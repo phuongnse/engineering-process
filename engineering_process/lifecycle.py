@@ -33,6 +33,15 @@ PHASES = {
     "completed",
 }
 
+FINDING_IDENTITY_FIELDS = (
+    "id",
+    "severity",
+    "path",
+    "line",
+    "summary",
+    "evidence",
+)
+
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -277,6 +286,7 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         "plan",
         "implementationActors",
         "verification",
+        "pendingFindings",
         "reviewAssignment",
         "review",
         "completion",
@@ -301,6 +311,8 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         raise ContractError(f"{path}.revision: must be a positive integer")
     if not isinstance(state["history"], list) or not state["history"]:
         raise ContractError(f"{path}.history: must not be empty")
+    if not isinstance(state["pendingFindings"], list):
+        raise ContractError(f"{path}.pendingFindings: must be an array")
     return state
 
 
@@ -384,6 +396,7 @@ def _start_change_unlocked(
         "plan": None,
         "implementationActors": [],
         "verification": [],
+        "pendingFindings": [],
         "reviewAssignment": None,
         "review": None,
         "completion": None,
@@ -631,6 +644,7 @@ def _start_review_unlocked(
         "contract": state["contract"],
         "plan": state["plan"],
         "verification": state["verification"],
+        "pendingFindings": state["pendingFindings"],
     }
     assignment_path = _run_root(project_root, change_id) / f"review-request-{state['cycle']}.json"
     _write_atomic(assignment_path, assignment)
@@ -671,6 +685,23 @@ def _submit_review_unlocked(
     ):
         if document[field] != assignment[field]:
             raise ContractError(f"review report {field} does not match its assignment")
+    findings_by_id = {finding["id"]: finding for finding in document["findings"]}
+    for pending in state["pendingFindings"]:
+        current = findings_by_id.get(pending["id"])
+        if current is None:
+            raise ContractError(
+                f"review report must carry forward pending finding {pending['id']}"
+            )
+        changed = [
+            field
+            for field in FINDING_IDENTITY_FIELDS
+            if current[field] != pending[field]
+        ]
+        if changed:
+            raise ContractError(
+                f"review finding {pending['id']} changed immutable fields: "
+                + ", ".join(changed)
+            )
     source = source_state(project_root)
     if (
         source["dirty"] is not False
@@ -683,6 +714,11 @@ def _submit_review_unlocked(
     )
     artifact = _copy_document(project_root, report_path, destination)
     state["review"] = artifact
+    state["pendingFindings"] = [
+        dict(finding)
+        for finding in document["findings"]
+        if finding["status"] == "open"
+    ]
     state["phase"] = (
         "approved" if document["verdict"] == "approved" else "changes-requested"
     )
@@ -712,6 +748,8 @@ def _finish_change_unlocked(
     _plan(project_root, state)
     if state["review"] is None:
         raise ContractError("approved change has no review artifact")
+    if state["pendingFindings"]:
+        raise ContractError("completion requires every pending finding to be resolved")
     review = read_json(_artifact_path(project_root, state["review"]))
     validate_review(review, "registered review")
     source = source_state(project_root)

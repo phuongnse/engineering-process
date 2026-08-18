@@ -6,6 +6,9 @@ from .contracts import ContractError, SKILL_PATTERN, read_json
 from .skills import skill_directories
 
 
+MANDATORY_BUNDLE = "core"
+
+
 def bundles_path(process_root: Path) -> Path:
     candidates = (
         process_root / "bundles.json",
@@ -64,3 +67,15 @@ def load_bundles(process_root: Path, skills_root: Path) -> dict[str, tuple[str, 
             f"{path}: skills missing bundle ownership: {', '.join(unowned)}"
         )
     return result
+
+
+def select_bundles(
+    available: dict[str, tuple[str, ...]], requested: list[str] | None
+) -> tuple[str, ...]:
+    if MANDATORY_BUNDLE not in available:
+        raise ContractError("bundle catalog is missing the mandatory core bundle")
+    selected = {MANDATORY_BUNDLE, *(requested or [])}
+    unknown = sorted(selected - set(available))
+    if unknown:
+        raise ContractError(f"unknown bundles: {', '.join(unknown)}")
+    return tuple(sorted(selected))

@@ -19,6 +19,7 @@ include = ["engineering_process*"]
 "share/engineering-process" = ["bundles.json"]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
+  "templates/PULL_REQUEST_TEMPLATE.md",
 ]
 "share/engineering-process/schemas" = [
   "schemas/change.schema.json",

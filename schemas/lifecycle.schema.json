@@ -16,6 +16,7 @@
     "plan",
     "implementationActors",
     "verification",
+    "pendingFindings",
     "reviewAssignment",
     "review",
     "completion",
@@ -44,6 +45,7 @@
     "plan": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
     "implementationActors": {"type": "array", "items": {"$ref": "#/$defs/actor"}},
     "verification": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "pendingFindings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
     "reviewAssignment": {"type": ["object", "null"]},
     "review": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
     "completion": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
@@ -76,6 +78,30 @@
         "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
         "checkpoint": {"type": "string"},
         "workspaceFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "path",
+        "line",
+        "summary",
+        "evidence",
+        "status",
+        "resolutionEvidence"
+      ],
+      "properties": {
+        "id": {"type": "string"},
+        "severity": {"enum": ["critical", "high", "medium", "low"]},
+        "path": {"type": "string"},
+        "line": {"type": ["integer", "null"], "minimum": 1},
+        "summary": {"type": "string"},
+        "evidence": {"type": "string"},
+        "status": {"const": "open"},
+        "resolutionEvidence": {"type": "null"}
       }
     }
   }

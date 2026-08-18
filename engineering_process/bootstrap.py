@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from . import VERSION
-from .bundles import load_bundles
+from .bundles import load_bundles, select_bundles
 from .contracts import ContractError, read_json, validate_project, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
 from .syncing import skill_target_ownership_issues, sync_skills
@@ -13,6 +13,8 @@ from .syncing import skill_target_ownership_issues, sync_skills
 
 AGENTS_START = "<!-- engineering-process:start -->"
 AGENTS_END = "<!-- engineering-process:end -->"
+PR_DESCRIPTION_START = "<!-- engineering-process:pr-description:start -->"
+PR_DESCRIPTION_END = "<!-- engineering-process:pr-description:end -->"
 RUNS_IGNORE = "/.process/runs/"
 
 
@@ -66,6 +68,44 @@ def _install_agents(project_root: Path, process_root: Path) -> None:
         path.write_text(updated, encoding="utf-8")
 
 
+def _managed_pull_request_text(current: str, block: str) -> str:
+    start_count = current.count(PR_DESCRIPTION_START)
+    end_count = current.count(PR_DESCRIPTION_END)
+    if start_count != end_count or start_count > 1:
+        raise ContractError(
+            ".github/PULL_REQUEST_TEMPLATE.md: invalid engineering-process managed block"
+        )
+    if start_count == 0:
+        if current.strip():
+            raise ContractError(
+                ".github/PULL_REQUEST_TEMPLATE.md: existing unmanaged template must "
+                "be migrated around the engineering-process managed block"
+            )
+        return block.strip() + "\n"
+    start = current.index(PR_DESCRIPTION_START)
+    end = current.index(PR_DESCRIPTION_END, start) + len(PR_DESCRIPTION_END)
+    prefix = current[:start].rstrip()
+    suffix = current[end:].strip()
+    parts = [part for part in (prefix, block.strip(), suffix) if part]
+    return "\n\n".join(parts) + "\n"
+
+
+def _install_pull_request_template(project_root: Path, process_root: Path) -> None:
+    source = asset_root(process_root) / "templates" / "PULL_REQUEST_TEMPLATE.md"
+    if not source.is_file():
+        raise ContractError(f"{source}: missing pull-request template")
+    try:
+        block = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{source}: cannot read template: {error}") from error
+    path = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+    updated = _managed_pull_request_text(current, block)
+    if current != updated:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(updated, encoding="utf-8")
+
+
 def _install_ignore(project_root: Path) -> None:
     path = project_root / ".gitignore"
     current = path.read_text(encoding="utf-8") if path.is_file() else ""
@@ -98,10 +138,7 @@ def initialize_project(
     project = validate_project(document, str(source_manifest))
 
     available = load_bundles(process_root, skills_root(process_root))
-    selected_bundles = requested_bundles or ["core"]
-    unknown = sorted(set(selected_bundles) - set(available))
-    if unknown:
-        raise ContractError(f"unknown bundles: {', '.join(unknown)}")
+    selected_bundles = select_bundles(available, requested_bundles)
     skills = tuple(
         sorted(
             {
@@ -131,6 +168,7 @@ def initialize_project(
         replace=replace,
     )
     _install_agents(project_root, process_root)
+    _install_pull_request_template(project_root, process_root)
     _install_ignore(project_root)
     issues = sync_skills(project_root, process_root, check=False)
     if issues:
@@ -140,6 +178,6 @@ def initialize_project(
         "project": project.identifier,
         "version": VERSION,
         "digest": lock_document["process"]["digest"],
-        "bundles": sorted(set(selected_bundles)),
+        "bundles": list(selected_bundles),
         "skills": list(skills),
     }

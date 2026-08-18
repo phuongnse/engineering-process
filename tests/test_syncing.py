@@ -2,9 +2,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from engineering_process import syncing
 from engineering_process import VERSION
-from engineering_process.contracts import ContractError
+from engineering_process.contracts import ContractError, ProcessLock
 from engineering_process.distribution import distribution_digest
 from engineering_process.syncing import sync_skills, synchronized_state
 from engineering_process.contracts import read_json, validate_process_lock
@@ -123,4 +125,35 @@ class SyncTests(unittest.TestCase):
                     "unmanaged project skill asset" in issue
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
+            )
+
+    def test_relocated_install_discovers_assets_beside_the_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            package = target / "engineering_process"
+            assets = target / "share" / "engineering-process"
+            package.mkdir()
+            (assets / "skills").mkdir(parents=True)
+            (assets / "bundles.json").write_text("{}\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(syncing, "__file__", str(package / "syncing.py")),
+                mock.patch.object(syncing.sysconfig, "get_path", return_value="/missing"),
+            ):
+                self.assertEqual(target.resolve(), syncing.default_process_root())
+
+    def test_synchronized_state_rejects_a_lock_without_core(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            skills = ("assess-design", "run-project-command")
+            lock = ProcessLock(
+                version=VERSION,
+                digest=distribution_digest(PROCESS_ROOT, skills),
+                skills=skills,
+            )
+
+            issues = synchronized_state(project_root, PROCESS_ROOT, lock)
+
+            self.assertTrue(
+                any("omits mandatory core skills" in issue for issue in issues)
             )

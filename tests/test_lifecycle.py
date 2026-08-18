@@ -299,9 +299,86 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(state["cycle"], 2)
             self.assertEqual(state["verification"], [])
             self.assertIsNone(state["review"])
+            self.assertEqual(["finding-1"], [item["id"] for item in state["pendingFindings"]])
             self.assertTrue(
                 any(event.get("report") for event in state["history"])
             )
+
+            for profile in ("development", "review"):
+                state, _ = verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    profile,
+                    actor_id="implementer",
+                    context_id="fix-context",
+                    kind="agent",
+                )
+            _, next_assignment = start_review(
+                root,
+                "change-1",
+                actor_id="reviewer",
+                context_id="second-review-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The test host created a second isolated review context",
+            )
+            self.assertEqual(
+                ["finding-1"],
+                [item["id"] for item in next_assignment["pendingFindings"]],
+            )
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 2,
+                        "changeId": "change-1",
+                        "cycle": 2,
+                        "checkpoint": next_assignment["checkpoint"],
+                        "workspaceFingerprint": next_assignment["workspaceFingerprint"],
+                        "comparisonBase": next_assignment["comparisonBase"],
+                        "reviewer": next_assignment["reviewer"],
+                        "independence": next_assignment["independence"],
+                        "verdict": "approved",
+                        "findings": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ContractError, "carry forward pending finding"):
+                submit_review(root, "change-1", report_path)
+
+            resolved = dict(next_assignment["pendingFindings"][0])
+            resolved["status"] = "resolved"
+            resolved["resolutionEvidence"] = "The second review verified the correction"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 2,
+                        "changeId": "change-1",
+                        "cycle": 2,
+                        "checkpoint": next_assignment["checkpoint"],
+                        "workspaceFingerprint": next_assignment["workspaceFingerprint"],
+                        "comparisonBase": next_assignment["comparisonBase"],
+                        "reviewer": next_assignment["reviewer"],
+                        "independence": next_assignment["independence"],
+                        "verdict": "approved",
+                        "findings": [resolved],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = submit_review(root, "change-1", report_path)
+            self.assertEqual("approved", state["phase"])
+            self.assertEqual([], state["pendingFindings"])
+            state, _ = finish_change(
+                root,
+                "change-1",
+                actor_id="implementer",
+                context_id="fix-context",
+                kind="agent",
+            )
+            self.assertEqual("completed", state["phase"])
 
     def test_source_change_invalidates_review_start(self):
         with tempfile.TemporaryDirectory() as directory:

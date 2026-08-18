@@ -12,6 +12,12 @@ The enforcement boundary has three parts:
 3. The consumer's `AGENTS.md` and `.process/project.json` own domain policy and exact
    argument-array verification commands.
 
+Publication conventions are distribution-owned as well: manual and automation branch
+names, Conventional Commit subjects, PR titles, the managed PR-description structure,
+structured requirement statuses, and draft-versus-ready semantics are validated by
+`processctl publication ...`. Projects populate those sections with their own contract,
+impact, risk, evidence, and review details and may append stronger domain checks.
+
 Core semantics never name a model, agent product, orchestration API, or code-indexing
 provider. An agent host or human workflow supplies an independent reviewer identity;
 `processctl` rejects any reviewer actor or context used by the current implementation
@@ -32,6 +38,8 @@ Add only project-owned configuration:
 ~~~text
 project/
 ├── AGENTS.md
+├── .github/
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── .gitignore             # includes .process/runs/
 └── .process/
     └── project.json       # project profiles and lifecycle baseline
@@ -121,6 +129,26 @@ only review requires a separate actor and context.
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately authorized project workflows.
 
+## Publication contract
+
+Validate common metadata before creating or updating a review object:
+
+~~~text
+processctl publication validate-branch --branch feat/short-description
+processctl publication validate-commit --subject "feat(scope): describe the change"
+processctl publication validate-range --project-root . \
+  --branch feat/short-description --range origin/main..HEAD
+processctl publication validate-pr --title "feat(scope): describe the change" \
+  --branch feat/short-description --state draft --body-file pr.md
+~~~
+
+Manual branches use `{type}/{kebab-description}`. Automation uses the provider-neutral
+`automation/{owner}/{description}` namespace. Commit subjects and PR titles use
+Conventional Commit syntax and are limited to 72 characters. Draft and automation PRs
+may retain explicitly pending checklist items; a ready manual PR may not. The managed
+template owns the shared sections and standard checklist while project extensions
+remain outside its markers.
+
 ## Trust boundary
 
 The CLI proves structural separation: reviewer actor id and context id must both be
@@ -129,6 +157,11 @@ agent host or human organization owns the truth of the identity attestation. A h
 adapter should create a read-only isolated context, pass stable identities to
 `change review start`, and preserve its evidence. Self-asserted separation without a
 host or human attestation does not satisfy the process.
+
+`change review submit` may be invoked by a coordinator transporting the assigned
+reviewer's exact report. The CLI validates that artifact against the assignment and
+carried findings; the attesting host or human boundary, not local process state,
+authenticates who produced it.
 
 ## Distribution contracts
 
@@ -145,6 +178,9 @@ host or human attestation does not satisfy the process.
 - Host-specific launchers, agent role files, and model settings are optional external
   integrations. They are neither bundled into the core nor required in consumer
   repositories.
+- The managed pull-request template and publication validators are shared process
+  policy. Consumer repositories may append project-specific requirements outside the
+  managed block but do not copy or redefine the common convention.
 
 ## Development
 

@@ -26,8 +26,10 @@ specific checkpoint without changing the reviewed source.
 5. Request changes when any required finding remains open. Approve only when required
    outcomes and evidence are complete for the reviewed checkpoint.
 6. Validate the report with processctl contract validate --kind review, then submit
-   it with processctl change review submit. The CLI rejects self-review, stale
-   evidence, assignment mismatches, and checkpoint mismatches.
+   it with processctl change review submit. A coordinator may transport the assigned
+   reviewer's exact artifact; the host or human attester owns its authenticity. The
+   CLI rejects implementation identity reuse at assignment, stale evidence, missing
+   carried findings, assignment mismatches, and checkpoint mismatches.
 7. Return findings to the implementation owner. Review never silently edits,
    publishes, or expands the accepted scope.
 

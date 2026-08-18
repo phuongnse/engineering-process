@@ -7,16 +7,22 @@ import tempfile
 from pathlib import Path
 
 from . import VERSION
+from .bundles import load_bundles
 from .contracts import ContractError, ProcessLock, read_json, validate_process_lock
-from .distribution import distribution_digest, skills_root
+from .distribution import asset_root, distribution_digest, skills_root
 from .skills import MARKER_NAME, validate_skills
 
 
 def default_process_root() -> Path:
     source_root = Path(__file__).resolve().parent.parent
-    if (source_root / ".agents" / "skills").is_dir():
-        return source_root
-    return Path(sysconfig.get_path("data")).resolve()
+    candidates = (source_root, Path(sysconfig.get_path("data")).resolve())
+    for candidate in candidates:
+        try:
+            asset_root(candidate)
+        except ContractError:
+            continue
+        return candidate
+    return candidates[-1]
 
 
 def process_skills_root(process_root: Path) -> Path:
@@ -91,6 +97,12 @@ def synchronized_state(
     source_root = process_skills_root(process_root)
     target_root = project_root / ".agents" / "skills"
     issues = validate_skills(source_root, lock.skills)
+    bundles = load_bundles(process_root, source_root)
+    missing_core = sorted(set(bundles["core"]) - set(lock.skills))
+    if missing_core:
+        issues.append(
+            "process.lock omits mandatory core skills: " + ", ".join(missing_core)
+        )
     if issues:
         return issues
     if lock.version != VERSION:

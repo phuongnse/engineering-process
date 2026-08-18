@@ -12,6 +12,21 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class CliTests(unittest.TestCase):
+    def test_routes_portable_publication_validation(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "publication",
+                        "validate-branch",
+                        "--branch",
+                        "feat/portable-publication",
+                        "--json",
+                    ]
+                ),
+                0,
+            )
+
     def test_creates_core_lock_and_refuses_implicit_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
@@ -46,7 +61,7 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(main(arguments), 2)
 
-    def test_combines_core_and_cross_repo_bundles(self):
+    def test_explicit_bundle_still_includes_mandatory_core(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
             with contextlib.redirect_stdout(io.StringIO()):
@@ -59,8 +74,6 @@ class CliTests(unittest.TestCase):
                         "--process-root",
                         str(PROCESS_ROOT),
                         "--bundle",
-                        "core",
-                        "--bundle",
                         "cross-repo",
                         "--json",
                     ]
@@ -71,3 +84,4 @@ class CliTests(unittest.TestCase):
                 read_json(project_root / ".process" / "process.lock")
             )
             self.assertIn("cross-repo-change", lock.skills)
+            self.assertIn("run-change", lock.skills)

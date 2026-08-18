@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
 from . import VERSION
-from .bundles import load_bundles
+from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
     ContractError,
@@ -31,6 +32,12 @@ from .lifecycle import (
     verify_change,
 )
 from .runner import run_profile
+from .publication import (
+    validate_branch,
+    validate_commit_range,
+    validate_commit_subject,
+    validate_pull_request,
+)
 from .skills import validate_skills
 from .syncing import (
     default_process_root,
@@ -122,10 +129,7 @@ def command_lock_create(args: argparse.Namespace) -> int:
         )
     skills_root = process_skills_root(args.process_root)
     bundles = load_bundles(args.process_root, skills_root)
-    requested = args.bundle or ["core"]
-    unknown = sorted(set(requested) - set(bundles))
-    if unknown:
-        raise ContractError(f"unknown bundles: {', '.join(unknown)}")
+    requested = select_bundles(bundles, args.bundle)
     skills = tuple(
         sorted(
             {
@@ -360,6 +364,7 @@ def command_change_status(args: argparse.Namespace) -> int:
         plan=state["plan"],
         implementationActors=state["implementationActors"],
         verification=state["verification"],
+        pendingFindings=state["pendingFindings"],
         reviewAssignment=state["reviewAssignment"],
         review=state["review"],
         completion=state["completion"],
@@ -388,14 +393,12 @@ def command_digest(args: argparse.Namespace) -> int:
     selected = lock.skills if lock else None
     if args.bundle:
         bundles = load_bundles(args.process_root, root)
-        unknown = sorted(set(args.bundle) - set(bundles))
-        if unknown:
-            raise ContractError(f"unknown bundles: {', '.join(unknown)}")
+        requested = select_bundles(bundles, args.bundle)
         selected = tuple(
             sorted(
                 {
                     skill
-                    for bundle in args.bundle
+                    for bundle in requested
                     for skill in bundles[bundle]
                 }
             )
@@ -495,6 +498,81 @@ def command_verify(args: argparse.Namespace) -> int:
         if args.output:
             print(f"  report: {args.output}")
     return 0 if report["status"] == "passed" else 1
+
+
+def _publication_result(
+    args: argparse.Namespace, command: str, issues: list[str], **details: Any
+) -> int:
+    _emit(
+        args,
+        _result(
+            command,
+            status="failed" if issues else "passed",
+            **details,
+            issues=issues,
+        ),
+    )
+    return 1 if issues else 0
+
+
+def command_publication_validate_branch(args: argparse.Namespace) -> int:
+    issues = validate_branch(args.branch)
+    return _publication_result(
+        args,
+        "publication validate-branch",
+        issues,
+        branch=args.branch,
+    )
+
+
+def command_publication_validate_commit(args: argparse.Namespace) -> int:
+    issues = validate_commit_subject(args.subject)
+    return _publication_result(
+        args,
+        "publication validate-commit",
+        issues,
+        subject=args.subject,
+    )
+
+
+def command_publication_validate_range(args: argparse.Namespace) -> int:
+    issues, records = validate_commit_range(
+        args.project_root,
+        branch=args.branch,
+        range_spec=args.range_spec,
+    )
+    return _publication_result(
+        args,
+        "publication validate-range",
+        issues,
+        branch=args.branch,
+        range=args.range_spec,
+        commits=[commit for commit, _subject in records],
+    )
+
+
+def command_publication_validate_pr(args: argparse.Namespace) -> int:
+    if args.body_file is not None:
+        try:
+            body = args.body_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ContractError(f"{args.body_file}: cannot read PR body: {error}") from error
+    else:
+        body = os.environ.get("PR_BODY", "")
+    issues = validate_pull_request(
+        title=args.title,
+        body=body,
+        branch=args.branch,
+        state=args.state,
+    )
+    return _publication_result(
+        args,
+        "publication validate-pr",
+        issues,
+        branch=args.branch,
+        state=args.state,
+        title=args.title,
+    )
 
 
 def _add_json(parser: argparse.ArgumentParser) -> None:
@@ -652,6 +730,46 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--output", type=Path)
     _add_json(verify)
     verify.set_defaults(handler=command_verify)
+
+    publication = commands.add_parser(
+        "publication", help="Validate portable publication metadata"
+    )
+    publication_commands = publication.add_subparsers(
+        dest="publication_command", required=True
+    )
+
+    publication_branch = publication_commands.add_parser(
+        "validate-branch", help="Validate a publication branch name"
+    )
+    publication_branch.add_argument("--branch", required=True)
+    _add_json(publication_branch)
+    publication_branch.set_defaults(handler=command_publication_validate_branch)
+
+    publication_commit = publication_commands.add_parser(
+        "validate-commit", help="Validate a commit subject"
+    )
+    publication_commit.add_argument("--subject", required=True)
+    _add_json(publication_commit)
+    publication_commit.set_defaults(handler=command_publication_validate_commit)
+
+    publication_range = publication_commands.add_parser(
+        "validate-range", help="Validate a branch and every commit subject in a range"
+    )
+    _add_project_root(publication_range)
+    publication_range.add_argument("--branch", required=True)
+    publication_range.add_argument("--range", dest="range_spec", required=True)
+    _add_json(publication_range)
+    publication_range.set_defaults(handler=command_publication_validate_range)
+
+    publication_pr = publication_commands.add_parser(
+        "validate-pr", help="Validate a pull-request title and description"
+    )
+    publication_pr.add_argument("--title", required=True)
+    publication_pr.add_argument("--branch", required=True)
+    publication_pr.add_argument("--state", choices=("draft", "ready"), required=True)
+    publication_pr.add_argument("--body-file", type=Path)
+    _add_json(publication_pr)
+    publication_pr.set_defaults(handler=command_publication_validate_pr)
 
     change = commands.add_parser("change", help="Run the canonical change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)
