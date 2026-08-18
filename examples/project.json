@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "project": "sample-project",
+  "lifecycle": {
+    "requiredProfiles": ["development", "review"]
+  },
+  "profiles": {
+    "development": [
+      {
+        "id": "unit",
+        "run": ["python", "-m", "unittest"],
+        "timeoutSeconds": 600
+      }
+    ],
+    "review": [
+      {
+        "id": "full",
+        "run": ["python", "-m", "unittest", "discover"],
+        "timeoutSeconds": 1800
+      }
+    ]
+  }
+}

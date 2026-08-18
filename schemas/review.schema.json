@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/review.schema.json",
+  "title": "Independent engineering review report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "changeId",
+    "cycle",
+    "checkpoint",
+    "workspaceFingerprint",
+    "comparisonBase",
+    "reviewer",
+    "independence",
+    "verdict",
+    "findings"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 2},
+    "changeId": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "cycle": {"type": "integer", "minimum": 1},
+    "checkpoint": {"type": "string", "minLength": 1, "maxLength": 256},
+    "workspaceFingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "comparisonBase": {"type": "string", "minLength": 1, "maxLength": 256},
+    "reviewer": {"$ref": "#/$defs/actor"},
+    "independence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "attestedBy", "evidence"],
+      "properties": {
+        "method": {"enum": ["isolated-context", "separate-person"]},
+        "attestedBy": {"type": "string", "minLength": 1, "maxLength": 256},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    },
+    "verdict": {"enum": ["approved", "changes-requested"]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "path",
+          "line",
+          "summary",
+          "evidence",
+          "status",
+          "resolutionEvidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          },
+          "severity": {"enum": ["critical", "high", "medium", "low"]},
+          "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "line": {"type": ["integer", "null"], "minimum": 1},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "evidence": {"type": "string", "minLength": 1, "maxLength": 4000},
+          "status": {"enum": ["open", "resolved", "deferred", "false-positive"]},
+          "resolutionEvidence": {"type": ["string", "null"], "maxLength": 4000}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    }
+  }
+}

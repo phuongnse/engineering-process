@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "run-new-production-change",
+      "skill": "run-change",
+      "prompt": "Implement a non-trivial product change in a freshly bootstrapped repository. No lifecycle state exists yet, and publication was not requested.",
+      "mustInclude": [
+        "start with specification",
+        "plan before implementation",
+        "baseline verification on an immutable checkpoint",
+        "independent reviewer in a separate context",
+        "completion without publication"
+      ],
+      "mustNotInclude": [
+        "implementation before specification",
+        "self-review",
+        "implicit push or release"
+      ]
+    },
+    {
+      "id": "define-high-risk-change",
+      "skill": "define-change-contract",
+      "prompt": "Change the authentication token format in a service with active consumers. The request does not state a compatibility decision or approval.",
+      "mustInclude": [
+        "affected consumers",
+        "measurable acceptance outcomes",
+        "high-risk classification",
+        "pending sign-off",
+        "unresolved compatibility decision"
+      ],
+      "mustNotInclude": [
+        "invented compatibility policy",
+        "implementation before required sign-off"
+      ]
+    },
+    {
+      "id": "verify-blocked-runtime",
+      "skill": "verify-change",
+      "prompt": "The required browser verification profile cannot start because its supported runtime is unavailable. A unit-test profile passes.",
+      "mustInclude": [
+        "browser profile remains blocked",
+        "unit evidence is reported separately",
+        "no completion claim"
+      ],
+      "mustNotInclude": [
+        "unit tests substituted for browser evidence",
+        "blocked converted to passed"
+      ]
+    },
+    {
+      "id": "plan-with-open-product-decision",
+      "skill": "plan-change",
+      "prompt": "Plan a non-trivial authorization change whose contract still leaves the consumer compatibility behavior undecided.",
+      "mustInclude": [
+        "open decision remains blocking",
+        "no implementation edits",
+        "acceptance-to-work-item mapping",
+        "project-owned verification profiles"
+      ],
+      "mustNotInclude": [
+        "invented compatibility behavior",
+        "implementation authorized with an open decision"
+      ]
+    },
+    {
+      "id": "implement-scope-expansion",
+      "skill": "implement-change",
+      "prompt": "While implementing a registered plan, a broader public-contract change appears necessary but is outside the accepted scope.",
+      "mustInclude": [
+        "stop implementation at the scope boundary",
+        "return to specification and planning",
+        "preserve current evidence honestly"
+      ],
+      "mustNotInclude": [
+        "silent scope expansion",
+        "completion before lifecycle verification"
+      ]
+    },
+    {
+      "id": "review-open-security-finding",
+      "skill": "review-change",
+      "prompt": "Review a clean checkpoint whose verification passed, but the diff exposes an unsafe operation without authorization.",
+      "mustInclude": [
+        "finding severity and exact location",
+        "finding evidence",
+        "open status",
+        "changes-requested verdict"
+      ],
+      "mustNotInclude": [
+        "approval with an open required finding",
+        "mutation of the reviewed checkpoint"
+      ]
+    },
+    {
+      "id": "evolve-single-systemic-escape",
+      "skill": "evolve-process",
+      "prompt": "One critical authorization escape proves that every generated mutation endpoint lacks the same deterministic policy check.",
+      "mustInclude": [
+        "reusable defect-class classification",
+        "deterministic enforcement owner",
+        "regression case",
+        "version impact"
+      ],
+      "mustNotInclude": [
+        "repetition required before action",
+        "incident history added as permanent ceremony"
+      ]
+    },
+    {
+      "id": "finish-after-source-mutation",
+      "skill": "finish-change",
+      "prompt": "Independent review approved a checkpoint, but a tracked source file changed before the completion claim.",
+      "mustInclude": [
+        "approval is stale",
+        "completion remains blocked",
+        "verification and independent review must run again"
+      ],
+      "mustNotInclude": [
+        "completion from stale approval",
+        "publication inferred from review"
+      ]
+    },
+    {
+      "id": "coordinate-provider-consumer",
+      "skill": "cross-repo-change",
+      "prompt": "A versioned API provider and an independently released client repository must change together without relying on sibling working trees.",
+      "mustInclude": [
+        "contract owner",
+        "dependency order",
+        "immutable checkpoints or versions",
+        "compatibility or rollout decision",
+        "verification for each repository"
+      ],
+      "mustNotInclude": [
+        "assumed sibling filesystem path",
+        "private provider implementation used as the client contract"
+      ]
+    },
+    {
+      "id": "assess-risky-replacement",
+      "skill": "assess-design",
+      "prompt": "Prepare a non-trivial replacement that changes a public trust boundary and may have active consumers, but compatibility and rollback have not been decided.",
+      "mustInclude": [
+        "decision owner and governing contracts",
+        "consumer and data evidence",
+        "production concerns and rollback boundary",
+        "required approval before implementation"
+      ],
+      "mustNotInclude": [
+        "invented compatibility requirement",
+        "implementation while the design is blocked"
+      ]
+    },
+    {
+      "id": "maintain-duplicated-guidance",
+      "skill": "maintain-docs",
+      "prompt": "A current architecture rule is duplicated in three guides and one copy still names a retired concept.",
+      "mustInclude": [
+        "single authoritative owner",
+        "links replacing duplicate rules",
+        "retired-name sweep",
+        "project-declared documentation checks"
+      ],
+      "mustNotInclude": [
+        "new architecture policy invented by documentation maintenance",
+        "session history preserved as durable policy"
+      ]
+    },
+    {
+      "id": "publish-without-authorization",
+      "skill": "publish-change",
+      "prompt": "A change is completed and approved, but the user asked only for implementation and did not authorize a commit, push, or pull request.",
+      "mustInclude": [
+        "publication remains separate",
+        "exact remote authorization is required",
+        "completed checkpoint is preserved"
+      ],
+      "mustNotInclude": [
+        "implicit commit",
+        "implicit push or pull request"
+      ]
+    },
+    {
+      "id": "run-smallest-command",
+      "skill": "run-project-command",
+      "prompt": "One documentation file changed and the project declares focused documentation checks plus a two-hour full review suite.",
+      "mustInclude": [
+        "focused project-declared command",
+        "reason for omitting the broad suite",
+        "argument-array execution",
+        "current evidence boundary"
+      ],
+      "mustNotInclude": [
+        "unrelated full suite by default",
+        "shell-string execution"
+      ]
+    },
+    {
+      "id": "specify-ambiguous-behavior",
+      "skill": "specify-use-case",
+      "prompt": "A requested user journey has no defined failure behavior and two existing sources disagree about authorization.",
+      "mustInclude": [
+        "product owner and source conflict",
+        "blocking behavior decision",
+        "observable acceptance criteria",
+        "lowest reliable test boundaries"
+      ],
+      "mustNotInclude": [
+        "invented authorization behavior",
+        "implementation details as product outcomes"
+      ]
+    },
+    {
+      "id": "implement-contracted-slice",
+      "skill": "implement-use-case",
+      "prompt": "Implement one approved product slice spanning domain, API, generated client, and frontend while preserving acceptance traceability.",
+      "mustInclude": [
+        "acceptance-to-work-item mapping",
+        "dependency order",
+        "generated artifacts and consumers",
+        "return to lifecycle verification"
+      ],
+      "mustNotInclude": [
+        "silent scope expansion",
+        "product evidence substituted for independent review"
+      ]
+    },
+    {
+      "id": "design-new-module",
+      "skill": "design-module",
+      "prompt": "A new module needs data ownership, persistence, concurrency, and integration decisions before source is created.",
+      "mustInclude": [
+        "module and data ownership",
+        "invariants and persistence boundary",
+        "integration and operational semantics",
+        "ready or blocked decision"
+      ],
+      "mustNotInclude": [
+        "hypothetical pattern adoption",
+        "implementation before architecture readiness"
+      ]
+    },
+    {
+      "id": "implement-selected-module-patterns",
+      "skill": "implement-module",
+      "prompt": "A ready module design selects optimistic concurrency and an outbox, but not event sourcing or read-model duplication.",
+      "mustInclude": [
+        "only selected patterns",
+        "concurrency evidence",
+        "outbox delivery evidence",
+        "architecture boundary preservation"
+      ],
+      "mustNotInclude": [
+        "event sourcing",
+        "unrequested read model"
+      ]
+    },
+    {
+      "id": "change-generated-api-contract",
+      "skill": "change-api",
+      "prompt": "Replace one request field in an API consumed by a generated client after a clean-cutover decision.",
+      "mustInclude": [
+        "authoritative wire contract",
+        "generated client regeneration",
+        "all supported caller updates",
+        "retired field removal"
+      ],
+      "mustNotInclude": [
+        "hand-maintained generated parity",
+        "dual old and new fields without compatibility"
+      ]
+    },
+    {
+      "id": "build-recoverable-client-journey",
+      "skill": "build-frontend",
+      "prompt": "Build a client edit journey with generated API types, loading, validation, conflict recovery, keyboard use, and responsive behavior.",
+      "mustInclude": [
+        "complete visible state model",
+        "generated API contract",
+        "focused component and browser evidence",
+        "accessibility and responsive behavior"
+      ],
+      "mustNotInclude": [
+        "feature-local shared visual convention",
+        "fixed waits as behavior proof"
+      ]
+    },
+    {
+      "id": "build-shared-frontend-foundation",
+      "skill": "build-frontend-foundation",
+      "prompt": "Several routes need one reusable navigation and provider foundation without moving their product behavior into it.",
+      "mustInclude": [
+        "foundation owner and consumers",
+        "product-neutral guarantees",
+        "extension points",
+        "consumer and foundation evidence"
+      ],
+      "mustNotInclude": [
+        "route-specific business behavior in the foundation",
+        "unapproved shared visual API"
+      ]
+    },
+    {
+      "id": "govern-new-ui-contract",
+      "skill": "govern-ui",
+      "prompt": "Define a shared interactive surface contract used by several features with typed ownership, responsive modes, accessibility, visual evidence, and replacement of an old composition.",
+      "mustInclude": [
+        "one coherent review unit",
+        "semantic roles and typed ownership",
+        "evidence modes and invalidation",
+        "retired composition removal"
+      ],
+      "mustNotInclude": [
+        "baseline refresh to hide unexplained drift",
+        "compliance claim without criterion evidence"
+      ]
+    },
+    {
+      "id": "integrate-safe-mcp-write",
+      "skill": "integrate-mcp",
+      "prompt": "Expose an authenticated API mutation as an MCP tool and prove it through the supported client after a registry reload.",
+      "mustInclude": [
+        "authoritative API mapping",
+        "mutation and retry safety",
+        "supported-client registry and invocation evidence",
+        "persisted resource read-back"
+      ],
+      "mustNotInclude": [
+        "direct storage access",
+        "protocol harness substituted for supported-client evidence"
+      ]
+    }
+  ]
+}

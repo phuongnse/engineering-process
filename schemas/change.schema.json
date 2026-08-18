@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/change.schema.json",
+  "title": "Engineering change specification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "summary",
+    "source",
+    "comparisonBase",
+    "specification",
+    "risk",
+    "affectedProjects",
+    "acceptanceCriteria",
+    "requiredProfiles",
+    "signOff"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 2},
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+    "source": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "comparisonBase": {"type": "string", "minLength": 1, "maxLength": 256},
+    "specification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reference", "rationale"],
+      "properties": {
+        "kind": {"enum": ["project", "change-contract"]},
+        "reference": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    },
+    "risk": {"enum": ["low", "medium", "high"]},
+    "affectedProjects": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+      }
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "outcome"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          },
+          "outcome": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    },
+    "requiredProfiles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+      }
+    },
+    "signOff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status", "evidence"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "status": {"enum": ["not-required", "pending", "approved"]},
+        "evidence": {"type": ["string", "null"], "maxLength": 1000}
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "id": "issue-123",
+  "summary": "Add a bounded product capability",
+  "source": "issue-123",
+  "comparisonBase": "main",
+  "specification": {
+    "kind": "project",
+    "reference": "docs/specs/issue-123.md",
+    "rationale": "The project specification owns observable product behavior."
+  },
+  "risk": "medium",
+  "affectedProjects": ["sample-project"],
+  "acceptanceCriteria": [
+    {
+      "id": "ac-1",
+      "outcome": "The authorized user can complete the requested behavior"
+    }
+  ],
+  "requiredProfiles": ["development", "review"],
+  "signOff": {
+    "required": false,
+    "status": "not-required",
+    "evidence": null
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/lifecycle.schema.json",
+  "title": "Engineering change lifecycle state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "changeId",
+    "project",
+    "phase",
+    "cycle",
+    "revision",
+    "comparisonBase",
+    "contract",
+    "plan",
+    "implementationActors",
+    "verification",
+    "reviewAssignment",
+    "review",
+    "completion",
+    "history"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "changeId": {"type": "string"},
+    "project": {"type": "string"},
+    "phase": {
+      "enum": [
+        "specified",
+        "planned",
+        "implementing",
+        "verified",
+        "review-pending",
+        "changes-requested",
+        "approved",
+        "completed"
+      ]
+    },
+    "cycle": {"type": "integer", "minimum": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "comparisonBase": {"type": "string"},
+    "contract": {"$ref": "#/$defs/artifact"},
+    "plan": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "implementationActors": {"type": "array", "items": {"$ref": "#/$defs/actor"}},
+    "verification": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "reviewAssignment": {"type": ["object", "null"]},
+    "review": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "completion": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "history": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+  },
+  "$defs": {
+    "actor": {
+      "type": "object",
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string"},
+        "contextId": {"type": "string"},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "digest"],
+      "properties": {
+        "path": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["profile", "path", "digest", "checkpoint", "workspaceFingerprint"],
+      "properties": {
+        "profile": {"type": "string"},
+        "path": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "checkpoint": {"type": "string"},
+        "workspaceFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

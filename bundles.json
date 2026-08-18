@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "bundles": {
+    "core": [
+      "define-change-contract",
+      "evolve-process",
+      "finish-change",
+      "implement-change",
+      "plan-change",
+      "review-change",
+      "run-change",
+      "verify-change"
+    ],
+    "delivery": [
+      "assess-design",
+      "run-project-command"
+    ],
+    "product": [
+      "implement-use-case",
+      "specify-use-case"
+    ],
+    "architecture": [
+      "design-module",
+      "implement-module"
+    ],
+    "api": [
+      "change-api"
+    ],
+    "frontend": [
+      "build-frontend",
+      "build-frontend-foundation",
+      "govern-ui"
+    ],
+    "mcp": [
+      "integrate-mcp"
+    ],
+    "docs": [
+      "maintain-docs"
+    ],
+    "publication": [
+      "publish-change"
+    ],
+    "cross-repo": [
+      "cross-repo-change"
+    ]
+  }
+}

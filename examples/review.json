@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "changeId": "issue-123",
+  "cycle": 1,
+  "checkpoint": "0123456789abcdef",
+  "workspaceFingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "comparisonBase": "main",
+  "reviewer": {
+    "actorId": "reviewer-1",
+    "contextId": "review-session-1",
+    "kind": "agent"
+  },
+  "independence": {
+    "method": "isolated-context",
+    "attestedBy": "agent-host",
+    "evidence": "The host created a read-only context that did not participate in implementation."
+  },
+  "verdict": "changes-requested",
+  "findings": [
+    {
+      "id": "finding-1",
+      "severity": "high",
+      "path": "src/authorization.py",
+      "line": 42,
+      "summary": "Authorization is missing",
+      "evidence": "The unsafe operation has no policy check",
+      "status": "open",
+      "resolutionEvidence": null
+    }
+  ]
+}

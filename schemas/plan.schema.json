@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/plan.schema.json",
+  "title": "Engineering implementation plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "changeId",
+    "contractDigest",
+    "approach",
+    "workItems",
+    "acceptancePlan",
+    "risks",
+    "openDecisions"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "changeId": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "contractDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "approach": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "workItems": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "outcome", "affectedPaths", "verificationProfiles"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          },
+          "outcome": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "affectedPaths": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+          },
+          "verificationProfiles": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            }
+          }
+        }
+      }
+    },
+    "acceptancePlan": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterionId", "workItems", "verificationProfiles"],
+        "properties": {
+          "criterionId": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          },
+          "workItems": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string"}
+          },
+          "verificationProfiles": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk", "mitigation"],
+        "properties": {
+          "risk": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "mitigation": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    },
+    "openDecisions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    }
+  }
+}
