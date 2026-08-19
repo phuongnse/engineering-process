@@ -43,7 +43,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 engineering_process = ["requirements-*.txt"]
 
 [tool.setuptools.data-files]
-"share/engineering-process" = ["bundles.json", "release.json", "PRODUCTION_STANDARD.md"]
+"share/engineering-process" = ["bundles.json", "release.json", "PRODUCTION_STANDARD.md", "VERSIONING.md"]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",

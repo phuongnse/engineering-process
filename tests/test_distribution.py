@@ -36,6 +36,12 @@ class DistributionDigestTests(unittest.TestCase):
         (root / "release.json").write_text(
             '{"schemaVersion":1,"version":"0.1.0"}\n', encoding="utf-8"
         )
+        (root / "PRODUCTION_STANDARD.md").write_text(
+            "# Production standard\n", encoding="utf-8"
+        )
+        (root / "VERSIONING.md").write_text(
+            "# Version governance\n", encoding="utf-8"
+        )
         return ("sample-skill",)
 
     def test_digest_covers_runtime_schema_and_selected_skill(self):
@@ -85,6 +91,29 @@ class DistributionDigestTests(unittest.TestCase):
             skill.write_text(skill.read_text(encoding="utf-8") + "Verify it.\n")
             skill_changed = distribution_digest(root, selected, package_root=package)
             self.assertNotEqual(baseline, skill_changed)
+
+    def test_digest_covers_distributed_version_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = self.prepare_distribution(root)
+            package = root / "runtime"
+            package.mkdir()
+            (package / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (package / "requirements-runtime.txt").write_text(
+                "parser==1.0\n", encoding="utf-8"
+            )
+            baseline = distribution_digest(root, selected, package_root=package)
+
+            versioning = root / "VERSIONING.md"
+            versioning.write_text(
+                "# Version governance\n\nDerived, never guessed.\n",
+                encoding="utf-8",
+            )
+
+            self.assertNotEqual(
+                baseline,
+                distribution_digest(root, selected, package_root=package),
+            )
 
 
 if __name__ == "__main__":

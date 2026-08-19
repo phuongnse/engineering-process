@@ -3,6 +3,7 @@ import unittest
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
     ContractError,
+    derive_release_version,
     validate_change,
     validate_plan,
     validate_process_lock,
@@ -357,6 +358,34 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_release_version_is_derived_from_highest_public_change(self):
+        cases = (
+            ("0.1.1", ["fix"], "0.1.2", "patch", "backward-compatible"),
+            (
+                "0.1.1",
+                ["fix", "capability"],
+                "0.2.0",
+                "minor",
+                "backward-compatible",
+            ),
+            ("0.1.1", ["breaking"], "0.2.0", "minor", "incompatible"),
+            ("1.4.2", ["breaking"], "2.0.0", "major", "incompatible"),
+        )
+        for previous, changes, version, classification, compatibility in cases:
+            with self.subTest(previous=previous, changes=changes):
+                plan = derive_release_version(previous, changes)
+                self.assertEqual(version, plan.version)
+                self.assertEqual(classification, plan.classification)
+                self.assertEqual(compatibility, plan.compatibility)
+
+    def test_release_version_planning_rejects_missing_or_invalid_inputs(self):
+        with self.assertRaisesRegex(ContractError, "at least one change type"):
+            derive_release_version("0.1.1", [])
+        with self.assertRaisesRegex(ContractError, "unknown release change types"):
+            derive_release_version("0.1.1", ["progress"])
+        with self.assertRaisesRegex(ContractError, "final SemVer"):
+            derive_release_version("0.2.0-rc.1", ["fix"])
+
     def valid_change(self):
         return {
             "schemaVersion": 3,

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "automerge": false,
+  "branchPrefix": "automation/renovate/",
+  "dependencyDashboard": true,
+  "draftPR": true,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "pin",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "prBodyTemplate": "<!-- engineering-process:pr-description:start -->\n## Summary\nRenovate proposes exact dependency updates for explicit owner adoption.\n\n## Contract and scope\nThis draft is dependency discovery only; the owning change contract must authorize any process-lock or managed-asset update.\n\n## Impact and risk\nNo process authority changes until public hashes, compatibility, generated lock state, and managed assets are independently verified.\n\n## Verification\nRequired project profiles and dependency integrity checks must pass after the generated state is synchronized.\n\n## Independent review\nA separate reviewer must approve the final immutable adoption checkpoint before this draft becomes ready.\n\n## Requirements and rules followed\n\n- [ ] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: pending]\n- [ ] **Verification evidence** — required current profiles pass on the published checkpoint. [status: pending]\n- [ ] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: pending]\n<!-- engineering-process:pr-description:end -->",
+  "packageRules": [
+    {
+      "description": "Prevent independent edits to transitive lifecycle-authority pins",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "requirements/process.txt"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Propose engineering-process authority adoption without applying it",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "requirements/process.txt"
+      ],
+      "matchPackageNames": [
+        "engineering-process"
+      ],
+      "enabled": true,
+      "automerge": false,
+      "groupName": "engineering-process authority",
+      "commitMessageScope": "process",
+      "commitMessageTopic": "engineering-process authority"
+    }
+  ]
+}

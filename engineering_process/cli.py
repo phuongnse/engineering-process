@@ -13,6 +13,7 @@ from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
     ContractError,
+    derive_release_version,
     read_json,
     validate_change,
     validate_plan,
@@ -749,6 +750,22 @@ def command_publication_validate_pr(args: argparse.Namespace) -> int:
     )
 
 
+def command_publication_plan_version(args: argparse.Namespace) -> int:
+    plan = derive_release_version(args.previous_version, args.change_type)
+    _emit(
+        args,
+        _result(
+            "publication plan-version",
+            previousVersion=plan.previous_version,
+            version=plan.version,
+            classification=plan.classification,
+            compatibility=plan.compatibility,
+            changeTypes=list(plan.change_types),
+        ),
+    )
+    return 0
+
+
 def command_publication_validate_release(args: argparse.Namespace) -> int:
     details = validate_release_checkpoint(
         args.project_root,
@@ -1055,6 +1072,20 @@ def build_parser() -> argparse.ArgumentParser:
     publication_pr.add_argument("--body-file", type=Path)
     _add_json(publication_pr)
     publication_pr.set_defaults(handler=command_publication_validate_pr)
+
+    publication_version = publication_commands.add_parser(
+        "plan-version",
+        help="Derive the exact next SemVer from public change classifications",
+    )
+    publication_version.add_argument("--previous-version", required=True)
+    publication_version.add_argument(
+        "--change-type",
+        action="append",
+        choices=("fix", "capability", "breaking"),
+        required=True,
+    )
+    _add_json(publication_version)
+    publication_version.set_defaults(handler=command_publication_plan_version)
 
     publication_release = publication_commands.add_parser(
         "validate-release",

@@ -19,9 +19,11 @@ CLI, schemas, and tests.
   `.process/process.lock`; source under development is a verification target, never
   its own lifecycle authority. Keep managed N-1 skills in `.agents/skills` and edit
   only N+1 distribution sources under `process_assets/skills`.
-- Treat the CLI, exit codes, schemas, lifecycle transitions, evidence shapes,
-  managed assets, and documented semantics as the public API. Classify every release
-  as SemVer major, minor, or patch from that surface before changing its version.
+- Treat [`VERSIONING.md`](VERSIONING.md) as the normative package, schema, release,
+  and adoption version policy. Treat the CLI, exit codes, schemas, lifecycle
+  transitions, evidence shapes, managed assets, and documented semantics as the
+  public API. Derive every release increment from that surface before changing its
+  version.
 - Treat integer `schemaVersion` values as compatibility majors for serialized data.
   Additive optional fields do not increment them. Do not alter a released schema's
   meaning or remove its reader without an explicit deprecation, migration, and

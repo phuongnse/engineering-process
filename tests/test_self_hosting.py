@@ -9,12 +9,41 @@ import unittest
 from pathlib import Path
 
 from engineering_process import VERSION
+from engineering_process.publication import validate_pull_request
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_renovate_proposes_draft_adoption_without_merge_authority(self):
+        renovate = json.loads(
+            (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
+        )
+
+        self.assertFalse(renovate["automerge"])
+        self.assertTrue(renovate["draftPR"])
+        self.assertEqual("automation/renovate/", renovate["branchPrefix"])
+        self.assertEqual(
+            [],
+            validate_pull_request(
+                title="chore(process): update engineering-process authority",
+                body=renovate["prBodyTemplate"],
+                branch="automation/renovate/engineering-process-0.x",
+                state="draft",
+            ),
+        )
+        authority_rule = next(
+            rule
+            for rule in renovate["packageRules"]
+            if rule.get("matchPackageNames") == ["engineering-process"]
+        )
+        self.assertTrue(authority_rule["enabled"])
+        self.assertFalse(authority_rule["automerge"])
+        self.assertEqual(
+            ["requirements/process.txt"], authority_rule["matchFileNames"]
+        )
+
     def test_release_assets_are_prepared_before_immutable_publication(self):
         prepare = (
             PROCESS_ROOT / ".github" / "workflows" / "prepare-release.yml"
@@ -123,6 +152,7 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertIn('"process_assets/skills/', pyproject)
         self.assertNotIn('".agents/skills/', pyproject)
+        self.assertIn('"VERSIONING.md"', pyproject)
         self.assertIn("prune .agents\n", manifest)
         self.assertIn("prune .process\n", manifest)
 

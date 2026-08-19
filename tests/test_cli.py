@@ -43,6 +43,30 @@ class CliTests(unittest.TestCase):
                 0,
             )
 
+    def test_publication_plans_exact_version_from_change_types(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = main(
+                [
+                    "publication",
+                    "plan-version",
+                    "--previous-version",
+                    "0.1.1",
+                    "--change-type",
+                    "fix",
+                    "--change-type",
+                    "capability",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual("0.2.0", report["version"])
+        self.assertEqual("minor", report["classification"])
+        self.assertEqual("backward-compatible", report["compatibility"])
+        self.assertEqual(["capability", "fix"], report["changeTypes"])
+
     def test_creates_core_lock_and_refuses_implicit_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

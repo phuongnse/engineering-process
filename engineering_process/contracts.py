@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 import regex as bounded_regex
@@ -62,6 +62,59 @@ CORE_QUALITY_DIMENSIONS = (
 
 class ContractError(ValueError):
     """Raised when a process contract is invalid."""
+
+
+@dataclass(frozen=True)
+class ReleaseVersionPlan:
+    previous_version: str
+    version: str
+    classification: str
+    compatibility: str
+    change_types: tuple[str, ...]
+
+
+def derive_release_version(
+    previous_version: str, change_types: Iterable[str]
+) -> ReleaseVersionPlan:
+    """Derive the only permitted next package version from public change types."""
+    previous_match = FINAL_SEMVER_PATTERN.fullmatch(previous_version)
+    if previous_match is None:
+        raise ContractError("previous version must be final SemVer X.Y.Z")
+    normalized = tuple(sorted(set(change_types)))
+    if not normalized:
+        raise ContractError(
+            "release version planning requires at least one change type"
+        )
+    allowed = {"fix", "capability", "breaking"}
+    unknown = sorted(set(normalized) - allowed)
+    if unknown:
+        raise ContractError(
+            "unknown release change types: " + ", ".join(unknown)
+        )
+
+    previous = tuple(int(part) for part in previous_match.groups())
+    if "breaking" in normalized:
+        classification = "minor" if previous[0] == 0 else "major"
+        compatibility = "incompatible"
+    elif "capability" in normalized:
+        classification = "minor"
+        compatibility = "backward-compatible"
+    else:
+        classification = "patch"
+        compatibility = "backward-compatible"
+
+    version = {
+        "patch": (previous[0], previous[1], previous[2] + 1),
+        "minor": (previous[0], previous[1] + 1, 0),
+        "major": (previous[0] + 1, 0, 0),
+    }[classification]
+    return ReleaseVersionPlan(
+        previous_version=previous_version,
+        version=".".join(str(part) for part in version),
+        classification=classification,
+        compatibility=compatibility,
+        change_types=normalized,
+    )
 
 
 @dataclass(frozen=True)
@@ -1337,23 +1390,15 @@ def validate_release(document: Any, path: str = "release") -> Release:
         if len(change_ids) != len(set(change_ids)):
             raise ContractError(f"{path}.changes: duplicate ids are not allowed")
 
-        derived_classification = (
-            "minor" if "breaking" in change_types and previous_parts[0] == 0
-            else "major" if "breaking" in change_types
-            else "minor" if "capability" in change_types
-            else "patch"
-        )
-        if classification != derived_classification:
+        version_plan = derive_release_version(previous, change_types)
+        if classification != version_plan.classification:
             raise ContractError(
-                f"{path}.classification: changes require {derived_classification}, "
+                f"{path}.classification: changes require {version_plan.classification}, "
                 f"not {classification}"
             )
-        expected_compatibility = (
-            "incompatible" if "breaking" in change_types else "backward-compatible"
-        )
-        if compatibility != expected_compatibility:
+        if compatibility != version_plan.compatibility:
             raise ContractError(
-                f"{path}.compatibility: changes require {expected_compatibility}"
+                f"{path}.compatibility: changes require {version_plan.compatibility}"
             )
         if schema_impact == "breaking" and "breaking" not in change_types:
             raise ContractError(

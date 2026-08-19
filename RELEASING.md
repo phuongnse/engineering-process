@@ -17,24 +17,10 @@ The GitHub `pypi` environment and the workflow environment must keep the same na
 
 ## Version classification
 
-The package follows SemVer and PEP 440. Its public API is the documented CLI and exit
-codes, project and lifecycle schemas, lifecycle transitions, verification and review
-evidence, managed distribution assets, and portable execution semantics.
-
-- Patch releases contain only backward-compatible defect fixes.
-- Minor releases add backward-compatible public capability or mark a public surface
-  deprecated. During the `0.x` pilot, an intentionally incompatible change also uses
-  the next minor release, but it requires owner sign-off, migration guidance, and an
-  explicit compatibility statement.
-- Version `1.0.0` declares the first stable public API. After that point, incompatible
-  public changes require a major release.
-
-An integer `schemaVersion` is the compatibility major of one serialized contract,
-not the package version. Optional additive properties and validator corrections keep
-the current schema number. A schema number changes only when previously valid data
-cannot retain the same meaning. Published schema readers remain supported throughout
-the current package major; deprecation precedes removal and names a migration and
-target major release.
+[`VERSIONING.md`](./VERSIONING.md) is the normative package, serialized-contract,
+release, and adoption version policy. Derive the exact candidate with `processctl
+publication plan-version`; never choose an increment from release chronology or
+development progress.
 
 The root `release.json` is the machine-readable release identity and classification
 owner. Its ordered change records derive patch/minor/major classification and

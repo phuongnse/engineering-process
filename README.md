@@ -32,7 +32,8 @@ release pinned in `.process/process.lock` governs development of N+1; the checko
 under test never supplies its own lifecycle authority. Managed N-1 skills live in
 `.agents/skills`, while editable N+1 distribution sources live in
 `process_assets/skills`. The bootstrap trust chain and evidence boundary are defined
-in [`SELF_HOSTING.md`](./SELF_HOSTING.md).
+in [`SELF_HOSTING.md`](./SELF_HOSTING.md); package, schema, release, and adoption
+versions are governed by [`VERSIONING.md`](./VERSIONING.md).
 
 Python 3.11 or newer and Git are required. Windows command containment requires
 Windows 10 or Windows Server 2016 and newer so Job Object membership can be attached
@@ -457,6 +458,9 @@ authenticates who produced it.
   lifecycle receipt, and later consumer locks must match it. Earlier immutable
   releases are recorded explicitly as bootstrap history rather than retroactively
   claimed as governed.
+- `VERSIONING.md` owns package-versus-schema classification and the explicit
+  Renovate-assisted adoption boundary. `processctl publication plan-version` derives
+  the only permitted next package version from the release change types.
 - Project commands run without a shell and inherit the caller environment. Never put
   secrets in manifests, arguments, or reports.
 - Consumer skill roots are distribution-owned: unmanaged `SKILL.md` files or catalog
