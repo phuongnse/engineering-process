@@ -13,10 +13,22 @@ class RuntimeDependencyTests(unittest.TestCase):
     def test_all_distribution_dependency_locks_are_exact(self):
         expected = {
             "requirements-build.txt": ["setuptools==84.0.0"],
-            "requirements-dev.txt": ["build==1.5.0", "jsonschema==4.26.0"],
+            "requirements-dev.txt": [
+                "attrs==26.1.0",
+                "build==1.5.0",
+                'colorama==0.4.6; os_name == "nt"',
+                "jsonschema==4.26.0",
+                "jsonschema-specifications==2025.9.1",
+                "packaging==26.3",
+                "pyproject_hooks==1.2.0",
+                "referencing==0.37.0",
+                "rpds-py==2026.6.3",
+                'typing-extensions==4.15.0; python_version < "3.13"',
+            ],
             "requirements-runtime.txt": [
                 "markdown-it-py==4.2.0",
                 "mdurl==0.1.2",
+                "regex==2026.7.19",
             ],
         }
         package = resources.files("engineering_process")
@@ -33,12 +45,17 @@ class RuntimeDependencyTests(unittest.TestCase):
             {
                 "markdown-it-py": "4.2.0",
                 "mdurl": "0.1.2",
+                "regex": "2026.7.19",
             },
             runtime_dependency_pins(),
         )
 
     def test_runtime_dependency_mismatch_fails_closed(self):
-        actual = {"markdown-it-py": "3.0.0", "mdurl": "0.1.2"}
+        actual = {
+            "markdown-it-py": "3.0.0",
+            "mdurl": "0.1.2",
+            "regex": "2026.7.19",
+        }
         with mock.patch(
             "engineering_process.runtime.metadata.version",
             side_effect=lambda name: actual[name],

@@ -13,7 +13,7 @@ from engineering_process.contracts import (
 class ProjectContractTests(unittest.TestCase):
     def valid_project(self):
         return {
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "project": "sample-project",
             "lifecycle": {"requiredProfiles": ["development"]},
             "profiles": {
@@ -25,6 +25,25 @@ class ProjectContractTests(unittest.TestCase):
                     }
                 ]
             },
+            "environment": {
+                "defaultProfile": "development",
+                "foregroundOnly": True,
+                "managedTools": [],
+                "profiles": {"development": ["python-runtime"]},
+                "requirements": [
+                    {
+                        "id": "python-runtime",
+                        "description": "Supported Python runtime",
+                        "probe": {
+                            "run": ["python", "--version"],
+                            "timeoutSeconds": 15,
+                            "readOnly": True,
+                        },
+                        "remediation": "Install a supported Python runtime.",
+                    }
+                ],
+                "setupActions": [],
+            },
         }
 
     def test_accepts_argument_array_checks(self):
@@ -32,6 +51,49 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_preserves_historical_project_manifest_versions(self):
+        schema_one = self.valid_project()
+        schema_one["schemaVersion"] = 1
+        del schema_one["environment"]
+        self.assertIsNone(validate_project(schema_one).environment)
+
+        schema_two = self.valid_project()
+        schema_two["schemaVersion"] = 2
+        del schema_two["environment"]["foregroundOnly"]
+        self.assertFalse(validate_project(schema_two).environment.foreground_only)
+
+    def test_schema_two_batch_binding_remains_readable_for_manual_migration(self):
+        document = self.valid_project()
+        document["schemaVersion"] = 2
+        del document["environment"]["foregroundOnly"]
+        document["environment"]["managedTools"] = [
+            {
+                "id": "npm",
+                "version": "1.0.0",
+                "artifacts": [
+                    {
+                        "platform": "windows-x64",
+                        "url": "https://downloads.example.test/npm.zip",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "zip",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {"npm": "./bin/npm.cmd"},
+                    }
+                ],
+            }
+        ]
+
+        project = validate_project(document)
+
+        command = project.environment.managed_tools["npm"].artifacts[
+            "windows-x64"
+        ].commands["npm"]
+        self.assertEqual("bin/npm.cmd", command.executable)
+        self.assertIsNone(command.script)
 
     def test_rejects_shell_string(self):
         document = self.valid_project()
@@ -52,6 +114,81 @@ class ProjectContractTests(unittest.TestCase):
         document["agent"] = "codex"
 
         with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_project(document)
+
+    def test_environment_requires_foreground_only_attestation(self):
+        document = self.valid_project()
+        document["environment"]["foregroundOnly"] = False
+
+        with self.assertRaisesRegex(ContractError, "foregroundOnly: must attest true"):
+            validate_project(document)
+
+    def test_schema_three_windows_managed_commands_require_native_executables(self):
+        document = self.valid_project()
+        document["environment"]["managedTools"] = [
+            {
+                "id": "npm",
+                "version": "1.0.0",
+                "artifacts": [
+                    {
+                        "platform": "windows-x64",
+                        "url": "https://downloads.example.test/npm.zip",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "zip",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {"npm": "bin/npm.cmd"},
+                    }
+                ],
+            }
+        ]
+
+        with self.assertRaisesRegex(ContractError, "native \\.exe"):
+            validate_project(document)
+
+        document["environment"]["managedTools"][0]["artifacts"][0]["commands"] = {
+            "npm": {
+                "executable": "node.exe",
+                "script": "node_modules/npm/bin/npm-cli.js",
+            }
+        }
+        project = validate_project(document)
+        command = project.environment.managed_tools["npm"].artifacts[
+            "windows-x64"
+        ].commands["npm"]
+        self.assertEqual("node.exe", command.executable)
+        self.assertEqual("node_modules/npm/bin/npm-cli.js", command.script)
+
+    def test_managed_command_paths_use_one_portable_relative_syntax(self):
+        document = self.valid_project()
+        document["environment"]["managedTools"] = [
+            {
+                "id": "npm",
+                "version": "1.0.0",
+                "artifacts": [
+                    {
+                        "platform": "windows-x64",
+                        "url": "https://downloads.example.test/npm.zip",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "zip",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {
+                            "npm": {
+                                "executable": "C:\\node.exe",
+                                "script": "node_modules\\npm\\bin\\npm-cli.js",
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+
+        with self.assertRaisesRegex(ContractError, "contained relative file path"):
             validate_project(document)
 
 

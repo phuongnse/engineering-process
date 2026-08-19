@@ -358,15 +358,11 @@ def _replay_pending_findings(
     return list(pending.values())
 
 
-def _migrate_state(
-    project_root: Path, state: Any, path: Path
-) -> dict[str, Any]:
+def _migrate_state(project_root: Path, state: Any, path: Path) -> dict[str, Any]:
     if not isinstance(state, dict) or state.get("schemaVersion") != 1:
         return state
     migrated = dict(state)
-    migrated["pendingFindings"] = _replay_pending_findings(
-        project_root, state, path
-    )
+    migrated["pendingFindings"] = _replay_pending_findings(project_root, state, path)
     if migrated["pendingFindings"] and migrated.get("phase") in {
         "approved",
         "completed",

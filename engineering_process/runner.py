@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import Check, ContractError, Project
-from .environment import environment_path_entries, execute_command
+from .environment import (
+    environment_command_bindings,
+    environment_path_entries,
+    execute_command,
+)
+from .tooling import ManagedCommandBinding
 
 
 def _timestamp() -> str:
@@ -107,7 +112,11 @@ def source_state(root: Path) -> dict[str, Any]:
 
 
 def _run_check(
-    root: Path, check: Check, *, path_entries: tuple[Path, ...] = ()
+    root: Path,
+    check: Check,
+    *,
+    path_entries: tuple[Path, ...] = (),
+    command_bindings: dict[str, ManagedCommandBinding] | None = None,
 ) -> dict[str, Any]:
     print(f"[{check.identifier}] {' '.join(check.run)}", file=sys.stderr)
     execution = execute_command(
@@ -117,6 +126,7 @@ def _run_check(
         timeout_seconds=check.timeout_seconds,
         working_directory=check.working_directory,
         path_entries=path_entries,
+        command_bindings=command_bindings,
         stream_output=True,
     )
     allowed = {
@@ -144,8 +154,15 @@ def run_profile(root: Path, project: Project, profile: str) -> dict[str, Any]:
     started = _timestamp()
     source_before = _source_state(root)
     path_entries = environment_path_entries(project, profile=profile)
+    command_bindings = environment_command_bindings(project, profile=profile)
     results = [
-        _run_check(root, check, path_entries=path_entries) for check in checks
+        _run_check(
+            root,
+            check,
+            path_entries=path_entries,
+            command_bindings=command_bindings,
+        )
+        for check in checks
     ]
     source_after = _source_state(root)
     source_changed = (

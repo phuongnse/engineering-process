@@ -5,9 +5,15 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from engineering_process.contracts import ContractError, validate_project
-from engineering_process.environment import doctor_environment, setup_environment
+from engineering_process.environment import (
+    doctor_environment,
+    execute_command,
+    setup_environment,
+)
+from engineering_process.tooling import ManagedCommandBinding, platform_identifier
 
 
 def project_document(*, setup: bool = True, dependency: bool = False):
@@ -59,7 +65,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
     if setup:
         requirement["setupAction"] = "prepare-environment"
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "project": "sample",
         "lifecycle": {"requiredProfiles": ["development", "review"]},
         "profiles": {
@@ -80,6 +86,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
         },
         "environment": {
             "defaultProfile": "development",
+            "foregroundOnly": True,
             "managedTools": [],
             "profiles": {
                 "development": ["project-environment"],
@@ -92,6 +99,33 @@ def project_document(*, setup: bool = True, dependency: bool = False):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_managed_command_binding_preserves_logical_evidence_without_a_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "tool.py"
+            script.write_text(
+                "import sys; print('|'.join(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+
+            report = execute_command(
+                root,
+                identifier="managed-alias",
+                run=("sample-tool", "one", "two"),
+                timeout_seconds=30,
+                working_directory=".",
+                command_bindings={
+                    "sample-tool": ManagedCommandBinding(
+                        application=Path(sys.executable),
+                        prefix_arguments=(str(script),),
+                    )
+                },
+            )
+
+            self.assertEqual("passed", report["status"])
+            self.assertEqual(["sample-tool", "one", "two"], report["command"])
+            self.assertEqual(f"one|two{os.linesep}", report["stdout"])
+
     def test_doctor_is_read_only_and_reports_missing_requirement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -214,6 +248,30 @@ class EnvironmentTests(unittest.TestCase):
             self.assertTrue(requirement["outputTruncated"])
             self.assertLessEqual(len(requirement["stdout"].encode()), 16_384)
 
+    def test_probe_output_regex_is_bounded_by_the_probe_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = project_document()
+            probe = document["environment"]["requirements"][0]["probe"]
+            probe["run"] = [
+                sys.executable,
+                "-c",
+                "print('a' * 16000 + '!')",
+            ]
+            probe["outputRegex"] = "(a+)+$"
+            probe["outputStream"] = "stdout"
+            probe["timeoutSeconds"] = 1
+            project = validate_project(document)
+
+            started = time.monotonic()
+            report = doctor_environment(root, project)
+            elapsed = time.monotonic() - started
+
+            self.assertLess(elapsed, 1)
+            requirement = report["requirements"][0]
+            self.assertEqual("missing", requirement["status"])
+            self.assertIn("bounded match timeout", requirement["outputMatchError"])
+
     @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
     def test_probe_terminates_descendant_that_ignores_sigterm(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -269,20 +327,11 @@ class EnvironmentTests(unittest.TestCase):
             else:
                 self.fail(f"descendant process {pid} survived bounded termination")
 
-    def test_schema_one_remains_readable_but_cannot_run_setup(self):
+    def test_manifest_requires_the_single_environment_contract(self):
         document = project_document()
-        document["schemaVersion"] = 1
         del document["environment"]
-        project = validate_project(document)
-        self.assertEqual("not-declared", doctor_environment(Path.cwd(), project)["status"])
-        with self.assertRaisesRegex(ContractError, "schema-version-2"):
-            setup_environment(
-                Path.cwd(),
-                project,
-                profile=None,
-                apply=False,
-                allowed_mutations=set(),
-            )
+        with self.assertRaisesRegex(ContractError, "missing properties: environment"):
+            validate_project(document)
 
     def test_environment_rejects_cycles_and_undefined_references(self):
         document = project_document(dependency=True)
@@ -341,6 +390,122 @@ class EnvironmentTests(unittest.TestCase):
         ] = "http://downloads.example.test/sample.tar.gz"
         with self.assertRaisesRegex(ContractError, "must be an HTTPS URL"):
             validate_project(document)
+
+        document["environment"]["managedTools"][0]["artifacts"][0][
+            "url"
+        ] = "https://downloads.example.test:notaport/sample.tar.gz"
+        with self.assertRaisesRegex(ContractError, "invalid HTTPS URL"):
+            validate_project(document)
+
+        document["environment"]["managedTools"][0]["artifacts"][0][
+            "url"
+        ] = "https://downloads.example.test\\@mirror.example.test/sample.tar.gz"
+        with self.assertRaisesRegex(ContractError, "printable ASCII URI"):
+            validate_project(document)
+
+    def managed_setup_document(self):
+        document = project_document(setup=False, dependency=False)
+        platform_name = platform_identifier()
+        command_path = (
+            "sample.exe" if platform_name.startswith("windows-") else "sample"
+        )
+        document["environment"]["managedTools"] = [
+            {
+                "id": "sample",
+                "version": "1.2.3",
+                "artifacts": [
+                    {
+                        "platform": platform_name,
+                        "url": "https://downloads.example.test/sample",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "file",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 1000,
+                        "maxFiles": 1,
+                        "commands": {"sample": command_path},
+                    }
+                ],
+            }
+        ]
+        document["environment"]["setupActions"] = [
+            {
+                "id": "a-prepare",
+                "kind": "command",
+                "run": [
+                    sys.executable,
+                    "-c",
+                    "from pathlib import Path; Path('mutated').write_text('yes')",
+                ],
+                "timeoutSeconds": 30,
+                "mutations": ["project-files"],
+            },
+            {
+                "id": "z-install",
+                "kind": "managed-tool",
+                "tool": "sample",
+                "timeoutSeconds": 30,
+                "requires": ["a-prepare"],
+            },
+        ]
+        document["environment"]["requirements"][0]["setupAction"] = "z-install"
+        return document
+
+    def test_setup_preflights_managed_install_target_before_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools_root = root / "managed-tools"
+            invalid_target = tools_root / "sample" / "1.2.3"
+            invalid_target.parent.mkdir(parents=True)
+            invalid_target.write_text("occupied", encoding="utf-8")
+            project = validate_project(self.managed_setup_document())
+
+            with patch(
+                "engineering_process.tooling.managed_tools_root",
+                return_value=tools_root,
+            ):
+                report = setup_environment(
+                    root,
+                    project,
+                    profile=None,
+                    apply=True,
+                    allowed_mutations={"network", "project-files", "user-files"},
+                )
+
+            self.assertEqual("blocked", report["status"])
+            self.assertIn("not a directory", "\n".join(report["blocked"]))
+            self.assertFalse((root / "mutated").exists())
+
+    def test_setup_preserves_partial_evidence_for_operational_installer_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools_root = root / "managed-tools"
+            project = validate_project(self.managed_setup_document())
+
+            with (
+                patch(
+                    "engineering_process.tooling.managed_tools_root",
+                    return_value=tools_root,
+                ),
+                patch(
+                    "engineering_process.environment.install_managed_tool",
+                    side_effect=ValueError("operational failure"),
+                ),
+            ):
+                report = setup_environment(
+                    root,
+                    project,
+                    profile=None,
+                    apply=True,
+                    allowed_mutations={"network", "project-files", "user-files"},
+                )
+
+            self.assertEqual("failed", report["status"])
+            self.assertEqual(["a-prepare", "z-install"], [
+                action["id"] for action in report["actions"]
+            ])
+            self.assertEqual("ValueError", report["actions"][1]["errorType"])
+            self.assertTrue((root / "mutated").is_file())
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ class BootstrapTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 2,
+                    "schemaVersion": 3,
                     "project": project,
                     "lifecycle": {"requiredProfiles": ["development", "review"]},
                     "profiles": {
@@ -44,6 +44,7 @@ class BootstrapTests(unittest.TestCase):
                     },
                     "environment": {
                         "defaultProfile": "development",
+                        "foregroundOnly": True,
                         "managedTools": [],
                         "profiles": {
                             "development": ["python-runtime"],

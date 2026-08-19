@@ -3,9 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
-import signal
-import shutil
 import subprocess
 import sys
 import threading
@@ -13,6 +10,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import regex as bounded_regex
 
 from .contracts import (
     ContractError,
@@ -23,13 +22,19 @@ from .contracts import (
     SetupAction,
 )
 from .tooling import (
+    ManagedCommandBinding,
     install_managed_tool,
+    installed_command_bindings,
+    managed_command_bindings,
+    managed_tool_preflight,
     managed_path_entries,
     selected_artifact,
 )
+from .supervision import process_supervisor
 
 
 OUTPUT_LIMIT = 16_384
+OUTPUT_REGEX_TIMEOUT_SECONDS = 0.1
 TERMINATION_GRACE_SECONDS = 1.0
 
 
@@ -49,100 +54,6 @@ def _contained_working_directory(root: Path, relative: str) -> Path:
     return working
 
 
-def _posix_process_group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _wait_for_posix_process_group(process_group: int, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not _posix_process_group_exists(process_group):
-            return True
-        time.sleep(0.02)
-    return not _posix_process_group_exists(process_group)
-
-
-def _terminate_posix_process_group(process_group: int) -> tuple[bool, bool]:
-    if not _posix_process_group_exists(process_group):
-        return False, True
-    try:
-        os.killpg(process_group, signal.SIGTERM)
-    except ProcessLookupError:
-        return True, True
-    except OSError:
-        pass
-    if _wait_for_posix_process_group(process_group, TERMINATION_GRACE_SECONDS):
-        return True, True
-    try:
-        os.killpg(process_group, signal.SIGKILL)
-    except ProcessLookupError:
-        return True, True
-    except OSError:
-        pass
-    return True, _wait_for_posix_process_group(
-        process_group, TERMINATION_GRACE_SECONDS
-    )
-
-
-def _stop_command_tree(process: subprocess.Popen[bytes]) -> bool:
-    """Stop the complete command tree and return whether cleanup was bounded."""
-
-    if os.name == "posix":
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
-            process.wait(timeout=TERMINATION_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
-            try:
-                process.wait(timeout=TERMINATION_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
-                return False
-        _, stopped = _terminate_posix_process_group(process.pid)
-        return stopped
-
-    # Windows commands run inside the kill-on-close Job Object created by
-    # engineering_process._windows_job. Terminating the wrapper closes that job
-    # handle and the kernel terminates every assigned descendant.
-    if process.poll() is None:
-        try:
-            process.terminate()
-            process.wait(timeout=TERMINATION_GRACE_SECONDS)
-        except (OSError, subprocess.TimeoutExpired):
-            try:
-                process.kill()
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=TERMINATION_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
-                return False
-    return True
-
-
-def _command_for_platform(run: tuple[str, ...]) -> tuple[str, ...]:
-    if os.name != "nt":
-        return run
-    return (
-        sys.executable,
-        "-m",
-        "engineering_process._windows_job",
-        "--",
-        *run,
-    )
-
-
 def _command_preflight(
     root: Path,
     *,
@@ -150,27 +61,30 @@ def _command_preflight(
     run: tuple[str, ...],
     working_directory: str,
     path_entries: tuple[Path, ...] = (),
+    command_bindings: dict[str, ManagedCommandBinding] | None = None,
     planned_commands: set[str] | None = None,
 ) -> str | None:
     working = _contained_working_directory(root, working_directory)
-    executable = run[0]
-    executable_path = Path(executable)
-    if executable_path.is_absolute() or executable_path.parent != Path("."):
-        candidate = (
-            executable_path
-            if executable_path.is_absolute()
-            else working / executable_path
-        )
-        if not candidate.is_file() or not os.access(candidate, os.X_OK):
-            return f"setup action {identifier}: executable is unavailable: {executable}"
-        return None
-    search_path = os.pathsep.join(
+    command_environment = os.environ.copy()
+    command_environment["PATH"] = os.pathsep.join(
         [*(str(path) for path in path_entries), os.environ.get("PATH", "")]
     )
-    if shutil.which(executable, path=search_path) is None and executable not in (
-        planned_commands or set()
-    ):
-        return f"setup action {identifier}: executable is unavailable: {executable}"
+    effective_run = run
+    if binding := (command_bindings or {}).get(run[0]):
+        effective_run = (
+            str(binding.application),
+            *binding.prefix_arguments,
+            *run[1:],
+        )
+    try:
+        process_supervisor().resolve_application(
+            effective_run[0],
+            working_directory=working,
+            environment=command_environment,
+        )
+    except OSError:
+        if run[0] not in (planned_commands or set()):
+            return f"setup action {identifier}: executable is unavailable: {run[0]}"
     return None
 
 
@@ -208,6 +122,7 @@ def execute_command(
     timeout_seconds: int,
     working_directory: str,
     path_entries: tuple[Path, ...] = (),
+    command_bindings: dict[str, ManagedCommandBinding] | None = None,
     stream_output: bool = False,
 ) -> dict[str, Any]:
     working = _contained_working_directory(root, working_directory)
@@ -216,7 +131,6 @@ def execute_command(
     command_digest = hashlib.sha256(
         json.dumps(run, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     command_environment = os.environ.copy()
     if path_entries:
         command_environment["PATH"] = os.pathsep.join(
@@ -226,18 +140,20 @@ def execute_command(
             ]
         )
     try:
-        process = subprocess.Popen(
-            _command_for_platform(run),
-            cwd=working,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            env=command_environment,
-            start_new_session=os.name == "posix",
-            creationflags=creation_flags,
+        supervisor = process_supervisor()
+        effective_run = run
+        if binding := (command_bindings or {}).get(run[0]):
+            effective_run = (
+                str(binding.application),
+                *binding.prefix_arguments,
+                *run[1:],
+            )
+        process = supervisor.spawn(
+            effective_run,
+            working_directory=working,
+            environment=command_environment,
         )
-    except OSError as error:
+    except (OSError, ValueError) as error:
         return {
             "id": identifier,
             "status": "failed-to-start",
@@ -283,28 +199,39 @@ def execute_command(
     except subprocess.TimeoutExpired:
         status = "timed-out"
         error_message = f"exceeded {timeout_seconds} seconds"
-        command_tree_bounded = _stop_command_tree(process)
+        cleanup = supervisor.terminate(
+            process, grace_seconds=TERMINATION_GRACE_SECONDS
+        )
+        command_tree_bounded = cleanup.bounded
+        if cleanup.error is not None:
+            error_message = cleanup.error
         exit_code = process.returncode
     except KeyboardInterrupt:
-        _stop_command_tree(process)
+        supervisor.terminate(process, grace_seconds=TERMINATION_GRACE_SECONDS)
         raise
     finally:
-        if process.poll() is not None and os.name == "posix":
-            descendants_found, descendants_stopped = _terminate_posix_process_group(
-                process.pid
+        if process.poll() is not None:
+            cleanup = supervisor.finalize(
+                process, grace_seconds=TERMINATION_GRACE_SECONDS
             )
-            command_tree_bounded = command_tree_bounded and descendants_stopped
-            if descendants_found and status == "passed":
+            command_tree_bounded = command_tree_bounded and cleanup.bounded
+            if cleanup.descendants_found and status == "passed":
                 status = "failed"
                 error_message = "command left descendant processes; they were terminated"
+            if cleanup.error is not None:
+                error_message = cleanup.error
         for thread in drain_threads:
             thread.join(timeout=TERMINATION_GRACE_SECONDS)
         if any(thread.is_alive() for thread in drain_threads):
             status = "failed"
-            error_message = "command tree retained output streams after bounded termination"
+            error_message = (
+                "command process group retained output streams after bounded termination"
+            )
         if not command_tree_bounded:
             status = "failed"
-            error_message = "command tree could not be terminated within the bounded grace period"
+            error_message = (
+                "command process group could not be terminated within the bounded grace period"
+            )
             for thread in drain_threads:
                 thread.join(timeout=1)
     stdout = bytes(stdout_capture["data"]).decode("utf-8", errors="replace")
@@ -337,7 +264,7 @@ def _profile_environment(
     if environment is None:
         if profile is not None:
             raise ContractError(
-                "environment profile requested, but project schema version 1 has no "
+                "environment profile requested for an internal Project without an "
                 "environment contract"
             )
         return None, None, ()
@@ -376,9 +303,9 @@ def _action_dependencies(
     return dependencies
 
 
-def environment_path_entries(
+def _environment_managed_tools(
     project: Project, *, profile: str
-) -> tuple[Path, ...]:
+) -> tuple[Any, ...]:
     if project.environment is None:
         return ()
     environment, _, identifiers = _profile_environment(project, profile)
@@ -392,12 +319,16 @@ def environment_path_entries(
         for action in actions
         if action.kind == "managed-tool" and action.tool is not None
     }
+    return tuple(environment.managed_tools[identifier] for identifier in sorted(tool_ids))
+
+
+def environment_path_entries(
+    project: Project, *, profile: str
+) -> tuple[Path, ...]:
     entries: list[Path] = []
-    for identifier in sorted(tool_ids):
+    for tool in _environment_managed_tools(project, profile=profile):
         try:
-            tool_entries = managed_path_entries(
-                [environment.managed_tools[identifier]]
-            )
+            tool_entries = managed_path_entries([tool])
         except ContractError:
             continue
         for entry in tool_entries:
@@ -406,13 +337,23 @@ def environment_path_entries(
     return tuple(entries)
 
 
+def environment_command_bindings(
+    project: Project, *, profile: str
+) -> dict[str, ManagedCommandBinding]:
+    return managed_command_bindings(
+        _environment_managed_tools(project, profile=profile)
+    )
+
+
 def _probe_requirement(
     root: Path,
     requirement: EnvironmentRequirement,
     *,
     path_entries: tuple[Path, ...],
+    command_bindings: dict[str, ManagedCommandBinding],
 ) -> dict[str, Any]:
     probe = requirement.probe
+    deadline = time.monotonic() + probe.timeout_seconds
     execution = execute_command(
         root,
         identifier=requirement.identifier,
@@ -420,16 +361,35 @@ def _probe_requirement(
         timeout_seconds=probe.timeout_seconds,
         working_directory=probe.working_directory,
         path_entries=path_entries,
+        command_bindings=command_bindings,
     )
     stream = {
         "stdout": execution["stdout"],
         "stderr": execution["stderr"],
         "combined": execution["stdout"] + "\n" + execution["stderr"],
     }[probe.output_stream]
-    output_matches = (
-        probe.output_regex is None
-        or re.search(probe.output_regex, stream, re.MULTILINE) is not None
-    )
+    output_matches = probe.output_regex is None
+    output_match_error: str | None = None
+    if probe.output_regex is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            output_matches = False
+            output_match_error = "probe timeout expired before output matching"
+        else:
+            try:
+                output_matches = (
+                    bounded_regex.search(
+                        probe.output_regex,
+                        stream,
+                        bounded_regex.MULTILINE,
+                        timeout=min(remaining, OUTPUT_REGEX_TIMEOUT_SECONDS),
+                        concurrent=True,
+                    )
+                    is not None
+                )
+            except TimeoutError:
+                output_matches = False
+                output_match_error = "outputRegex exceeded its bounded match timeout"
     satisfied = execution["status"] == "passed" and output_matches
     return {
         **execution,
@@ -438,6 +398,7 @@ def _probe_requirement(
         "outputStream": probe.output_stream,
         "outputRegex": probe.output_regex,
         "outputMatched": output_matches,
+        "outputMatchError": output_match_error,
         "remediation": requirement.remediation,
         "setupAction": requirement.setup_action,
     }
@@ -454,11 +415,13 @@ def doctor_environment(
             "requirements": [],
         }
     path_entries = environment_path_entries(project, profile=selected)
+    command_bindings = environment_command_bindings(project, profile=selected)
     results = [
         _probe_requirement(
             root,
             environment.requirements[identifier],
             path_entries=path_entries,
+            command_bindings=command_bindings,
         )
         for identifier in identifiers
     ]
@@ -469,6 +432,7 @@ def doctor_environment(
             else "failed"
         ),
         "profile": selected,
+        "foregroundOnly": environment.foreground_only,
         "requirements": results,
     }
 
@@ -526,7 +490,7 @@ def setup_environment(
     environment, selected, _ = _profile_environment(project, profile)
     if environment is None:
         raise ContractError(
-            "setup requires a schema-version-2 project environment contract"
+            "setup requires a project environment contract"
         )
     if allowed_mutations and not apply:
         raise ContractError("--allow is valid only together with --apply")
@@ -577,12 +541,24 @@ def setup_environment(
     except ContractError as error:
         installed_paths = ()
         preflight_issues.append(str(error))
+    try:
+        installed_bindings = managed_command_bindings(
+            environment.managed_tools[identifier]
+            for identifier in sorted(planned_tool_ids)
+        )
+    except ContractError as error:
+        installed_bindings = {}
+        preflight_issues.append(str(error))
     for action in actions:
         try:
             if action.kind == "managed-tool":
                 assert action.tool is not None
-                artifact = selected_artifact(environment.managed_tools[action.tool])
+                tool = environment.managed_tools[action.tool]
+                artifact = selected_artifact(tool)
                 issue = None
+                install_issue = managed_tool_preflight(tool)
+                if install_issue is not None:
+                    issue = f"setup action {action.identifier}: {install_issue}"
                 for command_name in artifact.commands:
                     previous = provided_commands.get(command_name)
                     if previous is not None and previous != action.identifier:
@@ -609,9 +585,10 @@ def setup_environment(
                     run=action.run,
                     working_directory=action.working_directory,
                     path_entries=installed_paths,
+                    command_bindings=installed_bindings,
                     planned_commands=planned_commands,
                 )
-        except (ContractError, OSError) as error:
+        except Exception as error:
             issue = f"setup action {action.identifier}: {error}"
         if issue is not None:
             preflight_issues.append(issue)
@@ -680,10 +657,11 @@ def setup_environment(
                     tool.version,
                     artifact.platform,
                 )
-                commands = install_managed_tool(
+                install_managed_tool(
                     tool,
                     timeout_seconds=action.timeout_seconds,
                 )
+                commands = installed_command_bindings(tool)
                 result = {
                     "id": action.identifier,
                     "kind": action.kind,
@@ -703,7 +681,11 @@ def setup_environment(
                         ).encode("utf-8")
                     ).hexdigest(),
                     "installedCommands": {
-                        name: str(path) for name, path in commands.items()
+                        name: {
+                            "application": str(binding.application),
+                            "prefixArguments": list(binding.prefix_arguments),
+                        }
+                        for name, binding in commands.items()
                     },
                 }
             else:
@@ -717,8 +699,12 @@ def setup_environment(
                         environment.managed_tools[identifier]
                         for identifier in sorted(planned_tool_ids)
                     ),
+                    command_bindings=managed_command_bindings(
+                        environment.managed_tools[identifier]
+                        for identifier in sorted(planned_tool_ids)
+                    ),
                 )
-        except (ContractError, OSError) as error:
+        except Exception as error:
             result = {
                 "id": action.identifier,
                 "kind": action.kind,
@@ -730,6 +716,7 @@ def setup_environment(
                 ),
                 "workingDirectory": action.working_directory,
                 "error": str(error),
+                "errorType": type(error).__name__,
             }
         result["mutations"] = list(action.mutations)
         result["requires"] = list(action.requires)
@@ -745,7 +732,15 @@ def setup_environment(
                 "blocked": [],
                 "final": None,
             }
-    final = doctor_environment(root, project, profile=selected)
+    try:
+        final = doctor_environment(root, project, profile=selected)
+    except Exception as error:
+        final = {
+            "status": "failed-to-start",
+            "error": str(error),
+            "errorType": type(error).__name__,
+            "requirements": [],
+        }
     return {
         "status": "passed" if final["status"] == "passed" else "failed",
         "mode": "apply",
