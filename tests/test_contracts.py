@@ -13,7 +13,7 @@ from engineering_process.contracts import (
 class ProjectContractTests(unittest.TestCase):
     def valid_project(self):
         return {
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "project": "sample-project",
             "lifecycle": {"requiredProfiles": ["development"]},
             "profiles": {
@@ -52,12 +52,48 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
 
-    def test_rejects_a_second_project_manifest_version_during_development(self):
+    def test_preserves_historical_project_manifest_versions(self):
+        schema_one = self.valid_project()
+        schema_one["schemaVersion"] = 1
+        del schema_one["environment"]
+        self.assertIsNone(validate_project(schema_one).environment)
+
+        schema_two = self.valid_project()
+        schema_two["schemaVersion"] = 2
+        del schema_two["environment"]["foregroundOnly"]
+        self.assertFalse(validate_project(schema_two).environment.foreground_only)
+
+    def test_schema_two_batch_binding_remains_readable_for_manual_migration(self):
         document = self.valid_project()
         document["schemaVersion"] = 2
+        del document["environment"]["foregroundOnly"]
+        document["environment"]["managedTools"] = [
+            {
+                "id": "npm",
+                "version": "1.0.0",
+                "artifacts": [
+                    {
+                        "platform": "windows-x64",
+                        "url": "https://downloads.example.test/npm.zip",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "zip",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {"npm": "./bin/npm.cmd"},
+                    }
+                ],
+            }
+        ]
 
-        with self.assertRaisesRegex(ContractError, "schemaVersion: must be 1"):
-            validate_project(document)
+        project = validate_project(document)
+
+        command = project.environment.managed_tools["npm"].artifacts[
+            "windows-x64"
+        ].commands["npm"]
+        self.assertEqual("bin/npm.cmd", command.executable)
+        self.assertIsNone(command.script)
 
     def test_rejects_shell_string(self):
         document = self.valid_project()
@@ -87,6 +123,74 @@ class ProjectContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "foregroundOnly: must attest true"):
             validate_project(document)
 
+    def test_schema_three_windows_managed_commands_require_native_executables(self):
+        document = self.valid_project()
+        document["environment"]["managedTools"] = [
+            {
+                "id": "npm",
+                "version": "1.0.0",
+                "artifacts": [
+                    {
+                        "platform": "windows-x64",
+                        "url": "https://downloads.example.test/npm.zip",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "zip",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {"npm": "bin/npm.cmd"},
+                    }
+                ],
+            }
+        ]
+
+        with self.assertRaisesRegex(ContractError, "native \\.exe"):
+            validate_project(document)
+
+        document["environment"]["managedTools"][0]["artifacts"][0]["commands"] = {
+            "npm": {
+                "executable": "node.exe",
+                "script": "node_modules/npm/bin/npm-cli.js",
+            }
+        }
+        project = validate_project(document)
+        command = project.environment.managed_tools["npm"].artifacts[
+            "windows-x64"
+        ].commands["npm"]
+        self.assertEqual("node.exe", command.executable)
+        self.assertEqual("node_modules/npm/bin/npm-cli.js", command.script)
+
+    def test_managed_command_paths_use_one_portable_relative_syntax(self):
+        document = self.valid_project()
+        document["environment"]["managedTools"] = [
+            {
+                "id": "npm",
+                "version": "1.0.0",
+                "artifacts": [
+                    {
+                        "platform": "windows-x64",
+                        "url": "https://downloads.example.test/npm.zip",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "zip",
+                        "stripComponents": 0,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {
+                            "npm": {
+                                "executable": "C:\\node.exe",
+                                "script": "node_modules\\npm\\bin\\npm-cli.js",
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+
+        with self.assertRaisesRegex(ContractError, "contained relative file path"):
+            validate_project(document)
+
 
 class ArtifactContractTests(unittest.TestCase):
     def test_lock_requires_sorted_skills_and_digest(self):
@@ -104,7 +208,7 @@ class ArtifactContractTests(unittest.TestCase):
 
     def test_change_requires_approval_evidence(self):
         document = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "id": "sec-12",
             "summary": "Change authentication policy",
             "source": "SEC-12",
@@ -132,7 +236,7 @@ class ArtifactContractTests(unittest.TestCase):
 
     def test_approved_review_cannot_have_open_findings(self):
         document = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "changeId": "sec-12",
             "cycle": 1,
             "checkpoint": "abc",

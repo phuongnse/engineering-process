@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "changeId": "issue-123",
   "cycle": 1,
   "checkpoint": "0123456789abcdef",

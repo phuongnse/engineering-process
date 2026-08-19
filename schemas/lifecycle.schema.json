@@ -23,7 +23,7 @@
     "history"
   ],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"const": 2},
     "changeId": {"type": "string"},
     "project": {"type": "string"},
     "phase": {

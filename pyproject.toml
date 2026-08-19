@@ -6,8 +6,26 @@ build-backend = "setuptools.build_meta"
 name = "engineering-process"
 version = "0.1.0"
 description = "Agent-neutral end-to-end engineering lifecycle and deterministic process CLI"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dynamic = ["dependencies", "optional-dependencies"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/phuongnse/engineering-process"
+Issues = "https://github.com/phuongnse/engineering-process/issues"
+Repository = "https://github.com/phuongnse/engineering-process.git"
 
 [project.scripts]
 processctl = "engineering_process.cli:main"

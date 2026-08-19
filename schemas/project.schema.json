@@ -4,13 +4,13 @@
   "title": "Engineering process project manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "project", "lifecycle", "profiles", "environment"],
+  "required": ["schemaVersion", "project", "lifecycle", "profiles"],
   "properties": {
     "$schema": {
       "type": "string"
     },
     "schemaVersion": {
-      "const": 1
+      "enum": [1, 2, 3]
     },
     "project": {
       "type": "string",
@@ -51,6 +51,113 @@
       "$ref": "#/$defs/environment"
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
+      "then": {"not": {"required": ["environment"]}}
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["environment"],
+        "properties": {
+          "environment": {
+            "not": {"required": ["foregroundOnly"]},
+            "properties": {
+              "managedTools": {
+                "items": {
+                  "properties": {
+                    "artifacts": {
+                      "items": {
+                        "properties": {
+                          "commands": {
+                            "additionalProperties": {"type": "string"}
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["environment"],
+        "properties": {
+          "environment": {
+            "required": ["foregroundOnly"],
+            "properties": {
+              "managedTools": {
+                "items": {
+                  "properties": {
+                    "artifacts": {
+                      "items": {
+                        "allOf": [
+                          {
+                            "properties": {
+                              "commands": {
+                                "additionalProperties": {
+                                  "oneOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$).+$"
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "executable": {
+                                          "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$).+$"
+                                        },
+                                        "script": {
+                                          "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$).+$"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": {"platform": {"pattern": "^windows-"}},
+                              "required": ["platform"]
+                            },
+                            "then": {
+                              "properties": {
+                                "commands": {
+                                  "additionalProperties": {
+                                    "oneOf": [
+                                      {"type": "string", "pattern": "\\.[eE][xX][eE]$"},
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "executable": {"pattern": "\\.[eE][xX][eE]$"}
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "check": {
       "type": "object",
@@ -85,7 +192,7 @@
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["defaultProfile", "foregroundOnly", "profiles", "requirements", "managedTools", "setupActions"],
+      "required": ["defaultProfile", "profiles", "requirements", "managedTools", "setupActions"],
       "properties": {
         "defaultProfile": {
           "type": "string",
@@ -217,9 +324,30 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
           },
           "additionalProperties": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 512
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["executable", "script"],
+                "properties": {
+                  "executable": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "script": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                }
+              }
+            ]
           }
         }
       }

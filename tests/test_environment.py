@@ -8,8 +8,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from engineering_process.contracts import ContractError, validate_project
-from engineering_process.environment import doctor_environment, setup_environment
-from engineering_process.tooling import platform_identifier
+from engineering_process.environment import (
+    doctor_environment,
+    execute_command,
+    setup_environment,
+)
+from engineering_process.tooling import ManagedCommandBinding, platform_identifier
 
 
 def project_document(*, setup: bool = True, dependency: bool = False):
@@ -61,7 +65,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
     if setup:
         requirement["setupAction"] = "prepare-environment"
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 3,
         "project": "sample",
         "lifecycle": {"requiredProfiles": ["development", "review"]},
         "profiles": {
@@ -95,6 +99,33 @@ def project_document(*, setup: bool = True, dependency: bool = False):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_managed_command_binding_preserves_logical_evidence_without_a_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "tool.py"
+            script.write_text(
+                "import sys; print('|'.join(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+
+            report = execute_command(
+                root,
+                identifier="managed-alias",
+                run=("sample-tool", "one", "two"),
+                timeout_seconds=30,
+                working_directory=".",
+                command_bindings={
+                    "sample-tool": ManagedCommandBinding(
+                        application=Path(sys.executable),
+                        prefix_arguments=(str(script),),
+                    )
+                },
+            )
+
+            self.assertEqual("passed", report["status"])
+            self.assertEqual(["sample-tool", "one", "two"], report["command"])
+            self.assertEqual("one|two\n", report["stdout"])
+
     def test_doctor_is_read_only_and_reports_missing_requirement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -364,6 +395,12 @@ class EnvironmentTests(unittest.TestCase):
             "url"
         ] = "https://downloads.example.test:notaport/sample.tar.gz"
         with self.assertRaisesRegex(ContractError, "invalid HTTPS URL"):
+            validate_project(document)
+
+        document["environment"]["managedTools"][0]["artifacts"][0][
+            "url"
+        ] = "https://downloads.example.test\\@mirror.example.test/sample.tar.gz"
+        with self.assertRaisesRegex(ContractError, "printable ASCII URI"):
             validate_project(document)
 
     def managed_setup_document(self):

@@ -23,7 +23,7 @@ class BootstrapTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 3,
                     "project": project,
                     "lifecycle": {"requiredProfiles": ["development", "review"]},
                     "profiles": {

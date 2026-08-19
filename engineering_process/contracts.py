@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -64,6 +64,12 @@ class EnvironmentRequirement:
 
 
 @dataclass(frozen=True)
+class ManagedCommand:
+    executable: str
+    script: str | None
+
+
+@dataclass(frozen=True)
 class ManagedToolArtifact:
     platform: str
     url: str
@@ -73,7 +79,7 @@ class ManagedToolArtifact:
     max_download_bytes: int
     max_extracted_bytes: int
     max_files: int
-    commands: dict[str, str]
+    commands: dict[str, ManagedCommand]
 
 
 @dataclass(frozen=True)
@@ -231,17 +237,36 @@ def _bounded_integer(value: Any, path: str, *, minimum: int, maximum: int) -> in
     return value
 
 
-def _relative_tool_path(value: Any, path: str) -> str:
+def _relative_tool_path(value: Any, path: str, *, strict_portable: bool) -> str:
     text = _string(value, path, max_length=512)
-    candidate = Path(text)
-    if candidate.is_absolute() or ".." in candidate.parts or text in {".", ".."}:
+    if not strict_portable:
+        legacy_candidate = Path(text)
+        if (
+            legacy_candidate.is_absolute()
+            or ".." in legacy_candidate.parts
+            or text in {".", ".."}
+        ):
+            raise ContractError(f"{path}: must be a contained relative file path")
+        return legacy_candidate.as_posix()
+    candidate = PurePosixPath(text)
+    if (
+        "\\" in text
+        or ":" in text
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+        or text in {".", ".."}
+        or text.endswith("/")
+        or candidate.as_posix() != text
+    ):
         raise ContractError(f"{path}: must be a contained relative file path")
-    return candidate.as_posix()
+    return text
 
 
 def _https_url(value: Any, path: str) -> str:
     text = _string(value, path, max_length=2048)
-    if any(ord(character) < 0x21 or ord(character) > 0x7e for character in text):
+    if "\\" in text or any(
+        ord(character) < 0x21 or ord(character) > 0x7e for character in text
+    ):
         raise ContractError(f"{path}: must contain only printable ASCII URI characters")
     try:
         parsed = urlsplit(text)
@@ -263,18 +288,26 @@ def _https_url(value: Any, path: str) -> str:
     return text
 
 
-def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
+def _validate_environment(
+    document: Any,
+    path: str,
+    *,
+    require_foreground_only: bool,
+    require_native_windows_commands: bool,
+) -> ProjectEnvironment:
     value = _object(document, path)
+    required = {
+        "defaultProfile",
+        "managedTools",
+        "profiles",
+        "requirements",
+        "setupActions",
+    }
+    if require_foreground_only:
+        required.add("foregroundOnly")
     _exact_keys(
         value,
-        required={
-            "defaultProfile",
-            "foregroundOnly",
-            "managedTools",
-            "profiles",
-            "requirements",
-            "setupActions",
-        },
+        required=required,
         path=path,
     )
     default_profile = _string(
@@ -282,7 +315,7 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
     )
     if PROFILE_PATTERN.fullmatch(default_profile) is None:
         raise ContractError(f"{path}.defaultProfile: invalid profile name")
-    if value["foregroundOnly"] is not True:
+    if require_foreground_only and value["foregroundOnly"] is not True:
         raise ContractError(f"{path}.foregroundOnly: must attest true")
 
     raw_tools = value["managedTools"]
@@ -356,38 +389,93 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
                 raise ContractError(
                     f"{artifact_path}.commands: must define at least one command"
                 )
-            commands: dict[str, str] = {}
-            for command_name, relative_path in raw_commands.items():
+            commands: dict[str, ManagedCommand] = {}
+            for command_name, raw_command in raw_commands.items():
                 if COMMAND_PATTERN.fullmatch(command_name) is None:
                     raise ContractError(
                         f"{artifact_path}.commands.{command_name}: invalid command name"
                     )
-                commands[command_name] = _relative_tool_path(
-                    relative_path, f"{artifact_path}.commands.{command_name}"
-                )
-                basename = Path(commands[command_name]).name
-                allowed_basenames = (
-                    {
-                        command_name.casefold(),
-                        f"{command_name}.bat".casefold(),
-                        f"{command_name}.cmd".casefold(),
-                        f"{command_name}.exe".casefold(),
-                    }
-                    if platform_name.startswith("windows-")
-                    else {command_name.casefold()}
-                )
+                command_path = f"{artifact_path}.commands.{command_name}"
+                if isinstance(raw_command, str):
+                    executable = _relative_tool_path(
+                        raw_command,
+                        command_path,
+                        strict_portable=require_native_windows_commands,
+                    )
+                    script = None
+                elif require_native_windows_commands:
+                    command = _object(raw_command, command_path)
+                    _exact_keys(
+                        command,
+                        required={"executable", "script"},
+                        path=command_path,
+                    )
+                    executable = _relative_tool_path(
+                        command["executable"],
+                        f"{command_path}.executable",
+                        strict_portable=True,
+                    )
+                    script = _relative_tool_path(
+                        command["script"],
+                        f"{command_path}.script",
+                        strict_portable=True,
+                    )
+                    if executable == script:
+                        raise ContractError(
+                            f"{command_path}: executable and script must differ"
+                        )
+                else:
+                    raise ContractError(
+                        f"{command_path}: legacy manifests require a relative command path"
+                    )
+                basename = Path(executable).name
+                if platform_name.startswith("windows-"):
+                    if require_native_windows_commands:
+                        if Path(executable).suffix.casefold() != ".exe":
+                            raise ContractError(
+                                f"{command_path}: executable must be a native .exe"
+                            )
+                        allowed_basenames = {
+                            basename.casefold()
+                            if script is not None
+                            else f"{command_name}.exe".casefold()
+                        }
+                    else:
+                        allowed_basenames = {
+                            command_name.casefold(),
+                            f"{command_name}.bat".casefold(),
+                            f"{command_name}.cmd".casefold(),
+                            f"{command_name}.exe".casefold(),
+                        }
+                else:
+                    allowed_basenames = (
+                        {basename.casefold()}
+                        if script is not None
+                        else {command_name.casefold()}
+                    )
                 if basename.casefold() not in allowed_basenames:
                     raise ContractError(
                         f"{artifact_path}.commands.{command_name}: executable basename "
-                        "must match the command name"
+                        + (
+                            "must be the matching native .exe command"
+                            if platform_name.startswith("windows-")
+                            and require_native_windows_commands
+                            else "must match the command name"
+                        )
                     )
+                commands[command_name] = ManagedCommand(
+                    executable=executable,
+                    script=script,
+                )
             if list(commands) != sorted(commands):
                 raise ContractError(f"{artifact_path}.commands: must be sorted")
             if archive_format == "file" and (
-                strip_components != 0 or len(commands) != 1
+                strip_components != 0
+                or len(commands) != 1
+                or next(iter(commands.values())).script is not None
             ):
                 raise ContractError(
-                    f"{artifact_path}: file artifacts require stripComponents 0 and one command"
+                    f"{artifact_path}: file artifacts require stripComponents 0 and one direct command"
                 )
             checksum = _string(
                 artifact["checksum"], f"{artifact_path}.checksum", max_length=136
@@ -663,7 +751,7 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
         raise ContractError(f"{path}.defaultProfile: profile is not defined")
     return ProjectEnvironment(
         default_profile=default_profile,
-        foreground_only=True,
+        foreground_only=require_foreground_only,
         profiles=profiles,
         requirements=requirements,
         managed_tools=managed_tools,
@@ -673,17 +761,13 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
 
 def validate_project(document: Any, path: str = "project") -> Project:
     value = _object(document, path)
-    if value.get("schemaVersion") != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
     _exact_keys(
         value,
-        required={
-            "schemaVersion",
-            "project",
-            "lifecycle",
-            "profiles",
-            "environment",
-        },
+        required={"schemaVersion", "project", "lifecycle", "profiles"}
+        | ({"environment"} if schema_version >= 2 else set()),
         optional={"$schema"},
         path=path,
     )
@@ -760,15 +844,23 @@ def validate_project(document: Any, path: str = "project") -> Project:
             f"{path}.lifecycle.requiredProfiles: undefined profiles: "
             f"{', '.join(missing_required)}"
         )
-    environment = _validate_environment(
-        value["environment"], f"{path}.environment"
-    )
-    missing_environment_profiles = sorted(set(profiles) - set(environment.profiles))
-    if missing_environment_profiles:
-        raise ContractError(
-            f"{path}.environment.profiles: missing verification profiles: "
-            + ", ".join(missing_environment_profiles)
+    environment = (
+        _validate_environment(
+            value["environment"],
+            f"{path}.environment",
+            require_foreground_only=schema_version == 3,
+            require_native_windows_commands=schema_version == 3,
         )
+        if schema_version >= 2
+        else None
+    )
+    if environment is not None:
+        missing_environment_profiles = sorted(set(profiles) - set(environment.profiles))
+        if missing_environment_profiles:
+            raise ContractError(
+                f"{path}.environment.profiles: missing verification profiles: "
+                + ", ".join(missing_environment_profiles)
+            )
     return Project(
         identifier=identifier,
         profiles=profiles,
@@ -826,8 +918,8 @@ def validate_change(document: Any, path: str = "change") -> None:
         optional={"$schema"},
         path=path,
     )
-    if value.get("schemaVersion") != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value.get("schemaVersion") != 2:
+        raise ContractError(f"{path}.schemaVersion: must be 2")
     identifier = _string(value["id"], f"{path}.id", max_length=64)
     if PROFILE_PATTERN.fullmatch(identifier) is None:
         raise ContractError(f"{path}.id: invalid change id")
@@ -1036,6 +1128,8 @@ def _validate_actor(value: Any, path: str) -> dict[str, str]:
 def _validate_review(
     document: Any,
     path: str = "review",
+    *,
+    allow_legacy_unresolved_approval: bool = False,
 ) -> None:
     value = _object(document, path)
     _exact_keys(
@@ -1055,8 +1149,8 @@ def _validate_review(
         optional={"$schema"},
         path=path,
     )
-    if value.get("schemaVersion") != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value.get("schemaVersion") != 2:
+        raise ContractError(f"{path}.schemaVersion: must be 2")
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
     if PROFILE_PATTERN.fullmatch(change_id) is None:
         raise ContractError(f"{path}.changeId: invalid change id")
@@ -1161,6 +1255,7 @@ def _validate_review(
     if (
         verdict == "approved"
         and unresolved_findings
+        and not allow_legacy_unresolved_approval
     ):
         raise ContractError(
             f"{path}: approved review cannot contain open or deferred findings"
@@ -1172,4 +1267,8 @@ def _validate_review(
 
 
 def validate_review(document: Any, path: str = "review") -> None:
-    _validate_review(document, path)
+    _validate_review(document, path, allow_legacy_unresolved_approval=False)
+
+
+def _validate_legacy_review(document: Any, path: str) -> None:
+    _validate_review(document, path, allow_legacy_unresolved_approval=True)

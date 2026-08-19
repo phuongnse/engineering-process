@@ -22,6 +22,7 @@ from .contracts import (
 from .distribution import distribution_digest
 from .environment import (
     doctor_environment,
+    environment_command_bindings,
     environment_path_entries,
     execute_command,
     require_environment_profile,
@@ -542,6 +543,7 @@ def command_exec(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout_seconds,
         working_directory=args.working_directory,
         path_entries=environment_path_entries(project, profile=args.profile),
+        command_bindings=environment_command_bindings(project, profile=args.profile),
         stream_output=not args.json,
     )
     if args.json:

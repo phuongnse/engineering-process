@@ -1,28 +1,38 @@
 """Run one command in a Windows kill-on-close Job Object.
 
-This private helper is launched by the environment executor. It uses a suspended
-CreateProcess call so the target cannot create an untracked descendant before it
-is assigned to the Job Object.
+This private helper is launched by the environment executor. The Job Object is
+attached through the process creation attribute list so the target is contained
+before its first instruction can run, including if this helper is terminated while
+CreateProcessW is in progress.
 """
 
 from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import ntpath
 import os
 import subprocess
 import sys
+import time
+from typing import Any
 
 
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-CREATE_SUSPENDED = 0x00000004
+EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 INFINITE = 0xFFFFFFFF
+JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS = 1
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D
 STARTF_USESTDHANDLES = 0x00000100
 STD_INPUT_HANDLE = wintypes.DWORD(-10).value
 STD_OUTPUT_HANDLE = wintypes.DWORD(-11).value
 STD_ERROR_HANDLE = wintypes.DWORD(-12).value
+WAIT_FAILED = 0xFFFFFFFF
+WAIT_OBJECT_0 = 0x00000000
+WAIT_TIMEOUT = 0x00000102
+CLEANUP_GRACE_MILLISECONDS = 5_000
 
 
 class IO_COUNTERS(ctypes.Structure):
@@ -61,6 +71,19 @@ class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
     ]
 
 
+class JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("TotalUserTime", ctypes.c_longlong),
+        ("TotalKernelTime", ctypes.c_longlong),
+        ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+        ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+        ("TotalPageFaultCount", wintypes.DWORD),
+        ("TotalProcesses", wintypes.DWORD),
+        ("ActiveProcesses", wintypes.DWORD),
+        ("TotalTerminatedProcesses", wintypes.DWORD),
+    ]
+
+
 class STARTUPINFOW(ctypes.Structure):
     _fields_ = [
         ("cb", wintypes.DWORD),
@@ -84,6 +107,13 @@ class STARTUPINFOW(ctypes.Structure):
     ]
 
 
+class STARTUPINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("StartupInfo", STARTUPINFOW),
+        ("lpAttributeList", ctypes.c_void_p),
+    ]
+
+
 class PROCESS_INFORMATION(ctypes.Structure):
     _fields_ = [
         ("hProcess", wintypes.HANDLE),
@@ -94,11 +124,15 @@ class PROCESS_INFORMATION(ctypes.Structure):
 
 
 def _last_error(label: str) -> OSError:
-    return ctypes.WinError(ctypes.get_last_error(), label)
+    get_last_error = getattr(ctypes, "get_last_error", lambda: 0)
+    error_code = get_last_error()
+    win_error = getattr(ctypes, "WinError", None)
+    if win_error is not None:
+        return win_error(error_code, label)
+    return OSError(error_code, f"{label} failed")
 
 
-def _run(command: list[str]) -> int:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+def _configure_kernel32(kernel32: Any) -> None:
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
     kernel32.SetInformationJobObject.argtypes = [
         wintypes.HANDLE,
@@ -107,6 +141,25 @@ def _run(command: list[str]) -> int:
         wintypes.DWORD,
     ]
     kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.InitializeProcThreadAttributeList.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    kernel32.InitializeProcThreadAttributeList.restype = wintypes.BOOL
+    kernel32.UpdateProcThreadAttribute.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    kernel32.UpdateProcThreadAttribute.restype = wintypes.BOOL
+    kernel32.DeleteProcThreadAttributeList.argtypes = [ctypes.c_void_p]
+    kernel32.DeleteProcThreadAttributeList.restype = None
     kernel32.CreateProcessW.argtypes = [
         wintypes.LPCWSTR,
         wintypes.LPWSTR,
@@ -120,10 +173,6 @@ def _run(command: list[str]) -> int:
         ctypes.POINTER(PROCESS_INFORMATION),
     ]
     kernel32.CreateProcessW.restype = wintypes.BOOL
-    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
-    kernel32.ResumeThread.restype = wintypes.DWORD
     kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.GetExitCodeProcess.argtypes = [
@@ -131,17 +180,113 @@ def _run(command: list[str]) -> int:
         ctypes.POINTER(wintypes.DWORD),
     ]
     kernel32.GetExitCodeProcess.restype = wintypes.BOOL
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.QueryInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
     kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
     kernel32.GetStdHandle.restype = wintypes.HANDLE
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
 
+
+def _active_processes(kernel32: Any, job: int) -> int:
+    accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+    returned_length = wintypes.DWORD()
+    if not kernel32.QueryInformationJobObject(
+        job,
+        JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS,
+        ctypes.byref(accounting),
+        ctypes.sizeof(accounting),
+        ctypes.byref(returned_length),
+    ):
+        raise _last_error("QueryInformationJobObject")
+    return int(accounting.ActiveProcesses)
+
+
+def _cleanup_process_and_job(
+    kernel32: Any,
+    job: int,
+    process_info: PROCESS_INFORMATION,
+) -> tuple[list[OSError], int | None]:
+    errors: list[OSError] = []
+    if process_info.hProcess:
+        try:
+            active_processes = _active_processes(kernel32, job)
+        except OSError as error:
+            errors.append(error)
+            active_processes = None
+        active_processes_before_cleanup = active_processes
+
+        if active_processes is None or active_processes > 0:
+            if not kernel32.TerminateJobObject(job, 125):
+                errors.append(_last_error("TerminateJobObject"))
+            deadline = time.monotonic() + CLEANUP_GRACE_MILLISECONDS / 1000
+            while True:
+                try:
+                    active_processes = _active_processes(kernel32, job)
+                except OSError as error:
+                    errors.append(error)
+                    break
+                if active_processes == 0:
+                    break
+                if time.monotonic() >= deadline:
+                    errors.append(
+                        OSError(
+                            "Job Object retained active processes after bounded termination"
+                        )
+                    )
+                    break
+                time.sleep(0.01)
+
+        wait_result = kernel32.WaitForSingleObject(
+            process_info.hProcess, CLEANUP_GRACE_MILLISECONDS
+        )
+        if wait_result == WAIT_FAILED:
+            errors.append(_last_error("WaitForSingleObject during cleanup"))
+        elif wait_result == WAIT_TIMEOUT:
+            errors.append(OSError("target process survived bounded Job Object cleanup"))
+        elif wait_result != WAIT_OBJECT_0:
+            errors.append(
+                OSError(f"unexpected target cleanup wait result: {wait_result}")
+            )
+    return errors, (
+        active_processes_before_cleanup if process_info.hProcess else None
+    )
+
+
+def _close_handle(kernel32: Any, handle: int, label: str) -> OSError | None:
+    if handle and not kernel32.CloseHandle(handle):
+        return _last_error(f"CloseHandle({label})")
+    return None
+
+
+def _run(
+    application: str,
+    command: list[str],
+    *,
+    kernel32: Any | None = None,
+) -> int:
+    if not ntpath.isabs(application) or ntpath.splitext(application)[1].casefold() != ".exe":
+        raise OSError("Windows Job Object application must be an absolute .exe path")
+    if kernel32 is None:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _configure_kernel32(kernel32)
+
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
         raise _last_error("CreateJobObjectW")
     process_info = PROCESS_INFORMATION()
+    attribute_list: ctypes.c_void_p | None = None
+    attribute_list_initialized = False
+    caught_error: BaseException | None = None
+    exit_code: int | None = None
     try:
         limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -153,45 +298,98 @@ def _run(command: list[str]) -> int:
         ):
             raise _last_error("SetInformationJobObject")
 
-        startup = STARTUPINFOW()
-        startup.cb = ctypes.sizeof(startup)
-        startup.dwFlags = STARTF_USESTDHANDLES
-        startup.hStdInput = kernel32.GetStdHandle(STD_INPUT_HANDLE)
-        startup.hStdOutput = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
-        startup.hStdError = kernel32.GetStdHandle(STD_ERROR_HANDLE)
+        attribute_list_size = ctypes.c_size_t()
+        kernel32.InitializeProcThreadAttributeList(
+            None, 1, 0, ctypes.byref(attribute_list_size)
+        )
+        if attribute_list_size.value == 0:
+            raise _last_error("InitializeProcThreadAttributeList(size)")
+        attribute_list_buffer = ctypes.create_string_buffer(attribute_list_size.value)
+        attribute_list = ctypes.cast(attribute_list_buffer, ctypes.c_void_p)
+        if not kernel32.InitializeProcThreadAttributeList(
+            attribute_list, 1, 0, ctypes.byref(attribute_list_size)
+        ):
+            raise _last_error("InitializeProcThreadAttributeList")
+        attribute_list_initialized = True
+        job_handles = (wintypes.HANDLE * 1)(job)
+        if not kernel32.UpdateProcThreadAttribute(
+            attribute_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            ctypes.cast(job_handles, ctypes.c_void_p),
+            ctypes.sizeof(job_handles),
+            None,
+            None,
+        ):
+            raise _last_error("UpdateProcThreadAttribute(JOB_LIST)")
+
+        startup = STARTUPINFOEXW()
+        startup.StartupInfo.cb = ctypes.sizeof(startup)
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES
+        startup.StartupInfo.hStdInput = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        startup.StartupInfo.hStdOutput = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        startup.StartupInfo.hStdError = kernel32.GetStdHandle(STD_ERROR_HANDLE)
+        startup.lpAttributeList = attribute_list
         command_line = ctypes.create_unicode_buffer(subprocess.list2cmdline(command))
         if not kernel32.CreateProcessW(
-            None,
+            application,
             command_line,
             None,
             None,
             True,
-            CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_PROCESS_GROUP,
             None,
             None,
-            ctypes.byref(startup),
+            ctypes.cast(ctypes.byref(startup), ctypes.POINTER(STARTUPINFOW)),
             ctypes.byref(process_info),
         ):
             raise _last_error("CreateProcessW")
-        if not kernel32.AssignProcessToJobObject(job, process_info.hProcess):
-            kernel32.TerminateProcess(process_info.hProcess, 125)
-            raise _last_error("AssignProcessToJobObject")
-        if kernel32.ResumeThread(process_info.hThread) == 0xFFFFFFFF:
-            kernel32.TerminateProcess(process_info.hProcess, 125)
-            raise _last_error("ResumeThread")
-        kernel32.WaitForSingleObject(process_info.hProcess, INFINITE)
-        exit_code = wintypes.DWORD()
+        wait_result = kernel32.WaitForSingleObject(process_info.hProcess, INFINITE)
+        if wait_result == WAIT_FAILED:
+            raise _last_error("WaitForSingleObject")
+        if wait_result != WAIT_OBJECT_0:
+            raise OSError(f"unexpected target wait result: {wait_result}")
+        native_exit_code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(
-            process_info.hProcess, ctypes.byref(exit_code)
+            process_info.hProcess, ctypes.byref(native_exit_code)
         ):
             raise _last_error("GetExitCodeProcess")
-        return int(exit_code.value)
+        exit_code = int(native_exit_code.value)
+    except BaseException as error:
+        caught_error = error
     finally:
-        if process_info.hThread:
-            kernel32.CloseHandle(process_info.hThread)
-        if process_info.hProcess:
-            kernel32.CloseHandle(process_info.hProcess)
-        kernel32.CloseHandle(job)
+        cleanup_errors, active_processes_before_cleanup = _cleanup_process_and_job(
+            kernel32, job, process_info
+        )
+        if attribute_list_initialized and attribute_list is not None:
+            kernel32.DeleteProcThreadAttributeList(attribute_list)
+        for handle, label in (
+            (process_info.hThread, "thread"),
+            (process_info.hProcess, "process"),
+            (job, "job"),
+        ):
+            if error := _close_handle(kernel32, handle, label):
+                cleanup_errors.append(error)
+
+    if caught_error is not None:
+        if cleanup_errors and isinstance(caught_error, Exception):
+            details = "; ".join(str(error) for error in cleanup_errors)
+            raise OSError(f"{caught_error}; cleanup failed: {details}") from caught_error
+        if cleanup_errors:
+            caught_error.add_note(
+                "Windows Job Object cleanup failed: "
+                + "; ".join(str(error) for error in cleanup_errors)
+            )
+        raise caught_error
+    if cleanup_errors:
+        raise OSError(
+            "Windows Job Object cleanup failed: "
+            + "; ".join(str(error) for error in cleanup_errors)
+        )
+    if active_processes_before_cleanup:
+        raise OSError("target command left descendant processes; they were terminated")
+    assert exit_code is not None
+    return exit_code
 
 
 def main() -> int:
@@ -199,13 +397,19 @@ def main() -> int:
         print("Windows Job Object runner is only available on Windows", file=sys.stderr)
         return 125
     arguments = sys.argv[1:]
-    if arguments[:1] == ["--"]:
-        arguments = arguments[1:]
+    if len(arguments) < 4 or arguments[0] != "--application" or arguments[2] != "--":
+        print(
+            "Windows Job Object runner requires --application ABSOLUTE.exe -- COMMAND",
+            file=sys.stderr,
+        )
+        return 125
+    application = arguments[1]
+    arguments = arguments[3:]
     if not arguments:
         print("Windows Job Object runner requires a command", file=sys.stderr)
         return 125
     try:
-        return _run(arguments)
+        return _run(application, arguments)
     except OSError as error:
         print(f"Windows Job Object setup failed: {error}", file=sys.stderr)
         return 125

@@ -27,9 +27,29 @@ The core ships only the agent-neutral reviewer-attestation contract. Host-specif
 launchers and model configuration are separate integrations and are never part of a
 required process bundle.
 
-Python 3.11 or newer and Git are required. Lifecycle state is stored under ignored
+Python 3.11 or newer and Git are required. Windows command containment requires
+Windows 10 or Windows Server 2016 and newer so Job Object membership can be attached
+atomically during process creation. Lifecycle state is stored under ignored
 `.process/runs/`; completion, review, and verification are bound to a clean Git
 checkpoint and workspace fingerprint.
+
+## Execution architecture
+
+Consumers use one foreground-task contract on every supported platform. The contract
+owns argument-array commands, non-interactive standard input, bounded output, timeout,
+exit status, and descendant cleanup. Platform selection occurs once inside the
+distribution: the POSIX backend owns a new process session/group and the Windows
+backend owns a kill-on-close Job Object. Consumer manifests, evidence, and exit codes
+do not branch by operating system. If an outer Windows Job applies incompatible
+nesting or UI limits, target creation fails closed instead of running uncontained.
+
+This task boundary intentionally separates finite commands from services and
+interactive protocols. `processctl exec`, requirement probes, setup command actions,
+and verification checks are finite foreground tasks. Detached Docker Compose stacks,
+log followers, interactive shells, watchers, and stdio servers remain project-owned
+commands outside this executor until a separate service or interactive lifecycle is
+specified. They must not be placed in verification profiles or wrapped by
+`processctl exec`.
 
 ## Consumer bootstrap
 
@@ -50,6 +70,7 @@ Install `processctl` from a tagged release and create a candidate manifest from
 standard in one command:
 
 ~~~text
+python -m pip install "engineering-process==0.1.0"
 processctl project init --project-root . --manifest project.json \
   --bundle core --bundle delivery --bundle product
 processctl doctor --project-root .
@@ -109,9 +130,39 @@ the tool from a `managed-tool` setup action:
 The zero checksum above is a shape example only; a real manifest must contain the
 publisher artifact's verified digest and declare every supported platform explicitly.
 
+Schema-3 Windows command entries must resolve to native `.exe` applications. Batch
+files are rejected because running `.cmd` or `.bat` requires a command shell. When a
+publisher exposes a script launcher, bind the stable logical command to a verified
+native runtime and a verified contained script instead. For example, a Windows Node
+artifact can preserve the portable `npm` command without `cmd.exe`:
+
+~~~json
+{
+  "commands": {
+    "npm": {
+      "executable": "node.exe",
+      "script": "node_modules/npm/bin/npm-cli.js"
+    }
+  }
+}
+~~~
+
+Managed artifact paths always use contained, relative, forward-slash syntax on every
+host. Schema-1 and schema-2 project manifests remain readable for lifecycle history,
+but a schema-2 Windows `.cmd` or `.bat` launcher is intentionally not executable by
+the shell-free supervisor. Migrate that entry manually to schema 3 and bind it to the
+publisher's trusted native runtime and contained script as above; a generic migrator
+cannot safely infer either file or attest that the task is foreground-only.
+
+The report still records the logical command such as `["npm", "ci"]`; the executor
+uses the absolute managed application and script paths internally. Unqualified Windows
+commands are resolved only from absolute PATH entries, so a same-named executable in
+the project working directory cannot shadow a verified managed tool.
+
 `doctor` executes only probes explicitly attested `readOnly: true` and never invokes
-setup actions. The environment contract must also attest `foregroundOnly: true` for
-every project command. The project owner remains responsible for those attestations.
+setup actions. A schema-3 environment contract must also attest `foregroundOnly: true`
+for every process-managed task. The project owner remains responsible for those
+attestations.
 `setup` is plan-only unless `--apply` is present, computes
 the full dependency-ordered action plan before execution, and refuses to run any
 action until every declared mutation scope has been approved. Supported scopes are
@@ -124,7 +175,8 @@ probes; an installer exit code alone never proves readiness.
 
 The distribution owns detection, planning, bounded execution, HTTPS acquisition,
 size limits, checksum verification, safe archive extraction, atomic user-local tool
-installation, and managed PATH injection. A consumer owns only declarative environment
+installation, and exact managed command binding/PATH injection. A consumer owns only
+declarative environment
 data: exact probes, tool versions and per-platform artifacts, immutable checksums,
 project-native dependency commands, dependency edges, and remediation. Project source
 does not carry a generic downloader, archive installer, doctor, or setup lifecycle.
@@ -139,9 +191,13 @@ process. Managed-tool actions are stronger—the distribution constrains them to
 HTTPS, declared size/checksum/archive/path boundaries and derives their approvals as
 `network` plus `user-files`. Use a command action only for project-native package
 managers or domain preparation that cannot be represented by the managed-tool
-primitive, and declare every possible scope truthfully. There is no legacy manifest
-mode during unpublished development: every consumer receives the complete environment
-contract instead of creating a project-local doctor or setup lifecycle.
+primitive, and declare every possible scope truthfully. New consumers use
+project-manifest schema 3. Schema 1 (without an environment contract) and schema 2
+(the original environment contract) remain readable for backward compatibility; they
+are not relabeled as newer shapes. A consumer upgrades explicitly to schema 3 to
+attest foreground-only task execution and use managed script bindings. New integrations
+receive the complete environment contract instead of creating a project-local doctor
+or setup lifecycle.
 
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
@@ -292,3 +348,5 @@ python -m venv .venv
 Version 0.x remains a compatibility pilot. A 1.0 release requires publishing the CLI,
 running consumer CI through the published artifact, and completing forward tests on
 representative agent hosts. Portable evaluation fixtures live in `evals/cases.json`.
+Maintainer release steps and the secretless PyPI publisher identity are defined in
+[`RELEASING.md`](https://github.com/phuongnse/engineering-process/blob/main/RELEASING.md).
