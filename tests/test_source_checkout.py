@@ -1,9 +1,10 @@
+import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path, PurePosixPath
 
-from engineering_process.distribution_verify import _tracked_paths
+from engineering_process.distribution_verify import _copy_tracked_snapshot
 from engineering_process.git import remaining_seconds, run_git
 
 
@@ -25,17 +26,48 @@ EXPECTED_ATTRIBUTES = {
     "filter": "unset",
     "ident": "unset",
 }
+CHECK_ATTRIBUTES_ARGUMENTS = ["check-attr", "-z", *ATTRIBUTE_NAMES, "--"]
+CHECK_EOL_ARGUMENTS = ["ls-files", "-z", "--eol", "--"]
 MAX_GIT_OUTPUT_BYTES = 256_000
+MAX_WINDOWS_TARGET_COMMAND_CHARS = 12_000
 MAX_POLICY_BYTES = 4_096
-PATHS_PER_QUERY = 128
 TEST_TIMEOUT_SECONDS = 30.0
 
 
-def _chunks(paths: list[PurePosixPath]) -> list[list[PurePosixPath]]:
-    return [
-        paths[index : index + PATHS_PER_QUERY]
-        for index in range(0, len(paths), PATHS_PER_QUERY)
-    ]
+def _target_command_chars(
+    arguments: list[str], paths: list[PurePosixPath]
+) -> int:
+    return len(
+        subprocess.list2cmdline(
+            ["git", *arguments, *(path.as_posix() for path in paths)]
+        )
+    )
+
+
+def _path_chunks(paths: list[PurePosixPath]) -> list[list[PurePosixPath]]:
+    chunks: list[list[PurePosixPath]] = []
+    current: list[PurePosixPath] = []
+    for path in paths:
+        candidate = [*current, path]
+        length = max(
+            _target_command_chars(CHECK_ATTRIBUTES_ARGUMENTS, candidate),
+            _target_command_chars(CHECK_EOL_ARGUMENTS, candidate),
+        )
+        if length <= MAX_WINDOWS_TARGET_COMMAND_CHARS:
+            current = candidate
+            continue
+        if not current:
+            raise ValueError(f"tracked path exceeds the Git argv limit: {path}")
+        chunks.append(current)
+        current = [path]
+        if max(
+            _target_command_chars(CHECK_ATTRIBUTES_ARGUMENTS, current),
+            _target_command_chars(CHECK_EOL_ARGUMENTS, current),
+        ) > MAX_WINDOWS_TARGET_COMMAND_CHARS:
+            raise ValueError(f"tracked path exceeds the Git argv limit: {path}")
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 class SourceCheckoutTests(unittest.TestCase):
@@ -69,58 +101,98 @@ class SourceCheckoutTests(unittest.TestCase):
         return result.stdout
 
     def test_all_tracked_sources_have_byte_stable_checkout_attributes(self):
-        self.assertEqual(
-            PRODUCER_ATTRIBUTES,
-            self.bounded_bytes(
-                PROCESS_ROOT / ".gitattributes", limit=MAX_POLICY_BYTES
-            ),
-        )
-        paths = _tracked_paths(PROCESS_ROOT)
-        self.assertIn(PurePosixPath(".gitattributes"), paths)
-        deadline = time.monotonic() + TEST_TIMEOUT_SECONDS
-
-        for chunk in _chunks(paths):
-            names = [path.as_posix() for path in chunk]
-            attributes = self.git(
-                PROCESS_ROOT,
-                ["check-attr", "-z", *ATTRIBUTE_NAMES, "--", *names],
-                label="inspect producer checkout attributes",
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "source"
+            snapshot.mkdir()
+            paths = _copy_tracked_snapshot(PROCESS_ROOT, snapshot)
+            self.assertIn(PurePosixPath(".gitattributes"), paths)
+            self.assertEqual(
+                PRODUCER_ATTRIBUTES,
+                self.bounded_bytes(
+                    snapshot / ".gitattributes", limit=MAX_POLICY_BYTES
+                ),
+            )
+            deadline = time.monotonic() + TEST_TIMEOUT_SECONDS
+            self.git(
+                snapshot,
+                ["init", "--quiet"],
+                label="initialize source snapshot Git",
                 deadline=deadline,
-            ).split(b"\0")
-            self.assertEqual(b"", attributes.pop())
-            self.assertEqual(0, len(attributes) % 3)
-            observed: dict[str, dict[str, str]] = {}
-            for index in range(0, len(attributes), 3):
-                path, attribute, value = (
-                    item.decode("utf-8") for item in attributes[index : index + 3]
-                )
-                observed.setdefault(path, {})[attribute] = value
-            self.assertEqual(set(names), set(observed))
-            for name in names:
-                self.assertEqual(EXPECTED_ATTRIBUTES, observed[name])
-
-            records = self.git(
-                PROCESS_ROOT,
-                ["ls-files", "-z", "--eol", "--", *names],
-                label="inspect producer checkout line endings",
+            )
+            self.git(
+                snapshot,
+                ["config", "core.autocrlf", "true"],
+                label="configure source snapshot Git",
                 deadline=deadline,
-            ).split(b"\0")
-            self.assertEqual(b"", records.pop())
-            self.assertEqual(len(names), len(records))
-            for record in records:
-                metadata, separator, encoded_path = record.partition(b"\t")
-                self.assertEqual(b"\t", separator)
-                self.assertIn(encoded_path.decode("utf-8"), names)
-                fields = metadata.split()
-                self.assertGreaterEqual(len(fields), 2)
-                self.assertIn(
-                    (fields[0], fields[1]),
-                    {
-                        (b"i/lf", b"w/lf"),
-                        (b"i/-text", b"w/-text"),
-                        (b"i/none", b"w/none"),
-                    },
-                )
+            )
+            self.git(
+                snapshot,
+                ["add", "--all"],
+                label="stage bounded source snapshot",
+                deadline=deadline,
+            )
+
+            for chunk in _path_chunks(paths):
+                names = [path.as_posix() for path in chunk]
+                attributes = self.git(
+                    snapshot,
+                    [*CHECK_ATTRIBUTES_ARGUMENTS, *names],
+                    label="inspect producer checkout attributes",
+                    deadline=deadline,
+                ).split(b"\0")
+                self.assertEqual(b"", attributes.pop())
+                self.assertEqual(0, len(attributes) % 3)
+                observed: dict[str, dict[str, str]] = {}
+                for index in range(0, len(attributes), 3):
+                    path, attribute, value = (
+                        item.decode("utf-8")
+                        for item in attributes[index : index + 3]
+                    )
+                    observed.setdefault(path, {})[attribute] = value
+                self.assertEqual(set(names), set(observed))
+                for name in names:
+                    self.assertEqual(EXPECTED_ATTRIBUTES, observed[name])
+
+                records = self.git(
+                    snapshot,
+                    [*CHECK_EOL_ARGUMENTS, *names],
+                    label="inspect producer checkout line endings",
+                    deadline=deadline,
+                ).split(b"\0")
+                self.assertEqual(b"", records.pop())
+                self.assertEqual(len(names), len(records))
+                for record in records:
+                    metadata, separator, encoded_path = record.partition(b"\t")
+                    self.assertEqual(b"\t", separator)
+                    self.assertIn(encoded_path.decode("utf-8"), names)
+                    fields = metadata.split()
+                    self.assertGreaterEqual(len(fields), 2)
+                    self.assertIn(
+                        (fields[0], fields[1]),
+                        {
+                            (b"i/lf", b"w/lf"),
+                            (b"i/-text", b"w/-text"),
+                            (b"i/none", b"w/none"),
+                        },
+                    )
+
+    def test_path_chunks_bound_windows_command_line_characters(self):
+        paths = [
+            PurePosixPath(f"directory-{index:03}/{'x' * 240}.txt")
+            for index in range(128)
+        ]
+        chunks = _path_chunks(paths)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual(paths, [path for chunk in chunks for path in chunk])
+        for chunk in chunks:
+            self.assertLessEqual(
+                _target_command_chars(CHECK_ATTRIBUTES_ARGUMENTS, chunk),
+                MAX_WINDOWS_TARGET_COMMAND_CHARS,
+            )
+            self.assertLessEqual(
+                _target_command_chars(CHECK_EOL_ARGUMENTS, chunk),
+                MAX_WINDOWS_TARGET_COMMAND_CHARS,
+            )
 
     def test_binary_checkout_bytes_are_not_normalized(self):
         binary = b"\x00process-binary\r\n\xff"

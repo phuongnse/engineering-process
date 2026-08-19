@@ -77,11 +77,14 @@ def _tracked_paths(project_root: Path) -> list[PurePosixPath]:
     return paths
 
 
-def _copy_tracked_snapshot(project_root: Path, destination: Path) -> None:
+def _copy_tracked_snapshot(
+    project_root: Path, destination: Path
+) -> list[PurePosixPath]:
     total = 0
     deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
     resolved_root = project_root.resolve(strict=True)
-    for relative in _tracked_paths(project_root):
+    paths = _tracked_paths(project_root)
+    for relative in paths:
         if time.monotonic() >= deadline:
             raise ContractError("tracked distribution snapshot exceeded 30 seconds")
         source = project_root.joinpath(*relative.parts)
@@ -132,6 +135,7 @@ def _copy_tracked_snapshot(project_root: Path, destination: Path) -> None:
                 f"tracked distribution file changed while copying: {relative}"
             )
         target.chmod(stat.S_IMODE(source_stat.st_mode))
+    return paths
 
 
 def _forbidden_archive_path(name: str, *, allow_sdist_metadata: bool) -> bool:
