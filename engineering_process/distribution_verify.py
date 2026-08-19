@@ -9,9 +9,10 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from .artifact_attestation import create_distribution_attestation
 from .contracts import ContractError, read_json, validate_release
 from .environment import execute_command
-from .git import run_git
+from .git import tracked_index_paths, run_git
 
 
 MAX_TRACKED_FILES = 5_000
@@ -37,44 +38,14 @@ REQUIRED_SUFFIXES = {
 
 
 def _tracked_paths(project_root: Path) -> list[PurePosixPath]:
-    result = run_git(
+    encoded_paths = tracked_index_paths(
         project_root,
-        ["ls-files", "-z", "--cached", "--"],
         label="distribution snapshot tracked paths",
         timeout_seconds=30,
         max_stdout_bytes=MAX_TRACKED_LIST_BYTES,
+        max_paths=MAX_TRACKED_FILES,
     )
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise ContractError(
-            "distribution snapshot: git ls-files failed"
-            + (f": {detail}" if detail else "")
-        )
-    encoded_paths = result.stdout.split(b"\0")
-    if encoded_paths and encoded_paths[-1] == b"":
-        encoded_paths.pop()
-    if len(encoded_paths) > MAX_TRACKED_FILES:
-        raise ContractError(
-            f"distribution snapshot exceeds {MAX_TRACKED_FILES} tracked files"
-        )
-    paths: list[PurePosixPath] = []
-    for encoded in encoded_paths:
-        try:
-            text = encoded.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise ContractError("tracked distribution paths must be UTF-8") from error
-        candidate = PurePosixPath(text)
-        if (
-            not text
-            or "\\" in text
-            or ":" in text
-            or candidate.is_absolute()
-            or ".." in candidate.parts
-            or candidate.as_posix() != text
-        ):
-            raise ContractError(f"non-portable tracked distribution path: {text!r}")
-        paths.append(candidate)
-    return paths
+    return [PurePosixPath(encoded.decode("utf-8")) for encoded in encoded_paths]
 
 
 def _copy_tracked_snapshot(
@@ -331,7 +302,11 @@ def _checkout_generated_state(project_root: Path) -> list[str]:
 
 
 def verify_distribution(
-    project_root: Path, *, output_root: Path | None = None
+    project_root: Path,
+    *,
+    output_root: Path | None = None,
+    receipt_path: Path | None = None,
+    attestation_path: Path | None = None,
 ) -> dict[str, object]:
     project_root = project_root.resolve(strict=True)
     resolved_output: Path | None = None
@@ -345,6 +320,8 @@ def verify_distribution(
             raise ContractError("verified distribution output must stay outside the checkout")
         if resolved_output.exists():
             raise ContractError(f"{resolved_output}: refusing to replace existing output")
+    if attestation_path is not None and resolved_output is None:
+        raise ContractError("artifact attestation requires preserved distribution output")
     generated_before = _checkout_generated_state(project_root)
     if generated_before:
         raise ContractError(
@@ -413,8 +390,18 @@ def verify_distribution(
                 "distribution verification changed checkout build state: "
                 f"before {generated_before}, after {generated_after}"
             )
+    attestation = None
+    if attestation_path is not None:
+        assert resolved_output is not None
+        attestation = create_distribution_attestation(
+            project_root,
+            resolved_output,
+            attestation_path,
+            receipt_path=receipt_path,
+        )
     return {
         "artifacts": list(release.artifacts),
+        "attestation": attestation,
         "checkoutGeneratedState": [],
         "output": str(resolved_output) if resolved_output is not None else None,
     }

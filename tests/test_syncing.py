@@ -41,6 +41,44 @@ CORE_SKILLS = (
 
 
 class SyncTests(unittest.TestCase):
+    def test_managed_skill_comparison_rejects_symlinks_and_resource_overflow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "file.txt").write_text("bounded\n", encoding="utf-8")
+            link = root / "link.txt"
+            try:
+                link.symlink_to("file.txt")
+            except OSError:
+                self.skipTest("symlinks are unavailable on this platform")
+            with self.assertRaisesRegex(ContractError, "rejects symlinks"):
+                syncing._files(root, ignore_marker=False)
+
+            link.unlink()
+            (root / "large.bin").write_bytes(b"x" * 11)
+            with (
+                mock.patch.object(syncing, "MAX_SKILL_FILE_BYTES", 10),
+                self.assertRaisesRegex(ContractError, "file exceeds 10 bytes"),
+            ):
+                syncing._files(root, ignore_marker=False)
+
+            (root / "large.bin").write_bytes(b"123456")
+            (root / "second.bin").write_bytes(b"123456")
+            with (
+                mock.patch.object(syncing, "MAX_SKILL_TOTAL_BYTES", 10),
+                self.assertRaisesRegex(ContractError, "content exceeds 10 bytes"),
+            ):
+                syncing._files(root, ignore_marker=False)
+            with (
+                mock.patch.object(syncing, "MAX_SKILL_ENTRIES", 1),
+                self.assertRaisesRegex(ContractError, "entry count exceeds 1"),
+            ):
+                syncing._files(root, ignore_marker=False)
+            with (
+                mock.patch.object(syncing, "SKILL_COMPARISON_TIMEOUT_SECONDS", 0),
+                self.assertRaisesRegex(ContractError, "comparison exceeded 0 seconds"),
+            ):
+                syncing._files(root, ignore_marker=False)
+
     def prepare_project(self, root: Path) -> None:
         process = root / ".process"
         process.mkdir()

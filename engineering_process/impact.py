@@ -4,16 +4,15 @@ import json
 import time
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 from .contracts import Check, ContractError, Project, ProjectImpact
-from .git import remaining_seconds, run_git
+from .git import portable_git_path, remaining_seconds, run_git
 
 
 MAX_CHANGED_PATHS = 5_000
 MAX_CHANGED_PATH_BYTES = 100_000
-MAX_CHANGED_PATH_LENGTH = 1_024
 MAX_IMPACT_EVIDENCE_BYTES = 350_000
 IMPACT_PLANNING_TIMEOUT_SECONDS = 15.0
 IMPACT_FILE_ENV = "ENGINEERING_PROCESS_IMPACT_FILE"
@@ -69,44 +68,6 @@ def _commit(root: Path, ref: str, *, deadline: float) -> str | None:
         raise ContractError(f"impact scope resolve {ref}: invalid Git object id") from error
 
 
-def _portable_path(encoded: bytes, *, label: str) -> str:
-    try:
-        path = encoded.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ContractError(
-            f"impact scope {label}: changed paths must use UTF-8"
-        ) from error
-    candidate = PurePosixPath(path)
-    segments = path.split("/")
-    windows_reserved = {
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        *(f"COM{index}" for index in range(1, 10)),
-        *(f"LPT{index}" for index in range(1, 10)),
-    }
-    if (
-        not path
-        or len(path) > MAX_CHANGED_PATH_LENGTH
-        or "\\" in path
-        or any(ord(character) < 32 for character in path)
-        or any(character in '<>:"|?*' for character in path)
-        or candidate.is_absolute()
-        or ".." in candidate.parts
-        or candidate.as_posix() != path
-        or any(not segment or segment.endswith((" ", ".")) for segment in segments)
-        or any(
-            segment.split(".", 1)[0].upper() in windows_reserved
-            for segment in segments
-        )
-    ):
-        raise ContractError(
-            f"impact scope {label}: Git returned a non-portable path: {path!r}"
-        )
-    return path
-
-
 def _paths(output: bytes, *, label: str) -> list[str]:
     if len(output) > MAX_CHANGED_PATH_BYTES:
         raise ContractError(
@@ -118,7 +79,10 @@ def _paths(output: bytes, *, label: str) -> list[str]:
         raise ContractError(
             f"impact scope {label}: changed-path count exceeds {MAX_CHANGED_PATHS}"
         )
-    return [_portable_path(item, label=label) for item in encoded_paths]
+    return [
+        portable_git_path(item, label=f"impact scope {label}")
+        for item in encoded_paths
+    ]
 
 
 def _changed_paths(

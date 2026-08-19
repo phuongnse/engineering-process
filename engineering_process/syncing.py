@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import stat
 import sysconfig
 import tempfile
-from pathlib import Path
+import time
+from pathlib import Path, PurePosixPath
 
 from . import VERSION
 from .bundles import load_bundles
@@ -29,6 +32,13 @@ from .publication import (
     validate_project_extensions,
 )
 from .skills import MARKER_NAME, validate_skills
+from .git import portable_git_path
+
+
+MAX_SKILL_ENTRIES = 500
+MAX_SKILL_FILE_BYTES = 1_000_000
+MAX_SKILL_TOTAL_BYTES = 8_000_000
+SKILL_COMPARISON_TIMEOUT_SECONDS = 10.0
 
 
 def default_process_root() -> Path:
@@ -70,14 +80,133 @@ def _read_marker(path: Path) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
 
 
-def _files(path: Path, *, ignore_marker: bool) -> dict[str, bytes]:
-    result: dict[str, bytes] = {}
-    if not path.is_dir():
+def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
+    result: dict[str, tuple[int, str]] = {}
+    if not os.path.lexists(path):
         return result
-    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
-        if ignore_marker and item.name == MARKER_NAME:
-            continue
-        result[item.relative_to(path).as_posix()] = item.read_bytes()
+    try:
+        root_stat = path.lstat()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot inspect managed skill: {error}") from error
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise ContractError(f"{path}: managed skill comparison root must be a directory")
+    deadline = time.monotonic() + SKILL_COMPARISON_TIMEOUT_SECONDS
+    entries = 0
+    total_bytes = 0
+    stack: list[tuple[Path, PurePosixPath]] = [(path, PurePosixPath())]
+    while stack:
+        if time.monotonic() >= deadline:
+            raise ContractError(
+                f"{path}: managed skill comparison exceeded "
+                f"{SKILL_COMPARISON_TIMEOUT_SECONDS:g} seconds"
+            )
+        directory, relative_directory = stack.pop()
+        try:
+            with os.scandir(directory) as iterator:
+                children = []
+                for child in iterator:
+                    if time.monotonic() >= deadline:
+                        raise ContractError(
+                            f"{path}: managed skill comparison exceeded "
+                            f"{SKILL_COMPARISON_TIMEOUT_SECONDS:g} seconds"
+                        )
+                    entries += 1
+                    if entries > MAX_SKILL_ENTRIES:
+                        raise ContractError(
+                            f"{path}: managed skill entry count exceeds "
+                            f"{MAX_SKILL_ENTRIES}"
+                        )
+                    children.append(child)
+                children.sort(key=lambda item: item.name)
+        except OSError as error:
+            raise ContractError(
+                f"{directory}: cannot enumerate managed skill: {error}"
+            ) from error
+        directories: list[tuple[Path, PurePosixPath]] = []
+        for child in children:
+            relative = relative_directory / child.name
+            try:
+                encoded = relative.as_posix().encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ContractError(
+                    f"{path}: managed skill paths must use UTF-8"
+                ) from error
+            portable = portable_git_path(
+                encoded, label=f"{path}: managed skill comparison"
+            )
+            try:
+                before = child.stat(follow_symlinks=False)
+            except OSError as error:
+                raise ContractError(
+                    f"{child.path}: cannot inspect managed skill entry: {error}"
+                ) from error
+            if stat.S_ISLNK(before.st_mode):
+                raise ContractError(
+                    f"{child.path}: managed skill comparison rejects symlinks"
+                )
+            if stat.S_ISDIR(before.st_mode):
+                directories.append((Path(child.path), relative))
+                continue
+            if not stat.S_ISREG(before.st_mode):
+                raise ContractError(
+                    f"{child.path}: managed skill comparison requires regular files"
+                )
+            if ignore_marker and child.name == MARKER_NAME:
+                continue
+            if before.st_size > MAX_SKILL_FILE_BYTES:
+                raise ContractError(
+                    f"{child.path}: managed skill file exceeds "
+                    f"{MAX_SKILL_FILE_BYTES} bytes"
+                )
+            total_bytes += before.st_size
+            if total_bytes > MAX_SKILL_TOTAL_BYTES:
+                raise ContractError(
+                    f"{path}: managed skill content exceeds "
+                    f"{MAX_SKILL_TOTAL_BYTES} bytes"
+                )
+            digest = hashlib.sha256()
+            read_bytes = 0
+            try:
+                with Path(child.path).open("rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (
+                        not stat.S_ISREG(opened.st_mode)
+                        or opened.st_dev != before.st_dev
+                        or opened.st_ino != before.st_ino
+                    ):
+                        raise ContractError(
+                            f"{child.path}: managed skill file changed while opening"
+                        )
+                    while chunk := stream.read(64 * 1024):
+                        if time.monotonic() >= deadline:
+                            raise ContractError(
+                                f"{path}: managed skill comparison exceeded "
+                                f"{SKILL_COMPARISON_TIMEOUT_SECONDS:g} seconds"
+                            )
+                        read_bytes += len(chunk)
+                        if read_bytes > before.st_size:
+                            raise ContractError(
+                                f"{child.path}: managed skill file changed while reading"
+                            )
+                        digest.update(chunk)
+                after = Path(child.path).lstat()
+            except OSError as error:
+                raise ContractError(
+                    f"{child.path}: cannot read managed skill file: {error}"
+                ) from error
+            if (
+                read_bytes != before.st_size
+                or after.st_size != before.st_size
+                or after.st_mtime_ns != before.st_mtime_ns
+                or after.st_mode != before.st_mode
+                or after.st_dev != before.st_dev
+                or after.st_ino != before.st_ino
+            ):
+                raise ContractError(
+                    f"{child.path}: managed skill file changed while reading"
+                )
+            result[portable] = (read_bytes, digest.hexdigest())
+        stack.extend(reversed(directories))
     return result
 
 

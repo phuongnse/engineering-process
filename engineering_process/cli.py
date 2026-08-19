@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import VERSION
+from .artifact_attestation import validate_distribution_attestation
 from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
@@ -761,6 +762,18 @@ def command_publication_validate_release(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_publication_validate_artifacts(args: argparse.Namespace) -> int:
+    details = validate_distribution_attestation(
+        args.project_root,
+        args.artifacts,
+        args.attestation,
+        receipt_path=args.receipt,
+        checkpoint=args.commit,
+    )
+    _emit(args, _result("publication validate-artifacts", attestation=details))
+    return 0
+
+
 def _add_json(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
@@ -1055,6 +1068,20 @@ def build_parser() -> argparse.ArgumentParser:
     publication_release.add_argument("--receipt", type=Path)
     _add_json(publication_release)
     publication_release.set_defaults(handler=command_publication_validate_release)
+
+    publication_artifacts = publication_commands.add_parser(
+        "validate-artifacts",
+        help="Validate distribution digests against release and lifecycle evidence",
+    )
+    _add_project_root(publication_artifacts)
+    publication_artifacts.add_argument("--artifacts", type=_root, required=True)
+    publication_artifacts.add_argument("--attestation", type=Path, required=True)
+    publication_artifacts.add_argument("--receipt", type=Path)
+    publication_artifacts.add_argument("--commit", required=True)
+    _add_json(publication_artifacts)
+    publication_artifacts.set_defaults(
+        handler=command_publication_validate_artifacts
+    )
 
     change = commands.add_parser("change", help="Run the canonical change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)

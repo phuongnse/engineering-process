@@ -387,7 +387,9 @@ processctl evidence prune --project-root . --change-id issue-123 \
 
 The first prune command is a preview. `--apply` is accepted only for a completed run
 whose current state matches the validated external receipt. Active, failed,
-unexported, mismatched, or tampered evidence remains fail-closed.
+unexported, mismatched, or tampered evidence remains fail-closed. A partial deletion
+failure remains under an explicit `.pruning-*` quarantine and must be recovered from
+the retained validated receipt; it is never presented again as a complete local run.
 
 ## Publication contract
 

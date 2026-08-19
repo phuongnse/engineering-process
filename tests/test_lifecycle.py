@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
@@ -413,6 +414,39 @@ class LifecycleTests(unittest.TestCase):
                 root, "change-1", receipt_path, apply=False
             )
             self.assertFalse(preview["applied"])
+            receipt_document = json.loads(receipt_path.read_text(encoding="utf-8"))
+            contract = receipt_document["artifacts"]["contract"]
+            contract_path = receipt_document["state"]["document"]["contract"]["path"]
+            quarantine_path: Path | None = None
+
+            def fail_after_partial_delete(path: Path) -> None:
+                nonlocal quarantine_path
+                quarantine_path = Path(path)
+                (quarantine_path / Path(contract_path).name).unlink()
+                raise OSError("simulated partial deletion")
+
+            with (
+                mock.patch(
+                    "engineering_process.evidence.shutil.rmtree",
+                    side_effect=fail_after_partial_delete,
+                ),
+                self.assertRaisesRegex(
+                    ContractError, "no restored run is claimed.*validated receipt"
+                ),
+            ):
+                prune_completed_run(root, "change-1", receipt_path, apply=True)
+            run_root = root / ".process" / "runs" / "change-1"
+            self.assertFalse(run_root.exists())
+            self.assertIsNotNone(quarantine_path)
+            assert quarantine_path is not None
+            self.assertTrue(quarantine_path.exists())
+            self.assertFalse((quarantine_path / Path(contract_path).name).exists())
+            self.assertEqual(exported, validate_receipt(receipt_path))
+
+            recovered_contract = quarantine_path / Path(contract_path).name
+            recovered_contract.parent.mkdir(parents=True, exist_ok=True)
+            recovered_contract.write_text(contract["sourceText"], encoding="utf-8")
+            quarantine_path.replace(run_root)
             applied = prune_completed_run(root, "change-1", receipt_path, apply=True)
             self.assertTrue(applied["applied"])
             self.assertFalse((root / ".process" / "runs" / "change-1").exists())

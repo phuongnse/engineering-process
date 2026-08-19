@@ -440,10 +440,9 @@ def _prune_completed_run_unlocked(
         run_root.replace(quarantine)
         shutil.rmtree(quarantine)
     except OSError as error:
-        try:
-            if quarantine.exists() and not run_root.exists():
-                quarantine.replace(run_root)
-        except OSError:
-            pass
-        raise ContractError(f"cannot prune completed lifecycle run safely: {error}") from error
+        raise ContractError(
+            "cannot prune completed lifecycle run safely; no restored run is "
+            "claimed because deletion may be partial. Retain the validated receipt "
+            f"for recovery and inspect quarantine {quarantine}: {error}"
+        ) from error
     return result

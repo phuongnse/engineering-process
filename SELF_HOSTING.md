@@ -50,7 +50,9 @@ failed runs are retained for recovery. A completed run may be pruned only throug
 `processctl evidence prune --apply` after a bounded portable receipt has been
 exported and independently validated; release receipts remain attached to the
 immutable public release. Pruning first quarantines the exact run directory and
-restores it if deletion fails.
+deletes it. If deletion fails, the possibly partial quarantine remains explicitly
+named for inspection and the validated external receipt remains the recovery
+authority; the implementation never renames a partial tree back as a complete run.
 
 The isolated public N environment and build/impact temporary directories have a
 single coordinator owner. Build and impact directories are removed on success,

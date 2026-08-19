@@ -5,7 +5,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .contracts import ContractError
 from .supervision import process_supervisor
@@ -13,6 +13,15 @@ from .supervision import process_supervisor
 
 GIT_STDERR_LIMIT = 16_384
 GIT_TERMINATION_GRACE_SECONDS = 2.0
+MAX_PORTABLE_PATH_LENGTH = 1_024
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 @dataclass(frozen=True)
@@ -56,13 +65,24 @@ def run_git(
 ) -> GitResult:
     if timeout_seconds <= 0:
         raise ContractError(f"{label}: Git time budget is exhausted")
-    environment = os.environ.copy()
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.upper().startswith("GIT_")
+    }
     environment["GIT_OPTIONAL_LOCKS"] = "0"
     environment["GIT_TERMINAL_PROMPT"] = "0"
     supervisor = process_supervisor()
     try:
         process = supervisor.spawn(
-            ("git", *arguments),
+            (
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                *arguments,
+            ),
             working_directory=root,
             environment=environment,
         )
@@ -137,6 +157,71 @@ def run_git(
         stdout=bytes(stdout_capture["data"]),
         stderr=bytes(stderr_capture["data"]),
     )
+
+
+def portable_git_path(encoded: bytes, *, label: str) -> str:
+    try:
+        path = encoded.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError(f"{label}: Git paths must use UTF-8") from error
+    candidate = PurePosixPath(path)
+    segments = path.split("/")
+    if (
+        not path
+        or len(path) > MAX_PORTABLE_PATH_LENGTH
+        or "\\" in path
+        or any(ord(character) < 32 for character in path)
+        or any(character in '<>:"|?*' for character in path)
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+        or candidate.as_posix() != path
+        or any(not segment or segment.endswith((" ", ".")) for segment in segments)
+        or any(
+            segment.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES
+            for segment in segments
+        )
+    ):
+        raise ContractError(f"{label}: Git returned a non-portable path: {path!r}")
+    return path
+
+
+def tracked_index_paths(
+    root: Path,
+    *,
+    label: str,
+    timeout_seconds: float,
+    max_stdout_bytes: int,
+    max_paths: int,
+) -> list[bytes]:
+    result = run_git(
+        root,
+        ["ls-files", "-v", "-z", "--cached", "--"],
+        label=label,
+        timeout_seconds=timeout_seconds,
+        max_stdout_bytes=max_stdout_bytes,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ContractError(
+            f"{label}: git ls-files failed" + (f": {detail}" if detail else "")
+        )
+    records = [record for record in result.stdout.split(b"\0") if record]
+    if len(records) > max_paths:
+        raise ContractError(f"{label}: tracked path count exceeds {max_paths}")
+    paths: list[bytes] = []
+    for record in records:
+        if len(record) < 3 or record[1:2] != b" ":
+            raise ContractError(f"{label}: Git returned an invalid index record")
+        tag = record[:1]
+        encoded_path = record[2:]
+        path = portable_git_path(encoded_path, label=label)
+        if tag == b"S" or (b"a" <= tag <= b"z"):
+            raise ContractError(
+                f"{label}: tracked path uses a hidden index flag; clear "
+                f"skip-worktree/assume-unchanged before continuing: {path}"
+            )
+        paths.append(encoded_path)
+    return paths
 
 
 def remaining_seconds(deadline: float, *, label: str) -> float:

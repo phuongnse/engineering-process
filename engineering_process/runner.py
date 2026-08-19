@@ -19,7 +19,7 @@ from .environment import (
     execute_command,
 )
 from .impact import IMPACT_FILE_ENV, plan_profile
-from .git import remaining_seconds, run_git
+from .git import remaining_seconds, run_git, tracked_index_paths
 from .tooling import ManagedCommandBinding
 
 
@@ -75,6 +75,15 @@ def _source_state(root: Path) -> dict[str, Any]:
     )
     if sourceless_bytecode.returncode != 0:
         return {"checkpoint": None, "dirty": None, "fingerprint": None}
+    tracked_index_paths(
+        root,
+        label="workspace fingerprint tracked index",
+        timeout_seconds=remaining_seconds(
+            deadline, label="workspace fingerprint tracked index"
+        ),
+        max_stdout_bytes=MAX_SOURCE_STATUS_BYTES,
+        max_paths=MAX_SOURCE_PATHS,
+    )
     ignored_bytecode_paths = sorted(
         path for path in sourceless_bytecode.stdout.split(b"\0") if path
     )

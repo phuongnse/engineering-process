@@ -3,9 +3,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path, PurePosixPath
+from unittest import mock
 
+from engineering_process.contracts import ContractError
 from engineering_process.distribution_verify import _copy_tracked_snapshot
 from engineering_process.git import remaining_seconds, run_git
+from engineering_process.runner import source_state
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -71,6 +74,65 @@ def _path_chunks(paths: list[PurePosixPath]) -> list[list[PurePosixPath]]:
 
 
 class SourceCheckoutTests(unittest.TestCase):
+    def test_git_environment_cannot_redirect_checkpoint_inspection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            other = base / "other"
+            root.mkdir()
+            other.mkdir()
+            self._initialize_repository(root)
+            self._initialize_repository(other)
+            with mock.patch.dict(
+                "os.environ", {"GIT_DIR": str(other / ".git")}, clear=False
+            ):
+                result = run_git(
+                    root,
+                    ["rev-parse", "--show-toplevel"],
+                    label="sanitized Git environment",
+                    timeout_seconds=5,
+                    max_stdout_bytes=1_024,
+                )
+            self.assertEqual(0, result.returncode)
+            self.assertEqual(str(root.resolve()), result.stdout.decode().strip())
+
+    def _initialize_repository(self, root: Path) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "tests@example.invalid"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Tests"], cwd=root, check=True
+        )
+        (root / "tracked.txt").write_text("checkpoint\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "--quiet", "-m", "checkpoint"],
+            cwd=root,
+            check=True,
+        )
+
+    def test_hidden_index_flags_are_rejected_by_fingerprint_and_snapshot(self):
+        for flag in ("--assume-unchanged", "--skip-worktree"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._initialize_repository(root)
+                tracked = root / "tracked.txt"
+                tracked.write_text("changed behind Git's back\n", encoding="utf-8")
+                subprocess.run(
+                    ["git", "update-index", flag, "--", "tracked.txt"],
+                    cwd=root,
+                    check=True,
+                )
+
+                with self.assertRaisesRegex(ContractError, "hidden index flag"):
+                    source_state(root)
+                with tempfile.TemporaryDirectory() as snapshot_directory:
+                    with self.assertRaisesRegex(ContractError, "hidden index flag"):
+                        _copy_tracked_snapshot(root, Path(snapshot_directory))
+
     def bounded_bytes(self, path: Path, *, limit: int) -> bytes:
         self.assertLessEqual(path.stat().st_size, limit)
         with path.open("rb") as stream:

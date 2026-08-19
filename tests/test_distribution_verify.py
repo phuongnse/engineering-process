@@ -1,5 +1,6 @@
 import tempfile
 import tarfile
+import subprocess
 import unittest
 import warnings
 import zipfile
@@ -8,6 +9,7 @@ from unittest.mock import patch
 
 from engineering_process.contracts import ContractError
 from engineering_process.distribution_verify import (
+    _tracked_paths,
     _validate_archive_members,
     _validate_tar_archive,
     _validate_zip_archive,
@@ -16,6 +18,16 @@ from engineering_process.distribution_verify import (
 
 
 class DistributionVerificationTests(unittest.TestCase):
+    def test_tracked_distribution_paths_reject_windows_hostile_names(self):
+        for name in ("AUX.txt", "trailing. ", "control\x01.txt"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+                (root / name).write_text("hostile\n", encoding="utf-8")
+                subprocess.run(["git", "add", "--", name], cwd=root, check=True)
+                with self.assertRaisesRegex(ContractError, "non-portable path"):
+                    _tracked_paths(root)
+
     def test_archive_contract_requires_release_and_production_assets(self):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
         members = [
