@@ -21,6 +21,8 @@ TERMINATION_TIMEOUT_SECONDS = 5
 MAX_CAPTURE_BYTES = 128_000
 READ_CHUNK_BYTES = 64 * 1024
 MAX_REQUIREMENTS_BYTES = 1_000_000
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+PathIdentity = tuple[int, int, int, int]
 
 
 @dataclass
@@ -169,24 +171,96 @@ def _child_environment() -> dict[str, str]:
     return environment
 
 
+def _is_link_or_reparse(value: os.stat_result) -> bool:
+    return stat.S_ISLNK(value.st_mode) or bool(
+        getattr(value, "st_file_attributes", 0)
+        & FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _path_identity(value: os.stat_result) -> PathIdentity:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_mtime_ns,
+    )
+
+
+def _path_identity_chain(
+    root: Path, path: Path
+) -> tuple[PathIdentity, ...]:
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise RuntimeError(f"requirements lock escaped checkout: {path}") from error
+    if not relative.parts:
+        raise RuntimeError("requirements lock must name a file")
+    try:
+        root_value = root.lstat()
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot inspect requirements root {root}: {error}"
+        ) from error
+    if _is_link_or_reparse(root_value) or not stat.S_ISDIR(root_value.st_mode):
+        raise RuntimeError("requirements root must be a regular directory")
+    chain: list[PathIdentity] = [_path_identity(root_value)]
+    current = root
+    for index, part in enumerate(relative.parts):
+        current /= part
+        try:
+            value = current.lstat()
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot inspect requirements path {current}: {error}"
+            ) from error
+        if _is_link_or_reparse(value):
+            raise RuntimeError(
+                f"requirements path must not traverse a link or reparse point: {current}"
+            )
+        if index < len(relative.parts) - 1 and not stat.S_ISDIR(value.st_mode):
+            raise RuntimeError(
+                f"requirements path ancestor must be a directory: {current}"
+            )
+        chain.append(_path_identity(value))
+    return tuple(chain)
+
+
 def _requirements_source(project_root: Path, supplied: Path) -> Path:
     candidate = supplied if supplied.is_absolute() else project_root / supplied
-    if candidate.is_symlink():
-        raise RuntimeError("requirements lock must not be a symlink")
     try:
-        candidate.resolve(strict=True).relative_to(project_root)
+        candidate_value = candidate.lstat()
+    except OSError as error:
+        raise RuntimeError(f"cannot inspect requirements lock: {error}") from error
+    if _is_link_or_reparse(candidate_value):
+        raise RuntimeError(
+            "requirements lock must not be a link or reparse point"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(project_root)
     except (OSError, ValueError) as error:
         raise RuntimeError(
             "requirements lock must be a regular file inside the checkout"
         ) from error
-    return candidate
+    _path_identity_chain(project_root, resolved)
+    return resolved
 
 
-def _read_stable_requirements(path: Path) -> bytes:
+def _read_stable_requirements(
+    path: Path, *, containment_root: Path | None = None
+) -> bytes:
+    before_chain = (
+        _path_identity_chain(containment_root, path)
+        if containment_root is not None
+        else None
+    )
     try:
         before = path.lstat()
         if not stat.S_ISREG(before.st_mode):
             raise RuntimeError("requirements lock must be a regular file")
+        if before_chain is not None and _path_identity(before) != before_chain[-1]:
+            raise RuntimeError("requirements path changed before opening")
         if before.st_size > MAX_REQUIREMENTS_BYTES:
             raise RuntimeError(
                 f"requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
@@ -224,6 +298,13 @@ def _read_stable_requirements(path: Path) -> bytes:
         or after.st_ino != before.st_ino
     ):
         raise RuntimeError("requirements lock changed while reading")
+    if containment_root is not None:
+        after_chain = _path_identity_chain(containment_root, path)
+        if (
+            after_chain != before_chain
+            or _path_identity(after) != after_chain[-1]
+        ):
+            raise RuntimeError("requirements path changed while reading")
     return content
 
 
@@ -241,8 +322,16 @@ def _write_private_snapshot(path: Path, content: bytes) -> None:
             os.close(descriptor)
 
 
-def _require_unchanged(path: Path, expected: bytes, label: str) -> None:
-    current = _read_stable_requirements(path)
+def _require_unchanged(
+    path: Path,
+    expected: bytes,
+    label: str,
+    *,
+    containment_root: Path | None = None,
+) -> None:
+    current = _read_stable_requirements(
+        path, containment_root=containment_root
+    )
     if current != expected:
         before = hashlib.sha256(expected).hexdigest()
         after = hashlib.sha256(current).hexdigest()
@@ -326,7 +415,9 @@ def main(argv: list[str] | None = None) -> int:
     requirements_source = _requirements_source(
         project_root, args.requirements_lock
     )
-    requirements_content = _read_stable_requirements(requirements_source)
+    requirements_content = _read_stable_requirements(
+        requirements_source, containment_root=project_root
+    )
     requirements_digest = (
         "sha256:" + hashlib.sha256(requirements_content).hexdigest()
     )
@@ -373,9 +464,13 @@ def main(argv: list[str] | None = None) -> int:
             requirements_snapshot,
             requirements_content,
             "private requirements snapshot",
+            containment_root=temporary_root,
         )
         _require_unchanged(
-            requirements_source, requirements_content, "checkout requirements lock"
+            requirements_source,
+            requirements_content,
+            "checkout requirements lock",
+            containment_root=project_root,
         )
         output = _run(
             [
@@ -401,9 +496,13 @@ def main(argv: list[str] | None = None) -> int:
             requirements_snapshot,
             requirements_content,
             "private requirements snapshot",
+            containment_root=temporary_root,
         )
         _require_unchanged(
-            requirements_source, requirements_content, "checkout requirements lock"
+            requirements_source,
+            requirements_content,
+            "checkout requirements lock",
+            containment_root=project_root,
         )
         try:
             result = json.loads(output)

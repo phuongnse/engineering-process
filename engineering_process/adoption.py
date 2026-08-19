@@ -39,6 +39,8 @@ MAX_MANAGED_ADOPTION_TOTAL_BYTES = 16_000_000
 PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 PACKAGE_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]*$")
 HASH_PATTERN = re.compile(r"^--hash=sha256:[0-9a-f]{64}$")
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+PathIdentity = tuple[int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,71 @@ def _canonical_package_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
-def _read_bounded_regular_file(path: Path) -> bytes:
+def _is_link_or_reparse(value: os.stat_result) -> bool:
+    return stat.S_ISLNK(value.st_mode) or bool(
+        getattr(value, "st_file_attributes", 0)
+        & FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _path_identity(value: os.stat_result) -> PathIdentity:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_mtime_ns,
+    )
+
+
+def _path_identity_chain(
+    root: Path, path: Path
+) -> tuple[PathIdentity, ...]:
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise ContractError(f"{path}: requirements lock escaped {root}") from error
+    if not relative.parts:
+        raise ContractError(f"{path}: requirements lock must name a file")
+    try:
+        root_value = root.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{root}: cannot inspect requirements root: {error}"
+        ) from error
+    if _is_link_or_reparse(root_value) or not stat.S_ISDIR(root_value.st_mode):
+        raise ContractError(
+            f"{root}: requirements root must be a regular directory"
+        )
+    chain: list[PathIdentity] = [_path_identity(root_value)]
+    current = root
+    for index, part in enumerate(relative.parts):
+        current /= part
+        try:
+            value = current.lstat()
+        except OSError as error:
+            raise ContractError(
+                f"{current}: cannot inspect requirements path: {error}"
+            ) from error
+        if _is_link_or_reparse(value):
+            raise ContractError(
+                f"{current}: requirements path must not traverse a link or reparse point"
+            )
+        if index < len(relative.parts) - 1 and not stat.S_ISDIR(value.st_mode):
+            raise ContractError(
+                f"{current}: requirements path ancestor must be a directory"
+            )
+        chain.append(_path_identity(value))
+    return tuple(chain)
+
+
+def _read_bounded_regular_file(
+    path: Path, *, containment_root: Path | None = None
+) -> bytes:
+    before_chain = (
+        _path_identity_chain(containment_root, path)
+        if containment_root is not None
+        else None
+    )
     try:
         before = path.lstat()
     except OSError as error:
@@ -68,6 +134,10 @@ def _read_bounded_regular_file(path: Path) -> bytes:
         ) from error
     if not stat.S_ISREG(before.st_mode):
         raise ContractError(f"{path}: requirements lock must be a regular file")
+    if before_chain is not None and _path_identity(before) != before_chain[-1]:
+        raise ContractError(
+            f"{path}: requirements path changed before opening"
+        )
     if before.st_size > MAX_REQUIREMENTS_BYTES:
         raise ContractError(
             f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
@@ -110,6 +180,15 @@ def _read_bounded_regular_file(path: Path) -> bytes:
         or after.st_ino != before.st_ino
     ):
         raise ContractError(f"{path}: requirements lock changed while reading")
+    if containment_root is not None:
+        after_chain = _path_identity_chain(containment_root, path)
+        if (
+            after_chain != before_chain
+            or _path_identity(after) != after_chain[-1]
+        ):
+            raise ContractError(
+                f"{path}: requirements path changed while reading"
+            )
     return content
 
 
@@ -133,9 +212,13 @@ def _logical_lines(content: str, path: Path) -> tuple[str, ...]:
     return tuple(result)
 
 
-def validate_requirements_lock(path: Path) -> RequirementsLock:
+def validate_requirements_lock(
+    path: Path, *, containment_root: Path | None = None
+) -> RequirementsLock:
     resolved = Path(os.path.abspath(os.fspath(path)))
-    content = _read_bounded_regular_file(resolved)
+    content = _read_bounded_regular_file(
+        resolved, containment_root=containment_root
+    )
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -221,23 +304,36 @@ def _require_external_authority(project_root: Path, process_root: Path) -> None:
 
 def _checkout_requirements_path(project_root: Path, path: Path) -> Path:
     candidate = path if path.is_absolute() else project_root / path
-    if candidate.is_symlink():
+    try:
+        candidate_value = candidate.lstat()
+    except OSError as error:
         raise ContractError(
-            f"{candidate}: requirements lock must not be a symlink"
+            f"{candidate}: cannot inspect requirements lock: {error}"
+        ) from error
+    if _is_link_or_reparse(candidate_value):
+        raise ContractError(
+            f"{candidate}: requirements lock must not be a link or reparse point"
         )
     try:
-        candidate.resolve(strict=True).relative_to(project_root)
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(project_root)
     except (OSError, ValueError) as error:
         raise ContractError(
             "requirements source must be a regular file inside the consumer checkout"
         ) from error
-    return candidate
+    _path_identity_chain(project_root, resolved)
+    return resolved
 
 
 def _require_matching_requirements_source(
-    source: Path, expected_digest: str
+    source: Path,
+    expected_digest: str,
+    *,
+    containment_root: Path | None = None,
 ) -> None:
-    current = validate_requirements_lock(source)
+    current = validate_requirements_lock(
+        source, containment_root=containment_root
+    )
     if current.digest != expected_digest:
         raise ContractError(
             f"{source}: requirements source changed from {expected_digest} "
@@ -428,7 +524,9 @@ def check_adoption(
     requirement_path = _checkout_requirements_path(
         project_root, requirements_lock
     )
-    requirement = validate_requirements_lock(requirement_path)
+    requirement = validate_requirements_lock(
+        requirement_path, containment_root=project_root
+    )
     lock = load_lock(project_root)
     issues = synchronized_state(project_root, process_root, lock)
     return {
@@ -481,7 +579,12 @@ def apply_adoption(
             raise ContractError(
                 "requirements snapshot must be outside the consumer checkout"
             )
-    requirement = validate_requirements_lock(requirement_path)
+    requirement = validate_requirements_lock(
+        requirement_path,
+        containment_root=(
+            None if requirements_source is not None else project_root
+        ),
+    )
     if (
         expected_requirements_digest is not None
         and requirement.digest != expected_requirements_digest
@@ -489,7 +592,11 @@ def apply_adoption(
         raise ContractError(
             "requirements snapshot digest does not match the runner expectation"
         )
-    _require_matching_requirements_source(source_path, requirement.digest)
+    _require_matching_requirements_source(
+        source_path,
+        requirement.digest,
+        containment_root=project_root,
+    )
 
     lock_path = project_root / ".process" / "process.lock"
     if lock_path.is_symlink():
@@ -534,7 +641,9 @@ def apply_adoption(
                 requirement_path, requirement.digest
             )
             _require_matching_requirements_source(
-                source_path, requirement.digest
+                source_path,
+                requirement.digest,
+                containment_root=project_root,
             )
         except BaseException as error:
             rollback_issues = _restore_targets(snapshots)

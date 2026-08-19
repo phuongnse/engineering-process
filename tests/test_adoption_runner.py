@@ -3,11 +3,13 @@ import hashlib
 import importlib.util
 import json
 import os
+import stat
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -256,7 +258,7 @@ class AdoptionRunnerTests(unittest.TestCase):
 
             with (
                 mock.patch.object(runner, "_run") as run,
-                self.assertRaisesRegex(RuntimeError, "must not be a symlink"),
+                self.assertRaisesRegex(RuntimeError, "must not be a link"),
             ):
                 runner.main(
                     [
@@ -299,6 +301,81 @@ class AdoptionRunnerTests(unittest.TestCase):
                     ]
                 )
             self.assertEqual(2, calls)
+
+    def test_parent_link_retarget_cannot_change_canonical_source(self):
+        runner = load_runner()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside_directory,
+        ):
+            root = Path(directory).resolve()
+            inside = root / "inside"
+            outside = Path(outside_directory).resolve()
+            inside.mkdir()
+            (inside / "process.txt").write_bytes(b"authority A\n")
+            (outside / "process.txt").write_bytes(b"authority B\n")
+            alias = root / "requirements"
+            try:
+                alias.symlink_to(inside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlink unavailable: {error}")
+
+            accepted = runner._requirements_source(
+                root, alias / "process.txt"
+            )
+            self.assertEqual(inside / "process.txt", accepted)
+            alias.unlink()
+            alias.symlink_to(outside, target_is_directory=True)
+
+            self.assertEqual(
+                b"authority A\n",
+                runner._read_stable_requirements(
+                    accepted, containment_root=root
+                ),
+            )
+
+    def test_path_identity_rejects_windows_reparse_attributes(self):
+        runner = load_runner()
+        value = SimpleNamespace(
+            st_mode=stat.S_IFDIR,
+            st_file_attributes=runner.FILE_ATTRIBUTE_REPARSE_POINT,
+        )
+
+        self.assertTrue(runner._is_link_or_reparse(value))
+
+    def test_parent_swap_during_open_is_detected(self):
+        runner = load_runner()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside_directory,
+        ):
+            root = Path(directory).resolve()
+            inside = root / "inside"
+            saved = root / "saved"
+            outside = Path(outside_directory).resolve()
+            inside.mkdir()
+            (inside / "process.txt").write_bytes(b"authority A\n")
+            (outside / "process.txt").write_bytes(b"authority B\n")
+            source = inside / "process.txt"
+            real_open = runner.os.open
+
+            def swap_then_open(path, flags, *args):
+                inside.rename(saved)
+                try:
+                    inside.symlink_to(outside, target_is_directory=True)
+                except OSError as error:
+                    self.skipTest(f"directory symlink unavailable: {error}")
+                return real_open(path, flags, *args)
+
+            with (
+                mock.patch.object(runner.os, "open", side_effect=swap_then_open),
+                self.assertRaisesRegex(
+                    RuntimeError, "changed while opening|link or reparse"
+                ),
+            ):
+                runner._read_stable_requirements(
+                    source, containment_root=root
+                )
 
 
 if __name__ == "__main__":

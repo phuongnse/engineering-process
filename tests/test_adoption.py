@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,8 @@ from unittest import mock
 
 from engineering_process import VERSION
 from engineering_process.adoption import (
+    _checkout_requirements_path,
+    _read_bounded_regular_file,
     apply_adoption,
     check_adoption,
     validate_requirements_lock,
@@ -293,6 +296,78 @@ class AdoptionTests(unittest.TestCase):
                 )
 
             self.assertEqual(before, lock.read_bytes())
+
+    def test_checkout_path_binds_parent_link_to_canonical_target(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside_directory,
+        ):
+            root = Path(directory).resolve()
+            inside = root / "inside"
+            outside = Path(outside_directory).resolve()
+            inside.mkdir()
+            source = inside / "process.txt"
+            source.write_bytes(
+                (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
+            )
+            (outside / "process.txt").write_text(
+                "outside\n", encoding="utf-8"
+            )
+            alias = root / "requirements"
+            try:
+                alias.symlink_to(inside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlink unavailable: {error}")
+
+            accepted = _checkout_requirements_path(
+                root, alias / "process.txt"
+            )
+            self.assertEqual(source, accepted)
+            alias.unlink()
+            alias.symlink_to(outside, target_is_directory=True)
+
+            self.assertEqual(
+                validate_requirements_lock(
+                    source, containment_root=root
+                ).digest,
+                validate_requirements_lock(
+                    accepted, containment_root=root
+                ).digest,
+            )
+
+    def test_parent_swap_during_installed_authority_read_is_detected(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside_directory,
+        ):
+            root = Path(directory).resolve()
+            inside = root / "inside"
+            saved = root / "saved"
+            outside = Path(outside_directory).resolve()
+            inside.mkdir()
+            (inside / "process.txt").write_bytes(b"authority A\n")
+            (outside / "process.txt").write_bytes(b"authority B\n")
+            source = inside / "process.txt"
+            real_open = os.open
+
+            def swap_then_open(path, flags, *args):
+                inside.rename(saved)
+                try:
+                    inside.symlink_to(outside, target_is_directory=True)
+                except OSError as error:
+                    self.skipTest(f"directory symlink unavailable: {error}")
+                return real_open(path, flags, *args)
+
+            with (
+                mock.patch(
+                    "engineering_process.adoption.os.open",
+                    side_effect=swap_then_open,
+                ),
+                self.assertRaisesRegex(
+                    ContractError, "changed while opening|link or reparse"
+                ),
+            ):
+                _read_bounded_regular_file(source, containment_root=root)
 
     def test_apply_rejects_checkout_as_its_own_adoption_authority(self):
         with self.assertRaisesRegex(ContractError, "installed outside"):
