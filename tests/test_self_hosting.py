@@ -15,6 +15,26 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_release_assets_are_prepared_before_immutable_publication(self):
+        prepare = (
+            PROCESS_ROOT / ".github" / "workflows" / "prepare-release.yml"
+        ).read_text(encoding="utf-8")
+        publish = (
+            PROCESS_ROOT / ".github" / "workflows" / "publish.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", prepare)
+        self.assertIn("isDraft", prepare)
+        self.assertIn("gh release upload", prepare)
+        self.assertIn("expected-release-assets.txt", prepare)
+        self.assertIn("release:\n    types: [published]", publish)
+        self.assertNotIn("gh release upload", publish)
+        self.assertGreaterEqual(publish.count("gh release verify"), 2)
+        self.assertGreaterEqual(publish.count("gh release verify-asset"), 2)
+        self.assertGreaterEqual(publish.count("attestations: read"), 2)
+        self.assertIn(
+            "Revalidate immutable release immediately before publication", publish
+        )
+
     def test_producer_environment_binds_the_exact_build_backend(self):
         project = json.loads(
             (PROCESS_ROOT / ".process" / "project.json").read_text(encoding="utf-8")

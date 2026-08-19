@@ -18,6 +18,8 @@ MAX_ATTESTATION_BYTES = 256_000
 MAX_ARTIFACT_BYTES = 128_000_000
 MAX_ARTIFACT_TOTAL_BYTES = 256_000_000
 ARTIFACT_HASH_TIMEOUT_SECONDS = 30.0
+MAX_ARTIFACT_NAME_BYTES = 4_096
+ARTIFACT_ENUMERATION_TIMEOUT_SECONDS = 5.0
 
 
 def attestation_asset_name(release: Release) -> str:
@@ -110,7 +112,9 @@ def _checkpoint(project_root: Path) -> str:
         checkpoint = result.stdout.decode("ascii").strip()
     except UnicodeDecodeError as error:
         raise ContractError("artifact attestation checkpoint must be ASCII") from error
-    if len(checkpoint) != 40 or any(character not in "0123456789abcdef" for character in checkpoint):
+    if len(checkpoint) not in {40, 64} or any(
+        character not in "0123456789abcdef" for character in checkpoint
+    ):
         raise ContractError("artifact attestation checkpoint is not a full object id")
     return checkpoint
 
@@ -154,11 +158,45 @@ def _receipt_identity(
 def _artifact_entries(artifact_root: Path, release: Release) -> list[dict[str, Any]]:
     if not artifact_root.is_dir() or artifact_root.is_symlink():
         raise ContractError("artifact attestation input must be a non-symlink directory")
+    expected = list(release.artifacts)
+    actual: list[str] = []
+    name_bytes = 0
+    deadline = time.monotonic() + ARTIFACT_ENUMERATION_TIMEOUT_SECONDS
     try:
-        actual = sorted(item.name for item in artifact_root.iterdir())
+        with os.scandir(artifact_root) as iterator:
+            for item in iterator:
+                if time.monotonic() >= deadline:
+                    raise ContractError(
+                        "artifact attestation enumeration exceeded "
+                        f"{ARTIFACT_ENUMERATION_TIMEOUT_SECONDS:g} seconds"
+                    )
+                if len(actual) >= len(expected):
+                    raise ContractError(
+                        "artifact attestation input exceeds the declared artifact count"
+                    )
+                try:
+                    encoded_name = item.name.encode("utf-8")
+                except UnicodeEncodeError as error:
+                    raise ContractError(
+                        "artifact attestation names must use UTF-8"
+                    ) from error
+                name_bytes += len(encoded_name)
+                if name_bytes > MAX_ARTIFACT_NAME_BYTES:
+                    raise ContractError(
+                        "artifact attestation names exceed "
+                        f"{MAX_ARTIFACT_NAME_BYTES} bytes"
+                    )
+                item_stat = item.stat(follow_symlinks=False)
+                if stat.S_ISLNK(item_stat.st_mode) or not stat.S_ISREG(
+                    item_stat.st_mode
+                ):
+                    raise ContractError(
+                        "artifact attestation inputs must be regular non-symlink files"
+                    )
+                actual.append(item.name)
     except OSError as error:
         raise ContractError(f"cannot enumerate distribution artifacts: {error}") from error
-    expected = list(release.artifacts)
+    actual.sort()
     if actual != expected:
         raise ContractError(
             "artifact attestation inputs do not match release identity: "
@@ -222,6 +260,7 @@ def create_distribution_attestation(
     output_path: Path,
     *,
     receipt_path: Path | None,
+    checkpoint: str | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve(strict=True)
     artifact_root = artifact_root.resolve(strict=True)
@@ -232,11 +271,16 @@ def create_distribution_attestation(
         raise ContractError(
             f"artifact attestation output must be named {attestation_asset_name(release)}"
         )
+    checkpoint = checkpoint or _checkpoint(project_root)
+    if len(checkpoint) not in {40, 64} or any(
+        character not in "0123456789abcdef" for character in checkpoint
+    ):
+        raise ContractError("artifact attestation checkpoint is not a full object id")
     document = _expected_attestation(
         project_root,
         artifact_root,
         receipt_path,
-        checkpoint=_checkpoint(project_root),
+        checkpoint=checkpoint,
     )
     data = json.dumps(
         document, ensure_ascii=False, indent=2, sort_keys=True

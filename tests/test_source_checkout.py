@@ -133,6 +133,42 @@ class SourceCheckoutTests(unittest.TestCase):
                     with self.assertRaisesRegex(ContractError, "hidden index flag"):
                         _copy_tracked_snapshot(root, Path(snapshot_directory))
 
+    def test_snapshot_materializes_head_objects_not_live_worktree_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._initialize_repository(root)
+            (root / "tracked.txt").write_text(
+                "transient unreviewed bytes\n", encoding="utf-8"
+            )
+            with tempfile.TemporaryDirectory() as snapshot_directory:
+                snapshot = Path(snapshot_directory)
+                _copy_tracked_snapshot(root, snapshot)
+                self.assertEqual(
+                    "checkpoint\n",
+                    (snapshot / "tracked.txt").read_text(encoding="utf-8"),
+                )
+
+    def test_snapshot_can_pin_the_checkpoint_across_a_ref_move(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._initialize_repository(root)
+            checkpoint = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            (root / "tracked.txt").write_text("later commit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "later"], cwd=root, check=True
+            )
+
+            with tempfile.TemporaryDirectory() as snapshot_directory:
+                snapshot = Path(snapshot_directory)
+                _copy_tracked_snapshot(root, snapshot, checkpoint=checkpoint)
+                self.assertEqual(
+                    "checkpoint\n",
+                    (snapshot / "tracked.txt").read_text(encoding="utf-8"),
+                )
+
     def bounded_bytes(self, path: Path, *, limit: int) -> bytes:
         self.assertLessEqual(path.stat().st_size, limit)
         with path.open("rb") as stream:

@@ -49,6 +49,43 @@ class DistributionVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "forbidden generated or managed"):
             _validate_archive_members(wheel, [".process/runs/change/state.json"])
 
+    def test_archive_contract_rejects_windows_hostile_member_names(self):
+        required = [
+            "PRODUCTION_STANDARD.md",
+            "engineering_process/requirements-release.txt",
+            "release.json",
+            "schemas/change.schema.json",
+            "schemas/evidence-receipt.schema.json",
+            "schemas/release.schema.json",
+        ]
+        cases = (
+            (
+                Path("engineering_process-0.1.1-py3-none-any.whl"),
+                required,
+                "CON.txt",
+            ),
+            (
+                Path("engineering_process-0.1.1-py3-none-any.whl"),
+                required,
+                "package/trailing.",
+            ),
+            (
+                Path("engineering_process-0.1.1.tar.gz"),
+                [f"engineering_process-0.1.1/{name}" for name in required],
+                "engineering_process-0.1.1/CON.txt",
+            ),
+            (
+                Path("engineering_process-0.1.1.tar.gz"),
+                [f"engineering_process-0.1.1/{name}" for name in required],
+                "engineering_process-0.1.1/package/trailing.",
+            ),
+        )
+        for archive, members, hostile in cases:
+            with self.subTest(archive=archive, hostile=hostile), self.assertRaisesRegex(
+                ContractError, "forbidden generated or managed"
+            ):
+                _validate_archive_members(archive, [*members, hostile])
+
     def test_wheel_expansion_and_duplicate_names_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "engineering_process-0.1.1-py3-none-any.whl"

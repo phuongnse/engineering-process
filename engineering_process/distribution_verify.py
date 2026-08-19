@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from .artifact_attestation import create_distribution_attestation
 from .contracts import ContractError, read_json, validate_release
 from .environment import execute_command
-from .git import tracked_index_paths, run_git
+from .git import portable_git_path, remaining_seconds, tracked_index_paths, run_git
 
 
 MAX_TRACKED_FILES = 5_000
@@ -37,80 +37,160 @@ REQUIRED_SUFFIXES = {
 }
 
 
-def _tracked_paths(project_root: Path) -> list[PurePosixPath]:
-    encoded_paths = tracked_index_paths(
+def _tracked_entries(
+    project_root: Path, *, checkpoint: str | None, deadline: float
+) -> list[tuple[PurePosixPath, str, int, int]]:
+    indexed_paths = tracked_index_paths(
         project_root,
         label="distribution snapshot tracked paths",
-        timeout_seconds=30,
+        timeout_seconds=remaining_seconds(
+            deadline, label="distribution snapshot tracked paths"
+        ),
         max_stdout_bytes=MAX_TRACKED_LIST_BYTES,
         max_paths=MAX_TRACKED_FILES,
     )
-    return [PurePosixPath(encoded.decode("utf-8")) for encoded in encoded_paths]
-
-
-def _copy_tracked_snapshot(
-    project_root: Path, destination: Path
-) -> list[PurePosixPath]:
+    checkpoint = checkpoint or _head_checkpoint(project_root)
+    result = run_git(
+        project_root,
+        ["ls-tree", "-r", "-z", "--long", checkpoint, "--"],
+        label="distribution snapshot HEAD tree",
+        timeout_seconds=remaining_seconds(
+            deadline, label="distribution snapshot HEAD tree"
+        ),
+        max_stdout_bytes=MAX_TRACKED_LIST_BYTES,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ContractError(
+            "distribution snapshot HEAD tree failed"
+            + (f": {detail}" if detail else "")
+        )
+    records = [record for record in result.stdout.split(b"\0") if record]
+    if len(records) > MAX_TRACKED_FILES:
+        raise ContractError(
+            f"distribution snapshot exceeds {MAX_TRACKED_FILES} tracked files"
+        )
+    entries: list[tuple[PurePosixPath, str, int, int]] = []
+    tree_paths: list[bytes] = []
     total = 0
-    deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
-    resolved_root = project_root.resolve(strict=True)
-    paths = _tracked_paths(project_root)
-    for relative in paths:
-        if time.monotonic() >= deadline:
-            raise ContractError("tracked distribution snapshot exceeded 30 seconds")
-        source = project_root.joinpath(*relative.parts)
-        target = destination.joinpath(*relative.parts)
+    for record in records:
+        metadata, separator, encoded_path = record.partition(b"\t")
+        fields = metadata.split()
+        if separator != b"\t" or len(fields) != 4:
+            raise ContractError("distribution snapshot HEAD tree record is invalid")
+        encoded_mode, object_type, encoded_oid, encoded_size = fields
+        path = portable_git_path(
+            encoded_path, label="distribution snapshot HEAD tree"
+        )
+        if encoded_mode not in {b"100644", b"100755"} or object_type != b"blob":
+            raise ContractError(
+                f"tracked distribution input must be a regular file: {path}"
+            )
         try:
-            source_stat = source.lstat()
-            source.resolve(strict=True).relative_to(resolved_root)
-        except (OSError, ValueError) as error:
-            raise ContractError(f"cannot inspect tracked file {relative}: {error}") from error
-        if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISREG(source_stat.st_mode):
+            oid = encoded_oid.decode("ascii")
+            size = int(encoded_size.decode("ascii"))
+            mode = int(encoded_mode, 8)
+        except (UnicodeDecodeError, ValueError) as error:
             raise ContractError(
-                f"tracked distribution input must be a regular file: {relative}"
-            )
-        if source_stat.st_size > MAX_TRACKED_FILE_BYTES:
+                f"distribution snapshot HEAD tree metadata is invalid: {path}"
+            ) from error
+        if len(oid) not in {40, 64} or any(
+            character not in "0123456789abcdef" for character in oid
+        ):
             raise ContractError(
-                f"tracked distribution file exceeds {MAX_TRACKED_FILE_BYTES} bytes: {relative}"
+                f"distribution snapshot HEAD tree object id is invalid: {path}"
             )
-        total += source_stat.st_size
+        if size < 0 or size > MAX_TRACKED_FILE_BYTES:
+            raise ContractError(
+                f"tracked distribution file exceeds {MAX_TRACKED_FILE_BYTES} bytes: {path}"
+            )
+        total += size
         if total > MAX_TRACKED_TOTAL_BYTES:
             raise ContractError(
                 f"tracked distribution snapshot exceeds {MAX_TRACKED_TOTAL_BYTES} bytes"
             )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        try:
-            with source.open("rb") as input_stream, target.open("xb") as output_stream:
-                while chunk := input_stream.read(1024 * 1024):
-                    if time.monotonic() >= deadline:
-                        raise ContractError(
-                            "tracked distribution snapshot exceeded 30 seconds"
-                        )
-                    copied += len(chunk)
-                    if copied > source_stat.st_size:
-                        raise ContractError(
-                            f"tracked distribution file changed while copying: {relative}"
-                        )
-                    output_stream.write(chunk)
-            after = source.lstat()
-        except OSError as error:
-            raise ContractError(f"cannot copy tracked file {relative}: {error}") from error
-        if (
-            copied != source_stat.st_size
-            or after.st_size != source_stat.st_size
-            or after.st_mtime_ns != source_stat.st_mtime_ns
-            or after.st_mode != source_stat.st_mode
-        ):
+        tree_paths.append(encoded_path)
+        entries.append((PurePosixPath(path), oid, size, mode))
+    if sorted(indexed_paths) != sorted(tree_paths):
+        raise ContractError(
+            "distribution snapshot index does not match the verified HEAD tree"
+        )
+    return entries
+
+
+def _head_checkpoint(project_root: Path) -> str:
+    result = run_git(
+        project_root,
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        label="distribution snapshot checkpoint",
+        timeout_seconds=30,
+        max_stdout_bytes=128,
+    )
+    if result.returncode != 0:
+        raise ContractError("distribution snapshot requires a Git HEAD checkpoint")
+    try:
+        checkpoint = result.stdout.decode("ascii").strip()
+    except UnicodeDecodeError as error:
+        raise ContractError("distribution snapshot checkpoint must be ASCII") from error
+    if len(checkpoint) not in {40, 64} or any(
+        character not in "0123456789abcdef" for character in checkpoint
+    ):
+        raise ContractError("distribution snapshot checkpoint is not a full object id")
+    return checkpoint
+
+
+def _tracked_paths(project_root: Path) -> list[PurePosixPath]:
+    deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
+    return [
+        path
+        for path, _oid, _size, _mode in _tracked_entries(
+            project_root, checkpoint=None, deadline=deadline
+        )
+    ]
+
+
+def _copy_tracked_snapshot(
+    project_root: Path, destination: Path, *, checkpoint: str | None = None
+) -> list[PurePosixPath]:
+    deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
+    entries = _tracked_entries(
+        project_root, checkpoint=checkpoint, deadline=deadline
+    )
+    for relative, oid, size, mode in entries:
+        target = destination.joinpath(*relative.parts)
+        blob = run_git(
+            project_root,
+            ["cat-file", "blob", oid],
+            label=f"distribution snapshot HEAD blob {relative}",
+            timeout_seconds=remaining_seconds(
+                deadline, label=f"distribution snapshot HEAD blob {relative}"
+            ),
+            max_stdout_bytes=MAX_TRACKED_FILE_BYTES,
+        )
+        if blob.returncode != 0 or len(blob.stdout) != size:
             raise ContractError(
-                f"tracked distribution file changed while copying: {relative}"
+                f"cannot materialize tracked HEAD blob with declared size: {relative}"
             )
-        target.chmod(stat.S_IMODE(source_stat.st_mode))
-    return paths
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with target.open("xb") as output_stream:
+                output_stream.write(blob.stdout)
+        except OSError as error:
+            raise ContractError(
+                f"cannot materialize tracked HEAD blob {relative}: {error}"
+            ) from error
+        target.chmod(stat.S_IMODE(mode))
+    return [path for path, _oid, _size, _mode in entries]
 
 
 def _forbidden_archive_path(name: str, *, allow_sdist_metadata: bool) -> bool:
     canonical = name[:-1] if name.endswith("/") else name
+    try:
+        portable_git_path(
+            canonical.encode("utf-8"), label="distribution archive member"
+        )
+    except (ContractError, UnicodeEncodeError):
+        return True
     candidate = PurePosixPath(canonical)
     parts = candidate.parts
     egg_info_indexes = [
@@ -322,6 +402,7 @@ def verify_distribution(
             raise ContractError(f"{resolved_output}: refusing to replace existing output")
     if attestation_path is not None and resolved_output is None:
         raise ContractError("artifact attestation requires preserved distribution output")
+    checkpoint = _head_checkpoint(project_root)
     generated_before = _checkout_generated_state(project_root)
     if generated_before:
         raise ContractError(
@@ -337,11 +418,7 @@ def verify_distribution(
     )
     if checkout.returncode != 0 or checkout.stdout:
         raise ContractError("distribution verification requires a clean checkout")
-    release = validate_release(
-        read_json(project_root / "release.json"), str(project_root / "release.json")
-    )
-    if not release.artifacts:
-        raise ContractError("release schemaVersion 2 identity is required for distribution verification")
+    attestation = None
     try:
         with tempfile.TemporaryDirectory(prefix="engineering-process-build-") as directory:
             temporary = Path(directory)
@@ -349,7 +426,17 @@ def verify_distribution(
             artifacts = temporary / "artifacts"
             snapshot.mkdir()
             artifacts.mkdir()
-            _copy_tracked_snapshot(project_root, snapshot)
+            _copy_tracked_snapshot(
+                project_root, snapshot, checkpoint=checkpoint
+            )
+            release = validate_release(
+                read_json(snapshot / "release.json"), str(snapshot / "release.json")
+            )
+            if not release.artifacts:
+                raise ContractError(
+                    "release schemaVersion 2 identity is required for "
+                    "distribution verification"
+                )
             result = execute_command(
                 project_root,
                 identifier="isolated-distribution-build",
@@ -383,6 +470,15 @@ def verify_distribution(
                     raise ContractError(
                         f"cannot preserve verified distributions: {error}"
                     ) from error
+            if attestation_path is not None:
+                assert resolved_output is not None
+                attestation = create_distribution_attestation(
+                    snapshot,
+                    resolved_output,
+                    attestation_path,
+                    receipt_path=receipt_path,
+                    checkpoint=checkpoint,
+                )
     finally:
         generated_after = _checkout_generated_state(project_root)
         if generated_after != generated_before:
@@ -390,15 +486,14 @@ def verify_distribution(
                 "distribution verification changed checkout build state: "
                 f"before {generated_before}, after {generated_after}"
             )
-    attestation = None
-    if attestation_path is not None:
-        assert resolved_output is not None
-        attestation = create_distribution_attestation(
-            project_root,
-            resolved_output,
-            attestation_path,
-            receipt_path=receipt_path,
-        )
+    if _head_checkpoint(project_root) != checkpoint:
+        raise ContractError("distribution snapshot checkpoint changed during verification")
+    return {
+        "artifacts": list(release.artifacts),
+        "attestation": attestation,
+        "checkoutGeneratedState": [],
+        "output": str(resolved_output) if resolved_output is not None else None,
+    }
     return {
         "artifacts": list(release.artifacts),
         "attestation": attestation,

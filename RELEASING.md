@@ -81,17 +81,20 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 2. Update the ordered `release.json.changes`; let their types determine the exact
    SemVer classification. Set the same version in `release.json`, `pyproject.toml`,
    and `engineering_process.VERSION`, and declare canonical artifact/receipt names.
-3. Create a draft GitHub release whose tag and title are both exactly
+3. Create a draft GitHub release whose existing tag and title are both exactly
    `v<package-version>` and whose target is the verified `main` commit. Attach the
-   receipt using the exact `release.json.identity.receiptAsset` name, then publish the
-   immutable release.
-4. Observe the `Publish` workflow. It validates the release contract, exact increment,
-   latest prior tag, title/tag/checkpoint/package/runtime/artifact identity, receipt
-   authority, and `main` ancestry; installs the complete Ubuntu/Python 3.14 release
-   graph from `requirements-release.txt` with artifact hashes; builds without
-   dependency isolation in an isolated tracked snapshot; installs the exact inspected
-   wheel; reruns the portable validation suite; and publishes
-   both inspected artifacts with PyPI attestations.
+   receipt using the exact `release.json.identity.receiptAsset` name. Run the
+   `Prepare Release` workflow for that tag; it validates the draft and N-1 receipt,
+   builds from the verified HEAD object graph, attaches the inspected wheel, sdist,
+   and digest attestation to the still-editable draft, and fails if any asset exists
+   unexpectedly. Only after that workflow passes, publish the immutable release.
+4. Observe the `Publish` workflow. It never mutates the published release. Its no-OIDC
+   build job downloads the immutable assets, verifies GitHub's release attestation
+   and each local asset against it, then checks release identity, N-1 receipt,
+   artifact digests, installed wheel, and the portable
+   validation suite. The separately gated PyPI job downloads and validates those same
+   immutable assets again immediately before publishing both distributions with PyPI
+   attestations.
 5. Confirm the version and artifact hashes on PyPI before updating consumer locks.
 
 Never upload a locally built distribution or enable `skip-existing`. A failed release

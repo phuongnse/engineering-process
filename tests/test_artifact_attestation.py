@@ -7,13 +7,51 @@ from pathlib import Path
 from unittest.mock import patch
 
 from engineering_process.artifact_attestation import (
+    _artifact_entries,
     create_distribution_attestation,
     validate_distribution_attestation,
 )
-from engineering_process.contracts import ContractError
+from engineering_process.contracts import ContractError, Release
 
 
 class ArtifactAttestationTests(unittest.TestCase):
+    def test_artifact_enumeration_is_count_name_and_time_bounded(self):
+        release = Release(
+            previous_version="0.1.0",
+            version="0.1.1",
+            classification="patch",
+            compatibility="backward-compatible",
+            schema_impact="unchanged",
+            migration=None,
+            artifacts=("one.whl", "two.tar.gz"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "one.whl").write_bytes(b"one")
+            (root / "two.tar.gz").write_bytes(b"two")
+            self.assertEqual(2, len(_artifact_entries(root, release)))
+
+            (root / "extra.bin").write_bytes(b"extra")
+            with self.assertRaisesRegex(ContractError, "declared artifact count"):
+                _artifact_entries(root, release)
+            (root / "extra.bin").unlink()
+            with (
+                patch(
+                    "engineering_process.artifact_attestation.ARTIFACT_ENUMERATION_TIMEOUT_SECONDS",
+                    0,
+                ),
+                self.assertRaisesRegex(ContractError, "enumeration exceeded 0 seconds"),
+            ):
+                _artifact_entries(root, release)
+            with (
+                patch(
+                    "engineering_process.artifact_attestation.MAX_ARTIFACT_NAME_BYTES",
+                    1,
+                ),
+                self.assertRaisesRegex(ContractError, "names exceed 1 bytes"),
+            ):
+                _artifact_entries(root, release)
+
     def test_attestation_binds_artifact_bytes_release_checkpoint_and_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
