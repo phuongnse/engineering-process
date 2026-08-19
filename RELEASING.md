@@ -87,8 +87,10 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
    immutable release.
 4. Observe the `Publish` workflow. It validates the release contract, exact increment,
    latest prior tag, title/tag/checkpoint/package/runtime/artifact identity, receipt
-   authority, and `main` ancestry; builds in an isolated tracked snapshot; installs
-   the exact inspected wheel; reruns the portable validation suite; and publishes
+   authority, and `main` ancestry; installs the complete Ubuntu/Python 3.14 release
+   graph from `requirements-release.txt` with artifact hashes; builds without
+   dependency isolation in an isolated tracked snapshot; installs the exact inspected
+   wheel; reruns the portable validation suite; and publishes
    both inspected artifacts with PyPI attestations.
 5. Confirm the version and artifact hashes on PyPI before updating consumer locks.
 
@@ -96,9 +98,9 @@ Never upload a locally built distribution or enable `skip-existing`. A failed re
 is diagnosed and republished as a new version; PyPI artifacts are not replaced.
 
 Release `0.1.1` is explicitly recorded as `bootstrap-history`: its actual immutable
-title is retained and it makes no current-lifecycle claim. Because that public N-1
-predates `processctl evidence validate`, the first governed receipt uses the one-time
-0.1.1 bootstrap path: current code verifies the aggregate/cross-links while the
-pinned public authority remains the recorded lifecycle executor. From the next
-release onward, the exact pinned N-1 binary must validate the receipt directly; the
-workflow fails closed for any other authority without that command.
+title is retained and it makes no current-lifecycle claim. It predates
+`processctl evidence validate`, so it cannot authorize a governed publication that
+depends on a lifecycle receipt. There is no fallback to code from the release under
+review. Before the first governed release, a separately scoped bootstrap-authority
+release must make the receipt validator public and the producer lock must pin that
+artifact and its hashes. Until then, publication intentionally fails closed.

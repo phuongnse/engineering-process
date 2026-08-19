@@ -63,6 +63,20 @@ class SelfHostingTests(unittest.TestCase):
         self.assertEqual(VERSION, pyproject["project"]["version"])
         self.assertEqual(VERSION, release["version"])
 
+    def test_publish_fails_closed_at_the_n_minus_one_and_hash_boundaries(self):
+        workflow = (
+            PROCESS_ROOT / ".github" / "workflows" / "publish.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'process-authority/bin/processctl" evidence validate', workflow
+        )
+        self.assertNotIn("bootstrap validator", workflow)
+        self.assertNotIn("authority_version=", workflow)
+        self.assertIn("pip install --require-hashes", workflow)
+        self.assertIn("engineering_process/requirements-release.txt", workflow)
+        self.assertIn("--no-deps", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

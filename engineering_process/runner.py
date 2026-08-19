@@ -56,6 +56,39 @@ def _git(
 
 def _source_state(root: Path) -> dict[str, Any]:
     deadline = time.monotonic() + SOURCE_STATE_TIMEOUT_SECONDS
+    sourceless_bytecode = _git(
+        root,
+        [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            "*.pyc",
+            "*.pyo",
+            ":(glob,exclude)**/__pycache__/**",
+        ],
+        label="ignored sourceless Python bytecode",
+        deadline=deadline,
+        max_stdout_bytes=MAX_SOURCE_STATUS_BYTES,
+    )
+    if sourceless_bytecode.returncode != 0:
+        return {"checkpoint": None, "dirty": None, "fingerprint": None}
+    ignored_bytecode_paths = sorted(
+        path for path in sourceless_bytecode.stdout.split(b"\0") if path
+    )
+    if len(ignored_bytecode_paths) > MAX_SOURCE_PATHS:
+        raise ContractError(
+            "workspace ignored sourceless bytecode path count exceeds "
+            f"{MAX_SOURCE_PATHS}"
+        )
+    if ignored_bytecode_paths:
+        first = os.fsdecode(ignored_bytecode_paths[0])
+        raise ContractError(
+            "ignored sourceless Python bytecode can shadow checkpoint source; "
+            f"remove it before verification: {first}"
+        )
     status_result = _git(
         root,
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -209,9 +242,12 @@ def _run_check(
         tempfile.mkdtemp(prefix=f"{check.identifier}-", dir=impact_root)
     )
     impact_file = directory / "impact.json"
+    pycache_root = directory / "pycache"
     expected_digest = hashlib.sha256(impact_bytes).hexdigest()
     integrity = "verified"
     try:
+        pycache_root.mkdir()
+        pycache_root.chmod(stat.S_IRWXU)
         impact_file.write_bytes(impact_bytes)
         impact_file.chmod(stat.S_IRUSR)
         directory.chmod(stat.S_IRUSR | stat.S_IXUSR)
@@ -223,7 +259,13 @@ def _run_check(
             working_directory=check.working_directory,
             path_entries=path_entries,
             command_bindings=command_bindings,
-            environment_overrides={IMPACT_FILE_ENV: str(impact_file)},
+            environment_overrides={
+                IMPACT_FILE_ENV: str(impact_file),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPYCACHEPREFIX": str(pycache_root),
+                "PYTHONHOME": None,
+                "PYTHONPATH": None,
+            },
             stream_output=True,
         )
         try:

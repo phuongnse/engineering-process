@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from engineering_process.contracts import (
     ProjectImpact,
 )
 from engineering_process.evidence import (
+    _canonical_digest,
     export_receipt,
     prune_completed_run,
     validate_receipt,
@@ -129,7 +131,7 @@ class LifecycleTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "changeId": "change-1",
                     "contractDigest": digest,
                     "approach": "Use the existing owner",
@@ -369,10 +371,44 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(exported, validate_receipt(receipt_path))
             tampered_path = inputs / "tampered-receipt.json"
             tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
-            tampered["artifacts"]["contract"]["document"]["summary"] = "tampered"
+            contract_entry = tampered["artifacts"]["contract"]
+            contract_entry["sourceText"] = contract_entry["sourceText"].replace(
+                "Change tracked behavior", "tampered"
+            )
             tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
-            with self.assertRaisesRegex(ContractError, "canonicalDigest"):
+            with self.assertRaisesRegex(ContractError, "canonicalDigest|sourceDigest"):
                 validate_receipt(tampered_path)
+            incomplete_path = inputs / "incomplete-verification-receipt.json"
+            incomplete = json.loads(receipt_path.read_text(encoding="utf-8"))
+            entry = incomplete["artifacts"]["verification"][0]
+            report = json.loads(entry["sourceText"])
+            incomplete_report = {
+                name: report[name]
+                for name in ("profile", "status", "checkpoint", "workspaceFingerprint")
+            }
+            entry["sourceText"] = json.dumps(incomplete_report)
+            entry["sourceDigest"] = (
+                "sha256:"
+                + hashlib.sha256(entry["sourceText"].encode("utf-8")).hexdigest()
+            )
+            entry["canonicalDigest"] = _canonical_digest(incomplete_report)
+            incomplete_path.write_text(json.dumps(incomplete), encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "schemaVersion"):
+                validate_receipt(incomplete_path)
+            semantic_path = inputs / "semantic-tamper-receipt.json"
+            semantic = json.loads(receipt_path.read_text(encoding="utf-8"))
+            entry = semantic["artifacts"]["verification"][0]
+            report = json.loads(entry["sourceText"])
+            report["checks"][0]["command"].append("tampered")
+            entry["sourceText"] = json.dumps(report)
+            entry["sourceDigest"] = (
+                "sha256:"
+                + hashlib.sha256(entry["sourceText"].encode("utf-8")).hexdigest()
+            )
+            entry["canonicalDigest"] = _canonical_digest(report)
+            semantic_path.write_text(json.dumps(semantic), encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "does not match command"):
+                validate_receipt(semantic_path)
             preview = prune_completed_run(
                 root, "change-1", receipt_path, apply=False
             )

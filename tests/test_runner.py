@@ -2,6 +2,8 @@ import sys
 import subprocess
 import tempfile
 import unittest
+import os
+import py_compile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -197,6 +199,95 @@ class RunnerTests(unittest.TestCase):
                 report["workspaceFingerprint"],
                 report["completedWorkspaceFingerprint"],
             )
+
+    def test_ignored_python_bytecode_cannot_override_the_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_repository(root)
+            source = root / "victim.py"
+            source.write_text("VALUE = 'safe'\n", encoding="utf-8")
+            (root / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "victim.py", ".gitignore"], cwd=root, check=True
+            )
+            subprocess.run(["git", "commit", "-qm", "add module"], cwd=root, check=True)
+
+            source.write_text("VALUE = 'evil'\n", encoding="utf-8")
+            fixed_mtime = 1_700_000_000
+            os.utime(source, (fixed_mtime, fixed_mtime))
+            py_compile.compile(str(source), doraise=True)
+            source.write_text("VALUE = 'safe'\n", encoding="utf-8")
+            os.utime(source, (fixed_mtime, fixed_mtime))
+            self.assertFalse(
+                subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                ).stdout
+            )
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            "attested-source",
+                            (
+                                sys.executable,
+                                "-c",
+                                "import victim; assert victim.VALUE == 'safe'",
+                            ),
+                            10,
+                            ".",
+                        ),
+                    )
+                },
+            )
+
+            report = run_profile(root, project, "development")
+
+            self.assertEqual("passed", report["status"])
+            self.assertFalse(report["workingTreeDirty"])
+
+    def test_ignored_sourceless_bytecode_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_repository(root)
+            (root / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", ".gitignore"], cwd=root, check=True
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "ignore bytecode"], cwd=root, check=True
+            )
+            source = root / "unreviewed.py"
+            source.write_text("VALUE = 'evil'\n", encoding="utf-8")
+            py_compile.compile(
+                str(source), cfile=str(root / "unreviewed.pyc"), doraise=True
+            )
+            source.unlink()
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            "attested-source",
+                            (
+                                sys.executable,
+                                "-c",
+                                "import unreviewed; assert unreviewed.VALUE == 'evil'",
+                            ),
+                            10,
+                            ".",
+                        ),
+                    )
+                },
+            )
+
+            with self.assertRaisesRegex(
+                ContractError, "ignored sourceless Python bytecode"
+            ):
+                run_profile(root, project, "development")
 
     def test_each_check_receives_fresh_impact_bytes_and_tampering_fails(self):
         with tempfile.TemporaryDirectory() as directory:

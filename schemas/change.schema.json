@@ -42,7 +42,6 @@
     "affectedProjects": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 64,
       "uniqueItems": true,
       "items": {
         "type": "string",
@@ -52,7 +51,6 @@
     "acceptanceCriteria": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -70,7 +68,6 @@
     "requiredProfiles": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 64,
       "uniqueItems": true,
       "items": {
         "type": "string",
@@ -159,7 +156,14 @@
     },
     {
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
-      "then": {"required": ["quality"]}
+      "then": {
+        "required": ["quality"],
+        "properties": {
+          "affectedProjects": {"maxItems": 64},
+          "acceptanceCriteria": {"maxItems": 256},
+          "requiredProfiles": {"maxItems": 64}
+        }
+      }
     }
   ]
 }

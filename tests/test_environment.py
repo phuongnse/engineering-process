@@ -127,7 +127,7 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual(["sample-tool", "one", "two"], report["command"])
             self.assertEqual(f"one|two{os.linesep}", report["stdout"])
 
-    def test_streamed_output_is_bounded_but_full_digest_is_recorded(self):
+    def test_streamed_output_budget_fails_closed_and_stays_bounded(self):
         class Sink:
             def __init__(self):
                 self.buffer = io.BytesIO()
@@ -151,11 +151,33 @@ class EnvironmentTests(unittest.TestCase):
                     stream_output=True,
                 )
 
-            self.assertEqual("passed", report["status"])
+            self.assertEqual("failed", report["status"])
             self.assertGreater(report["stdoutBytes"], 1_000_000)
             self.assertTrue(report["outputTruncated"])
-            self.assertTrue(report["streamOutputTruncated"])
             self.assertLess(len(sink.buffer.getvalue()), 1_000_100)
+            self.assertIn("output exceeded", report["error"])
+
+    def test_combined_output_budget_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = execute_command(
+                Path(directory),
+                identifier="combined-output",
+                run=(
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.write('o'*800000); "
+                    "sys.stderr.write('e'*800000)",
+                ),
+                timeout_seconds=30,
+                working_directory=".",
+            )
+
+            self.assertEqual("failed", report["status"])
+            self.assertGreater(
+                report["stdoutBytes"] + report["stderrBytes"], 1_500_000
+            )
+            self.assertTrue(report["outputTruncated"])
+            self.assertIn("output exceeded", report["error"])
 
     def test_doctor_is_read_only_and_reports_missing_requirement(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -55,22 +55,22 @@
     "artifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sourceDigest", "canonicalDigest", "document"],
+      "required": ["sourceDigest", "canonicalDigest", "sourceText"],
       "properties": {
         "sourceDigest": {"$ref": "#/$defs/digest"},
         "canonicalDigest": {"$ref": "#/$defs/digest"},
-        "document": {"type": "object"}
+        "sourceText": {"type": "string", "maxLength": 1000000}
       }
     },
     "verificationArtifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profile", "sourceDigest", "canonicalDigest", "document"],
+      "required": ["profile", "sourceDigest", "canonicalDigest", "sourceText"],
       "properties": {
         "profile": {"$ref": "#/$defs/id"},
         "sourceDigest": {"$ref": "#/$defs/digest"},
         "canonicalDigest": {"$ref": "#/$defs/digest"},
-        "document": {"type": "object"}
+        "sourceText": {"type": "string", "maxLength": 1000000}
       }
     }
   }

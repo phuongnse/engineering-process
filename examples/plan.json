@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "changeId": "issue-123",
   "contractDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "approach": "Implement the accepted behavior through its existing owner and preserve the current public contract.",

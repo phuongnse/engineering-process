@@ -199,16 +199,17 @@ HTTPS, declared size/checksum/archive/path boundaries and derives their approval
 `network` plus `user-files`. Use a command action only for project-native package
 managers or domain preparation that cannot be represented by the managed-tool
 primitive, and declare every possible scope truthfully. New consumers use
-project-manifest schema 3. Schema 1 (without an environment contract) and schema 2
+project-manifest schema 4. Schema 1 (without an environment contract), schema 2
 (the original environment contract) remain readable for backward compatibility; they
-are not relabeled as newer shapes. A consumer upgrades explicitly to schema 3 to
-attest foreground-only task execution and use managed script bindings. New integrations
+and schema 3 are not relabeled as newer shapes. Schema 3 introduced foreground-only
+task execution and managed script bindings; schema 4 adds bounded impact and quality
+extensions without tightening those published readers. New integrations
 receive the complete environment contract instead of creating a project-local doctor
 or setup lifecycle.
 
 ## Affected-check selection
 
-Schema 3 optionally declares a portable impact graph. Components own canonical
+Schema 4 optionally declares a portable impact graph. Components own canonical
 forward-slash glob patterns and list downstream components in `affects`; profile
 checks list the components that can invalidate them. The distribution discovers the
 committed diff from an exact Git merge base and combines staged, unstaged, and
@@ -421,6 +422,10 @@ authenticates who produced it.
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest
   reachable prior tag, immutable checkpoint, and main ancestry.
+- New lifecycle work uses bounded plan schema 2; selective-impact consumers use
+  project schema 4. Plan schema 1 and project schemas 1-3 retain their published
+  validation behavior for historical compatibility instead of being tightened in
+  place.
 - `release.json` is the single release-identity owner. Governed GitHub tag and title
   are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
   lifecycle receipt, and later consumer locks must match it. Earlier immutable

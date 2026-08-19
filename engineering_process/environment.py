@@ -35,6 +35,8 @@ from .supervision import process_supervisor
 
 OUTPUT_LIMIT = 16_384
 MIRRORED_OUTPUT_LIMIT = 1_000_000
+COMMAND_OUTPUT_STREAM_LIMIT = 1_000_000
+COMMAND_OUTPUT_TOTAL_LIMIT = 1_500_000
 OUTPUT_REGEX_TIMEOUT_SECONDS = 0.1
 TERMINATION_GRACE_SECONDS = 1.0
 
@@ -92,11 +94,33 @@ def _command_preflight(
 _OUTPUT_MIRROR_LOCK = threading.Lock()
 
 
-def _drain_output(stream, capture: dict[str, Any], *, mirror: bool) -> None:
+def _drain_output(
+    stream,
+    capture: dict[str, Any],
+    *,
+    mirror: bool,
+    budget: dict[str, Any],
+    abort: threading.Event,
+) -> None:
     try:
         while chunk := stream.read(8192):
-            capture["bytes"] += len(chunk)
             capture["sha256"].update(chunk)
+            with budget["lock"]:
+                capture["bytes"] += len(chunk)
+                budget["bytes"] += len(chunk)
+                if (
+                    capture["bytes"] > COMMAND_OUTPUT_STREAM_LIMIT
+                    or budget["bytes"] > COMMAND_OUTPUT_TOTAL_LIMIT
+                ):
+                    capture["truncated"] = True
+                    capture["limitExceeded"] = True
+                    budget["error"] = (
+                        "command output exceeded the fail-closed byte budget "
+                        f"({COMMAND_OUTPUT_STREAM_LIMIT} per stream, "
+                        f"{COMMAND_OUTPUT_TOTAL_LIMIT} aggregate)"
+                    )
+                    abort.set()
+                    break
             remaining = OUTPUT_LIMIT - len(capture["data"])
             if remaining > 0:
                 capture["data"].extend(chunk[:remaining])
@@ -124,8 +148,13 @@ def _drain_output(stream, capture: dict[str, Any], *, mirror: bool) -> None:
                             sys.stderr.write(marker.decode("ascii"))
                             sys.stderr.flush()
                         capture["mirrorTruncated"] = True
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
         capture["truncated"] = True
+        capture["readError"] = str(error)
+        with budget["lock"]:
+            if budget["error"] is None:
+                budget["error"] = f"cannot read command output: {error}"
+        abort.set()
     finally:
         stream.close()
 
@@ -214,17 +243,34 @@ def execute_command(
         "mirroredBytes": 0,
         "mirrorTruncated": False,
     }
+    for capture in (stdout_capture, stderr_capture):
+        capture["limitExceeded"] = False
+        capture["readError"] = None
+    output_budget: dict[str, Any] = {
+        "bytes": 0,
+        "error": None,
+        "lock": threading.Lock(),
+    }
+    output_abort = threading.Event()
     drain_threads = (
         threading.Thread(
             target=_drain_output,
             args=(process.stdout, stdout_capture),
-            kwargs={"mirror": stream_output},
+            kwargs={
+                "mirror": stream_output,
+                "budget": output_budget,
+                "abort": output_abort,
+            },
             daemon=True,
         ),
         threading.Thread(
             target=_drain_output,
             args=(process.stderr, stderr_capture),
-            kwargs={"mirror": stream_output},
+            kwargs={
+                "mirror": stream_output,
+                "budget": output_budget,
+                "abort": output_abort,
+            },
             daemon=True,
         ),
     )
@@ -234,19 +280,38 @@ def execute_command(
     error_message: str | None = None
     command_tree_bounded = True
     try:
-        exit_code = process.wait(timeout=timeout_seconds)
-        if exit_code != 0:
-            status = "failed"
-    except subprocess.TimeoutExpired:
-        status = "timed-out"
-        error_message = f"exceeded {timeout_seconds} seconds"
-        cleanup = supervisor.terminate(
-            process, grace_seconds=TERMINATION_GRACE_SECONDS
-        )
-        command_tree_bounded = cleanup.bounded
-        if cleanup.error is not None:
-            error_message = cleanup.error
-        exit_code = process.returncode
+        deadline = monotonic_start + timeout_seconds
+        while True:
+            if output_abort.is_set():
+                status = "failed"
+                error_message = output_budget["error"] or "command output capture failed"
+                cleanup = supervisor.terminate(
+                    process, grace_seconds=TERMINATION_GRACE_SECONDS
+                )
+                command_tree_bounded = cleanup.bounded
+                if cleanup.error is not None:
+                    error_message = cleanup.error
+                exit_code = process.returncode
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                status = "timed-out"
+                error_message = f"exceeded {timeout_seconds} seconds"
+                cleanup = supervisor.terminate(
+                    process, grace_seconds=TERMINATION_GRACE_SECONDS
+                )
+                command_tree_bounded = cleanup.bounded
+                if cleanup.error is not None:
+                    error_message = cleanup.error
+                exit_code = process.returncode
+                break
+            try:
+                exit_code = process.wait(timeout=min(remaining, 0.05))
+            except subprocess.TimeoutExpired:
+                continue
+            if exit_code != 0:
+                status = "failed"
+            break
     except KeyboardInterrupt:
         supervisor.terminate(process, grace_seconds=TERMINATION_GRACE_SECONDS)
         raise
@@ -268,6 +333,9 @@ def execute_command(
             error_message = (
                 "command process group retained output streams after bounded termination"
             )
+        if output_abort.is_set():
+            status = "failed"
+            error_message = output_budget["error"] or "command output capture failed"
         if not command_tree_bounded:
             status = "failed"
             error_message = (

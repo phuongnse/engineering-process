@@ -55,12 +55,19 @@ Limits fail closed and have regression coverage for success, failure, timeout, a
 interruption. Selective verification reduces work only through the distribution-owned
 impact algorithm; unmatched or ambiguous paths expand verification.
 
+Released serialized contracts are never tightened in place. A new resource bound or
+meaning-changing requirement uses a new integer schema major with explicit migration;
+historical readers retain their published behavior. New changes use the bounded plan
+and project schema majors while older artifacts remain readable as history.
+
 Ephemeral files use private temporary directories and are removed on success,
 failure, timeout, and interruption. Build outputs are created in an isolated tracked
 snapshot and never persist in the source checkout. `.process/runs/` is durable local
 lifecycle evidence, not temporary state: completed evidence is exported and
 validated against `schemas/evidence-receipt.schema.json` and its semantic cross-links
 before an explicit prune; active or unexported evidence is not deleted.
+Verification isolates interpreter bytecode caches from the checkout and rejects
+ignored sourceless bytecode that could shadow checkpoint-owned source.
 
 ## Release identity
 
@@ -69,6 +76,9 @@ SemVer, tag, GitHub release title, runtime version location, artifact names, and
 lifecycle receipt name. Governed releases use the exact tag and title `v<SemVer>`.
 Publication cross-checks every declared surface against one immutable checkpoint;
 consumer locks change only after public artifacts and hashes are verified.
+The exact public N-1 binary validates governed lifecycle receipts with no fallback to
+code under release. Release/build dependencies are artifact-hash locked and the build
+runs without dependency isolation or network resolution.
 
 Immutable releases created before this contract use `bootstrap-history` provenance.
 That mode records their actual identity and explicitly makes no lifecycle-governance

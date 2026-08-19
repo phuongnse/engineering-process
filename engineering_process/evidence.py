@@ -12,14 +12,17 @@ from typing import Any
 from .contracts import (
     ContractError,
     DIGEST_PATTERN,
+    MAX_JSON_BYTES,
     NAME_PATTERN,
     PROFILE_PATTERN,
     SEMVER_PATTERN,
     read_json,
     validate_change,
+    validate_completion,
     validate_plan,
     validate_process_lock,
     validate_review,
+    validate_verification,
 )
 from .lifecycle import _change_lock, _validate_state, load_state
 
@@ -66,17 +69,19 @@ def _entry(project_root: Path, reference: dict[str, Any]) -> dict[str, Any]:
         path.relative_to(root)
     except (OSError, ValueError) as error:
         raise ContractError(f"lifecycle artifact escapes project: {relative}") from error
-    document = read_json(path)
     try:
-        actual_source_digest = f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+        source_bytes = path.read_bytes()
     except OSError as error:
         raise ContractError(f"{path}: cannot hash lifecycle artifact: {error}") from error
+    document = read_json(path)
+    source_text = source_bytes.decode("utf-8")
+    actual_source_digest = f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
     if actual_source_digest != source_digest:
         raise ContractError(f"{path}: lifecycle artifact digest is stale")
     return {
         "sourceDigest": source_digest,
         "canonicalDigest": _canonical_digest(document),
-        "document": document,
+        "sourceText": source_text,
     }
 
 
@@ -107,7 +112,9 @@ def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str
         "project": state["project"],
         "changeId": state["changeId"],
         "cycle": state["cycle"],
-        "checkpoint": artifacts["completion"]["document"]["checkpoint"],
+        "checkpoint": _validate_entry(
+            artifacts["completion"], "receipt.artifacts.completion"
+        )["checkpoint"],
         "comparisonBase": state["comparisonBase"],
         "state": {
             "canonicalDigest": _canonical_digest(state),
@@ -139,14 +146,21 @@ def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
+        validated = validate_receipt(temporary)
         temporary.replace(output)
+    except ContractError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     except OSError as error:
         try:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
         raise ContractError(f"{output}: cannot export lifecycle receipt: {error}") from error
-    return validate_receipt(output)
+    return validated
 
 
 def _require_exact(value: dict[str, Any], expected: set[str], path: str) -> None:
@@ -164,8 +178,19 @@ def _require_exact(value: dict[str, Any], expected: set[str], path: str) -> None
 def _validate_entry(entry: Any, path: str) -> dict[str, Any]:
     if not isinstance(entry, dict):
         raise ContractError(f"{path}: must be an object")
-    _require_exact(entry, {"sourceDigest", "canonicalDigest", "document"}, path)
-    document = entry["document"]
+    _require_exact(entry, {"sourceDigest", "canonicalDigest", "sourceText"}, path)
+    source_text = entry["sourceText"]
+    if not isinstance(source_text, str):
+        raise ContractError(f"{path}.sourceText: must be a string")
+    source_bytes = source_text.encode("utf-8")
+    if len(source_bytes) > MAX_JSON_BYTES:
+        raise ContractError(f"{path}.sourceText: exceeds the 1 MB artifact limit")
+    try:
+        document = json.loads(source_text)
+    except json.JSONDecodeError as error:
+        raise ContractError(f"{path}.sourceText: invalid JSON: {error.msg}") from error
+    if not isinstance(document, dict):
+        raise ContractError(f"{path}.sourceText: artifact must be an object")
     if entry["canonicalDigest"] != _canonical_digest(document):
         raise ContractError(f"{path}.canonicalDigest: does not match document")
     if (
@@ -173,6 +198,8 @@ def _validate_entry(entry: Any, path: str) -> dict[str, Any]:
         or DIGEST_PATTERN.fullmatch(entry["sourceDigest"]) is None
     ):
         raise ContractError(f"{path}.sourceDigest: invalid digest")
+    if entry["sourceDigest"] != f"sha256:{hashlib.sha256(source_bytes).hexdigest()}":
+        raise ContractError(f"{path}.sourceDigest: does not match sourceText")
     return document
 
 
@@ -257,6 +284,7 @@ def validate_receipt(path: Path) -> dict[str, Any]:
     validate_change(contract, "receipt contract")
     validate_plan(plan, "receipt plan")
     validate_review(review, "receipt review")
+    validate_completion(completion, "receipt completion")
     required_review_schema = 3 if contract["schemaVersion"] == 3 else 2
     if review["schemaVersion"] != required_review_schema:
         raise ContractError("receipt review schema does not match the change contract")
@@ -308,6 +336,9 @@ def validate_receipt(path: Path) -> dict[str, Any]:
         entry = dict(raw_entry)
         entry.pop("profile", None)
         report = _validate_entry(entry, f"receipt.artifacts.verification[{index}]")
+        validate_verification(
+            report, f"receipt.artifacts.verification[{index}].document"
+        )
         if not isinstance(profile, str) or report.get("profile") != profile:
             raise ContractError(f"receipt.artifacts.verification[{index}]: profile mismatch")
         if (
@@ -384,7 +415,9 @@ def _prune_completed_run_unlocked(
         raise ContractError("receipt does not identify the requested lifecycle run")
     if state["phase"] != "completed" or state["completion"] is None:
         raise ContractError("only completed lifecycle runs may be pruned")
-    completion = _entry(project_root, state["completion"])["document"]
+    completion = _validate_entry(
+        _entry(project_root, state["completion"]), "current completion"
+    )
     if receipt["checkpoint"] != completion.get("checkpoint"):
         raise ContractError("receipt checkpoint does not match current completion")
     if receipt["stateCanonicalDigest"] != _canonical_digest(state):

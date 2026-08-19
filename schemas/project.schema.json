@@ -10,7 +10,7 @@
       "type": "string"
     },
     "schemaVersion": {
-      "enum": [1, 2, 3]
+      "enum": [1, 2, 3, 4]
     },
     "project": {
       "type": "string",
@@ -25,7 +25,6 @@
         "requiredProfiles": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 64,
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -46,14 +45,12 @@
     "profiles": {
       "type": "object",
       "minProperties": 1,
-      "maxProperties": 64,
       "propertyNames": {
         "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
       },
       "additionalProperties": {
         "type": "array",
         "minItems": 1,
-        "maxItems": 256,
         "items": {
           "$ref": "#/$defs/check"
         }
@@ -128,6 +125,22 @@
     {
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
       "then": {
+        "not": {"required": ["impact"]},
+        "properties": {
+          "lifecycle": {
+            "not": {"required": ["qualityExtensions"]}
+          },
+          "profiles": {
+            "additionalProperties": {
+              "items": {"not": {"required": ["components"]}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"enum": [3, 4]}}, "required": ["schemaVersion"]},
+      "then": {
         "required": ["environment"],
         "properties": {
           "environment": {
@@ -197,6 +210,54 @@
           }
         }
       }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 4}}, "required": ["schemaVersion"]},
+      "then": {
+        "properties": {
+          "lifecycle": {
+            "properties": {
+              "requiredProfiles": {"maxItems": 64}
+            }
+          },
+          "profiles": {
+            "maxProperties": 64,
+            "additionalProperties": {
+              "maxItems": 256,
+              "items": {
+                "properties": {
+                  "run": {"maxItems": 256},
+                  "components": {"maxItems": 256}
+                }
+              }
+            }
+          },
+          "environment": {
+            "properties": {
+              "requirements": {
+                "items": {
+                  "properties": {
+                    "probe": {
+                      "properties": {"run": {"maxItems": 256}}
+                    }
+                  }
+                }
+              },
+              "setupActions": {
+                "items": {
+                  "if": {
+                    "properties": {"kind": {"const": "command"}},
+                    "required": ["kind"]
+                  },
+                  "then": {
+                    "properties": {"run": {"maxItems": 256}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -213,7 +274,6 @@
         "run": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 256,
           "items": {
             "type": "string",
             "minLength": 1
@@ -502,7 +562,6 @@
         "run": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 256,
           "items": {
             "type": "string",
             "minLength": 1
@@ -553,7 +612,6 @@
         "run": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 256,
           "items": {
             "type": "string",
             "minLength": 1

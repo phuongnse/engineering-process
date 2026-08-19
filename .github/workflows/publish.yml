@@ -51,19 +51,13 @@ jobs:
         env:
           RECEIPT_PATH: ${{ steps.receipt.outputs.path }}
         run: |
-          if "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
-            "$RECEIPT_PATH" --json; then
-            exit 0
-          fi
-          authority_version="$(python -c 'import json; print(json.load(open(".process/process.lock", encoding="utf-8"))["process"]["version"])')"
-          if [ "$authority_version" != "0.1.1" ]; then
-            echo "Pinned public authority supports no receipt validator" >&2
-            exit 1
-          fi
-          echo "Using the documented one-time 0.1.1 receipt bootstrap validator"
+          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "$RECEIPT_PATH" --json
 
-      - name: Install exact verification dependencies
-        run: python -m pip install -r engineering_process/requirements-dev.txt
+      - name: Install hash-locked release dependencies
+        run: |
+          python -m pip install --require-hashes \
+            -r engineering_process/requirements-release.txt
 
       - name: Validate release contract and checkpoint
         run: |
@@ -91,6 +85,7 @@ jobs:
       - name: Verify built wheel
         run: |
           python -m pip install --force-reinstall \
+            --no-deps \
             "$RUNNER_TEMP"/python-distributions/*.whl
           cd "$RUNNER_TEMP"
           processctl digest

@@ -1,10 +1,16 @@
 import tempfile
+import tarfile
 import unittest
+import warnings
+import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from engineering_process.contracts import ContractError
 from engineering_process.distribution_verify import (
     _validate_archive_members,
+    _validate_tar_archive,
+    _validate_zip_archive,
     verify_distribution,
 )
 
@@ -14,6 +20,7 @@ class DistributionVerificationTests(unittest.TestCase):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
         members = [
             "engineering_process-0.1.1.data/data/share/engineering-process/PRODUCTION_STANDARD.md",
+            "engineering_process/requirements-release.txt",
             "engineering_process-0.1.1.data/data/share/engineering-process/release.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/change.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/evidence-receipt.schema.json",
@@ -29,6 +36,52 @@ class DistributionVerificationTests(unittest.TestCase):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
         with self.assertRaisesRegex(ContractError, "forbidden generated or managed"):
             _validate_archive_members(wheel, [".process/runs/change/state.json"])
+
+    def test_wheel_expansion_and_duplicate_names_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "engineering_process-0.1.1-py3-none-any.whl"
+            required = [
+                "PRODUCTION_STANDARD.md",
+                "engineering_process/requirements-release.txt",
+                "release.json",
+                "schemas/change.schema.json",
+                "schemas/evidence-receipt.schema.json",
+                "schemas/release.schema.json",
+            ]
+            with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for name in required:
+                    archive.writestr(name, b"ok")
+                archive.writestr("payload.bin", b"x" * 101)
+            with (
+                patch(
+                    "engineering_process.distribution_verify.MAX_ARCHIVE_MEMBER_BYTES",
+                    100,
+                ),
+                self.assertRaisesRegex(ContractError, "expanded bytes"),
+            ):
+                _validate_zip_archive(wheel)
+
+            duplicate = Path(directory) / "duplicate.whl"
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(duplicate, "w") as archive:
+                    for name in required:
+                        archive.writestr(name, b"ok")
+                    archive.writestr("duplicate.txt", b"one")
+                    archive.writestr("duplicate.txt", b"two")
+            with self.assertRaisesRegex(ContractError, "duplicate member"):
+                _validate_zip_archive(duplicate)
+
+    def test_sdist_special_members_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sdist = Path(directory) / "engineering_process-0.1.1.tar.gz"
+            root = "engineering_process-0.1.1"
+            with tarfile.open(sdist, "w:gz") as archive:
+                fifo = tarfile.TarInfo(f"{root}/unexpected.fifo")
+                fifo.type = tarfile.FIFOTYPE
+                archive.addfile(fifo)
+            with self.assertRaisesRegex(ContractError, "non-regular member"):
+                _validate_tar_archive(sdist)
 
     def test_verified_outputs_cannot_be_written_into_the_checkout(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -17,8 +17,10 @@ from .contracts import (
     _validate_legacy_review,
     read_json,
     validate_change,
+    validate_completion,
     validate_plan,
     validate_review,
+    validate_verification,
 )
 from .environment import require_environment_profile
 from .git import run_git
@@ -506,6 +508,8 @@ def _register_plan_unlocked(
         raise ContractError(f"change {change_id} requires sign-off before planning")
     document = read_json(plan_path)
     validate_plan(document, str(plan_path))
+    if contract["schemaVersion"] == 3 and document["schemaVersion"] != 2:
+        raise ContractError("new schema-3 changes require a bounded schema-2 plan")
     if document["changeId"] != change_id:
         raise ContractError(f"plan changeId does not match {change_id}")
     if document["contractDigest"] != state["contract"]["digest"]:
@@ -605,6 +609,7 @@ def _verify_change_unlocked(
         profile,
         base_ref=contract["comparisonBase"],
     )
+    validate_verification(report, f"verification profile {profile}")
     report_path = (
         _run_root(project_root, change_id)
         / "verification"
@@ -877,6 +882,7 @@ def _finish_change_unlocked(
         raise ContractError("completion requires the exact required verification profiles")
     for item in state["verification"]:
         report = read_json(_artifact_path(project_root, item))
+        validate_verification(report, f"verification profile {item['profile']}")
         if report.get("status") != "passed":
             raise ContractError(f"verification profile {item['profile']} is not passing")
         if (
@@ -899,6 +905,7 @@ def _finish_change_unlocked(
         "verification": state["verification"],
         "review": state["review"],
     }
+    validate_completion(completion, "completion")
     completion_path = _run_root(project_root, change_id) / "completion.json"
     _write_atomic(completion_path, completion)
     state["completion"] = {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -502,6 +503,7 @@ def _validate_environment(
     *,
     require_foreground_only: bool,
     require_native_windows_commands: bool,
+    bounded_commands: bool,
 ) -> ProjectEnvironment:
     value = _object(document, path)
     required = {
@@ -773,7 +775,7 @@ def _validate_environment(
                 _string_list(
                     action["run"],
                     f"{action_path}.run",
-                    maximum=MAX_CONTRACT_ITEMS,
+                    maximum=MAX_CONTRACT_ITEMS if bounded_commands else None,
                 )
             )
             tool_identifier = None
@@ -918,7 +920,7 @@ def _validate_environment(
                     _string_list(
                         raw_probe["run"],
                         f"{requirement_path}.probe.run",
-                        maximum=MAX_CONTRACT_ITEMS,
+                        maximum=MAX_CONTRACT_ITEMS if bounded_commands else None,
                     )
                 ),
                 timeout_seconds=_timeout(
@@ -980,13 +982,13 @@ def _validate_environment(
 def validate_project(document: Any, path: str = "project") -> Project:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2, 3}:
-        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
+    if schema_version not in {1, 2, 3, 4}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, 3, or 4")
     _exact_keys(
         value,
         required={"schemaVersion", "project", "lifecycle", "profiles"}
         | ({"environment"} if schema_version >= 2 else set()),
-        optional={"$schema"} | ({"impact"} if schema_version == 3 else set()),
+        optional={"$schema"} | ({"impact"} if schema_version == 4 else set()),
         path=path,
     )
     identifier = _string(value["project"], f"{path}.project", max_length=128)
@@ -997,14 +999,14 @@ def validate_project(document: Any, path: str = "project") -> Project:
     _exact_keys(
         lifecycle,
         required={"requiredProfiles"},
-        optional={"qualityExtensions"} if schema_version == 3 else set(),
+        optional={"qualityExtensions"} if schema_version == 4 else set(),
         path=f"{path}.lifecycle",
     )
     required_profiles = _string_list(
         lifecycle["requiredProfiles"],
         f"{path}.lifecycle.requiredProfiles",
         pattern=PROFILE_PATTERN,
-        maximum=MAX_PROJECT_PROFILES,
+        maximum=MAX_PROJECT_PROFILES if schema_version == 4 else None,
     )
     if required_profiles != sorted(required_profiles):
         raise ContractError(
@@ -1044,7 +1046,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
     raw_profiles = _object(value["profiles"], f"{path}.profiles")
     if not raw_profiles:
         raise ContractError(f"{path}.profiles: must define at least one profile")
-    if len(raw_profiles) > MAX_PROJECT_PROFILES:
+    if schema_version == 4 and len(raw_profiles) > MAX_PROJECT_PROFILES:
         raise ContractError(f"{path}.profiles: exceeds {MAX_PROJECT_PROFILES} profiles")
     profiles: dict[str, tuple[Check, ...]] = {}
     total_checks = 0
@@ -1057,12 +1059,12 @@ def validate_project(document: Any, path: str = "project") -> Project:
             raise ContractError(
                 f"{path}.profiles.{profile_name}: must contain at least one check"
             )
-        if len(raw_checks) > MAX_CHECKS_PER_PROFILE:
+        if schema_version == 4 and len(raw_checks) > MAX_CHECKS_PER_PROFILE:
             raise ContractError(
                 f"{path}.profiles.{profile_name}: exceeds {MAX_CHECKS_PER_PROFILE} checks"
             )
         total_checks += len(raw_checks)
-        if total_checks > MAX_PROJECT_CHECKS:
+        if schema_version == 4 and total_checks > MAX_PROJECT_CHECKS:
             raise ContractError(
                 f"{path}.profiles: exceeds {MAX_PROJECT_CHECKS} total checks"
             )
@@ -1074,7 +1076,8 @@ def validate_project(document: Any, path: str = "project") -> Project:
             _exact_keys(
                 check,
                 required={"id", "run", "timeoutSeconds"},
-                optional={"workingDirectory", "components"},
+                optional={"workingDirectory"}
+                | ({"components"} if schema_version == 4 else set()),
                 path=check_path,
             )
             check_id = _string(check["id"], f"{check_path}.id", max_length=64)
@@ -1086,7 +1089,9 @@ def validate_project(document: Any, path: str = "project") -> Project:
                 )
             identifiers.add(check_id)
             argv = _string_list(
-                check["run"], f"{check_path}.run", maximum=MAX_CONTRACT_ITEMS
+                check["run"],
+                f"{check_path}.run",
+                maximum=MAX_CONTRACT_ITEMS if schema_version == 4 else None,
             )
             timeout = _timeout(check["timeoutSeconds"], f"{check_path}.timeoutSeconds")
             working_directory = _working_directory(
@@ -1138,8 +1143,9 @@ def validate_project(document: Any, path: str = "project") -> Project:
         _validate_environment(
             value["environment"],
             f"{path}.environment",
-            require_foreground_only=schema_version == 3,
-            require_native_windows_commands=schema_version == 3,
+            require_foreground_only=schema_version >= 3,
+            require_native_windows_commands=schema_version >= 3,
+            bounded_commands=schema_version == 4,
         )
         if schema_version >= 2
         else None
@@ -1584,19 +1590,19 @@ def validate_change(document: Any, path: str = "change") -> None:
         value["affectedProjects"],
         f"{path}.affectedProjects",
         pattern=NAME_PATTERN,
-        maximum=64,
+        maximum=64 if schema_version == 3 else None,
     )
     required_profiles = _string_list(
         value["requiredProfiles"],
         f"{path}.requiredProfiles",
         pattern=PROFILE_PATTERN,
-        maximum=MAX_PROJECT_PROFILES,
+        maximum=MAX_PROJECT_PROFILES if schema_version == 3 else None,
     )
 
     criteria = value["acceptanceCriteria"]
     if not isinstance(criteria, list) or not criteria:
         raise ContractError(f"{path}.acceptanceCriteria: must not be empty")
-    if len(criteria) > MAX_CONTRACT_ITEMS:
+    if schema_version == 3 and len(criteria) > MAX_CONTRACT_ITEMS:
         raise ContractError(
             f"{path}.acceptanceCriteria: exceeds {MAX_CONTRACT_ITEMS} items"
         )
@@ -1744,6 +1750,10 @@ def validate_change(document: Any, path: str = "change") -> None:
 
 def validate_plan(document: Any, path: str = "plan") -> None:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    bounded = schema_version == 2
     _exact_keys(
         value,
         required={
@@ -1759,7 +1769,6 @@ def validate_plan(document: Any, path: str = "plan") -> None:
         optional={"$schema"},
         path=path,
     )
-    _schema_version(value, path)
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
     if PROFILE_PATTERN.fullmatch(change_id) is None:
         raise ContractError(f"{path}.changeId: invalid change id")
@@ -1773,7 +1782,7 @@ def validate_plan(document: Any, path: str = "plan") -> None:
     work_items = value["workItems"]
     if not isinstance(work_items, list) or not work_items:
         raise ContractError(f"{path}.workItems: must not be empty")
-    if len(work_items) > MAX_CONTRACT_ITEMS:
+    if bounded and len(work_items) > MAX_CONTRACT_ITEMS:
         raise ContractError(f"{path}.workItems: exceeds {MAX_CONTRACT_ITEMS} items")
     work_item_ids: set[str] = set()
     for index, raw_item in enumerate(work_items):
@@ -1794,19 +1803,19 @@ def validate_plan(document: Any, path: str = "plan") -> None:
         _string_list(
             item["affectedPaths"],
             f"{item_path}.affectedPaths",
-            maximum=MAX_CONTRACT_ITEMS,
+            maximum=MAX_CONTRACT_ITEMS if bounded else None,
         )
         _string_list(
             item["verificationProfiles"],
             f"{item_path}.verificationProfiles",
             pattern=PROFILE_PATTERN,
-            maximum=MAX_PROJECT_PROFILES,
+            maximum=MAX_PROJECT_PROFILES if bounded else None,
         )
 
     acceptance_plan = value["acceptancePlan"]
     if not isinstance(acceptance_plan, list) or not acceptance_plan:
         raise ContractError(f"{path}.acceptancePlan: must not be empty")
-    if len(acceptance_plan) > MAX_CONTRACT_ITEMS:
+    if bounded and len(acceptance_plan) > MAX_CONTRACT_ITEMS:
         raise ContractError(
             f"{path}.acceptancePlan: exceeds {MAX_CONTRACT_ITEMS} items"
         )
@@ -1833,7 +1842,7 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             mapping["workItems"],
             f"{mapping_path}.workItems",
             pattern=PROFILE_PATTERN,
-            maximum=MAX_CONTRACT_ITEMS,
+            maximum=MAX_CONTRACT_ITEMS if bounded else None,
         )
         unknown_items = sorted(set(mapped_items) - work_item_ids)
         if unknown_items:
@@ -1844,13 +1853,13 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             mapping["verificationProfiles"],
             f"{mapping_path}.verificationProfiles",
             pattern=PROFILE_PATTERN,
-            maximum=MAX_PROJECT_PROFILES,
+            maximum=MAX_PROJECT_PROFILES if bounded else None,
         )
 
     risks = value["risks"]
     if not isinstance(risks, list):
         raise ContractError(f"{path}.risks: must be an array")
-    if len(risks) > MAX_CONTRACT_ITEMS:
+    if bounded and len(risks) > MAX_CONTRACT_ITEMS:
         raise ContractError(f"{path}.risks: exceeds {MAX_CONTRACT_ITEMS} items")
     for index, raw_risk in enumerate(risks):
         risk_path = f"{path}.risks[{index}]"
@@ -1862,13 +1871,15 @@ def validate_plan(document: Any, path: str = "plan") -> None:
     decisions = value["openDecisions"]
     if not isinstance(decisions, list):
         raise ContractError(f"{path}.openDecisions: must be an array")
-    if len(decisions) > MAX_CONTRACT_ITEMS:
+    if bounded and len(decisions) > MAX_CONTRACT_ITEMS:
         raise ContractError(
             f"{path}.openDecisions: exceeds {MAX_CONTRACT_ITEMS} items"
         )
     if decisions:
         _string_list(
-            decisions, f"{path}.openDecisions", maximum=MAX_CONTRACT_ITEMS
+            decisions,
+            f"{path}.openDecisions",
+            maximum=MAX_CONTRACT_ITEMS if bounded else None,
         )
 
 
@@ -2051,7 +2062,7 @@ def _validate_review(
     findings = value["findings"]
     if not isinstance(findings, list):
         raise ContractError(f"{path}.findings: must be an array")
-    if len(findings) > MAX_CONTRACT_ITEMS:
+    if schema_version == 3 and len(findings) > MAX_CONTRACT_ITEMS:
         raise ContractError(f"{path}.findings: exceeds {MAX_CONTRACT_ITEMS} items")
     finding_ids: set[str] = set()
     unresolved_findings = 0
@@ -2130,3 +2141,436 @@ def validate_review(document: Any, path: str = "review") -> None:
 
 def _validate_legacy_review(document: Any, path: str) -> None:
     _validate_review(document, path, allow_legacy_unresolved_approval=True)
+
+
+def _artifact_reference(value: Any, path: str) -> None:
+    reference = _object(value, path)
+    _exact_keys(reference, required={"path", "digest"}, path=path)
+    relative = _string(reference["path"], f"{path}.path", max_length=1000)
+    candidate = PurePosixPath(relative)
+    if (
+        "\\" in relative
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+        or candidate.as_posix() != relative
+    ):
+        raise ContractError(f"{path}.path: must be a portable relative path")
+    digest = _string(reference["digest"], f"{path}.digest", max_length=71)
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ContractError(f"{path}.digest: must be a lowercase sha256 digest")
+
+
+def _verification_reference(value: Any, path: str) -> None:
+    reference = _object(value, path)
+    _exact_keys(
+        reference,
+        required={"profile", "path", "digest", "checkpoint", "workspaceFingerprint"},
+        path=path,
+    )
+    profile = _string(reference["profile"], f"{path}.profile", max_length=64)
+    if PROFILE_PATTERN.fullmatch(profile) is None:
+        raise ContractError(f"{path}.profile: invalid profile")
+    relative = _string(reference["path"], f"{path}.path", max_length=1000)
+    candidate = PurePosixPath(relative)
+    if (
+        "\\" in relative
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+        or candidate.as_posix() != relative
+    ):
+        raise ContractError(f"{path}.path: must be a portable relative path")
+    for name in ("digest", "workspaceFingerprint"):
+        digest = _string(reference[name], f"{path}.{name}", max_length=71)
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise ContractError(f"{path}.{name}: must be a lowercase sha256 digest")
+    checkpoint = _string(
+        reference["checkpoint"], f"{path}.checkpoint", max_length=128
+    )
+    if re.fullmatch(r"[0-9a-f]{40,64}", checkpoint) is None:
+        raise ContractError(f"{path}.checkpoint: invalid commit digest")
+
+
+def validate_verification(document: Any, path: str = "verification") -> None:
+    value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    required = {
+        "schemaVersion",
+        "project",
+        "profile",
+        "checkpoint",
+        "workingTreeDirty",
+        "workspaceFingerprint",
+        "completedWorkspaceFingerprint",
+        "sourceChangedDuringVerification",
+        "startedAt",
+        "completedAt",
+        "status",
+        "checks",
+    }
+    _exact_keys(
+        value,
+        required=required | ({"impact"} if schema_version == 2 else set()),
+        optional={"impact"} if schema_version == 1 else set(),
+        path=path,
+    )
+    project = _string(value["project"], f"{path}.project", max_length=128)
+    if NAME_PATTERN.fullmatch(project) is None:
+        raise ContractError(f"{path}.project: invalid project")
+    profile = _string(value["profile"], f"{path}.profile", max_length=64)
+    if PROFILE_PATTERN.fullmatch(profile) is None:
+        raise ContractError(f"{path}.profile: invalid profile")
+    checkpoint = value["checkpoint"]
+    if checkpoint is not None:
+        _string(checkpoint, f"{path}.checkpoint", max_length=128)
+    dirty = value["workingTreeDirty"]
+    if dirty is not None and not isinstance(dirty, bool):
+        raise ContractError(f"{path}.workingTreeDirty: must be boolean or null")
+    for name in ("workspaceFingerprint", "completedWorkspaceFingerprint"):
+        fingerprint = value[name]
+        if fingerprint is not None and (
+            not isinstance(fingerprint, str)
+            or DIGEST_PATTERN.fullmatch(fingerprint) is None
+        ):
+            raise ContractError(f"{path}.{name}: must be null or a sha256 digest")
+    if not isinstance(value["sourceChangedDuringVerification"], bool):
+        raise ContractError(f"{path}.sourceChangedDuringVerification: must be boolean")
+    _string(value["startedAt"], f"{path}.startedAt", max_length=64)
+    _string(value["completedAt"], f"{path}.completedAt", max_length=64)
+    if value["status"] not in {"passed", "failed"}:
+        raise ContractError(f"{path}.status: must be passed or failed")
+
+    checks = value["checks"]
+    if not isinstance(checks, list):
+        raise ContractError(f"{path}.checks: must be an array")
+    if schema_version == 1 and not checks:
+        raise ContractError(f"{path}.checks: schema 1 requires at least one check")
+    if schema_version == 2 and len(checks) > MAX_CONTRACT_ITEMS:
+        raise ContractError(f"{path}.checks: exceeds {MAX_CONTRACT_ITEMS} items")
+    check_ids: list[str] = []
+    for index, raw_check in enumerate(checks):
+        check_path = f"{path}.checks[{index}]"
+        check = _object(raw_check, check_path)
+        required_check = {
+            "id",
+            "status",
+            "exitCode",
+            "startedAt",
+            "durationMs",
+            "workingDirectory",
+            "command",
+            "commandSha256",
+        }
+        evidence_fields = {
+            "impactSha256",
+            "impactIntegrity",
+            "stdoutBytes",
+            "stderrBytes",
+            "stdoutSha256",
+            "stderrSha256",
+            "outputTruncated",
+            "streamOutputTruncated",
+        }
+        _exact_keys(
+            check,
+            required=required_check | (evidence_fields if schema_version == 2 else set()),
+            optional={"error", "pathEntries"}
+            | (evidence_fields if schema_version == 1 else set()),
+            path=check_path,
+        )
+        identifier = _string(check["id"], f"{check_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{check_path}.id: invalid check id")
+        check_ids.append(identifier)
+        if check["status"] not in {"passed", "failed", "timed-out", "failed-to-start"}:
+            raise ContractError(f"{check_path}.status: invalid status")
+        exit_code = check["exitCode"]
+        if exit_code is not None and (
+            isinstance(exit_code, bool) or not isinstance(exit_code, int)
+        ):
+            raise ContractError(f"{check_path}.exitCode: must be integer or null")
+        duration = check["durationMs"]
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
+            raise ContractError(f"{check_path}.durationMs: must be a non-negative integer")
+        _string(check["startedAt"], f"{check_path}.startedAt", max_length=64)
+        _string(check["workingDirectory"], f"{check_path}.workingDirectory", max_length=512)
+        command = check["command"]
+        if not isinstance(command, list) or not command:
+            raise ContractError(f"{check_path}.command: must not be empty")
+        if schema_version == 2 and len(command) > MAX_CONTRACT_ITEMS:
+            raise ContractError(
+                f"{check_path}.command: exceeds {MAX_CONTRACT_ITEMS} items"
+            )
+        for argument_index, argument in enumerate(command):
+            _string(argument, f"{check_path}.command[{argument_index}]")
+        command_digest = _string(
+            check["commandSha256"], f"{check_path}.commandSha256", max_length=64
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", command_digest) is None:
+            raise ContractError(f"{check_path}.commandSha256: invalid sha256")
+        expected_command_digest = hashlib.sha256(
+            json.dumps(
+                command, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        if command_digest != expected_command_digest:
+            raise ContractError(
+                f"{check_path}.commandSha256: does not match command"
+            )
+        if "pathEntries" in check:
+            entries = check["pathEntries"]
+            if not isinstance(entries, list):
+                raise ContractError(f"{check_path}.pathEntries: must be an array")
+            for entry_index, entry in enumerate(entries):
+                _string(entry, f"{check_path}.pathEntries[{entry_index}]")
+        if "error" in check:
+            _string(check["error"], f"{check_path}.error", max_length=4000)
+        for name in ("impactSha256", "stdoutSha256", "stderrSha256"):
+            if name in check and re.fullmatch(r"[0-9a-f]{64}", check[name]) is None:
+                raise ContractError(f"{check_path}.{name}: invalid sha256")
+        if "impactIntegrity" in check and check["impactIntegrity"] not in {
+            "verified",
+            "failed",
+        }:
+            raise ContractError(f"{check_path}.impactIntegrity: invalid status")
+        for name in ("stdoutBytes", "stderrBytes"):
+            if name in check and (
+                isinstance(check[name], bool)
+                or not isinstance(check[name], int)
+                or check[name] < 0
+            ):
+                raise ContractError(f"{check_path}.{name}: must be non-negative")
+        for name in ("outputTruncated", "streamOutputTruncated"):
+            if name in check and not isinstance(check[name], bool):
+                raise ContractError(f"{check_path}.{name}: must be boolean")
+        if check["status"] == "passed" and (
+            check["exitCode"] != 0
+            or check.get("impactIntegrity") == "failed"
+            or "error" in check
+        ):
+            raise ContractError(f"{check_path}: passing check has contradictory evidence")
+    if len(check_ids) != len(set(check_ids)):
+        raise ContractError(f"{path}.checks: duplicate ids are not allowed")
+
+    if schema_version == 2:
+        impact = _object(value["impact"], f"{path}.impact")
+        _exact_keys(
+            impact,
+            required={
+                "schemaVersion",
+                "mode",
+                "profile",
+                "selectedCheckIds",
+                "skippedCheckIds",
+                "checkSelection",
+            },
+            optional={
+                "baseRef",
+                "baseCommit",
+                "headCommit",
+                "mergeBase",
+                "changedPaths",
+                "directlyChangedComponents",
+                "affectedComponents",
+                "unmatchedPaths",
+            },
+            path=f"{path}.impact",
+        )
+        if impact["schemaVersion"] != 1:
+            raise ContractError(f"{path}.impact.schemaVersion: must be 1")
+        if impact["mode"] not in {"full-profile", "affected-checks"}:
+            raise ContractError(f"{path}.impact.mode: invalid mode")
+        if impact["profile"] != profile:
+            raise ContractError(f"{path}.impact.profile: does not match report")
+        selected = _string_list(
+            impact["selectedCheckIds"],
+            f"{path}.impact.selectedCheckIds",
+            minimum=0,
+            maximum=MAX_CONTRACT_ITEMS,
+        )
+        skipped = _string_list(
+            impact["skippedCheckIds"],
+            f"{path}.impact.skippedCheckIds",
+            minimum=0,
+            maximum=MAX_CONTRACT_ITEMS,
+        )
+        if selected != check_ids:
+            raise ContractError(f"{path}.impact.selectedCheckIds: does not match checks")
+        if set(selected).intersection(skipped):
+            raise ContractError(
+                f"{path}.impact: selected and skipped check ids must be disjoint"
+            )
+        for name in ("baseRef", "baseCommit", "headCommit", "mergeBase"):
+            if name in impact:
+                _string(impact[name], f"{path}.impact.{name}", max_length=512)
+        for name in ("changedPaths", "unmatchedPaths"):
+            if name in impact:
+                _string_list(
+                    impact[name],
+                    f"{path}.impact.{name}",
+                    minimum=0,
+                    maximum=5_000,
+                )
+        for name in ("directlyChangedComponents", "affectedComponents"):
+            if name in impact:
+                _string_list(
+                    impact[name],
+                    f"{path}.impact.{name}",
+                    minimum=0,
+                    maximum=MAX_CONTRACT_ITEMS,
+                )
+        if impact["mode"] == "affected-checks":
+            required_scope = {
+                "baseRef",
+                "baseCommit",
+                "headCommit",
+                "mergeBase",
+                "changedPaths",
+                "directlyChangedComponents",
+                "affectedComponents",
+                "unmatchedPaths",
+            }
+            missing_scope = sorted(required_scope - set(impact))
+            if missing_scope:
+                raise ContractError(
+                    f"{path}.impact: affected-checks evidence is missing: "
+                    + ", ".join(missing_scope)
+                )
+        selection = impact["checkSelection"]
+        if not isinstance(selection, list) or len(selection) > MAX_CONTRACT_ITEMS:
+            raise ContractError(f"{path}.impact.checkSelection: invalid selection")
+        selection_ids: list[str] = []
+        for index, raw_selection in enumerate(selection):
+            selection_path = f"{path}.impact.checkSelection[{index}]"
+            item = _object(raw_selection, selection_path)
+            _exact_keys(
+                item,
+                required={
+                    "id",
+                    "selected",
+                    "reason",
+                    "components",
+                    "matchedComponents",
+                },
+                path=selection_path,
+            )
+            selection_id = _string(
+                item["id"], f"{selection_path}.id", max_length=64
+            )
+            if PROFILE_PATTERN.fullmatch(selection_id) is None:
+                raise ContractError(f"{selection_path}.id: invalid check id")
+            selection_ids.append(selection_id)
+            if not isinstance(item["selected"], bool):
+                raise ContractError(f"{selection_path}.selected: must be boolean")
+            if item["reason"] not in {
+                "profile-has-no-impact-contract",
+                "unscoped-always-run",
+                "unmatched-path-fallback",
+                "affected-component",
+                "no-affected-component",
+            }:
+                raise ContractError(f"{selection_path}.reason: invalid reason")
+            components = _string_list(
+                item["components"],
+                f"{selection_path}.components",
+                minimum=0,
+                maximum=MAX_CONTRACT_ITEMS,
+            )
+            matched = _string_list(
+                item["matchedComponents"],
+                f"{selection_path}.matchedComponents",
+                minimum=0,
+                maximum=MAX_CONTRACT_ITEMS,
+            )
+            if not set(matched).issubset(components):
+                raise ContractError(
+                    f"{selection_path}.matchedComponents: must be declared components"
+                )
+            if item["selected"] != (selection_id in selected):
+                raise ContractError(
+                    f"{selection_path}.selected: does not match selectedCheckIds"
+                )
+        if len(selection_ids) != len(set(selection_ids)):
+            raise ContractError(f"{path}.impact.checkSelection: duplicate ids")
+        if set(selection_ids) != set(selected).union(skipped):
+            raise ContractError(
+                f"{path}.impact.checkSelection: does not cover selected and skipped ids"
+            )
+        impact_digest = hashlib.sha256(
+            (
+                json.dumps(impact, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest()
+        if any(check["impactSha256"] != impact_digest for check in checks):
+            raise ContractError(f"{path}.checks: impactSha256 does not match impact")
+
+    if value["status"] == "passed" and (
+        value["sourceChangedDuringVerification"]
+        or any(check["status"] != "passed" for check in checks)
+    ):
+        raise ContractError(f"{path}: passing verification contains failed evidence")
+    before_fingerprint = value["workspaceFingerprint"]
+    after_fingerprint = value["completedWorkspaceFingerprint"]
+    if (
+        before_fingerprint is not None
+        and after_fingerprint is not None
+        and value["sourceChangedDuringVerification"]
+        != (before_fingerprint != after_fingerprint)
+    ):
+        raise ContractError(
+            f"{path}.sourceChangedDuringVerification: contradicts workspace fingerprints"
+        )
+
+
+def validate_completion(document: Any, path: str = "completion") -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "changeId",
+            "cycle",
+            "checkpoint",
+            "workspaceFingerprint",
+            "comparisonBase",
+            "completedAt",
+            "completedBy",
+            "contract",
+            "plan",
+            "verification",
+            "review",
+        },
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
+    if PROFILE_PATTERN.fullmatch(change_id) is None:
+        raise ContractError(f"{path}.changeId: invalid change id")
+    cycle = value["cycle"]
+    if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 1:
+        raise ContractError(f"{path}.cycle: must be a positive integer")
+    checkpoint = _string(value["checkpoint"], f"{path}.checkpoint", max_length=128)
+    if re.fullmatch(r"[0-9a-f]{40,64}", checkpoint) is None:
+        raise ContractError(f"{path}.checkpoint: invalid commit digest")
+    fingerprint = _string(
+        value["workspaceFingerprint"], f"{path}.workspaceFingerprint", max_length=71
+    )
+    if DIGEST_PATTERN.fullmatch(fingerprint) is None:
+        raise ContractError(f"{path}.workspaceFingerprint: invalid sha256 digest")
+    _string(value["comparisonBase"], f"{path}.comparisonBase", max_length=256)
+    _string(value["completedAt"], f"{path}.completedAt", max_length=64)
+    _validate_actor(value["completedBy"], f"{path}.completedBy")
+    for name in ("contract", "plan", "review"):
+        _artifact_reference(value[name], f"{path}.{name}")
+    verification = value["verification"]
+    if not isinstance(verification, list) or not verification:
+        raise ContractError(f"{path}.verification: must not be empty")
+    profiles: list[str] = []
+    for index, reference in enumerate(verification):
+        _verification_reference(reference, f"{path}.verification[{index}]")
+        profiles.append(reference["profile"])
+    if len(profiles) != len(set(profiles)):
+        raise ContractError(f"{path}.verification: duplicate profiles")

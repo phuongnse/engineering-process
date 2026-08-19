@@ -15,7 +15,7 @@ from engineering_process.contracts import (
 class ProjectContractTests(unittest.TestCase):
     def valid_project(self):
         return {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "project": "sample-project",
             "lifecycle": {"requiredProfiles": ["development"]},
             "profiles": {
@@ -54,7 +54,7 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
 
-    def test_accepts_schema_three_impact_graph(self):
+    def test_accepts_schema_four_impact_graph(self):
         document = self.valid_project()
         document["impact"] = {
             "baseRefs": ["origin/main", "main"],
@@ -83,7 +83,7 @@ class ProjectContractTests(unittest.TestCase):
         )
         self.assertEqual(project.impact.components["api"].affects, ("frontend",))
 
-    def test_impact_contract_is_additive_only_to_schema_three(self):
+    def test_impact_contract_is_additive_only_to_schema_four(self):
         document = self.valid_project()
         document["schemaVersion"] = 2
         del document["environment"]["foregroundOnly"]
@@ -181,6 +181,28 @@ class ProjectContractTests(unittest.TestCase):
         schema_two["schemaVersion"] = 2
         del schema_two["environment"]["foregroundOnly"]
         self.assertFalse(validate_project(schema_two).environment.foreground_only)
+
+    def test_project_resource_bounds_use_a_new_schema_major(self):
+        legacy = self.valid_project()
+        legacy["schemaVersion"] = 1
+        del legacy["environment"]
+        check = legacy["profiles"]["development"][0]
+        legacy["profiles"] = {
+            f"profile-{index}": [dict(check)] for index in range(65)
+        }
+        legacy["lifecycle"]["requiredProfiles"] = ["profile-0"]
+        self.assertEqual(65, len(validate_project(legacy).profiles))
+
+        bounded = self.valid_project()
+        bounded["profiles"] = {
+            f"profile-{index}": [dict(check)] for index in range(65)
+        }
+        bounded["lifecycle"]["requiredProfiles"] = ["profile-0"]
+        bounded["environment"]["profiles"] = {
+            f"profile-{index}": ["python-runtime"] for index in range(65)
+        }
+        with self.assertRaisesRegex(ContractError, "exceeds 64 profiles"):
+            validate_project(bounded)
 
     def test_schema_two_batch_binding_remains_readable_for_manual_migration(self):
         document = self.valid_project()
@@ -596,4 +618,36 @@ class ArtifactContractTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ContractError, "unknown ids"):
+            validate_plan(document)
+
+    def test_plan_resource_bounds_use_a_new_schema_major(self):
+        work_items = [
+            {
+                "id": f"work-{index}",
+                "outcome": "Implement it",
+                "affectedPaths": ["src/"],
+                "verificationProfiles": ["development"],
+            }
+            for index in range(257)
+        ]
+        document = {
+            "schemaVersion": 1,
+            "changeId": "change-1",
+            "contractDigest": f"sha256:{'0' * 64}",
+            "approach": "Use the current owner",
+            "workItems": work_items,
+            "acceptancePlan": [
+                {
+                    "criterionId": "ac-1",
+                    "workItems": ["work-0"],
+                    "verificationProfiles": ["development"],
+                }
+            ],
+            "risks": [],
+            "openDecisions": [],
+        }
+
+        validate_plan(document)
+        document["schemaVersion"] = 2
+        with self.assertRaisesRegex(ContractError, "exceeds 256"):
             validate_plan(document)

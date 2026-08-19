@@ -71,7 +71,6 @@
     },
     "findings": {
       "type": "array",
-      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -127,7 +126,12 @@
     },
     {
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
-      "then": {"required": ["quality"]}
+      "then": {
+        "required": ["quality"],
+        "properties": {
+          "findings": {"maxItems": 256}
+        }
+      }
     },
     {
       "if": {"properties": {"verdict": {"const": "approved"}}},

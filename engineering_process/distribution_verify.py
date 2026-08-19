@@ -21,10 +21,14 @@ MAX_TRACKED_TOTAL_BYTES = 64_000_000
 MAX_ARCHIVE_BYTES = 128_000_000
 MAX_ARCHIVE_MEMBERS = 10_000
 MAX_ARCHIVE_NAME_BYTES = 1_000_000
+MAX_ARCHIVE_MEMBER_BYTES = 16_000_000
+MAX_ARCHIVE_EXPANDED_BYTES = 64_000_000
+MAX_ARCHIVE_COMPRESSION_RATIO = 200
 SNAPSHOT_TIMEOUT_SECONDS = 30.0
 FORBIDDEN_PARTS = {".agents", ".process", "__pycache__", "build", "dist"}
 REQUIRED_SUFFIXES = {
     "PRODUCTION_STANDARD.md",
+    "engineering_process/requirements-release.txt",
     "release.json",
     "schemas/change.schema.json",
     "schemas/evidence-receipt.schema.json",
@@ -131,7 +135,8 @@ def _copy_tracked_snapshot(project_root: Path, destination: Path) -> None:
 
 
 def _forbidden_archive_path(name: str, *, allow_sdist_metadata: bool) -> bool:
-    candidate = PurePosixPath(name)
+    canonical = name[:-1] if name.endswith("/") else name
+    candidate = PurePosixPath(canonical)
     parts = candidate.parts
     egg_info_indexes = [
         index for index, part in enumerate(parts) if part.endswith(".egg-info")
@@ -143,9 +148,14 @@ def _forbidden_archive_path(name: str, *, allow_sdist_metadata: bool) -> bool:
     )
     return (
         not name
+        or not canonical
         or "\\" in name
+        or ":" in canonical
+        or "//" in canonical
+        or any(ord(character) < 32 for character in canonical)
         or candidate.is_absolute()
         or ".." in parts
+        or candidate.as_posix() != canonical
         or any(part in FORBIDDEN_PARTS for part in parts)
         or (bool(egg_info_indexes) and not allowed_egg_info)
         or name.endswith((".pyc", ".pyo"))
@@ -159,6 +169,9 @@ def _validate_archive_members(path: Path, names: list[str]) -> None:
         raise ContractError(
             f"{path.name}: member names exceed {MAX_ARCHIVE_NAME_BYTES} bytes"
         )
+    canonical_names = [name[:-1] if name.endswith("/") else name for name in names]
+    if len(set(canonical_names)) != len(canonical_names):
+        raise ContractError(f"{path.name}: duplicate member names are not allowed")
     is_sdist = path.name.endswith(".tar.gz")
     invalid = sorted(
         name
@@ -194,6 +207,101 @@ def _validate_archive_members(path: Path, names: list[str]) -> None:
             )
 
 
+def _validate_expanded_size(
+    path: Path, *, name: str, size: int, compressed_size: int | None, total: int
+) -> int:
+    if size < 0 or size > MAX_ARCHIVE_MEMBER_BYTES:
+        raise ContractError(
+            f"{path.name}: member {name!r} exceeds {MAX_ARCHIVE_MEMBER_BYTES} expanded bytes"
+        )
+    total += size
+    if total > MAX_ARCHIVE_EXPANDED_BYTES:
+        raise ContractError(
+            f"{path.name}: expanded content exceeds {MAX_ARCHIVE_EXPANDED_BYTES} bytes"
+        )
+    if size > 1_000_000 and compressed_size is not None:
+        if compressed_size <= 0 or size > compressed_size * MAX_ARCHIVE_COMPRESSION_RATIO:
+            raise ContractError(
+                f"{path.name}: member {name!r} exceeds the compression-ratio limit"
+            )
+    return total
+
+
+def _validate_zip_archive(path: Path) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = archive.infolist()
+            _validate_archive_members(path, [member.filename for member in members])
+            total = 0
+            for member in members:
+                mode = (member.external_attr >> 16) & 0xFFFF
+                file_type = stat.S_IFMT(mode)
+                if member.is_dir():
+                    if member.file_size != 0:
+                        raise ContractError(
+                            f"{path.name}: directory member has content: {member.filename!r}"
+                        )
+                    continue
+                if file_type not in {0, stat.S_IFREG}:
+                    raise ContractError(
+                        f"{path.name}: non-regular member is not allowed: {member.filename!r}"
+                    )
+                if member.flag_bits & 0x1:
+                    raise ContractError(
+                        f"{path.name}: encrypted members are not allowed: {member.filename!r}"
+                    )
+                total = _validate_expanded_size(
+                    path,
+                    name=member.filename,
+                    size=member.file_size,
+                    compressed_size=member.compress_size,
+                    total=total,
+                )
+            if total > path.stat().st_size * MAX_ARCHIVE_COMPRESSION_RATIO:
+                raise ContractError(
+                    f"{path.name}: archive exceeds the aggregate compression-ratio limit"
+                )
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ContractError(f"{path}: invalid wheel: {error}") from error
+
+
+def _validate_tar_archive(path: Path) -> None:
+    names: list[str] = []
+    total = 0
+    try:
+        with tarfile.open(path, mode="r:gz") as archive:
+            for member in archive:
+                names.append(member.name)
+                if len(names) > MAX_ARCHIVE_MEMBERS:
+                    raise ContractError(
+                        f"{path.name}: exceeds {MAX_ARCHIVE_MEMBERS} members"
+                    )
+                if not (member.isdir() or member.isreg()):
+                    raise ContractError(
+                        f"{path.name}: non-regular member is not allowed: {member.name!r}"
+                    )
+                if member.isdir():
+                    if member.size != 0:
+                        raise ContractError(
+                            f"{path.name}: directory member has content: {member.name!r}"
+                        )
+                    continue
+                total = _validate_expanded_size(
+                    path,
+                    name=member.name,
+                    size=member.size,
+                    compressed_size=None,
+                    total=total,
+                )
+        _validate_archive_members(path, names)
+        if total > path.stat().st_size * MAX_ARCHIVE_COMPRESSION_RATIO:
+            raise ContractError(
+                f"{path.name}: archive exceeds the aggregate compression-ratio limit"
+            )
+    except (OSError, tarfile.TarError) as error:
+        raise ContractError(f"{path}: invalid source distribution: {error}") from error
+
+
 def _validate_archives(artifact_root: Path, expected_names: tuple[str, ...]) -> None:
     actual = tuple(sorted(path.name for path in artifact_root.iterdir() if path.is_file()))
     if actual != expected_names:
@@ -205,20 +313,9 @@ def _validate_archives(artifact_root: Path, expected_names: tuple[str, ...]) -> 
         if path.stat().st_size > MAX_ARCHIVE_BYTES:
             raise ContractError(f"{path.name}: exceeds {MAX_ARCHIVE_BYTES} bytes")
         if path.suffix == ".whl":
-            try:
-                with zipfile.ZipFile(path) as archive:
-                    _validate_archive_members(path, archive.namelist())
-            except (OSError, zipfile.BadZipFile) as error:
-                raise ContractError(f"{path}: invalid wheel: {error}") from error
+            _validate_zip_archive(path)
         elif path.name.endswith(".tar.gz"):
-            try:
-                with tarfile.open(path, mode="r:gz") as archive:
-                    members = archive.getmembers()
-                    if any(member.issym() or member.islnk() for member in members):
-                        raise ContractError(f"{path.name}: archive links are not allowed")
-                    _validate_archive_members(path, [member.name for member in members])
-            except (OSError, tarfile.TarError) as error:
-                raise ContractError(f"{path}: invalid source distribution: {error}") from error
+            _validate_tar_archive(path)
         else:
             raise ContractError(f"unexpected distribution artifact type: {path.name}")
 
@@ -279,6 +376,7 @@ def verify_distribution(
                     sys.executable,
                     "-m",
                     "build",
+                    "--no-isolation",
                     "--outdir",
                     str(artifacts),
                     str(snapshot),

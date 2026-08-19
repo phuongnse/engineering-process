@@ -269,7 +269,7 @@ class CliTests(unittest.TestCase):
             manifest.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 3,
+                        "schemaVersion": 4,
                         "project": "sample",
                         "lifecycle": {"requiredProfiles": ["development"]},
                         "impact": {
