@@ -130,7 +130,14 @@ class ArtifactContractTests(unittest.TestCase):
             ],
         }
 
-        with self.assertRaisesRegex(ContractError, "cannot contain open"):
+        with self.assertRaisesRegex(ContractError, "open or deferred"):
+            validate_review(document)
+
+        document["findings"][0]["status"] = "deferred"
+        document["findings"][0]["resolutionEvidence"] = (
+            "A later change was proposed without owner approval"
+        )
+        with self.assertRaisesRegex(ContractError, "open or deferred"):
             validate_review(document)
 
     def test_plan_rejects_unknown_work_item_mapping(self):

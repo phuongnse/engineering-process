@@ -71,10 +71,60 @@
           "evidence": {"type": "string", "minLength": 1, "maxLength": 4000},
           "status": {"enum": ["open", "resolved", "deferred", "false-positive"]},
           "resolutionEvidence": {"type": ["string", "null"], "maxLength": 4000}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "open"}}},
+            "then": {"properties": {"resolutionEvidence": {"type": "null"}}}
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {"enum": ["resolved", "deferred", "false-positive"]}
+              }
+            },
+            "then": {
+              "properties": {
+                "resolutionEvidence": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        ]
       }
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"verdict": {"const": "approved"}}},
+      "then": {
+        "properties": {
+          "findings": {
+            "items": {
+              "properties": {
+                "status": {"enum": ["resolved", "false-positive"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"verdict": {"const": "changes-requested"}}},
+      "then": {
+        "properties": {
+          "findings": {
+            "contains": {
+              "properties": {
+                "status": {"enum": ["open", "deferred"]}
+              },
+              "required": ["status"]
+            },
+            "minContains": 1
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "actor": {
       "type": "object",

@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -85,3 +86,37 @@ class CliTests(unittest.TestCase):
             )
             self.assertIn("cross-repo-change", lock.skills)
             self.assertIn("run-change", lock.skills)
+
+    def test_lock_validate_rejects_a_schema_valid_lock_without_core(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            process = project_root / ".process"
+            process.mkdir()
+            (process / "process.lock").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "process": {
+                            "version": "0.1.0",
+                            "digest": "sha256:" + "0" * 64,
+                        },
+                        "skills": ["assess-design"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = main(
+                    [
+                        "lock",
+                        "validate",
+                        "--project-root",
+                        str(project_root),
+                        "--process-root",
+                        str(PROCESS_ROOT),
+                        "--json",
+                    ]
+                )
+
+            self.assertEqual(2, result)

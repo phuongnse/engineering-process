@@ -482,7 +482,12 @@ def _validate_actor(value: Any, path: str) -> dict[str, str]:
     return {"actorId": actor_id, "contextId": context_id, "kind": kind}
 
 
-def validate_review(document: Any, path: str = "review") -> None:
+def _validate_review(
+    document: Any,
+    path: str = "review",
+    *,
+    allow_legacy_unresolved_approval: bool = False,
+) -> None:
     value = _object(document, path)
     _exact_keys(
         value,
@@ -548,7 +553,7 @@ def validate_review(document: Any, path: str = "review") -> None:
     if not isinstance(findings, list):
         raise ContractError(f"{path}.findings: must be an array")
     finding_ids: set[str] = set()
-    open_findings = 0
+    unresolved_findings = 0
     for index, raw_finding in enumerate(findings):
         finding_path = f"{path}.findings[{index}]"
         finding = _object(raw_finding, finding_path)
@@ -591,8 +596,9 @@ def validate_review(document: Any, path: str = "review") -> None:
             "false-positive",
         }:
             raise ContractError(f"{finding_path}.status: invalid status")
+        if finding["status"] in {"open", "deferred"}:
+            unresolved_findings += 1
         if finding["status"] == "open":
-            open_findings += 1
             if finding["resolutionEvidence"] is not None:
                 raise ContractError(
                     f"{finding_path}.resolutionEvidence: must be null while open"
@@ -603,9 +609,23 @@ def validate_review(document: Any, path: str = "review") -> None:
                 f"{finding_path}.resolutionEvidence",
                 max_length=4000,
             )
-    if verdict == "approved" and open_findings:
-        raise ContractError(f"{path}: approved review cannot contain open findings")
-    if verdict == "changes-requested" and not open_findings:
+    if (
+        verdict == "approved"
+        and unresolved_findings
+        and not allow_legacy_unresolved_approval
+    ):
         raise ContractError(
-            f"{path}: changes-requested review must contain an open finding"
+            f"{path}: approved review cannot contain open or deferred findings"
         )
+    if verdict == "changes-requested" and not unresolved_findings:
+        raise ContractError(
+            f"{path}: changes-requested review must contain an open or deferred finding"
+        )
+
+
+def validate_review(document: Any, path: str = "review") -> None:
+    _validate_review(document, path, allow_legacy_unresolved_approval=False)
+
+
+def _validate_legacy_review(document: Any, path: str) -> None:
+    _validate_review(document, path, allow_legacy_unresolved_approval=True)

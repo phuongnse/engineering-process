@@ -109,6 +109,21 @@ def command_project_init(args: argparse.Namespace) -> int:
 def command_lock_validate(args: argparse.Namespace) -> int:
     path = args.project_root / ".process" / "process.lock"
     lock = validate_process_lock(read_json(path), str(path))
+    bundles = load_bundles(args.process_root, process_skills_root(args.process_root))
+    missing_core = sorted(set(bundles["core"]) - set(lock.skills))
+    if missing_core:
+        raise ContractError(
+            f"{path}: omits mandatory core skills: {', '.join(missing_core)}"
+        )
+    if lock.version != VERSION:
+        raise ContractError(
+            f"{path}: pins {lock.version}, but processctl is {VERSION}"
+        )
+    actual_digest = distribution_digest(args.process_root, lock.skills)
+    if actual_digest != lock.digest:
+        raise ContractError(
+            f"{path}: digest {lock.digest} does not match source {actual_digest}"
+        )
     _emit(
         args,
         _result(
@@ -656,6 +671,7 @@ def build_parser() -> argparse.ArgumentParser:
     lock_commands = lock.add_subparsers(dest="lock_command", required=True)
     lock_validate = lock_commands.add_parser("validate")
     _add_project_root(lock_validate)
+    _add_process_root(lock_validate)
     _add_json(lock_validate)
     lock_validate.set_defaults(handler=command_lock_validate)
     lock_create = lock_commands.add_parser("create")

@@ -35,6 +35,12 @@ CHECKLIST_REASON_RE = re.compile(
     r"\[reason:\s*(?P<reason>[^\]]*\S[^\]]*)\]", re.IGNORECASE
 )
 CHECKLIST_STATUSES = {"satisfied", "not-applicable", "pending"}
+PR_DESCRIPTION_START = "<!-- engineering-process:pr-description:start -->"
+PR_DESCRIPTION_END = "<!-- engineering-process:pr-description:end -->"
+_START_TOKEN = "ENGINEERING_PROCESS_MANAGED_PR_DESCRIPTION_START"
+_END_TOKEN = "ENGINEERING_PROCESS_MANAGED_PR_DESCRIPTION_END"
+FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})[^\r\n]*$")
+RAW_HTML_BLOCK_RE = re.compile(r"(?m)^ {0,3}</?[A-Za-z][^>]*>")
 REQUIRED_SECTIONS = (
     "Summary",
     "Contract and scope",
@@ -48,6 +54,22 @@ REQUIRED_REQUIREMENTS = (
     "Verification evidence",
     "Independent review",
 )
+STANDARD_REQUIREMENT_DETAILS = {
+    "Scope and contract": (
+        "— accepted scope is implemented without unapproved expansion."
+    ),
+    "Verification evidence": (
+        "— required current profiles pass on the published checkpoint."
+    ),
+    "Independent review": (
+        "— a separate reviewer approved the published checkpoint with no open "
+        "required finding."
+    ),
+}
+
+
+def _normalized_markdown(text: str) -> str:
+    return text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def validate_conventional_subject(subject: str, *, label: str) -> list[str]:
@@ -114,12 +136,137 @@ def _visible(text: str) -> str:
     return COMMENT_RE.sub("", text).strip()
 
 
+def _managed_span(text: str) -> tuple[int, int]:
+    if text.count(PR_DESCRIPTION_START) != 1 or text.count(PR_DESCRIPTION_END) != 1:
+        raise ContractError(
+            "PR body must contain exactly one engineering-process managed block"
+        )
+    start_matches = list(
+        re.finditer(
+            rf"(?m)^{re.escape(PR_DESCRIPTION_START)}$",
+            text,
+        )
+    )
+    end_matches = list(
+        re.finditer(
+            rf"(?m)^{re.escape(PR_DESCRIPTION_END)}$",
+            text,
+        )
+    )
+    if len(start_matches) != 1 or len(end_matches) != 1:
+        raise ContractError("PR managed markers must each occupy their own line")
+    start = start_matches[0]
+    end = end_matches[0]
+    if start.end() >= end.start():
+        raise ContractError("PR managed block markers are out of order")
+    return start.start(), end.end()
+
+
+def managed_pull_request_block(text: str) -> str:
+    normalized = _normalized_markdown(text)
+    start, end = _managed_span(normalized)
+    return normalized[start:end]
+
+
+def merge_managed_pull_request_template(current: str, block: str) -> str:
+    canonical = managed_pull_request_block(block).strip()
+    current = _normalized_markdown(current)
+    if PR_DESCRIPTION_START not in current and PR_DESCRIPTION_END not in current:
+        if current.strip():
+            raise ContractError(
+                ".github/PULL_REQUEST_TEMPLATE.md: existing unmanaged template must "
+                "be migrated around the engineering-process managed block"
+            )
+        return canonical + "\n"
+    start, end = _managed_span(current)
+    prefix = current[:start].rstrip()
+    suffix = current[end:].strip()
+    parts = [part for part in (canonical, prefix, suffix) if part]
+    return "\n\n".join(parts) + "\n"
+
+
+def _without_fenced_code(text: str) -> str:
+    visible: list[str] = []
+    active_character: str | None = None
+    active_length = 0
+    for line in text.splitlines():
+        match = FENCE_RE.fullmatch(line)
+        if active_character is None:
+            if match is None:
+                visible.append(line)
+                continue
+            fence = match.group("fence")
+            active_character = fence[0]
+            active_length = len(fence)
+            visible.append("")
+            continue
+        stripped = line.strip()
+        if (
+            stripped
+            and set(stripped) == {active_character}
+            and len(stripped) >= active_length
+        ):
+            active_character = None
+            active_length = 0
+        visible.append("")
+    return "\n".join(visible)
+
+
+def _visible_managed_content(body: str) -> tuple[str | None, list[str]]:
+    try:
+        start, _ = _managed_span(body)
+    except ContractError as error:
+        return None, [str(error)]
+    if body[:start].strip():
+        return None, [
+            "PR managed block must be the first non-whitespace content; append project "
+            "extensions after it"
+        ]
+    if _START_TOKEN in body or _END_TOKEN in body:
+        return None, ["PR body contains reserved engineering-process marker text"]
+    visible = body.replace(PR_DESCRIPTION_START, _START_TOKEN).replace(
+        PR_DESCRIPTION_END, _END_TOKEN
+    )
+    visible = COMMENT_RE.sub("", visible)
+    if "<!--" in visible or "-->" in visible:
+        return None, ["PR body contains an unterminated or malformed HTML comment"]
+    structural = _without_fenced_code(visible)
+    lines = structural.splitlines()
+    starts = [index for index, line in enumerate(lines) if line.strip() == _START_TOKEN]
+    ends = [index for index, line in enumerate(lines) if line.strip() == _END_TOKEN]
+    if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
+        return None, [
+            "PR managed block must be visible and must not be inside a code fence or comment"
+        ]
+    managed = "\n".join(lines[starts[0] + 1 : ends[0]])
+    if RAW_HTML_BLOCK_RE.search(managed):
+        return None, ["PR managed block must not contain raw HTML block elements"]
+    return managed, []
+
+
+def managed_pull_request_visibility_issues(body: str) -> list[str]:
+    _, issues = _visible_managed_content(_normalized_markdown(body))
+    return issues
+
+
 def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
-    body = body.lstrip("\ufeff")
+    body = _normalized_markdown(body)
     if not _visible(body):
         return ["PR body is empty; use the managed pull-request template"]
-    sections, duplicates = _sections(body)
-    issues = [f"Duplicate section: ## {name}" for name in sorted(set(duplicates))]
+    managed, marker_issues = _visible_managed_content(body)
+    if managed is None:
+        return marker_issues
+    headings = [match.group(1).strip() for match in HEADING_RE.finditer(managed)]
+    issues = list(marker_issues)
+    if tuple(headings) != REQUIRED_SECTIONS:
+        issues.append(
+            "Managed PR sections must exactly match the canonical order: "
+            + ", ".join(f"## {name}" for name in REQUIRED_SECTIONS)
+        )
+    sections, duplicates = _sections(managed)
+    issues.extend(
+        f"Duplicate section: ## {name}" for name in sorted(set(duplicates))
+    )
     for required in REQUIRED_SECTIONS:
         if required not in sections:
             issues.append(f"Missing section: ## {required}")
@@ -131,6 +278,11 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
     requirements = sections.get("Requirements and rules followed", "")
     checkboxes = list(CHECKBOX_RE.finditer(requirements))
     labels = [match.group("label").strip() for match in checkboxes]
+    if tuple(labels) != REQUIRED_REQUIREMENTS:
+        issues.append(
+            "Managed standard requirements must exactly match the canonical order: "
+            + ", ".join(REQUIRED_REQUIREMENTS)
+        )
     for required in REQUIRED_REQUIREMENTS:
         count = labels.count(required)
         if count == 0:
@@ -140,6 +292,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
 
     for match in checkboxes:
         line = match.group(0).strip()
+        label = match.group("label").strip()
         checked = match.group("state").lower() == "x"
         status_match = CHECKLIST_STATUS_RE.search(line)
         if status_match is None:
@@ -149,6 +302,20 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
         if status not in CHECKLIST_STATUSES:
             issues.append(f"Requirement has invalid status `{status}`: {line}")
             continue
+        detail = match.group("detail").strip()
+        detail_without_status = CHECKLIST_STATUS_RE.sub("", detail).strip()
+        reason_match = CHECKLIST_REASON_RE.search(detail_without_status)
+        if reason_match is not None:
+            if detail_without_status[reason_match.end() :].strip():
+                issues.append(f"Requirement reason must precede its status: {line}")
+            detail_without_status = (
+                detail_without_status[: reason_match.start()].strip()
+            )
+        expected_detail = STANDARD_REQUIREMENT_DETAILS.get(label)
+        if expected_detail is not None and detail_without_status != expected_detail:
+            issues.append(
+                f"Standard requirement text must remain canonical for {label}"
+            )
         if status == "pending":
             if checked:
                 issues.append(f"Pending requirement must be unchecked: {line}")
@@ -156,7 +323,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
                 issues.append(f"Pending requirement is not ready for publication: {line}")
         elif not checked:
             issues.append(f"Resolved requirement must be checked: {line}")
-        if status == "not-applicable" and CHECKLIST_REASON_RE.search(line) is None:
+        if status == "not-applicable" and reason_match is None:
             issues.append(
                 f"Not-applicable requirement must include `[reason: ...]`: {line}"
             )
@@ -168,7 +335,7 @@ def validate_pull_request(
 ) -> list[str]:
     if state not in {"draft", "ready"}:
         raise ContractError("pull-request state must be draft or ready")
-    allow_pending = state == "draft" or is_automation_branch(branch)
+    allow_pending = state == "draft"
     return [
         *validate_branch(branch),
         *validate_pr_title(title),

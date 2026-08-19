@@ -23,7 +23,7 @@
     "history"
   ],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"const": 2},
     "changeId": {"type": "string"},
     "project": {"type": "string"},
     "phase": {
@@ -100,9 +100,23 @@
         "line": {"type": ["integer", "null"], "minimum": 1},
         "summary": {"type": "string"},
         "evidence": {"type": "string"},
-        "status": {"const": "open"},
-        "resolutionEvidence": {"type": "null"}
-      }
+        "status": {"enum": ["open", "deferred"]},
+        "resolutionEvidence": {"type": ["string", "null"], "maxLength": 4000}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "open"}}},
+          "then": {"properties": {"resolutionEvidence": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "deferred"}}},
+          "then": {
+            "properties": {
+              "resolutionEvidence": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -10,6 +10,12 @@ from . import VERSION
 from .bundles import load_bundles
 from .contracts import ContractError, ProcessLock, read_json, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
+from .managed import managed_agents_block, merge_managed_agents
+from .publication import (
+    managed_pull_request_block,
+    managed_pull_request_visibility_issues,
+    merge_managed_pull_request_template,
+)
 from .skills import MARKER_NAME, validate_skills
 
 
@@ -89,6 +95,90 @@ def skill_target_ownership_issues(project_root: Path) -> list[str]:
     return issues
 
 
+def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
+    path = asset_root(process_root) / "templates" / "PULL_REQUEST_TEMPLATE.md"
+    if not path.is_file():
+        raise ContractError(f"{path}: missing pull-request template")
+    try:
+        return path, path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{path}: cannot read pull-request template: {error}") from error
+
+
+def _agents_source(process_root: Path) -> tuple[Path, str]:
+    path = asset_root(process_root) / "templates" / "AGENTS.process.md"
+    if not path.is_file():
+        raise ContractError(f"{path}: missing agent contract template")
+    try:
+        return path, path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{path}: cannot read agent contract template: {error}") from error
+
+
+def _agents_issues(project_root: Path, process_root: Path) -> list[str]:
+    _, source = _agents_source(process_root)
+    target = project_root / "AGENTS.md"
+    if not target.is_file():
+        return [f"{target}: missing managed engineering-process agent contract"]
+    try:
+        current = target.read_text(encoding="utf-8")
+        source_block = managed_agents_block(source).strip()
+        target_block = managed_agents_block(current).strip()
+    except (OSError, UnicodeError, ContractError) as error:
+        return [f"{target}: invalid managed agent contract: {error}"]
+    if source_block != target_block:
+        return [f"{target}: managed agent contract differs from the pinned distribution"]
+    return []
+
+
+def _sync_agents(project_root: Path, process_root: Path) -> None:
+    _, source = _agents_source(process_root)
+    target = project_root / "AGENTS.md"
+    try:
+        current = target.read_text(encoding="utf-8") if target.is_file() else ""
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{target}: cannot read agent contract: {error}") from error
+    updated = merge_managed_agents(current, source)
+    if current != updated:
+        target.write_text(updated, encoding="utf-8")
+
+
+def _pull_request_template_issues(
+    project_root: Path, process_root: Path
+) -> list[str]:
+    _, source = _pull_request_template_source(process_root)
+    target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    if not target.is_file():
+        return [f"{target}: missing managed pull-request template"]
+    try:
+        current = target.read_text(encoding="utf-8")
+        source_block = managed_pull_request_block(source).strip()
+        target_block = managed_pull_request_block(current).strip()
+    except (OSError, UnicodeError, ContractError) as error:
+        return [f"{target}: invalid managed pull-request template: {error}"]
+    issues = [
+        f"{target}: managed pull-request template differs from the pinned distribution"
+    ] if source_block != target_block else []
+    issues.extend(
+        f"{target}: {issue}"
+        for issue in managed_pull_request_visibility_issues(current)
+    )
+    return issues
+
+
+def _sync_pull_request_template(project_root: Path, process_root: Path) -> None:
+    _, source = _pull_request_template_source(process_root)
+    target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    try:
+        current = target.read_text(encoding="utf-8") if target.is_file() else ""
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{target}: cannot read pull-request template: {error}") from error
+    updated = merge_managed_pull_request_template(current, source)
+    if current != updated:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(updated, encoding="utf-8")
+
+
 def synchronized_state(
     project_root: Path,
     process_root: Path,
@@ -134,6 +224,8 @@ def synchronized_state(
                 and target.name not in lock.skills
             ):
                 issues.append(f"{target}: stale managed skill is not present in process.lock")
+    issues.extend(_agents_issues(project_root, process_root))
+    issues.extend(_pull_request_template_issues(project_root, process_root))
     return issues
 
 
@@ -149,6 +241,17 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
         return issues
 
     source_root = process_skills_root(process_root)
+    source_issues = validate_skills(source_root, lock.skills)
+    bundles = load_bundles(process_root, source_root)
+    missing_core = sorted(set(bundles["core"]) - set(lock.skills))
+    if source_issues or missing_core:
+        details = list(source_issues)
+        if missing_core:
+            details.append(
+                "process.lock omits mandatory core skills: "
+                + ", ".join(missing_core)
+            )
+        raise ContractError("\n".join(details))
     if lock.version != VERSION:
         raise ContractError(
             f"process.lock pins {lock.version}, but processctl is {VERSION}"
@@ -158,6 +261,9 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
         raise ContractError(
             f"process.lock digest {lock.digest} does not match source {actual_digest}"
         )
+
+    _sync_agents(project_root, process_root)
+    _sync_pull_request_template(project_root, process_root)
 
     target_root = project_root / ".agents" / "skills"
     target_root.mkdir(parents=True, exist_ok=True)

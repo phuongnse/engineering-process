@@ -109,6 +109,13 @@ class BootstrapTests(unittest.TestCase):
                     replace=False,
                 )
 
+            self.assertFalse((root / ".process").exists())
+            self.assertFalse((root / "AGENTS.md").exists())
+            self.assertFalse((root / ".gitignore").exists())
+            self.assertEqual(
+                "## Local template\n", template.read_text(encoding="utf-8")
+            )
+
     def test_refuses_to_replace_a_different_project_manifest_implicitly(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -130,6 +137,24 @@ class BootstrapTests(unittest.TestCase):
                     requested_bundles=["core"],
                     replace=False,
                 )
+
+    def test_parent_path_conflict_is_detected_before_bootstrap_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".github").write_text("not a directory\n", encoding="utf-8")
+            manifest = self.write_manifest(root)
+
+            with self.assertRaisesRegex(ContractError, "target parent"):
+                initialize_project(
+                    root,
+                    PROCESS_ROOT,
+                    manifest_path=manifest,
+                    requested_bundles=[],
+                    replace=False,
+                )
+
+            self.assertFalse((root / ".process").exists())
+            self.assertFalse((root / "AGENTS.md").exists())
 
 
 if __name__ == "__main__":

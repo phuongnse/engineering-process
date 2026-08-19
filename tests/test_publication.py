@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 
 from engineering_process.publication import (
+    PR_DESCRIPTION_END,
+    PR_DESCRIPTION_START,
     validate_branch,
     validate_commit_range,
     validate_commit_subject,
@@ -14,7 +16,8 @@ from engineering_process.publication import (
 
 def pr_body(status: str = "satisfied") -> str:
     checked = "x" if status != "pending" else " "
-    return f"""## Summary
+    return f"""{PR_DESCRIPTION_START}
+## Summary
 
 Adopt the shared publication contract.
 
@@ -36,9 +39,10 @@ Separate reviewer approved checkpoint abc123.
 
 ## Requirements and rules followed
 
-- [{checked}] **Scope and contract** — exact accepted scope. [status: {status}]
-- [{checked}] **Verification evidence** — current profiles passed. [status: {status}]
-- [{checked}] **Independent review** — no open findings. [status: {status}]
+- [{checked}] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: {status}]
+- [{checked}] **Verification evidence** — required current profiles pass on the published checkpoint. [status: {status}]
+- [{checked}] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: {status}]
+{PR_DESCRIPTION_END}
 """
 
 
@@ -90,6 +94,64 @@ class PublicationTests(unittest.TestCase):
                 state="ready",
             ),
         )
+
+    def test_rejects_markerless_hidden_and_weakened_managed_content(self):
+        markerless = pr_body().replace(PR_DESCRIPTION_START, "").replace(
+            PR_DESCRIPTION_END, ""
+        )
+        hidden = "Visible preface\n\n<!--\n" + pr_body() + "\n-->\n"
+        weakened = pr_body().replace(
+            "accepted scope is implemented without unapproved expansion",
+            "some scope was considered",
+        )
+
+        for body in (markerless, hidden, weakened):
+            with self.subTest(body=body[:40]):
+                self.assertTrue(
+                    validate_pull_request(
+                        title="feat(process): standardize publication",
+                        body=body,
+                        branch="feat/standardize-publication",
+                        state="ready",
+                    )
+                )
+
+    def test_ready_automation_pr_cannot_leave_standard_requirements_pending(self):
+        issues = validate_pull_request(
+            title="chore: update dependencies",
+            body=pr_body("pending"),
+            branch="automation/renovate/runtime-packages",
+            state="ready",
+        )
+
+        self.assertTrue(any("not ready for publication" in issue for issue in issues))
+
+    def test_rejects_a_managed_block_hidden_in_a_code_fence(self):
+        issues = validate_pull_request(
+            title="feat(process): standardize publication",
+            body="```markdown\n" + pr_body() + "```\n",
+            branch="feat/standardize-publication",
+            state="ready",
+        )
+
+        self.assertTrue(issues)
+
+    def test_rejects_prefix_content_and_raw_html_around_standard_sections(self):
+        prefixed = "Project preface\n\n" + pr_body()
+        raw_html = pr_body().replace("## Summary", "<pre>\n## Summary").replace(
+            PR_DESCRIPTION_END, "</pre>\n" + PR_DESCRIPTION_END
+        )
+
+        for body in (prefixed, raw_html):
+            with self.subTest(body=body[:40]):
+                self.assertTrue(
+                    validate_pull_request(
+                        title="feat(process): standardize publication",
+                        body=body,
+                        branch="feat/standardize-publication",
+                        state="ready",
+                    )
+                )
 
     def test_commit_range_reports_the_exact_invalid_commit(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -76,6 +76,84 @@ class SyncTests(unittest.TestCase):
                 )
             )
 
+    def test_sync_maintains_pr_template_block_and_preserves_extensions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            self.prepare_project(project_root)
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+            canonical = target.read_text(encoding="utf-8")
+            target.write_text(
+                canonical.replace(
+                    "accepted scope is implemented without unapproved expansion",
+                    "scope is optional",
+                )
+                + "\n## Project evidence\n\nProject-owned details.\n",
+                encoding="utf-8",
+            )
+            lock = validate_process_lock(
+                read_json(project_root / ".process" / "process.lock")
+            )
+
+            self.assertTrue(
+                any(
+                    "managed pull-request template differs" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            repaired = target.read_text(encoding="utf-8")
+            self.assertIn(
+                "accepted scope is implemented without unapproved expansion",
+                repaired,
+            )
+            self.assertIn("## Project evidence", repaired)
+
+            target.unlink()
+            self.assertTrue(
+                any(
+                    "missing managed pull-request template" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+
+    def test_sync_maintains_agent_contract_and_preserves_project_rules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            self.prepare_project(project_root)
+            (project_root / "AGENTS.md").write_text(
+                "# Project rules\n\nKeep domain policy here.\n",
+                encoding="utf-8",
+            )
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            target = project_root / "AGENTS.md"
+            installed = target.read_text(encoding="utf-8")
+            self.assertIn("# Project rules", installed)
+            target.write_text(
+                installed.replace(
+                    "Independent review requires an attested read-only actor",
+                    "Independent review can reuse the implementation actor",
+                ),
+                encoding="utf-8",
+            )
+            lock = validate_process_lock(
+                read_json(project_root / ".process" / "process.lock")
+            )
+
+            self.assertTrue(
+                any(
+                    "managed agent contract differs" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            repaired = target.read_text(encoding="utf-8")
+            self.assertIn(
+                "Independent review requires an attested read-only actor",
+                repaired,
+            )
+            self.assertIn("# Project rules", repaired)
+
     def test_refuses_to_overwrite_unmanaged_skill(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

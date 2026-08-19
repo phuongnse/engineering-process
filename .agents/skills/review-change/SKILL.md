@@ -23,8 +23,10 @@ specific checkpoint without changing the reviewed source.
 4. Record actionable findings with severity, exact location, evidence, and status.
    Separate defects from questions, optional improvements, and unsupported claims.
    Resolved, deferred, and false-positive findings require resolution evidence.
-5. Request changes when any required finding remains open. Approve only when required
-   outcomes and evidence are complete for the reviewed checkpoint.
+   Deferred remains unresolved and completion-blocking unless a future process
+   contract introduces an explicit owner-approved exception.
+5. Request changes when any required finding remains open or deferred. Approve only
+   when required outcomes and evidence are complete for the reviewed checkpoint.
 6. Validate the report with processctl contract validate --kind review, then submit
    it with processctl change review submit. A coordinator may transport the assigned
    reviewer's exact artifact; the host or human attester owns its authenticity. The

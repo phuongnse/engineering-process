@@ -55,11 +55,13 @@ processctl project init --project-root . --manifest project.json \
 processctl doctor --project-root .
 ~~~
 
-`project init` validates the manifest, writes the lock, installs the managed
-`AGENTS.md` contract, adds the ignored lifecycle-state path, and synchronizes the
-selected skills. It refuses to replace differing project configuration or unmanaged
-skills unless the conflict is resolved explicitly. A consumer never authors or
-maintains process skills locally.
+`project init` validates the manifest, preflights ownership conflicts, writes the
+lock, installs the managed `AGENTS.md` and pull-request contracts, adds the ignored
+lifecycle-state path, and synchronizes the selected skills. It refuses to replace
+differing project configuration or unmanaged skills unless the conflict is resolved
+explicitly. `sync --check` and `doctor` detect drift in skills, the managed agent
+contract, and the pull-request block. A consumer never authors or maintains process
+skills locally.
 
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
@@ -126,6 +128,11 @@ One worker owning specification, planning, implementation, and verification is t
 default topology. Bounded helpers are optional optimizations, not required roles;
 only review requires a separate actor and context.
 
+Open and deferred findings remain completion-blocking until a later review records
+them as resolved or false-positive with evidence. Schema-1 lifecycle state is loaded
+through a fail-closed migration that replays immutable review artifacts to reconstruct
+pending findings before any transition is allowed.
+
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately authorized project workflows.
 
@@ -144,10 +151,10 @@ processctl publication validate-pr --title "feat(scope): describe the change" \
 
 Manual branches use `{type}/{kebab-description}`. Automation uses the provider-neutral
 `automation/{owner}/{description}` namespace. Commit subjects and PR titles use
-Conventional Commit syntax and are limited to 72 characters. Draft and automation PRs
-may retain explicitly pending checklist items; a ready manual PR may not. The managed
-template owns the shared sections and standard checklist while project extensions
-remain outside its markers.
+Conventional Commit syntax and are limited to 72 characters. Draft PRs may retain
+explicitly pending checklist items; every ready PR, including automation, must satisfy
+them. The managed template owns the ordered shared sections and immutable standard
+checklist meaning; project extensions are appended after its closing marker.
 
 ## Trust boundary
 
@@ -179,7 +186,7 @@ authenticates who produced it.
   integrations. They are neither bundled into the core nor required in consumer
   repositories.
 - The managed pull-request template and publication validators are shared process
-  policy. Consumer repositories may append project-specific requirements outside the
+  policy. Consumer repositories may append project-specific requirements after the
   managed block but do not copy or redefine the common convention.
 
 ## Development

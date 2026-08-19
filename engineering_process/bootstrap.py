@@ -8,13 +8,15 @@ from . import VERSION
 from .bundles import load_bundles, select_bundles
 from .contracts import ContractError, read_json, validate_project, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
+from .managed import AGENTS_END, AGENTS_START, merge_managed_agents
+from .publication import (
+    PR_DESCRIPTION_END,
+    PR_DESCRIPTION_START,
+    merge_managed_pull_request_template,
+)
 from .syncing import skill_target_ownership_issues, sync_skills
 
 
-AGENTS_START = "<!-- engineering-process:start -->"
-AGENTS_END = "<!-- engineering-process:end -->"
-PR_DESCRIPTION_START = "<!-- engineering-process:pr-description:start -->"
-PR_DESCRIPTION_END = "<!-- engineering-process:pr-description:end -->"
 RUNS_IGNORE = "/.process/runs/"
 
 
@@ -22,38 +24,47 @@ def _serialized(document: Any) -> str:
     return json.dumps(document, ensure_ascii=False, indent=2) + "\n"
 
 
-def _install_file(path: Path, content: str, *, replace: bool) -> None:
+def _read_optional_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    if not path.is_file():
+        raise ContractError(f"{path}: expected a regular file")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{path}: cannot read existing file: {error}") from error
+
+
+def _preflight_file(path: Path, content: str, *, replace: bool) -> None:
     if path.exists():
-        try:
-            current = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            raise ContractError(f"{path}: cannot read existing file: {error}") from error
+        current = _read_optional_text(path)
         if current == content:
             return
         if not replace:
             raise ContractError(f"{path}: already exists with different content; use --replace")
+
+
+def _preflight_parents(project_root: Path, *paths: Path) -> None:
+    for path in paths:
+        parent = path.parent
+        while parent != project_root.parent:
+            if parent.exists() and not parent.is_dir():
+                raise ContractError(
+                    f"{parent}: target parent must be a directory before bootstrap"
+                )
+            if parent == project_root:
+                break
+            parent = parent.parent
+
+
+def _write_text(path: Path, content: str) -> None:
+    if _read_optional_text(path) == content:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
 
-def _managed_agents_text(current: str, block: str) -> str:
-    start_count = current.count(AGENTS_START)
-    end_count = current.count(AGENTS_END)
-    if start_count != end_count or start_count > 1:
-        raise ContractError("AGENTS.md: invalid engineering-process managed block")
-    if start_count == 1:
-        start = current.index(AGENTS_START)
-        end = current.index(AGENTS_END, start) + len(AGENTS_END)
-        prefix = current[:start].rstrip()
-        suffix = current[end:].strip()
-        parts = [part for part in (prefix, block.strip(), suffix) if part]
-        return "\n\n".join(parts) + "\n"
-    if not current.strip():
-        return block.strip() + "\n"
-    return current.rstrip() + "\n\n" + block.strip() + "\n"
-
-
-def _install_agents(project_root: Path, process_root: Path) -> None:
+def _agents_update(project_root: Path, process_root: Path) -> tuple[Path, str]:
     template = asset_root(process_root) / "templates" / "AGENTS.process.md"
     if not template.is_file():
         raise ContractError(f"{template}: missing process agent contract template")
@@ -62,35 +73,13 @@ def _install_agents(project_root: Path, process_root: Path) -> None:
     except (OSError, UnicodeError) as error:
         raise ContractError(f"{template}: cannot read template: {error}") from error
     path = project_root / "AGENTS.md"
-    current = path.read_text(encoding="utf-8") if path.is_file() else ""
-    updated = _managed_agents_text(current, block)
-    if current != updated:
-        path.write_text(updated, encoding="utf-8")
+    current = _read_optional_text(path)
+    return path, merge_managed_agents(current, block)
 
 
-def _managed_pull_request_text(current: str, block: str) -> str:
-    start_count = current.count(PR_DESCRIPTION_START)
-    end_count = current.count(PR_DESCRIPTION_END)
-    if start_count != end_count or start_count > 1:
-        raise ContractError(
-            ".github/PULL_REQUEST_TEMPLATE.md: invalid engineering-process managed block"
-        )
-    if start_count == 0:
-        if current.strip():
-            raise ContractError(
-                ".github/PULL_REQUEST_TEMPLATE.md: existing unmanaged template must "
-                "be migrated around the engineering-process managed block"
-            )
-        return block.strip() + "\n"
-    start = current.index(PR_DESCRIPTION_START)
-    end = current.index(PR_DESCRIPTION_END, start) + len(PR_DESCRIPTION_END)
-    prefix = current[:start].rstrip()
-    suffix = current[end:].strip()
-    parts = [part for part in (prefix, block.strip(), suffix) if part]
-    return "\n\n".join(parts) + "\n"
-
-
-def _install_pull_request_template(project_root: Path, process_root: Path) -> None:
+def _pull_request_template_update(
+    project_root: Path, process_root: Path
+) -> tuple[Path, str]:
     source = asset_root(process_root) / "templates" / "PULL_REQUEST_TEMPLATE.md"
     if not source.is_file():
         raise ContractError(f"{source}: missing pull-request template")
@@ -99,16 +88,13 @@ def _install_pull_request_template(project_root: Path, process_root: Path) -> No
     except (OSError, UnicodeError) as error:
         raise ContractError(f"{source}: cannot read template: {error}") from error
     path = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
-    current = path.read_text(encoding="utf-8") if path.is_file() else ""
-    updated = _managed_pull_request_text(current, block)
-    if current != updated:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(updated, encoding="utf-8")
+    current = _read_optional_text(path)
+    return path, merge_managed_pull_request_template(current, block)
 
 
-def _install_ignore(project_root: Path) -> None:
+def _ignore_update(project_root: Path) -> tuple[Path, str]:
     path = project_root / ".gitignore"
-    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+    current = _read_optional_text(path)
     lines = [RUNS_IGNORE if line == ".process/runs/" else line for line in current.splitlines()]
     normalized: list[str] = []
     for line in lines:
@@ -118,8 +104,7 @@ def _install_ignore(project_root: Path) -> None:
     if RUNS_IGNORE not in normalized:
         normalized.append(RUNS_IGNORE)
     updated = "\n".join(normalized) + "\n"
-    if current != updated:
-        path.write_text(updated, encoding="utf-8")
+    return path, updated
 
 
 def initialize_project(
@@ -161,15 +146,32 @@ def initialize_project(
     if ownership_issues:
         raise ContractError("\n".join(ownership_issues))
 
-    _install_file(target_manifest, _serialized(document), replace=replace)
-    _install_file(
-        project_root / ".process" / "process.lock",
-        _serialized(lock_document),
-        replace=replace,
+    manifest_content = _serialized(document)
+    lock_path = project_root / ".process" / "process.lock"
+    lock_content = _serialized(lock_document)
+    agents_target = project_root / "AGENTS.md"
+    pr_target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    ignore_target = project_root / ".gitignore"
+    _preflight_parents(
+        project_root,
+        target_manifest,
+        lock_path,
+        agents_target,
+        pr_target,
+        ignore_target,
+        project_root / ".agents" / "skills" / "__process_probe__",
     )
-    _install_agents(project_root, process_root)
-    _install_pull_request_template(project_root, process_root)
-    _install_ignore(project_root)
+    _preflight_file(target_manifest, manifest_content, replace=replace)
+    _preflight_file(lock_path, lock_content, replace=replace)
+    agents_path, agents_content = _agents_update(project_root, process_root)
+    pr_path, pr_content = _pull_request_template_update(project_root, process_root)
+    ignore_path, ignore_content = _ignore_update(project_root)
+
+    _write_text(target_manifest, manifest_content)
+    _write_text(lock_path, lock_content)
+    _write_text(agents_path, agents_content)
+    _write_text(pr_path, pr_content)
+    _write_text(ignore_path, ignore_content)
     issues = sync_skills(project_root, process_root, check=False)
     if issues:
         raise ContractError("\n".join(issues))
