@@ -3,7 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 from engineering_process.distribution_verify import verify_distribution
 
 
@@ -14,7 +18,7 @@ if __name__ == "__main__":
     print(
         json.dumps(
             verify_distribution(
-                Path(__file__).resolve().parent.parent,
+                PROJECT_ROOT,
                 output_root=arguments.output,
             ),
             ensure_ascii=False,

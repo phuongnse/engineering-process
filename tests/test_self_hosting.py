@@ -1,5 +1,9 @@
 import json
+import os
 import re
+import subprocess
+import sys
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -11,6 +15,31 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_distribution_verifier_resolves_the_checkout_before_installed_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            shadow_package = Path(directory) / "engineering_process"
+            shadow_package.mkdir()
+            (shadow_package / "__init__.py").write_text("", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = directory
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(PROCESS_ROOT / "verification" / "verify_distribution.py"),
+                    "--help",
+                ],
+                cwd=PROCESS_ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("usage: verify_distribution.py", result.stdout)
+
     def test_managed_and_distribution_skill_trees_are_separate(self):
         managed = PROCESS_ROOT / ".agents" / "skills"
         sources = PROCESS_ROOT / "process_assets" / "skills"
