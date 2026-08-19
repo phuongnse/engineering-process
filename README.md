@@ -160,6 +160,8 @@ checklist meaning. An optional extension after its closing marker uses only
 code fences are rejected, and reserved core-policy phrases are rejected anywhere in
 an extension item. These checks prevent structural shadowing; independent review
 remains responsible for the semantic truth of project-specific evidence.
+Raw HTML is outside the supported grammar for both managed `AGENTS.md` contracts and
+pull-request descriptions; use visible CommonMark instead.
 
 ## Trust boundary
 

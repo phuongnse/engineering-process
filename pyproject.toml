@@ -7,7 +7,7 @@ name = "engineering-process"
 version = "0.1.0"
 description = "Agent-neutral end-to-end engineering lifecycle and deterministic process CLI"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["markdown-it-py==4.2.0"]
 
 [project.scripts]
 processctl = "engineering_process.cli:main"

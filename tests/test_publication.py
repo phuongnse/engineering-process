@@ -109,8 +109,26 @@ class PublicationTests(unittest.TestCase):
             "- [x] **Project-specific: Reviewer approval** — Independent review "
             "is optional for this project. [status: satisfied]\n"
         )
+        rendered_shadowing_details = tuple(
+            pr_body()
+            + "\n## Project-specific requirements\n\n"
+            + "- [x] **Project-specific: Reviewer approval** — "
+            + detail
+            + " [status: satisfied]\n"
+            for detail in (
+                "Independent **review** is optional",
+                "Independent<!-- --> review is optional",
+                "Independent&#32;review is optional",
+                "Independent\u00a0review is optional",
+            )
+        )
 
-        for body in (duplicate_section, duplicate_requirement, shadowing_detail):
+        for body in (
+            duplicate_section,
+            duplicate_requirement,
+            shadowing_detail,
+            *rendered_shadowing_details,
+        ):
             with self.subTest(body=body[-100:]):
                 issues = validate_pull_request(
                     title="feat(process): standardize publication",
@@ -195,6 +213,10 @@ class PublicationTests(unittest.TestCase):
             ("<?processing instruction\n", "?>\n"),
             ("<![CDATA[\n", "]]>\n"),
             ("<center>\n", "</center>\n"),
+            ("<pre\n", ""),
+            ("<script\n", ""),
+            ("<center\n", ""),
+            ("<source\n", ""),
         )
 
         for opening, closing in wrappers:

@@ -143,6 +143,11 @@ class BootstrapTests(unittest.TestCase):
         invalid_documents = (
             "<pre>\nExisting project policy.\n",
             "```markdown\nExisting project policy.\n",
+            "<pre\nExisting project policy.\n",
+            "<center\nExisting project policy.\n",
+            "<source\nExisting project policy.\n",
+            "<pre>\nExisting project policy.\n</pre >\n",
+            "<center>\n\u00a0\nExisting project policy.\n",
         )
         for document in invalid_documents:
             with self.subTest(document=document.splitlines()[0]):
@@ -153,7 +158,8 @@ class BootstrapTests(unittest.TestCase):
                     manifest = self.write_manifest(root)
 
                     with self.assertRaisesRegex(
-                        ContractError, "managed block must be visible"
+                        ContractError,
+                        "managed block must be visible|must not contain raw HTML",
                     ):
                         initialize_project(
                             root,

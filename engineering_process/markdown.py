@@ -1,82 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 import re
+import unicodedata
+
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-FENCE_RE = re.compile(
-    r"^ {0,3}(?:(?P<backticks>`{3,})(?P<backtick_info>[^`]*)|"
-    r"(?P<tildes>~{3,})[^\r\n]*)$"
-)
-RAW_TAG_START_RE = re.compile(
-    r"^ {0,3}</?(?P<tag>[A-Za-z][A-Za-z0-9-]*)(?:\s|/?>)",
-    re.IGNORECASE,
-)
-RAW_CONTAINER_TAGS = {"pre", "script", "style", "textarea"}
-RAW_BLOCK_TAGS = {
-    "address",
-    "article",
-    "aside",
-    "base",
-    "basefont",
-    "blockquote",
-    "body",
-    "caption",
-    "center",
-    "col",
-    "colgroup",
-    "dd",
-    "details",
-    "dialog",
-    "dir",
-    "div",
-    "dl",
-    "dt",
-    "fieldset",
-    "figcaption",
-    "figure",
-    "footer",
-    "form",
-    "frame",
-    "frameset",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "header",
-    "hr",
-    "html",
-    "iframe",
-    "legend",
-    "li",
-    "link",
-    "main",
-    "menu",
-    "menuitem",
-    "nav",
-    "noframes",
-    "ol",
-    "optgroup",
-    "option",
-    "p",
-    "param",
-    "search",
-    "section",
-    "summary",
-    "table",
-    "tbody",
-    "td",
-    "tfoot",
-    "th",
-    "thead",
-    "title",
-    "tr",
-    "track",
-    "ul",
-}
+RAW_HTML_LIKE_LINE_RE = re.compile(r"(?m)^ {0,3}<(?:/?[A-Za-z]|[!?])")
+_COMMONMARK = MarkdownIt("commonmark", {"html": True})
+_NONVISIBLE_BLOCK_TYPES = {"code_block", "fence", "html_block"}
 
 
 def strip_html_comments(text: str) -> tuple[str, bool]:
@@ -85,116 +20,50 @@ def strip_html_comments(text: str) -> tuple[str, bool]:
     return visible, malformed
 
 
-def mask_fenced_code(text: str) -> str:
-    visible: list[str] = []
-    active_character: str | None = None
-    active_length = 0
-    for line in text.splitlines():
-        match = FENCE_RE.fullmatch(line)
-        if active_character is None:
-            if match is None:
-                visible.append(line)
-                continue
-            fence = match.group("backticks") or match.group("tildes")
-            active_character = fence[0]
-            active_length = len(fence)
-            visible.append("")
+def mask_nonvisible_markdown_blocks(text: str) -> str:
+    """Mask source lines CommonMark renders as code or raw HTML blocks."""
+
+    lines = text.splitlines()
+    hidden: set[int] = set()
+    for token in _COMMONMARK.parse(text):
+        if token.type not in _NONVISIBLE_BLOCK_TYPES or token.map is None:
             continue
-        closing = re.fullmatch(
-            rf" {{0,3}}{re.escape(active_character)}{{{active_length},}}[ \t]*",
-            line,
-        )
-        if closing is not None:
-            active_character = None
-            active_length = 0
-        visible.append("")
-    return "\n".join(visible)
+        start, end = token.map
+        hidden.update(range(start, end))
+    return "\n".join("" if index in hidden else line for index, line in enumerate(lines))
 
 
-def _opening_tag_end(line: str, start: int) -> int | None:
-    quote: str | None = None
-    for index in range(start, len(line)):
-        character = line[index]
-        if quote is not None:
-            if character == quote:
-                quote = None
-            continue
-        if character in {'"', "'"}:
-            quote = character
-        elif character == ">":
-            return index
-    return None
+def _walk_tokens(tokens: list[Token]) -> Iterator[Token]:
+    for token in tokens:
+        yield token
+        if token.children:
+            yield from _walk_tokens(token.children)
 
 
-def _closing_tag_end(line: str, tag: str, start: int = 0) -> int | None:
-    cursor = start
-    closing = re.compile(rf"</{re.escape(tag)}\s*>", re.IGNORECASE)
-    while True:
-        candidate = line.find("<", cursor)
-        if candidate < 0:
-            return None
-        match = closing.match(line, candidate)
-        if match is not None:
-            return match.end()
-        tag_end = _opening_tag_end(line, candidate)
-        if tag_end is None:
-            return None
-        cursor = tag_end + 1
+def contains_raw_html(text: str) -> bool:
+    return RAW_HTML_LIKE_LINE_RE.search(text) is not None or any(
+        token.type in {"html_block", "html_inline"}
+        for token in _walk_tokens(_COMMONMARK.parse(text))
+    )
 
 
-def mask_raw_html_containers(text: str) -> str:
-    visible: list[str] = []
-    active: tuple[str, str] | None = None
-    for line in text.splitlines():
-        if active is not None:
-            visible.append("")
-            kind, terminator = active
-            if kind == "tag" and _closing_tag_end(line, terminator) is not None:
-                active = None
-            elif kind == "token" and terminator in line:
-                active = None
-            elif kind == "blank" and not line.strip():
-                active = None
-            continue
+def _inline_text(tokens: list[Token]) -> str:
+    pieces: list[str] = []
+    for token in tokens:
+        if token.children:
+            pieces.append(_inline_text(token.children))
+        elif token.type in {"text", "code_inline"}:
+            pieces.append(token.content)
+        elif token.type in {"softbreak", "hardbreak"}:
+            pieces.append(" ")
+        elif token.type == "image":
+            pieces.append(token.content)
+    return "".join(pieces)
 
-        stripped = line.lstrip(" ")
-        indentation = len(line) - len(stripped)
-        if indentation <= 3 and stripped.startswith("<?"):
-            visible.append("")
-            if "?>" not in stripped[2:]:
-                active = ("token", "?>")
-            continue
-        if indentation <= 3 and stripped.startswith("<![CDATA["):
-            visible.append("")
-            if "]]>" not in stripped[9:]:
-                active = ("token", "]]>")
-            continue
-        if indentation <= 3 and re.match(r"<![A-Z]", stripped):
-            visible.append("")
-            if _opening_tag_end(stripped, 0) is None:
-                active = ("token", ">")
-            continue
 
-        match = RAW_TAG_START_RE.match(line)
-        if match is None:
-            visible.append(line)
-            continue
-        tag = match.group("tag").casefold()
-        tag_end = _opening_tag_end(line, match.start())
-        if tag not in RAW_BLOCK_TAGS and tag not in RAW_CONTAINER_TAGS:
-            if tag_end is None or line[tag_end + 1 :].strip():
-                visible.append(line)
-                continue
-        visible.append("")
-        if tag in RAW_CONTAINER_TAGS:
-            if tag_end is not None and _closing_tag_end(
-                line, tag, start=tag_end + 1
-            ) is not None:
-                continue
-            active = ("tag", tag)
-            continue
-        # CommonMark block tags and complete standalone HTML tags remain raw HTML
-        # until a blank line. A slash on a non-void HTML element does not make it
-        # safe: HTML ignores that self-closing flag.
-        active = ("blank", tag)
-    return "\n".join(visible)
+def normalized_rendered_inline_text(text: str) -> str:
+    """Return formatting-insensitive CommonMark inline text for policy checks."""
+
+    rendered = _inline_text(_COMMONMARK.parseInline(text))
+    normalized = unicodedata.normalize("NFKC", rendered)
+    return " ".join(normalized.split()).casefold()

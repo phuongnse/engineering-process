@@ -7,8 +7,9 @@ from pathlib import Path
 from .contracts import ContractError
 from .markdown import (
     COMMENT_RE,
-    mask_fenced_code,
-    mask_raw_html_containers,
+    contains_raw_html,
+    mask_nonvisible_markdown_blocks,
+    normalized_rendered_inline_text,
     strip_html_comments,
 )
 
@@ -212,7 +213,9 @@ def _visible_managed_content(body: str) -> tuple[str | None, list[str]]:
     visible, malformed_comments = strip_html_comments(visible)
     if malformed_comments:
         return None, ["PR body contains an unterminated or malformed HTML comment"]
-    structural = mask_raw_html_containers(mask_fenced_code(visible))
+    if contains_raw_html(visible):
+        return None, ["PR body must not contain raw HTML"]
+    structural = mask_nonvisible_markdown_blocks(visible)
     lines = structural.splitlines()
     starts = [index for index, line in enumerate(lines) if line.strip() == _START_TOKEN]
     ends = [index for index, line in enumerate(lines) if line.strip() == _END_TOKEN]
@@ -240,6 +243,8 @@ def validate_project_extensions(body: str, *, allow_pending: bool) -> list[str]:
     extension = body[end:]
     if not extension.strip():
         return []
+    if contains_raw_html(extension):
+        return ["PR extension must not contain raw HTML"]
     lines = extension.strip().splitlines()
     if not lines or lines[0] != PROJECT_EXTENSION_HEADING:
         return [
@@ -264,7 +269,7 @@ def validate_project_extensions(body: str, *, allow_pending: bool) -> list[str]:
         if folded in labels:
             issues.append(f"Duplicate project-specific requirement: {label}")
         labels.add(folded)
-        normalized_line = line.casefold()
+        normalized_line = normalized_rendered_inline_text(line)
         if any(
             required.casefold() in normalized_line
             for required in REQUIRED_REQUIREMENTS

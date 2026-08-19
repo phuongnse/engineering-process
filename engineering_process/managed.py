@@ -4,8 +4,8 @@ import re
 
 from .contracts import ContractError
 from .markdown import (
-    mask_fenced_code,
-    mask_raw_html_containers,
+    contains_raw_html,
+    mask_nonvisible_markdown_blocks,
     strip_html_comments,
 )
 
@@ -54,7 +54,12 @@ def managed_agents_visibility_issues(text: str) -> list[str]:
     visible, malformed_comments = strip_html_comments(visible)
     if malformed_comments:
         return ["AGENTS.md contains an unterminated or malformed HTML comment"]
-    structural = mask_raw_html_containers(mask_fenced_code(visible))
+    if contains_raw_html(visible):
+        return [
+            "AGENTS.md must not contain raw HTML; use visible CommonMark outside "
+            "the managed markers"
+        ]
+    structural = mask_nonvisible_markdown_blocks(visible)
     lines = structural.splitlines()
     starts = [
         index for index, line in enumerate(lines) if line == _AGENTS_START_TOKEN
@@ -63,7 +68,7 @@ def managed_agents_visibility_issues(text: str) -> list[str]:
     if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
         return [
             "AGENTS.md managed block must be visible and outside comments, code fences, "
-            "or raw HTML containers"
+            "or non-visible Markdown blocks"
         ]
     return []
 

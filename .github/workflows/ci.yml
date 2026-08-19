@@ -28,7 +28,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install processctl
-        run: python -m pip install --no-deps .
+        run: python -m pip install .
 
       - name: Validate publication metadata
         if: github.event_name == 'pull_request'

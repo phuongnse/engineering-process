@@ -162,7 +162,7 @@ class SyncTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    "managed block must be visible" in issue
+                    "raw HTML" in issue or "managed block must be visible" in issue
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
             )
@@ -173,7 +173,7 @@ class SyncTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    "managed block must be visible" in issue
+                    "raw HTML" in issue or "managed block must be visible" in issue
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
             )
@@ -184,7 +184,7 @@ class SyncTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    "managed block must be visible" in issue
+                    "raw HTML" in issue or "managed block must be visible" in issue
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
             )
@@ -197,7 +197,8 @@ class SyncTests(unittest.TestCase):
                     )
                     self.assertTrue(
                         any(
-                            "managed block must be visible" in issue
+                            "raw HTML" in issue
+                            or "managed block must be visible" in issue
                             for issue in synchronized_state(
                                 project_root, PROCESS_ROOT, lock
                             )
@@ -213,6 +214,10 @@ class SyncTests(unittest.TestCase):
                 ("<li>", "</li>"),
                 ("<summary>", "</summary>"),
                 ("<div/>", ""),
+                ("<pre", "</pre>"),
+                ("<script", "</script>"),
+                ("<center", "</center>"),
+                ("<source", "</source>"),
             )
             for opening_tag, closing_tag in raw_block_wrappers:
                 with self.subTest(opening_tag=opening_tag):
@@ -225,7 +230,39 @@ class SyncTests(unittest.TestCase):
                     )
                     self.assertTrue(
                         any(
-                            "managed block must be visible" in issue
+                            "raw HTML" in issue
+                            or "managed block must be visible" in issue
+                            for issue in synchronized_state(
+                                project_root, PROCESS_ROOT, lock
+                            )
+                        )
+                    )
+
+            raw_boundary_payloads = (
+                ("<pre>", "</pre >"),
+                ("<pre>", "</pre\t>"),
+                ("<center>", "\u00a0"),
+                ("<center>", "\u2003"),
+                ("<center>", "\x0b"),
+                ("<center>", "\x0c"),
+            )
+            for opening_tag, fake_separator in raw_boundary_payloads:
+                with self.subTest(
+                    opening_tag=opening_tag,
+                    fake_separator=repr(fake_separator),
+                ):
+                    target.write_text(
+                        opening_tag
+                        + "\nproject policy\n"
+                        + fake_separator
+                        + "\n"
+                        + managed_only,
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        any(
+                            "raw HTML" in issue
+                            or "managed block must be visible" in issue
                             for issue in synchronized_state(
                                 project_root, PROCESS_ROOT, lock
                             )
