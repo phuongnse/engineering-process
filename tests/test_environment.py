@@ -124,7 +124,7 @@ class EnvironmentTests(unittest.TestCase):
 
             self.assertEqual("passed", report["status"])
             self.assertEqual(["sample-tool", "one", "two"], report["command"])
-            self.assertEqual("one|two\n", report["stdout"])
+            self.assertEqual(f"one|two{os.linesep}", report["stdout"])
 
     def test_doctor_is_read_only_and_reports_missing_requirement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -405,13 +405,17 @@ class EnvironmentTests(unittest.TestCase):
 
     def managed_setup_document(self):
         document = project_document(setup=False, dependency=False)
+        platform_name = platform_identifier()
+        command_path = (
+            "sample.exe" if platform_name.startswith("windows-") else "sample"
+        )
         document["environment"]["managedTools"] = [
             {
                 "id": "sample",
                 "version": "1.2.3",
                 "artifacts": [
                     {
-                        "platform": platform_identifier(),
+                        "platform": platform_name,
                         "url": "https://downloads.example.test/sample",
                         "checksum": f"sha256:{'0' * 64}",
                         "archiveFormat": "file",
@@ -419,7 +423,7 @@ class EnvironmentTests(unittest.TestCase):
                         "maxDownloadBytes": 1000,
                         "maxExtractedBytes": 1000,
                         "maxFiles": 1,
-                        "commands": {"sample": "sample"},
+                        "commands": {"sample": command_path},
                     }
                 ],
             }
