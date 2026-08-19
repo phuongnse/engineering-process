@@ -34,6 +34,7 @@ from .supervision import process_supervisor
 
 
 OUTPUT_LIMIT = 16_384
+MIRRORED_OUTPUT_LIMIT = 1_000_000
 OUTPUT_REGEX_TIMEOUT_SECONDS = 0.1
 TERMINATION_GRACE_SECONDS = 1.0
 
@@ -94,6 +95,8 @@ _OUTPUT_MIRROR_LOCK = threading.Lock()
 def _drain_output(stream, capture: dict[str, Any], *, mirror: bool) -> None:
     try:
         while chunk := stream.read(8192):
+            capture["bytes"] += len(chunk)
+            capture["sha256"].update(chunk)
             remaining = OUTPUT_LIMIT - len(capture["data"])
             if remaining > 0:
                 capture["data"].extend(chunk[:remaining])
@@ -101,13 +104,26 @@ def _drain_output(stream, capture: dict[str, Any], *, mirror: bool) -> None:
                 capture["truncated"] = True
             if mirror:
                 with _OUTPUT_MIRROR_LOCK:
+                    mirrored = capture["mirroredBytes"]
+                    mirror_remaining = MIRRORED_OUTPUT_LIMIT - mirrored
+                    visible = chunk[:max(0, mirror_remaining)]
                     binary = getattr(sys.stderr, "buffer", None)
-                    if binary is not None:
-                        binary.write(chunk)
+                    if binary is not None and visible:
+                        binary.write(visible)
                         binary.flush()
-                    else:
-                        sys.stderr.write(chunk.decode("utf-8", errors="replace"))
+                    elif visible:
+                        sys.stderr.write(visible.decode("utf-8", errors="replace"))
                         sys.stderr.flush()
+                    capture["mirroredBytes"] += len(visible)
+                    if len(visible) < len(chunk) and not capture["mirrorTruncated"]:
+                        marker = b"\n[engineering-process: streamed output truncated]\n"
+                        if binary is not None:
+                            binary.write(marker)
+                            binary.flush()
+                        else:
+                            sys.stderr.write(marker.decode("ascii"))
+                            sys.stderr.flush()
+                        capture["mirrorTruncated"] = True
     except (OSError, ValueError):
         capture["truncated"] = True
     finally:
@@ -172,13 +188,32 @@ def execute_command(
             "error": str(error),
             "stdout": "",
             "stderr": "",
+            "stdoutBytes": 0,
+            "stderrBytes": 0,
+            "stdoutSha256": hashlib.sha256(b"").hexdigest(),
+            "stderrSha256": hashlib.sha256(b"").hexdigest(),
             "outputTruncated": False,
+            "streamOutputTruncated": False,
             "pathEntries": [str(path) for path in path_entries],
         }
     assert process.stdout is not None
     assert process.stderr is not None
-    stdout_capture: dict[str, Any] = {"data": bytearray(), "truncated": False}
-    stderr_capture: dict[str, Any] = {"data": bytearray(), "truncated": False}
+    stdout_capture: dict[str, Any] = {
+        "data": bytearray(),
+        "truncated": False,
+        "bytes": 0,
+        "sha256": hashlib.sha256(),
+        "mirroredBytes": 0,
+        "mirrorTruncated": False,
+    }
+    stderr_capture: dict[str, Any] = {
+        "data": bytearray(),
+        "truncated": False,
+        "bytes": 0,
+        "sha256": hashlib.sha256(),
+        "mirroredBytes": 0,
+        "mirrorTruncated": False,
+    }
     drain_threads = (
         threading.Thread(
             target=_drain_output,
@@ -253,8 +288,15 @@ def execute_command(
         "commandSha256": command_digest,
         "stdout": stdout,
         "stderr": stderr,
+        "stdoutBytes": stdout_capture["bytes"],
+        "stderrBytes": stderr_capture["bytes"],
+        "stdoutSha256": stdout_capture["sha256"].hexdigest(),
+        "stderrSha256": stderr_capture["sha256"].hexdigest(),
         "outputTruncated": bool(
             stdout_capture["truncated"] or stderr_capture["truncated"]
+        ),
+        "streamOutputTruncated": bool(
+            stdout_capture["mirrorTruncated"] or stderr_capture["mirrorTruncated"]
         ),
         "pathEntries": [str(path) for path in path_entries],
     }

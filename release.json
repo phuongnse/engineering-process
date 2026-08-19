@@ -1,9 +1,37 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "previousVersion": "0.1.0",
   "version": "0.1.1",
   "classification": "patch",
   "compatibility": "backward-compatible",
   "schemaImpact": "unchanged",
-  "migration": null
+  "migration": null,
+  "identity": {
+    "package": "engineering-process",
+    "distribution": "engineering_process",
+    "tag": "v0.1.1",
+    "releaseName": "engineering-process 0.1.1",
+    "runtimeVersion": {
+      "path": "engineering_process/__init__.py",
+      "variable": "VERSION"
+    },
+    "artifacts": [
+      "engineering_process-0.1.1-py3-none-any.whl",
+      "engineering_process-0.1.1.tar.gz"
+    ],
+    "receiptAsset": null
+  },
+  "provenance": {
+    "mode": "bootstrap-history",
+    "statement": "Recorded after the immutable public release; this history was not governed by the current lifecycle and does not claim a lifecycle receipt.",
+    "lifecycleReceipt": null
+  },
+  "changes": [
+    {
+      "id": "managed-download-closed-response",
+      "type": "fix",
+      "surfaces": ["execution"],
+      "rationale": "Close managed download responses deterministically after bounded use."
+    }
+  ]
 }

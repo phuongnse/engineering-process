@@ -19,6 +19,8 @@ the canonical verification and review lifecycle.
 3. Implement work items in dependency order. Add or update proving tests at the lowest
    reliable boundary and keep generated artifacts, migrations, callers, and docs in
    the same accepted slice.
+   Preserve declared resource bounds, observability, cleanup, trust boundaries, and
+   release identity as implementation invariants rather than end-of-cycle additions.
 4. Run focused project checks while editing. These checks diagnose implementation but
    do not replace lifecycle verification.
 5. Reconcile every acceptance criterion and planned work item. Record exact blockers

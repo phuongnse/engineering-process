@@ -29,6 +29,7 @@ from .environment import (
     require_environment_profile,
     setup_environment,
 )
+from .evidence import export_receipt, prune_completed_run, validate_receipt
 from .impact import plan_profile
 from .lifecycle import (
     begin_implementation,
@@ -100,6 +101,7 @@ def command_project_validate(args: argparse.Namespace) -> int:
             project=project.identifier,
             profiles=sorted(project.profiles),
             requiredProfiles=list(project.required_profiles),
+            qualityExtensions=list(project.quality_extensions),
             environmentProfiles=(
                 sorted(project.environment.profiles) if project.environment else []
             ),
@@ -456,6 +458,29 @@ def command_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_evidence_export(args: argparse.Namespace) -> int:
+    details = export_receipt(args.project_root, args.change_id, args.output)
+    _emit(args, _result("evidence export", output=str(args.output.resolve()), **details))
+    return 0
+
+
+def command_evidence_validate(args: argparse.Namespace) -> int:
+    details = validate_receipt(args.receipt)
+    _emit(args, _result("evidence validate", receipt=str(args.receipt.resolve()), **details))
+    return 0
+
+
+def command_evidence_prune(args: argparse.Namespace) -> int:
+    details = prune_completed_run(
+        args.project_root,
+        args.change_id,
+        args.receipt,
+        apply=args.apply,
+    )
+    _emit(args, _result("evidence prune", **details))
+    return 0
+
+
 def command_sync(args: argparse.Namespace) -> int:
     issues = sync_skills(
         args.project_root,
@@ -727,8 +752,10 @@ def command_publication_validate_release(args: argparse.Namespace) -> int:
     details = validate_release_checkpoint(
         args.project_root,
         tag=args.tag,
+        release_name=args.release_name,
         commit=args.commit,
         main_ref=args.main_ref,
+        receipt_path=args.receipt,
     )
     _emit(args, _result("publication validate-release", **details))
     return 0
@@ -866,6 +893,40 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(digest)
     digest.set_defaults(handler=command_digest)
 
+    evidence = commands.add_parser(
+        "evidence", help="Export, validate, and explicitly prune lifecycle evidence"
+    )
+    evidence_commands = evidence.add_subparsers(
+        dest="evidence_command", required=True
+    )
+    evidence_export = evidence_commands.add_parser(
+        "export", help="Export one completed lifecycle as a portable receipt"
+    )
+    _add_project_root(evidence_export)
+    evidence_export.add_argument("--change-id", required=True)
+    evidence_export.add_argument("--output", type=Path, required=True)
+    _add_json(evidence_export)
+    evidence_export.set_defaults(handler=command_evidence_export)
+    evidence_validate = evidence_commands.add_parser(
+        "validate", help="Validate an exported lifecycle receipt"
+    )
+    evidence_validate.add_argument("receipt", type=Path)
+    _add_json(evidence_validate)
+    evidence_validate.set_defaults(handler=command_evidence_validate)
+    evidence_prune = evidence_commands.add_parser(
+        "prune", help="Validate a receipt before pruning a completed local run"
+    )
+    _add_project_root(evidence_prune)
+    evidence_prune.add_argument("--change-id", required=True)
+    evidence_prune.add_argument("--receipt", type=Path, required=True)
+    evidence_prune.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the prune; without this flag only validate and preview",
+    )
+    _add_json(evidence_prune)
+    evidence_prune.set_defaults(handler=command_evidence_prune)
+
     sync = commands.add_parser("sync", help="Synchronize pinned skills into a project")
     _add_project_root(sync)
     _add_process_root(sync)
@@ -988,8 +1049,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_project_root(publication_release)
     publication_release.add_argument("--tag", required=True)
+    publication_release.add_argument("--release-name", required=True)
     publication_release.add_argument("--commit", required=True)
     publication_release.add_argument("--main-ref", default="origin/main")
+    publication_release.add_argument("--receipt", type=Path)
     _add_json(publication_release)
     publication_release.set_defaults(handler=command_publication_validate_release)
 

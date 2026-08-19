@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+import shutil
+import stat
+import sys
+import tarfile
+import tempfile
+import time
+import zipfile
+from pathlib import Path, PurePosixPath
+
+from .contracts import ContractError, read_json, validate_release
+from .environment import execute_command
+from .git import run_git
+
+
+MAX_TRACKED_FILES = 5_000
+MAX_TRACKED_LIST_BYTES = 1_000_000
+MAX_TRACKED_FILE_BYTES = 8_000_000
+MAX_TRACKED_TOTAL_BYTES = 64_000_000
+MAX_ARCHIVE_BYTES = 128_000_000
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_ARCHIVE_NAME_BYTES = 1_000_000
+SNAPSHOT_TIMEOUT_SECONDS = 30.0
+FORBIDDEN_PARTS = {".agents", ".process", "__pycache__", "build", "dist"}
+REQUIRED_SUFFIXES = {
+    "PRODUCTION_STANDARD.md",
+    "release.json",
+    "schemas/change.schema.json",
+    "schemas/evidence-receipt.schema.json",
+    "schemas/release.schema.json",
+}
+
+
+def _tracked_paths(project_root: Path) -> list[PurePosixPath]:
+    result = run_git(
+        project_root,
+        ["ls-files", "-z", "--cached", "--"],
+        label="distribution snapshot tracked paths",
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_TRACKED_LIST_BYTES,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ContractError(
+            "distribution snapshot: git ls-files failed"
+            + (f": {detail}" if detail else "")
+        )
+    encoded_paths = result.stdout.split(b"\0")
+    if encoded_paths and encoded_paths[-1] == b"":
+        encoded_paths.pop()
+    if len(encoded_paths) > MAX_TRACKED_FILES:
+        raise ContractError(
+            f"distribution snapshot exceeds {MAX_TRACKED_FILES} tracked files"
+        )
+    paths: list[PurePosixPath] = []
+    for encoded in encoded_paths:
+        try:
+            text = encoded.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ContractError("tracked distribution paths must be UTF-8") from error
+        candidate = PurePosixPath(text)
+        if (
+            not text
+            or "\\" in text
+            or ":" in text
+            or candidate.is_absolute()
+            or ".." in candidate.parts
+            or candidate.as_posix() != text
+        ):
+            raise ContractError(f"non-portable tracked distribution path: {text!r}")
+        paths.append(candidate)
+    return paths
+
+
+def _copy_tracked_snapshot(project_root: Path, destination: Path) -> None:
+    total = 0
+    deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
+    resolved_root = project_root.resolve(strict=True)
+    for relative in _tracked_paths(project_root):
+        if time.monotonic() >= deadline:
+            raise ContractError("tracked distribution snapshot exceeded 30 seconds")
+        source = project_root.joinpath(*relative.parts)
+        target = destination.joinpath(*relative.parts)
+        try:
+            source_stat = source.lstat()
+            source.resolve(strict=True).relative_to(resolved_root)
+        except (OSError, ValueError) as error:
+            raise ContractError(f"cannot inspect tracked file {relative}: {error}") from error
+        if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISREG(source_stat.st_mode):
+            raise ContractError(
+                f"tracked distribution input must be a regular file: {relative}"
+            )
+        if source_stat.st_size > MAX_TRACKED_FILE_BYTES:
+            raise ContractError(
+                f"tracked distribution file exceeds {MAX_TRACKED_FILE_BYTES} bytes: {relative}"
+            )
+        total += source_stat.st_size
+        if total > MAX_TRACKED_TOTAL_BYTES:
+            raise ContractError(
+                f"tracked distribution snapshot exceeds {MAX_TRACKED_TOTAL_BYTES} bytes"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        try:
+            with source.open("rb") as input_stream, target.open("xb") as output_stream:
+                while chunk := input_stream.read(1024 * 1024):
+                    if time.monotonic() >= deadline:
+                        raise ContractError(
+                            "tracked distribution snapshot exceeded 30 seconds"
+                        )
+                    copied += len(chunk)
+                    if copied > source_stat.st_size:
+                        raise ContractError(
+                            f"tracked distribution file changed while copying: {relative}"
+                        )
+                    output_stream.write(chunk)
+            after = source.lstat()
+        except OSError as error:
+            raise ContractError(f"cannot copy tracked file {relative}: {error}") from error
+        if (
+            copied != source_stat.st_size
+            or after.st_size != source_stat.st_size
+            or after.st_mtime_ns != source_stat.st_mtime_ns
+            or after.st_mode != source_stat.st_mode
+        ):
+            raise ContractError(
+                f"tracked distribution file changed while copying: {relative}"
+            )
+        target.chmod(stat.S_IMODE(source_stat.st_mode))
+
+
+def _forbidden_archive_path(name: str, *, allow_sdist_metadata: bool) -> bool:
+    candidate = PurePosixPath(name)
+    parts = candidate.parts
+    egg_info_indexes = [
+        index for index, part in enumerate(parts) if part.endswith(".egg-info")
+    ]
+    allowed_egg_info = (
+        allow_sdist_metadata
+        and egg_info_indexes == [1]
+        and len(parts) >= 2
+    )
+    return (
+        not name
+        or "\\" in name
+        or candidate.is_absolute()
+        or ".." in parts
+        or any(part in FORBIDDEN_PARTS for part in parts)
+        or (bool(egg_info_indexes) and not allowed_egg_info)
+        or name.endswith((".pyc", ".pyo"))
+    )
+
+
+def _validate_archive_members(path: Path, names: list[str]) -> None:
+    if len(names) > MAX_ARCHIVE_MEMBERS:
+        raise ContractError(f"{path.name}: exceeds {MAX_ARCHIVE_MEMBERS} members")
+    if sum(len(name.encode("utf-8")) for name in names) > MAX_ARCHIVE_NAME_BYTES:
+        raise ContractError(
+            f"{path.name}: member names exceed {MAX_ARCHIVE_NAME_BYTES} bytes"
+        )
+    is_sdist = path.name.endswith(".tar.gz")
+    invalid = sorted(
+        name
+        for name in names
+        if _forbidden_archive_path(name, allow_sdist_metadata=is_sdist)
+    )
+    if invalid:
+        raise ContractError(
+            f"{path.name}: contains forbidden generated or managed state: {invalid[0]}"
+        )
+    normalized = {
+        "/".join(PurePosixPath(name).parts[1:])
+        if is_sdist
+        else name
+        for name in names
+        if name and not name.endswith("/")
+    }
+    missing = sorted(
+        required
+        for required in REQUIRED_SUFFIXES
+        if not any(name == required or name.endswith(f"/{required}") for name in normalized)
+    )
+    if missing:
+        raise ContractError(
+            f"{path.name}: missing required distribution assets: {', '.join(missing)}"
+        )
+    if is_sdist:
+        roots = {PurePosixPath(name).parts[0] for name in names if name}
+        expected_root = path.name.removesuffix(".tar.gz")
+        if roots != {expected_root}:
+            raise ContractError(
+                f"{path.name}: source distribution root must be {expected_root}"
+            )
+
+
+def _validate_archives(artifact_root: Path, expected_names: tuple[str, ...]) -> None:
+    actual = tuple(sorted(path.name for path in artifact_root.iterdir() if path.is_file()))
+    if actual != expected_names:
+        raise ContractError(
+            "distribution artifacts do not match release identity: "
+            f"expected {list(expected_names)}, got {list(actual)}"
+        )
+    for path in (artifact_root / name for name in expected_names):
+        if path.stat().st_size > MAX_ARCHIVE_BYTES:
+            raise ContractError(f"{path.name}: exceeds {MAX_ARCHIVE_BYTES} bytes")
+        if path.suffix == ".whl":
+            try:
+                with zipfile.ZipFile(path) as archive:
+                    _validate_archive_members(path, archive.namelist())
+            except (OSError, zipfile.BadZipFile) as error:
+                raise ContractError(f"{path}: invalid wheel: {error}") from error
+        elif path.name.endswith(".tar.gz"):
+            try:
+                with tarfile.open(path, mode="r:gz") as archive:
+                    members = archive.getmembers()
+                    if any(member.issym() or member.islnk() for member in members):
+                        raise ContractError(f"{path.name}: archive links are not allowed")
+                    _validate_archive_members(path, [member.name for member in members])
+            except (OSError, tarfile.TarError) as error:
+                raise ContractError(f"{path}: invalid source distribution: {error}") from error
+        else:
+            raise ContractError(f"unexpected distribution artifact type: {path.name}")
+
+
+def _checkout_generated_state(project_root: Path) -> list[str]:
+    candidates = [project_root / "build", project_root / "dist"]
+    candidates.extend(sorted(project_root.glob("*.egg-info")))
+    return sorted(path.relative_to(project_root).as_posix() for path in candidates if path.exists())
+
+
+def verify_distribution(
+    project_root: Path, *, output_root: Path | None = None
+) -> dict[str, object]:
+    project_root = project_root.resolve(strict=True)
+    resolved_output: Path | None = None
+    if output_root is not None:
+        resolved_output = output_root.resolve()
+        try:
+            resolved_output.relative_to(project_root)
+        except ValueError:
+            pass
+        else:
+            raise ContractError("verified distribution output must stay outside the checkout")
+        if resolved_output.exists():
+            raise ContractError(f"{resolved_output}: refusing to replace existing output")
+    generated_before = _checkout_generated_state(project_root)
+    if generated_before:
+        raise ContractError(
+            "source checkout contains generated build state: "
+            + ", ".join(generated_before)
+        )
+    checkout = run_git(
+        project_root,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        label="inspect distribution checkout state",
+        timeout_seconds=30,
+        max_stdout_bytes=500_000,
+    )
+    if checkout.returncode != 0 or checkout.stdout:
+        raise ContractError("distribution verification requires a clean checkout")
+    release = validate_release(
+        read_json(project_root / "release.json"), str(project_root / "release.json")
+    )
+    if not release.artifacts:
+        raise ContractError("release schemaVersion 2 identity is required for distribution verification")
+    try:
+        with tempfile.TemporaryDirectory(prefix="engineering-process-build-") as directory:
+            temporary = Path(directory)
+            snapshot = temporary / "source"
+            artifacts = temporary / "artifacts"
+            snapshot.mkdir()
+            artifacts.mkdir()
+            _copy_tracked_snapshot(project_root, snapshot)
+            result = execute_command(
+                project_root,
+                identifier="isolated-distribution-build",
+                run=(
+                    sys.executable,
+                    "-m",
+                    "build",
+                    "--outdir",
+                    str(artifacts),
+                    str(snapshot),
+                ),
+                timeout_seconds=900,
+                working_directory=".",
+                stream_output=True,
+            )
+            if result["status"] != "passed":
+                raise ContractError(
+                    "isolated distribution build failed: "
+                    f"{result['status']} (exit {result['exitCode']})"
+                )
+            _validate_archives(artifacts, release.artifacts)
+            if resolved_output is not None:
+                try:
+                    resolved_output.mkdir(parents=True)
+                    for name in release.artifacts:
+                        shutil.copy2(artifacts / name, resolved_output / name)
+                except OSError as error:
+                    if resolved_output.exists():
+                        shutil.rmtree(resolved_output, ignore_errors=True)
+                    raise ContractError(
+                        f"cannot preserve verified distributions: {error}"
+                    ) from error
+    finally:
+        generated_after = _checkout_generated_state(project_root)
+        if generated_after != generated_before:
+            raise ContractError(
+                "distribution verification changed checkout build state: "
+                f"before {generated_before}, after {generated_after}"
+            )
+    return {
+        "artifacts": list(release.artifacts),
+        "checkoutGeneratedState": [],
+        "output": str(resolved_output) if resolved_output is not None else None,
+    }

@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -12,7 +13,8 @@ from engineering_process.contracts import (
     Project,
     ProjectImpact,
 )
-from engineering_process.impact import IMPACT_FILE_ENV, plan_profile
+from engineering_process.impact import IMPACT_FILE_ENV, _glob_matches, plan_profile
+from unittest.mock import patch
 from engineering_process.runner import run_profile
 
 
@@ -239,6 +241,28 @@ class ImpactTests(unittest.TestCase):
 
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["impact"]["selectedCheckIds"], ["inspect-impact"])
+
+    def test_repeated_globstars_have_bounded_matching_cost(self):
+        pattern = tuple("**/**/**/**/**/**/**/**/**/**/z".split("/"))
+        path = tuple(["segment"] * 31)
+
+        started = time.monotonic()
+        for _ in range(1_000):
+            self.assertFalse(_glob_matches(pattern, path))
+
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_rejects_oversized_impact_evidence_before_running_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.initialize_repository(root)
+            (root / "unknown.bin").write_bytes(b"unknown")
+
+            with (
+                patch("engineering_process.impact.MAX_IMPACT_EVIDENCE_BYTES", 100),
+                self.assertRaisesRegex(ContractError, "impact evidence exceeds"),
+            ):
+                plan_profile(root, self.project(), "development", base_ref=base)
 
 
 if __name__ == "__main__":

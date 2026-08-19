@@ -20,7 +20,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "enum": [1, 2]
     },
     "project": {
       "type": "string"
@@ -66,36 +66,43 @@
         "mergeBase": {"type": "string"},
         "changedPaths": {
           "type": "array",
+          "maxItems": 5000,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
         "directlyChangedComponents": {
           "type": "array",
+          "maxItems": 256,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
         "affectedComponents": {
           "type": "array",
+          "maxItems": 256,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
         "unmatchedPaths": {
           "type": "array",
+          "maxItems": 5000,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
         "selectedCheckIds": {
           "type": "array",
+          "maxItems": 256,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
         "skippedCheckIds": {
           "type": "array",
+          "maxItems": 256,
           "uniqueItems": true,
           "items": {"type": "string"}
         },
         "checkSelection": {
           "type": "array",
+          "maxItems": 256,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -166,6 +173,7 @@
     },
     "checks": {
       "type": "array",
+      "maxItems": 256,
       "items": {
         "type": "object",
         "required": [
@@ -210,6 +218,35 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "impactSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "impactIntegrity": {
+            "enum": ["verified", "failed"]
+          },
+          "stdoutBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stderrBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stdoutSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "stderrSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "outputTruncated": {
+            "type": "boolean"
+          },
+          "streamOutputTruncated": {
+            "type": "boolean"
+          },
           "pathEntries": {
             "type": "array",
             "items": {
@@ -223,5 +260,32 @@
         "additionalProperties": false
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["impact"],
+        "properties": {
+          "checks": {
+            "items": {
+              "required": [
+                "impactSha256",
+                "impactIntegrity",
+                "stdoutBytes",
+                "stderrBytes",
+                "stdoutSha256",
+                "stderrSha256",
+                "outputTruncated",
+                "streamOutputTruncated"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
 }

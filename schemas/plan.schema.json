@@ -27,6 +27,7 @@
     "workItems": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -41,12 +42,14 @@
           "affectedPaths": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 256,
             "uniqueItems": true,
             "items": {"type": "string", "minLength": 1, "maxLength": 1000}
           },
           "verificationProfiles": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 64,
             "uniqueItems": true,
             "items": {
               "type": "string",
@@ -59,6 +62,7 @@
     "acceptancePlan": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -72,12 +76,14 @@
           "workItems": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 256,
             "uniqueItems": true,
             "items": {"type": "string"}
           },
           "verificationProfiles": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 64,
             "uniqueItems": true,
             "items": {"type": "string"}
           }
@@ -86,6 +92,7 @@
     },
     "risks": {
       "type": "array",
+      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -98,6 +105,7 @@
     },
     "openDecisions": {
       "type": "array",
+      "maxItems": 256,
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1, "maxLength": 1000}
     }

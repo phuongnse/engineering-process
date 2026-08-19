@@ -19,12 +19,15 @@ inventing product behavior or duplicating the owning specification.
    affected projects, measurable acceptance outcomes, risk, required verification
    profiles, and sign-off state. Link the project-owned specification when one owns
    product behavior; otherwise state why the change contract is sufficient.
-4. Classify risk as low, medium, or high using project policy. When policy requires
+4. Assess every `production-v1` dimension and every declared project extension.
+   Map each applicable dimension to measurable acceptance criteria; record a concrete
+   rationale and no criteria for a dimension that is genuinely not applicable.
+5. Classify risk as low, medium, or high using project policy. When policy requires
    sign-off, stop implementation until approval evidence exists.
-5. Validate the document with processctl contract validate --kind change, then
+6. Validate the document with processctl contract validate --kind change, then
    register it with processctl change start. Registration completes specification;
    it does not authorize implementation.
-6. Hand the registered contract to planning. Keep durable product decisions in their
+7. Hand the registered contract to planning. Keep durable product decisions in their
    project-owned specification rather than in process history.
 
 ## Hard gates
@@ -32,6 +35,7 @@ inventing product behavior or duplicating the owning specification.
 - Do not replace missing product decisions with assumptions.
 - Do not lower required security, compatibility, migration, accessibility, or
   evidence boundaries to keep moving.
+- Do not mark a quality dimension not applicable merely because its work was omitted.
 - Report missing or blocked evidence honestly.
 
 ## Output

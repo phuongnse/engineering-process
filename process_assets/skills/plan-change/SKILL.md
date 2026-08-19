@@ -17,7 +17,8 @@ plan without changing implementation source.
 2. Trace callers, consumers, trust boundaries, tests, migrations, generated outputs,
    documentation, and retirement work far enough to define complete work items.
 3. Record ordered work items with owned paths and verification profiles. Map every
-   acceptance criterion to at least one work item and project-owned profile.
+   acceptance criterion and applicable production-quality dimension to at least one
+   work item and project-owned profile.
 4. Record concrete risks and mitigations. Leave behavior-changing ambiguity as an
    open decision; do not plan around it.
 5. Validate the plan with processctl contract validate --kind plan, then register it

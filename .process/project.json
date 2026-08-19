@@ -41,8 +41,7 @@
         "id": "distribution-build",
         "run": [
           "python",
-          "-m",
-          "build"
+          "verification/verify_distribution.py"
         ],
         "timeoutSeconds": 900
       }

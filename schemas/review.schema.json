@@ -18,7 +18,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"const": 2},
+    "schemaVersion": {"enum": [2, 3]},
     "changeId": {
       "type": "string",
       "maxLength": 64,
@@ -43,8 +43,35 @@
       }
     },
     "verdict": {"enum": ["approved", "changes-requested"]},
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standard", "assessments"],
+      "properties": {
+        "standard": {"const": "production-v1"},
+        "assessments": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/qualityAssessment"},
+          "allOf": [
+            {"contains": {"properties": {"dimension": {"const": "compatibility"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "correctness"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "maintainability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "observability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "operability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "performance"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "privacy"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "reliability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "security"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "supply-chain"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1}
+          ]
+        }
+      }
+    },
     "findings": {
       "type": "array",
+      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -95,9 +122,28 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {"not": {"required": ["quality"]}}
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+      "then": {"required": ["quality"]}
+    },
+    {
       "if": {"properties": {"verdict": {"const": "approved"}}},
       "then": {
         "properties": {
+          "quality": {
+            "properties": {
+              "assessments": {
+                "items": {
+                  "properties": {
+                    "status": {"enum": ["verified", "not-applicable-confirmed"]}
+                  }
+                }
+              }
+            }
+          },
           "findings": {
             "items": {
               "properties": {
@@ -112,6 +158,17 @@
       "if": {"properties": {"verdict": {"const": "changes-requested"}}},
       "then": {
         "properties": {
+          "quality": {
+            "properties": {
+              "assessments": {
+                "contains": {
+                  "properties": {"status": {"const": "failed"}},
+                  "required": ["status"]
+                },
+                "minContains": 1
+              }
+            }
+          },
           "findings": {
             "contains": {
               "properties": {
@@ -126,6 +183,35 @@
     }
   ],
   "$defs": {
+    "qualityAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension", "status", "criteria", "evidence"],
+      "properties": {
+        "dimension": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(?:compatibility|correctness|maintainability|observability|operability|performance|privacy|reliability|security|supply-chain|project-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)$"
+        },
+        "status": {"enum": ["verified", "failed", "not-applicable-confirmed"]},
+        "criteria": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"}
+        },
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["verified", "failed"]}}, "required": ["status"]},
+          "then": {"properties": {"criteria": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "not-applicable-confirmed"}}, "required": ["status"]},
+          "then": {"properties": {"criteria": {"maxItems": 0}}}
+        }
+      ]
+    },
     "actor": {
       "type": "object",
       "additionalProperties": false,

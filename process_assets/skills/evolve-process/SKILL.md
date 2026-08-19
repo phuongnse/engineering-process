@@ -22,6 +22,8 @@ incident history into permanent ceremony.
    realistic forward test without providing the expected answer.
 5. Validate backward compatibility, version impact, consumer locks, and migration
    needs. Remove superseded guidance instead of preserving duplicate paths.
+   Check the full `production-v1` boundary and derive every release identity surface
+   from the release contract so a local fix cannot create a new cross-surface drift.
 6. Measure whether the change improves task fidelity without disproportionate
    workflow cost.
 

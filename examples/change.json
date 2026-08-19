@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "issue-123",
   "summary": "Add a bounded product capability",
   "source": "issue-123",
@@ -12,11 +12,31 @@
   "risk": "medium",
   "affectedProjects": ["sample-project"],
   "acceptanceCriteria": [
-    {
-      "id": "ac-1",
-      "outcome": "The authorized user can complete the requested behavior"
-    }
+    {"id": "ac-compatibility", "outcome": "Existing supported consumers continue to work or receive reviewed migration guidance"},
+    {"id": "ac-correctness", "outcome": "The authorized user can complete the requested behavior and invalid input is rejected"},
+    {"id": "ac-maintainability", "outcome": "The implementation has bounded ownership and automated regression coverage"},
+    {"id": "ac-observability", "outcome": "Operators can correlate bounded, redacted evidence with the change and verification cycle"},
+    {"id": "ac-operability", "outcome": "Setup, failure, recovery, rollback, and generated-state cleanup are documented and verified"},
+    {"id": "ac-performance", "outcome": "Resource consumption remains within declared time, memory, output, and input bounds"},
+    {"id": "ac-reliability", "outcome": "Failure, timeout, interruption, and retry behavior is deterministic and fail-closed"},
+    {"id": "ac-security", "outcome": "Trust boundaries, unsafe inputs, credentials, and dependencies are explicitly verified"},
+    {"id": "ac-supply-chain", "outcome": "Released source, metadata, evidence, and artifacts share one verified identity"}
   ],
+  "quality": {
+    "standard": "production-v1",
+    "assessments": [
+      {"dimension": "compatibility", "status": "applicable", "rationale": "The change affects a supported product surface.", "criteria": ["ac-compatibility"]},
+      {"dimension": "correctness", "status": "applicable", "rationale": "Observable behavior must satisfy its product contract.", "criteria": ["ac-correctness"]},
+      {"dimension": "maintainability", "status": "applicable", "rationale": "The new behavior needs durable ownership and regression coverage.", "criteria": ["ac-maintainability"]},
+      {"dimension": "observability", "status": "applicable", "rationale": "Operational evidence must be attributable without retaining raw secrets.", "criteria": ["ac-observability"]},
+      {"dimension": "operability", "status": "applicable", "rationale": "Operators need deterministic setup, recovery, rollback, and cleanup.", "criteria": ["ac-operability"]},
+      {"dimension": "performance", "status": "applicable", "rationale": "All untrusted work and evidence must have resource bounds.", "criteria": ["ac-performance"]},
+      {"dimension": "privacy", "status": "not-applicable", "rationale": "The example behavior stores and transmits no personal data.", "criteria": []},
+      {"dimension": "reliability", "status": "applicable", "rationale": "Failure modes must be deterministic and recoverable.", "criteria": ["ac-reliability"]},
+      {"dimension": "security", "status": "applicable", "rationale": "Authorization and trust boundaries are part of the behavior.", "criteria": ["ac-security"]},
+      {"dimension": "supply-chain", "status": "applicable", "rationale": "Published outputs must bind to reviewed source and evidence.", "criteria": ["ac-supply-chain"]}
+    ]
+  },
   "requiredProfiles": ["development", "review"],
   "signOff": {
     "required": false,

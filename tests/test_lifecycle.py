@@ -6,11 +6,17 @@ import unittest
 from pathlib import Path
 
 from engineering_process.contracts import (
+    CORE_QUALITY_DIMENSIONS,
     Check,
     ContractError,
     ImpactComponent,
     Project,
     ProjectImpact,
+)
+from engineering_process.evidence import (
+    export_receipt,
+    prune_completed_run,
+    validate_receipt,
 )
 from engineering_process.lifecycle import (
     _change_lock,
@@ -39,8 +45,26 @@ class LifecycleTests(unittest.TestCase):
             check=True,
         )
         (root / ".gitignore").write_text(".process/runs/\n", encoding="utf-8")
+        (root / ".process").mkdir()
+        (root / ".process" / "process.lock").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "process": {
+                        "version": "0.1.1",
+                        "digest": f"sha256:{'0' * 64}",
+                    },
+                    "skills": ["run-change"],
+                }
+            ),
+            encoding="utf-8",
+        )
         (root / "tracked.txt").write_text("before\n", encoding="utf-8")
-        subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "add", ".gitignore", ".process/process.lock", "tracked.txt"],
+            cwd=root,
+            check=True,
+        )
         subprocess.run(["git", "commit", "-qm", "fixture"], cwd=root, check=True)
 
     def project(self) -> Project:
@@ -63,7 +87,7 @@ class LifecycleTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 2,
+                    "schemaVersion": 3,
                     "id": "change-1",
                     "summary": "Change tracked behavior",
                     "source": "request-1",
@@ -79,6 +103,18 @@ class LifecycleTests(unittest.TestCase):
                         {"id": "ac-1", "outcome": "The behavior is implemented"}
                     ],
                     "requiredProfiles": ["development", "review"],
+                    "quality": {
+                        "standard": "production-v1",
+                        "assessments": [
+                            {
+                                "dimension": dimension,
+                                "status": "applicable",
+                                "rationale": "The fixture exercises the governed lifecycle.",
+                                "criteria": ["ac-1"],
+                            }
+                            for dimension in CORE_QUALITY_DIMENSIONS
+                        ],
+                    },
                     "signOff": {
                         "required": False,
                         "status": "not-required",
@@ -118,6 +154,20 @@ class LifecycleTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def review_quality(self, *, failed: tuple[str, ...] = ()):
+        return {
+            "standard": "production-v1",
+            "assessments": [
+                {
+                    "dimension": dimension,
+                    "status": "failed" if dimension in failed else "verified",
+                    "criteria": ["ac-1"],
+                    "evidence": "The independent fixture review verified this dimension.",
+                }
+                for dimension in CORE_QUALITY_DIMENSIONS
+            ],
+        }
 
     def prepare_verified_change(self, root: Path, inputs: Path):
         contract_path = inputs / "contract.json"
@@ -287,7 +337,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "changeId": "change-1",
                         "cycle": 1,
                         "checkpoint": assignment["checkpoint"],
@@ -295,6 +345,7 @@ class LifecycleTests(unittest.TestCase):
                         "comparisonBase": assignment["comparisonBase"],
                         "reviewer": assignment["reviewer"],
                         "independence": assignment["independence"],
+                        "quality": self.review_quality(),
                         "verdict": "approved",
                         "findings": [],
                     }
@@ -312,6 +363,53 @@ class LifecycleTests(unittest.TestCase):
             )
             self.assertEqual(state["phase"], "completed")
             self.assertEqual(completion["checkpoint"], assignment["checkpoint"])
+            receipt_path = inputs / "receipt.json"
+            exported = export_receipt(root, "change-1", receipt_path)
+            self.assertEqual("change-1", exported["changeId"])
+            self.assertEqual(exported, validate_receipt(receipt_path))
+            tampered_path = inputs / "tampered-receipt.json"
+            tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
+            tampered["artifacts"]["contract"]["document"]["summary"] = "tampered"
+            tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "canonicalDigest"):
+                validate_receipt(tampered_path)
+            preview = prune_completed_run(
+                root, "change-1", receipt_path, apply=False
+            )
+            self.assertFalse(preview["applied"])
+            applied = prune_completed_run(root, "change-1", receipt_path, apply=True)
+            self.assertTrue(applied["applied"])
+            self.assertFalse((root / ".process" / "runs" / "change-1").exists())
+
+    def test_project_quality_extensions_are_additive_lifecycle_gates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            self.write_contract(contract_path)
+            project = self.project()
+            project = Project(
+                identifier=project.identifier,
+                profiles=project.profiles,
+                required_profiles=project.required_profiles,
+                quality_extensions=("project-accessibility",),
+            )
+
+            with self.assertRaisesRegex(
+                ContractError, "omits project quality dimensions: project-accessibility"
+            ):
+                start_change(
+                    root,
+                    project,
+                    contract_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
 
     def test_requested_changes_start_a_new_cycle_and_invalidate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -336,7 +434,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "changeId": "change-1",
                         "cycle": 1,
                         "checkpoint": assignment["checkpoint"],
@@ -344,6 +442,7 @@ class LifecycleTests(unittest.TestCase):
                         "comparisonBase": assignment["comparisonBase"],
                         "reviewer": assignment["reviewer"],
                         "independence": assignment["independence"],
+                        "quality": self.review_quality(failed=("correctness",)),
                         "verdict": "changes-requested",
                         "findings": [
                             {
@@ -408,7 +507,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "changeId": "change-1",
                         "cycle": 2,
                         "checkpoint": next_assignment["checkpoint"],
@@ -416,6 +515,7 @@ class LifecycleTests(unittest.TestCase):
                         "comparisonBase": next_assignment["comparisonBase"],
                         "reviewer": next_assignment["reviewer"],
                         "independence": next_assignment["independence"],
+                        "quality": self.review_quality(),
                         "verdict": "approved",
                         "findings": [deferred],
                     }
@@ -428,7 +528,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "changeId": "change-1",
                         "cycle": 2,
                         "checkpoint": next_assignment["checkpoint"],
@@ -436,6 +536,7 @@ class LifecycleTests(unittest.TestCase):
                         "comparisonBase": next_assignment["comparisonBase"],
                         "reviewer": next_assignment["reviewer"],
                         "independence": next_assignment["independence"],
+                        "quality": self.review_quality(),
                         "verdict": "approved",
                         "findings": [],
                     }
@@ -451,7 +552,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "changeId": "change-1",
                         "cycle": 2,
                         "checkpoint": next_assignment["checkpoint"],
@@ -459,6 +560,7 @@ class LifecycleTests(unittest.TestCase):
                         "comparisonBase": next_assignment["comparisonBase"],
                         "reviewer": next_assignment["reviewer"],
                         "independence": next_assignment["independence"],
+                        "quality": self.review_quality(),
                         "verdict": "approved",
                         "findings": [resolved],
                     }
@@ -523,7 +625,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 3,
                         "changeId": "change-1",
                         "cycle": 1,
                         "checkpoint": assignment["checkpoint"],
@@ -531,6 +633,7 @@ class LifecycleTests(unittest.TestCase):
                         "comparisonBase": assignment["comparisonBase"],
                         "reviewer": assignment["reviewer"],
                         "independence": assignment["independence"],
+                        "quality": self.review_quality(failed=("correctness",)),
                         "verdict": "changes-requested",
                         "findings": [
                             {

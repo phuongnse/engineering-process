@@ -36,13 +36,16 @@ cannot retain the same meaning. Published schema readers remain supported throug
 the current package major; deprecation precedes removal and names a migration and
 target major release.
 
-The root `release.json` is the machine-readable release specification. It must name
-the exact previous public version, next SemVer increment, compatibility and schema
-impact, and migration guidance for every incompatible release. `processctl contract
-validate --kind release release.json` validates its shape and classification;
-`processctl publication validate-release` additionally binds it to
-`pyproject.toml`, the immutable release tag and checkpoint, the latest reachable
-prior release, and `main` ancestry.
+The root `release.json` is the machine-readable release identity and classification
+owner. Its ordered change records derive patch/minor/major classification and
+compatibility instead of relying on a manually chosen number alone. It also owns the
+package/distribution names, exact tag, GitHub release title, runtime-version source,
+wheel/sdist names, lifecycle receipt asset, previous public version, schema impact,
+and migration guidance. Governed tag and release title are both exactly `v<SemVer>`.
+`processctl contract validate --kind release release.json` validates internal
+consistency; `processctl publication validate-release` cross-checks the contract
+against `pyproject.toml`, the static runtime constant, receipt, immutable tag and
+checkpoint, latest reachable prior release, and `main` ancestry.
 
 The version in `pyproject.toml`, `engineering_process.VERSION`, and `release.json`
 changes only in the reviewed release checkpoint. A development commit, schema
@@ -73,17 +76,29 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 ## Release
 
 1. Complete the repository's own process lifecycle on an immutable checkpoint and
-   require independent review plus the complete CI matrix to pass.
-2. Update `release.json` with the SemVer classification and any schema compatibility
-   or migration impact, then set the same package version in `pyproject.toml` and
-   `engineering_process.VERSION`; released versions are immutable.
-3. Create a GitHub release whose tag is exactly `v<package-version>` and whose target
-   is the verified `main` commit.
+   require independent review plus the complete CI matrix to pass. Export the
+   completed receipt bound to the pinned public N-1 authority and artifact digests.
+2. Update the ordered `release.json.changes`; let their types determine the exact
+   SemVer classification. Set the same version in `release.json`, `pyproject.toml`,
+   and `engineering_process.VERSION`, and declare canonical artifact/receipt names.
+3. Create a draft GitHub release whose tag and title are both exactly
+   `v<package-version>` and whose target is the verified `main` commit. Attach the
+   receipt using the exact `release.json.identity.receiptAsset` name, then publish the
+   immutable release.
 4. Observe the `Publish` workflow. It validates the release contract, exact increment,
-   latest prior tag, tag/checkpoint identity, and `main` ancestry; rebuilds the wheel
-   and source distribution; installs the wheel; reruns the portable validation suite;
-   and publishes both artifacts with PyPI attestations.
+   latest prior tag, title/tag/checkpoint/package/runtime/artifact identity, receipt
+   authority, and `main` ancestry; builds in an isolated tracked snapshot; installs
+   the exact inspected wheel; reruns the portable validation suite; and publishes
+   both inspected artifacts with PyPI attestations.
 5. Confirm the version and artifact hashes on PyPI before updating consumer locks.
 
 Never upload a locally built distribution or enable `skip-existing`. A failed release
 is diagnosed and republished as a new version; PyPI artifacts are not replaced.
+
+Release `0.1.1` is explicitly recorded as `bootstrap-history`: its actual immutable
+title is retained and it makes no current-lifecycle claim. Because that public N-1
+predates `processctl evidence validate`, the first governed receipt uses the one-time
+0.1.1 bootstrap path: current code verifies the aggregate/cross-links while the
+pinned public authority remains the recorded lifecycle executor. From the next
+release onward, the exact pinned N-1 binary must validate the receipt directly; the
+workflow fails closed for any other authority without that command.

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import ast
 import re
-import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
 
-from .contracts import ContractError, read_json, validate_release
+from .contracts import (
+    ContractError,
+    read_json,
+    validate_process_lock,
+    validate_release,
+)
+from .evidence import validate_receipt
+from .git import run_git
 
 
 VERSION_TAG_PATTERN = re.compile(
@@ -15,21 +22,18 @@ VERSION_TAG_PATTERN = re.compile(
 
 
 def _git(project_root: Path, arguments: list[str]) -> str:
-    try:
-        completed = subprocess.run(
-            ["git", *arguments],
-            cwd=project_root,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ContractError(f"git {' '.join(arguments)} failed: {error}") from error
+    label = f"git {' '.join(arguments)}"
+    completed = run_git(
+        project_root,
+        arguments,
+        label=label,
+        timeout_seconds=30,
+        max_stdout_bytes=256_000,
+    )
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
         raise ContractError(
-            f"git {' '.join(arguments)} failed"
+            f"{label} failed"
             + (f": {detail}" if detail else "")
         )
     try:
@@ -38,7 +42,7 @@ def _git(project_root: Path, arguments: list[str]) -> str:
         raise ContractError("git output must be UTF-8") from error
 
 
-def _project_version(project_root: Path) -> str:
+def _project_metadata(project_root: Path) -> tuple[str, str]:
     path = project_root / "pyproject.toml"
     try:
         data = path.read_bytes()
@@ -48,24 +52,66 @@ def _project_version(project_root: Path) -> str:
         raise ContractError(f"{path}: exceeds the 1 MB limit")
     try:
         document = tomllib.loads(data.decode("utf-8"))
+        name = document["project"]["name"]
         version = document["project"]["version"]
     except (UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
         raise ContractError(f"{path}: cannot read project.version: {error}") from error
-    if not isinstance(version, str):
-        raise ContractError(f"{path}: project.version must be a string")
-    return version
+    if not isinstance(name, str) or not isinstance(version, str):
+        raise ContractError(f"{path}: project.name and project.version must be strings")
+    return name, version
+
+
+def _runtime_version(project_root: Path, relative_path: str, variable: str) -> str:
+    path = project_root / relative_path
+    try:
+        resolved_root = project_root.resolve(strict=True)
+        resolved_path = path.resolve(strict=True)
+        resolved_path.relative_to(resolved_root)
+        data = path.read_bytes()
+    except (OSError, ValueError) as error:
+        raise ContractError(f"{path}: cannot read runtime version source: {error}") from error
+    if len(data) > 1_000_000:
+        raise ContractError(f"{path}: exceeds the 1 MB limit")
+    try:
+        document = ast.parse(data.decode("utf-8"), filename=str(path))
+    except (UnicodeDecodeError, SyntaxError) as error:
+        raise ContractError(f"{path}: cannot parse runtime version source: {error}") from error
+    matches: list[str] = []
+    for statement in document.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if (
+            isinstance(target, ast.Name)
+            and target.id == variable
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            matches.append(statement.value.value)
+    if len(matches) != 1:
+        raise ContractError(
+            f"{path}: must assign {variable} to exactly one string literal"
+        )
+    return matches[0]
 
 
 def validate_release_checkpoint(
     project_root: Path,
     *,
     tag: str,
+    release_name: str,
     commit: str,
     main_ref: str,
+    receipt_path: Path | None = None,
 ) -> dict[str, Any]:
     release_path = project_root / "release.json"
     release = validate_release(read_json(release_path), str(release_path))
-    package_version = _project_version(project_root)
+    if release.provenance_mode != "governed":
+        raise ContractError(
+            "publication requires a governed release contract; bootstrap history "
+            "and legacy contracts are read-only"
+        )
+    package_name, package_version = _project_metadata(project_root)
     if package_version != release.version:
         raise ContractError(
             f"{release_path}: version {release.version} does not match "
@@ -77,11 +123,85 @@ def validate_release_checkpoint(
         raise ContractError(
             f"release tag {tag!r} does not match contract version {expected_tag!r}"
         )
+    if release.tag is not None and tag != release.tag:
+        raise ContractError(
+            f"release tag {tag!r} does not match release identity {release.tag!r}"
+        )
+    if release.release_name is not None and release_name != release.release_name:
+        raise ContractError(
+            f"release name {release_name!r} does not match release identity "
+            f"{release.release_name!r}"
+        )
+    if release.package_name is not None and package_name != release.package_name:
+        raise ContractError(
+            f"pyproject.toml project.name {package_name!r} does not match release "
+            f"identity {release.package_name!r}"
+        )
+    if release.runtime_version_file is not None:
+        assert release.runtime_version_variable is not None
+        runtime_version = _runtime_version(
+            project_root,
+            release.runtime_version_file,
+            release.runtime_version_variable,
+        )
+        if runtime_version != release.version:
+            raise ContractError(
+                f"runtime version {runtime_version!r} does not match release "
+                f"version {release.version!r}"
+            )
+
+    receipt: dict[str, Any] | None = None
+    if release.provenance_mode == "governed":
+        if receipt_path is None:
+            raise ContractError("governed release requires a lifecycle receipt")
+        if release.receipt_asset != receipt_path.name:
+            raise ContractError(
+                f"receipt filename {receipt_path.name!r} does not match release identity "
+                f"{release.receipt_asset!r}"
+            )
+        receipt = validate_receipt(receipt_path)
+        if (
+            receipt["project"] != release.receipt_project
+            or receipt["changeId"] != release.receipt_change_id
+            or receipt["cycle"] != release.receipt_cycle
+            or receipt["checkpoint"] != commit
+        ):
+            raise ContractError(
+                "lifecycle receipt change, cycle, or checkpoint does not match release"
+            )
+        lock_path = project_root / ".process" / "process.lock"
+        lock = validate_process_lock(read_json(lock_path), str(lock_path))
+        if (
+            receipt["processVersion"] != lock.version
+            or receipt["processDigest"] != lock.digest
+        ):
+            raise ContractError(
+                "lifecycle receipt authority does not match the pinned process lock"
+            )
+    elif receipt_path is not None:
+        raise ContractError("bootstrap or legacy releases must not claim a lifecycle receipt")
 
     checkpoint = _git(
         project_root,
         ["rev-parse", "--verify", "--end-of-options", f"{commit}^{{commit}}"],
     )
+    head_checkpoint = _git(
+        project_root,
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+    )
+    if head_checkpoint != checkpoint:
+        raise ContractError(
+            f"release checkout HEAD {head_checkpoint} does not match {checkpoint}"
+        )
+    worktree = run_git(
+        project_root,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        label="inspect release checkout state",
+        timeout_seconds=30,
+        max_stdout_bytes=500_000,
+    )
+    if worktree.returncode != 0 or worktree.stdout:
+        raise ContractError("release checkout must be clean at the declared checkpoint")
     main_checkpoint = _git(
         project_root,
         ["rev-parse", "--verify", "--end-of-options", f"{main_ref}^{{commit}}"],
@@ -124,6 +244,7 @@ def validate_release_checkpoint(
 
     return {
         "tag": expected_tag,
+        "releaseName": release_name,
         "checkpoint": checkpoint,
         "mainCheckpoint": main_checkpoint,
         "previousTag": previous_tag,
@@ -133,4 +254,8 @@ def validate_release_checkpoint(
         "compatibility": release.compatibility,
         "schemaImpact": release.schema_impact,
         "migration": release.migration,
+        "artifacts": list(release.artifacts),
+        "receiptAsset": release.receipt_asset,
+        "provenanceMode": release.provenance_mode,
+        "lifecycleReceipt": receipt,
     }

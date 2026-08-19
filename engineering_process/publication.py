@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 from .contracts import ContractError
+from .git import run_git
 from .markdown import (
     COMMENT_RE,
     contains_raw_html,
@@ -421,18 +421,13 @@ def validate_pull_request(
 def commit_subjects(project_root: Path, range_spec: str) -> list[tuple[str, str]]:
     if GIT_RANGE_RE.fullmatch(range_spec) is None:
         raise ContractError(f"invalid Git revision or range: {range_spec}")
-    try:
-        result = subprocess.run(
-            ["git", "log", "--format=%H%x00%s", range_spec, "--"],
-            cwd=project_root,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ContractError(f"cannot inspect commit range {range_spec}: {error}") from error
+    result = run_git(
+        project_root,
+        ["log", "--format=%H%x00%s", range_spec, "--"],
+        label=f"inspect commit range {range_spec}",
+        timeout_seconds=30,
+        max_stdout_bytes=1_000_000,
+    )
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ContractError(
@@ -445,6 +440,8 @@ def commit_subjects(project_root: Path, range_spec: str) -> list[tuple[str, str]
         if not separator:
             raise ContractError("git returned an invalid commit record")
         records.append((commit, subject))
+        if len(records) > 5_000:
+            raise ContractError("commit range exceeds 5000 commits")
     if not records:
         raise ContractError(f"commit range {range_spec} is empty")
     return records

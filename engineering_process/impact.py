@@ -1,16 +1,21 @@
 from __future__ import annotations
 
-import re
-import subprocess
+import json
+import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .contracts import Check, ContractError, Project, ProjectImpact
+from .git import remaining_seconds, run_git
 
 
-MAX_CHANGED_PATHS = 10_000
-MAX_CHANGED_PATH_BYTES = 2_000_000
+MAX_CHANGED_PATHS = 5_000
+MAX_CHANGED_PATH_BYTES = 100_000
+MAX_CHANGED_PATH_LENGTH = 1_024
+MAX_IMPACT_EVIDENCE_BYTES = 350_000
+IMPACT_PLANNING_TIMEOUT_SECONDS = 15.0
 IMPACT_FILE_ENV = "ENGINEERING_PROCESS_IMPACT_FILE"
 
 
@@ -20,19 +25,23 @@ class ImpactPlan:
     evidence: dict[str, Any]
 
 
-def _git(root: Path, arguments: list[str], *, label: str) -> bytes:
-    try:
-        result = subprocess.run(
-            ["git", *arguments],
-            cwd=root,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ContractError(f"impact scope {label}: git failed: {error}") from error
+def _git(
+    root: Path,
+    arguments: list[str],
+    *,
+    label: str,
+    deadline: float,
+    max_stdout_bytes: int,
+) -> bytes:
+    result = run_git(
+        root,
+        arguments,
+        label=f"impact scope {label}",
+        timeout_seconds=remaining_seconds(
+            deadline, label=f"impact scope {label}"
+        ),
+        max_stdout_bytes=max_stdout_bytes,
+    )
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ContractError(
@@ -42,19 +51,16 @@ def _git(root: Path, arguments: list[str], *, label: str) -> bytes:
     return result.stdout
 
 
-def _commit(root: Path, ref: str) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"],
-            cwd=root,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ContractError(f"impact scope resolve {ref}: git failed: {error}") from error
+def _commit(root: Path, ref: str, *, deadline: float) -> str | None:
+    result = run_git(
+        root,
+        ["rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"],
+        label=f"impact scope resolve {ref}",
+        timeout_seconds=remaining_seconds(
+            deadline, label=f"impact scope resolve {ref}"
+        ),
+        max_stdout_bytes=128,
+    )
     if result.returncode != 0:
         return None
     try:
@@ -71,12 +77,29 @@ def _portable_path(encoded: bytes, *, label: str) -> str:
             f"impact scope {label}: changed paths must use UTF-8"
         ) from error
     candidate = PurePosixPath(path)
+    segments = path.split("/")
+    windows_reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{index}" for index in range(1, 10)),
+        *(f"LPT{index}" for index in range(1, 10)),
+    }
     if (
         not path
+        or len(path) > MAX_CHANGED_PATH_LENGTH
         or "\\" in path
+        or any(ord(character) < 32 for character in path)
+        or any(character in '<>:"|?*' for character in path)
         or candidate.is_absolute()
         or ".." in candidate.parts
         or candidate.as_posix() != path
+        or any(not segment or segment.endswith((" ", ".")) for segment in segments)
+        or any(
+            segment.split(".", 1)[0].upper() in windows_reserved
+            for segment in segments
+        )
     ):
         raise ContractError(
             f"impact scope {label}: Git returned a non-portable path: {path!r}"
@@ -98,7 +121,9 @@ def _paths(output: bytes, *, label: str) -> list[str]:
     return [_portable_path(item, label=label) for item in encoded_paths]
 
 
-def _changed_paths(root: Path, merge_base: str, head: str) -> list[str]:
+def _changed_paths(
+    root: Path, merge_base: str, head: str, *, deadline: float
+) -> list[str]:
     commands = (
         (
             ["diff", "--name-only", "--no-renames", "-z", f"{merge_base}..{head}", "--"],
@@ -120,7 +145,13 @@ def _changed_paths(root: Path, merge_base: str, head: str) -> list[str]:
     paths: set[str] = set()
     total_bytes = 0
     for arguments, label in commands:
-        output = _git(root, arguments, label=label)
+        output = _git(
+            root,
+            arguments,
+            label=label,
+            deadline=deadline,
+            max_stdout_bytes=MAX_CHANGED_PATH_BYTES,
+        )
         total_bytes += len(output)
         if total_bytes > MAX_CHANGED_PATH_BYTES:
             raise ContractError(
@@ -140,8 +171,10 @@ def discover_scope(
     impact: ProjectImpact,
     *,
     base_ref: str | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
-    head = _commit(root, "HEAD")
+    deadline = deadline or (time.monotonic() + IMPACT_PLANNING_TIMEOUT_SECONDS)
+    head = _commit(root, "HEAD", deadline=deadline)
     if head is None:
         raise ContractError("impact scope: project root has no Git HEAD commit")
 
@@ -149,7 +182,7 @@ def discover_scope(
     selected_ref: str | None = None
     base_commit: str | None = None
     for candidate in candidates:
-        resolved = _commit(root, candidate)
+        resolved = _commit(root, candidate, deadline=deadline)
         if resolved is not None:
             selected_ref = candidate
             base_commit = resolved
@@ -165,6 +198,8 @@ def discover_scope(
         root,
         ["merge-base", base_commit, head],
         label=f"merge base for {selected_ref}",
+        deadline=deadline,
+        max_stdout_bytes=128,
     ).decode("ascii").strip()
     if not merge_base:
         raise ContractError(
@@ -175,44 +210,62 @@ def discover_scope(
         "baseCommit": base_commit,
         "headCommit": head,
         "mergeBase": merge_base,
-        "changedPaths": _changed_paths(root, merge_base, head),
+        "changedPaths": _changed_paths(
+            root, merge_base, head, deadline=deadline
+        ),
     }
 
 
-def _glob_regex(pattern: str) -> re.Pattern[str]:
-    expression = ""
-    index = 0
-    while index < len(pattern):
-        character = pattern[index]
-        if character == "*":
-            if index + 1 < len(pattern) and pattern[index + 1] == "*":
-                index += 2
-                if index < len(pattern) and pattern[index] == "/":
-                    expression += "(?:[^/]+/)*"
-                    index += 1
-                else:
-                    expression += ".*"
-                continue
-            expression += "[^/]*"
-        elif character == "?":
-            expression += "[^/]"
+def _segment_matches(pattern: str, value: str) -> bool:
+    pattern_index = 0
+    value_index = 0
+    star_index = -1
+    star_value_index = -1
+    while value_index < len(value):
+        if (
+            pattern_index < len(pattern)
+            and pattern[pattern_index] in {"?", value[value_index]}
+        ):
+            pattern_index += 1
+            value_index += 1
+        elif pattern_index < len(pattern) and pattern[pattern_index] == "*":
+            star_index = pattern_index
+            pattern_index += 1
+            star_value_index = value_index
+        elif star_index >= 0:
+            pattern_index = star_index + 1
+            star_value_index += 1
+            value_index = star_value_index
         else:
-            expression += re.escape(character)
-        index += 1
-    return re.compile(f"^{expression}$")
+            return False
+    return all(character == "*" for character in pattern[pattern_index:])
 
 
-def _matches(path: str, patterns: tuple[str, ...]) -> bool:
-    return any(_glob_regex(pattern).fullmatch(path) for pattern in patterns)
+def _glob_matches(pattern: tuple[str, ...], path: tuple[str, ...]) -> bool:
+    previous = [False] * (len(path) + 1)
+    previous[0] = True
+    for segment in pattern:
+        current = [False] * (len(path) + 1)
+        if segment == "**":
+            current[0] = previous[0]
+            for index in range(1, len(path) + 1):
+                current[index] = previous[index] or current[index - 1]
+        else:
+            for index in range(1, len(path) + 1):
+                current[index] = previous[index - 1] and _segment_matches(
+                    segment, path[index - 1]
+                )
+        previous = current
+    return previous[-1]
 
 
 def _affected_components(
     impact: ProjectImpact, direct: set[str]
 ) -> set[str]:
     affected = set(direct)
-    pending = list(sorted(direct))
+    pending = deque(sorted(direct))
     while pending:
-        identifier = pending.pop(0)
+        identifier = pending.popleft()
         for downstream in impact.components[identifier].affects:
             if downstream not in affected:
                 affected.add(downstream)
@@ -227,6 +280,7 @@ def plan_profile(
     *,
     base_ref: str | None = None,
 ) -> ImpactPlan:
+    deadline = time.monotonic() + IMPACT_PLANNING_TIMEOUT_SECONDS
     checks = project.profiles.get(profile)
     if checks is None:
         available = ", ".join(sorted(project.profiles))
@@ -256,12 +310,31 @@ def plan_profile(
             },
         )
 
-    scope = discover_scope(root, project.impact, base_ref=base_ref)
+    scope = discover_scope(
+        root, project.impact, base_ref=base_ref, deadline=deadline
+    )
+    compiled_patterns = {
+        component.identifier: tuple(
+            tuple(pattern.split("/")) for pattern in component.paths
+        )
+        for component in project.impact.components.values()
+    }
     direct: set[str] = set()
     matched_paths: set[str] = set()
     for path in scope["changedPaths"]:
+        remaining_seconds(deadline, label="impact component matching")
+        path_segments = tuple(path.split("/"))
+        attempts = 0
         for component in project.impact.components.values():
-            if _matches(path, component.paths):
+            component_matched = False
+            for pattern in compiled_patterns[component.identifier]:
+                attempts += 1
+                if attempts % 64 == 0:
+                    remaining_seconds(deadline, label="impact component matching")
+                if _glob_matches(pattern, path_segments):
+                    component_matched = True
+                    break
+            if component_matched:
                 direct.add(component.identifier)
                 matched_paths.add(path)
     affected = _affected_components(project.impact, direct)
@@ -311,4 +384,17 @@ def plan_profile(
         "skippedCheckIds": skipped,
         "checkSelection": selection,
     }
+    evidence_size = len(
+        json.dumps(
+            evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    if evidence_size > MAX_IMPACT_EVIDENCE_BYTES:
+        raise ContractError(
+            "impact evidence exceeds the bounded serialized limit: "
+            f"{evidence_size} > {MAX_IMPACT_EVIDENCE_BYTES} bytes"
+        )
     return ImpactPlan(checks=tuple(selected), evidence=evidence)

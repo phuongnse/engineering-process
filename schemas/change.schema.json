@@ -19,7 +19,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"const": 2},
+    "schemaVersion": {"enum": [2, 3]},
     "id": {
       "type": "string",
       "maxLength": 64,
@@ -42,6 +42,7 @@
     "affectedProjects": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 64,
       "uniqueItems": true,
       "items": {
         "type": "string",
@@ -51,6 +52,7 @@
     "acceptanceCriteria": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -68,10 +70,37 @@
     "requiredProfiles": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 64,
       "uniqueItems": true,
       "items": {
         "type": "string",
         "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standard", "assessments"],
+      "properties": {
+        "standard": {"const": "production-v1"},
+        "assessments": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/qualityAssessment"},
+          "allOf": [
+            {"contains": {"properties": {"dimension": {"const": "compatibility"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "correctness"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "maintainability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "observability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "operability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "performance"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "privacy"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "reliability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "security"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"dimension": {"const": "supply-chain"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1}
+          ]
+        }
       }
     },
     "signOff": {
@@ -84,5 +113,53 @@
         "evidence": {"type": ["string", "null"], "maxLength": 1000}
       }
     }
-  }
+  },
+  "$defs": {
+    "qualityAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension", "status", "rationale", "criteria"],
+      "properties": {
+        "dimension": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(?:compatibility|correctness|maintainability|observability|operability|performance|privacy|reliability|security|supply-chain|project-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)$"
+        },
+        "status": {"enum": ["applicable", "not-applicable"]},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "criteria": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "applicable"}}, "required": ["status"]},
+          "then": {"properties": {"criteria": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "not-applicable"}}, "required": ["status"]},
+          "then": {"properties": {"criteria": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"dimension": {"const": "correctness"}}, "required": ["dimension"]},
+          "then": {"properties": {"status": {"const": "applicable"}}}
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {"not": {"required": ["quality"]}}
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+      "then": {"required": ["quality"]}
+    }
+  ]
 }

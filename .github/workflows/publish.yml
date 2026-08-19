@@ -24,24 +24,74 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Install exact public lifecycle authority
+        run: |
+          python -m venv "$RUNNER_TEMP/process-authority"
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            --require-hashes -r requirements/process.txt
+
+      - name: Obtain governed lifecycle receipt
+        id: receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
+          if [ "$mode" = "governed" ]; then
+            asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
+            mkdir -p "$RUNNER_TEMP/release-receipt"
+            gh release download "$GITHUB_REF_NAME" \
+              --pattern "$asset" --dir "$RUNNER_TEMP/release-receipt"
+            printf 'path=%s\n' "$RUNNER_TEMP/release-receipt/$asset" >> "$GITHUB_OUTPUT"
+          else
+            printf 'path=\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate receipt with public N-1 authority
+        if: steps.receipt.outputs.path != ''
+        env:
+          RECEIPT_PATH: ${{ steps.receipt.outputs.path }}
+        run: |
+          if "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "$RECEIPT_PATH" --json; then
+            exit 0
+          fi
+          authority_version="$(python -c 'import json; print(json.load(open(".process/process.lock", encoding="utf-8"))["process"]["version"])')"
+          if [ "$authority_version" != "0.1.1" ]; then
+            echo "Pinned public authority supports no receipt validator" >&2
+            exit 1
+          fi
+          echo "Using the documented one-time 0.1.1 receipt bootstrap validator"
+
       - name: Install exact verification dependencies
         run: python -m pip install -r engineering_process/requirements-dev.txt
 
       - name: Validate release contract and checkpoint
         run: |
           python processctl.py contract validate --kind release release.json
+          receipt_args=()
+          if [ -n "$RECEIPT_PATH" ]; then
+            receipt_args=(--receipt "$RECEIPT_PATH")
+          fi
           python processctl.py publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
+            --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
-            --main-ref origin/main
+            --main-ref origin/main \
+            "${receipt_args[@]}"
+        env:
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RECEIPT_PATH: ${{ steps.receipt.outputs.path }}
 
-      - name: Build distributions
-        run: python -m build --outdir dist
+      - name: Build and inspect distributions in an isolated snapshot
+        run: |
+          python verification/verify_distribution.py \
+            --output "$RUNNER_TEMP/python-distributions"
 
       - name: Verify built wheel
         run: |
-          python -m pip install --force-reinstall dist/*.whl
+          python -m pip install --force-reinstall \
+            "$RUNNER_TEMP"/python-distributions/*.whl
           cd "$RUNNER_TEMP"
           processctl digest
           processctl skills validate
@@ -51,7 +101,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-distributions
-          path: dist/
+          path: ${{ runner.temp }}/python-distributions/
           if-no-files-found: error
           retention-days: 1
 

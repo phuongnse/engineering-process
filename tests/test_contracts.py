@@ -1,6 +1,7 @@
 import unittest
 
 from engineering_process.contracts import (
+    CORE_QUALITY_DIMENSIONS,
     ContractError,
     validate_change,
     validate_plan,
@@ -134,6 +135,29 @@ class ProjectContractTests(unittest.TestCase):
                 document["impact"] = impact
                 with self.assertRaisesRegex(ContractError, message):
                     validate_project(document)
+
+    def test_impact_contract_enforces_resource_bounds(self):
+        document = self.valid_project()
+        document["impact"] = {
+            "baseRefs": [f"refs/heads/base-{index}" for index in range(17)],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {"id": "source", "paths": ["src/**"], "affects": []}
+            ],
+        }
+        with self.assertRaisesRegex(ContractError, "baseRefs: exceeds 16"):
+            validate_project(document)
+
+        document["impact"]["baseRefs"] = ["main"]
+        document["impact"]["components"][0]["paths"] = [
+            f"src/file-{index}.py" for index in range(65)
+        ]
+        with self.assertRaisesRegex(ContractError, "paths: exceeds 64"):
+            validate_project(document)
+
+        document["impact"]["components"][0]["paths"] = ["src/**suffix"]
+        with self.assertRaisesRegex(ContractError, "portable relative glob"):
+            validate_project(document)
 
         document = self.valid_project()
         document["impact"] = {
@@ -288,6 +312,127 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def valid_change(self):
+        return {
+            "schemaVersion": 3,
+            "id": "production-change",
+            "summary": "Exercise the production contract",
+            "source": "test",
+            "comparisonBase": "main",
+            "specification": {
+                "kind": "change-contract",
+                "reference": "test",
+                "rationale": "The fixture owns this bounded behavior.",
+            },
+            "risk": "medium",
+            "affectedProjects": ["sample-project"],
+            "acceptanceCriteria": [
+                {"id": "ac-1", "outcome": "The production boundary is verified"}
+            ],
+            "requiredProfiles": ["review"],
+            "quality": {
+                "standard": "production-v1",
+                "assessments": [
+                    {
+                        "dimension": dimension,
+                        "status": "applicable",
+                        "rationale": "The fixture verifies this dimension.",
+                        "criteria": ["ac-1"],
+                    }
+                    for dimension in CORE_QUALITY_DIMENSIONS
+                ],
+            },
+            "signOff": {
+                "required": False,
+                "status": "not-required",
+                "evidence": None,
+            },
+        }
+
+    def test_new_changes_require_every_production_dimension(self):
+        document = self.valid_change()
+        validate_change(document)
+
+        document["quality"]["assessments"].pop()
+        with self.assertRaisesRegex(ContractError, "missing core dimensions"):
+            validate_change(document)
+
+    def test_not_applicable_quality_requires_rationale_and_no_criteria(self):
+        document = self.valid_change()
+        privacy = next(
+            item
+            for item in document["quality"]["assessments"]
+            if item["dimension"] == "privacy"
+        )
+        privacy["status"] = "not-applicable"
+        with self.assertRaisesRegex(ContractError, "require an empty list"):
+            validate_change(document)
+        privacy["criteria"] = []
+        validate_change(document)
+
+    def test_release_identity_and_changes_derive_canonical_governed_release(self):
+        document = {
+            "schemaVersion": 2,
+            "previousVersion": "0.1.1",
+            "version": "0.2.0",
+            "classification": "minor",
+            "compatibility": "backward-compatible",
+            "schemaImpact": "additive",
+            "migration": None,
+            "identity": {
+                "package": "engineering-process",
+                "distribution": "engineering_process",
+                "tag": "v0.2.0",
+                "releaseName": "v0.2.0",
+                "runtimeVersion": {
+                    "path": "engineering_process/__init__.py",
+                    "variable": "VERSION",
+                },
+                "artifacts": [
+                    "engineering_process-0.2.0-py3-none-any.whl",
+                    "engineering_process-0.2.0.tar.gz",
+                ],
+                "receiptAsset": "engineering-process-v0.2.0-evidence.json",
+            },
+            "provenance": {
+                "mode": "governed",
+                "statement": "The receipt binds the release.",
+                "lifecycleReceipt": {
+                    "asset": "engineering-process-v0.2.0-evidence.json",
+                    "project": "engineering-process",
+                    "changeId": "release-0-2-0",
+                    "cycle": 2,
+                },
+            },
+            "changes": [
+                {
+                    "id": "portable-evidence",
+                    "type": "capability",
+                    "surfaces": ["evidence"],
+                    "rationale": "Add portable evidence.",
+                }
+            ],
+        }
+        release = validate_release(document)
+        self.assertEqual("v0.2.0", release.release_name)
+
+        document["identity"]["releaseName"] = "engineering-process 0.2.0"
+        with self.assertRaisesRegex(ContractError, "governed releases must use v0.2.0"):
+            validate_release(document)
+
+        document["identity"]["releaseName"] = "v0.2.0"
+        document["classification"] = "patch"
+        document["version"] = "0.1.2"
+        document["identity"]["tag"] = "v0.1.2"
+        document["identity"]["releaseName"] = "v0.1.2"
+        document["identity"]["artifacts"] = [
+            "engineering_process-0.1.2-py3-none-any.whl",
+            "engineering_process-0.1.2.tar.gz",
+        ]
+        document["identity"]["receiptAsset"] = "engineering-process-v0.1.2-evidence.json"
+        document["provenance"]["lifecycleReceipt"]["asset"] = document["identity"]["receiptAsset"]
+        with self.assertRaisesRegex(ContractError, "changes require minor"):
+            validate_release(document)
     def test_release_requires_the_exact_declared_semver_increment(self):
         document = {
             "schemaVersion": 1,

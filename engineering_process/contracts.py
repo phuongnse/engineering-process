@@ -35,6 +35,28 @@ PLATFORM_PATTERN = re.compile(
 COMMAND_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 CHECKSUM_PATTERN = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$")
 BASE_REF_PATTERN = re.compile(r"^(?!-)[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$")
+MAX_JSON_BYTES = 1_000_000
+MAX_IMPACT_BASE_REFS = 16
+MAX_IMPACT_COMPONENTS = 256
+MAX_IMPACT_PATTERNS_PER_COMPONENT = 64
+MAX_IMPACT_PATTERNS = 1024
+MAX_PROJECT_PROFILES = 64
+MAX_CHECKS_PER_PROFILE = 256
+MAX_PROJECT_CHECKS = 1_024
+MAX_CONTRACT_ITEMS = 256
+PRODUCTION_STANDARD = "production-v1"
+CORE_QUALITY_DIMENSIONS = (
+    "compatibility",
+    "correctness",
+    "maintainability",
+    "observability",
+    "operability",
+    "performance",
+    "privacy",
+    "reliability",
+    "security",
+    "supply-chain",
+)
 
 
 class ContractError(ValueError):
@@ -137,6 +159,7 @@ class Project:
     required_profiles: tuple[str, ...] = ()
     environment: ProjectEnvironment | None = None
     impact: ProjectImpact | None = None
+    quality_extensions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -154,6 +177,18 @@ class Release:
     compatibility: str
     schema_impact: str
     migration: str | None
+    package_name: str | None = None
+    distribution_name: str | None = None
+    tag: str | None = None
+    release_name: str | None = None
+    runtime_version_file: str | None = None
+    runtime_version_variable: str | None = None
+    artifacts: tuple[str, ...] = ()
+    receipt_asset: str | None = None
+    receipt_change_id: str | None = None
+    receipt_project: str | None = None
+    receipt_cycle: int | None = None
+    provenance_mode: str = "legacy"
 
 
 def read_json(path: Path) -> Any:
@@ -161,7 +196,7 @@ def read_json(path: Path) -> Any:
         data = path.read_bytes()
     except OSError as error:
         raise ContractError(f"{path}: cannot read: {error}") from error
-    if len(data) > 1_000_000:
+    if len(data) > MAX_JSON_BYTES:
         raise ContractError(f"{path}: contract exceeds the 1 MB limit")
     if data.startswith(b"\xef\xbb\xbf"):
         raise ContractError(f"{path}: UTF-8 BOM is not allowed")
@@ -215,10 +250,13 @@ def _string_list(
     path: str,
     *,
     minimum: int = 1,
+    maximum: int | None = None,
     pattern: re.Pattern[str] | None = None,
 ) -> list[str]:
     if not isinstance(value, list) or len(value) < minimum:
         raise ContractError(f"{path}: must contain at least {minimum} item(s)")
+    if maximum is not None and len(value) > maximum:
+        raise ContractError(f"{path}: exceeds {maximum} items")
     result: list[str] = []
     for index, item in enumerate(value):
         text = _string(item, f"{path}[{index}]")
@@ -260,7 +298,8 @@ def _portable_glob(value: Any, path: str) -> str:
     if (
         "\\" in pattern
         or ":" in pattern
-        or "***" in pattern
+        or any("**" in segment and segment != "**" for segment in pattern.split("/"))
+        or any(ord(character) < 32 for character in pattern)
         or candidate.is_absolute()
         or ".." in candidate.parts
         or pattern in {".", ".."}
@@ -281,6 +320,10 @@ def _validate_impact(value: Any, path: str) -> ProjectImpact:
         path=path,
     )
     base_refs = _string_list(impact["baseRefs"], f"{path}.baseRefs")
+    if len(base_refs) > MAX_IMPACT_BASE_REFS:
+        raise ContractError(
+            f"{path}.baseRefs: exceeds {MAX_IMPACT_BASE_REFS} items"
+        )
     for index, base_ref in enumerate(base_refs):
         if (
             BASE_REF_PATTERN.fullmatch(base_ref) is None
@@ -303,10 +346,13 @@ def _validate_impact(value: Any, path: str) -> ProjectImpact:
     raw_components = impact["components"]
     if not isinstance(raw_components, list) or not raw_components:
         raise ContractError(f"{path}.components: must contain at least 1 item(s)")
-    if len(raw_components) > 256:
-        raise ContractError(f"{path}.components: exceeds 256 items")
+    if len(raw_components) > MAX_IMPACT_COMPONENTS:
+        raise ContractError(
+            f"{path}.components: exceeds {MAX_IMPACT_COMPONENTS} items"
+        )
 
     components: dict[str, ImpactComponent] = {}
+    total_patterns = 0
     for index, raw_component in enumerate(raw_components):
         component_path = f"{path}.components[{index}]"
         component = _object(raw_component, component_path)
@@ -329,6 +375,16 @@ def _validate_impact(value: Any, path: str) -> ProjectImpact:
         if not isinstance(raw_paths, list) or not raw_paths:
             raise ContractError(
                 f"{component_path}.paths: must contain at least 1 item(s)"
+            )
+        if len(raw_paths) > MAX_IMPACT_PATTERNS_PER_COMPONENT:
+            raise ContractError(
+                f"{component_path}.paths: exceeds "
+                f"{MAX_IMPACT_PATTERNS_PER_COMPONENT} items"
+            )
+        total_patterns += len(raw_paths)
+        if total_patterns > MAX_IMPACT_PATTERNS:
+            raise ContractError(
+                f"{path}.components: exceeds {MAX_IMPACT_PATTERNS} total patterns"
             )
         patterns = [
             _portable_glob(item, f"{component_path}.paths[{path_index}]")
@@ -713,7 +769,13 @@ def _validate_environment(
                     f"{action_path}.mutations: unsupported scopes: "
                     + ", ".join(invalid_mutations)
                 )
-            run = tuple(_string_list(action["run"], f"{action_path}.run"))
+            run = tuple(
+                _string_list(
+                    action["run"],
+                    f"{action_path}.run",
+                    maximum=MAX_CONTRACT_ITEMS,
+                )
+            )
             tool_identifier = None
             working_directory = _working_directory(
                 action.get("workingDirectory", "."),
@@ -853,7 +915,11 @@ def _validate_environment(
             ),
             probe=EnvironmentProbe(
                 run=tuple(
-                    _string_list(raw_probe["run"], f"{requirement_path}.probe.run")
+                    _string_list(
+                        raw_probe["run"],
+                        f"{requirement_path}.probe.run",
+                        maximum=MAX_CONTRACT_ITEMS,
+                    )
                 ),
                 timeout_seconds=_timeout(
                     raw_probe["timeoutSeconds"],
@@ -931,16 +997,42 @@ def validate_project(document: Any, path: str = "project") -> Project:
     _exact_keys(
         lifecycle,
         required={"requiredProfiles"},
+        optional={"qualityExtensions"} if schema_version == 3 else set(),
         path=f"{path}.lifecycle",
     )
     required_profiles = _string_list(
         lifecycle["requiredProfiles"],
         f"{path}.lifecycle.requiredProfiles",
         pattern=PROFILE_PATTERN,
+        maximum=MAX_PROJECT_PROFILES,
     )
     if required_profiles != sorted(required_profiles):
         raise ContractError(
             f"{path}.lifecycle.requiredProfiles: must be sorted"
+        )
+    quality_extensions = (
+        _string_list(
+            lifecycle["qualityExtensions"],
+            f"{path}.lifecycle.qualityExtensions",
+            minimum=0,
+            maximum=MAX_CONTRACT_ITEMS - len(CORE_QUALITY_DIMENSIONS),
+            pattern=PROFILE_PATTERN,
+        )
+        if "qualityExtensions" in lifecycle
+        else []
+    )
+    if quality_extensions != sorted(quality_extensions):
+        raise ContractError(
+            f"{path}.lifecycle.qualityExtensions: must be sorted"
+        )
+    invalid_quality_extensions = [
+        dimension
+        for dimension in quality_extensions
+        if not dimension.startswith("project-")
+    ]
+    if invalid_quality_extensions:
+        raise ContractError(
+            f"{path}.lifecycle.qualityExtensions: extensions must use project-* names"
         )
 
     impact = (
@@ -952,7 +1044,10 @@ def validate_project(document: Any, path: str = "project") -> Project:
     raw_profiles = _object(value["profiles"], f"{path}.profiles")
     if not raw_profiles:
         raise ContractError(f"{path}.profiles: must define at least one profile")
+    if len(raw_profiles) > MAX_PROJECT_PROFILES:
+        raise ContractError(f"{path}.profiles: exceeds {MAX_PROJECT_PROFILES} profiles")
     profiles: dict[str, tuple[Check, ...]] = {}
+    total_checks = 0
     for profile_name, raw_checks in raw_profiles.items():
         if PROFILE_PATTERN.fullmatch(profile_name) is None:
             raise ContractError(
@@ -961,6 +1056,15 @@ def validate_project(document: Any, path: str = "project") -> Project:
         if not isinstance(raw_checks, list) or not raw_checks:
             raise ContractError(
                 f"{path}.profiles.{profile_name}: must contain at least one check"
+            )
+        if len(raw_checks) > MAX_CHECKS_PER_PROFILE:
+            raise ContractError(
+                f"{path}.profiles.{profile_name}: exceeds {MAX_CHECKS_PER_PROFILE} checks"
+            )
+        total_checks += len(raw_checks)
+        if total_checks > MAX_PROJECT_CHECKS:
+            raise ContractError(
+                f"{path}.profiles: exceeds {MAX_PROJECT_CHECKS} total checks"
             )
         checks: list[Check] = []
         identifiers: set[str] = set()
@@ -981,7 +1085,9 @@ def validate_project(document: Any, path: str = "project") -> Project:
                     f"{path}.profiles.{profile_name}: duplicate check id {check_id}"
                 )
             identifiers.add(check_id)
-            argv = _string_list(check["run"], f"{check_path}.run")
+            argv = _string_list(
+                check["run"], f"{check_path}.run", maximum=MAX_CONTRACT_ITEMS
+            )
             timeout = _timeout(check["timeoutSeconds"], f"{check_path}.timeoutSeconds")
             working_directory = _working_directory(
                 check.get("workingDirectory", "."),
@@ -992,6 +1098,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
                     check["components"],
                     f"{check_path}.components",
                     pattern=PROFILE_PATTERN,
+                    maximum=MAX_IMPACT_COMPONENTS,
                 )
                 if "components" in check
                 else None
@@ -1050,6 +1157,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
         required_profiles=tuple(required_profiles),
         environment=environment,
         impact=impact,
+        quality_extensions=tuple(quality_extensions),
     )
 
 
@@ -1084,6 +1192,9 @@ def validate_process_lock(document: Any, path: str = "process.lock") -> ProcessL
 
 def validate_release(document: Any, path: str = "release") -> Release:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     _exact_keys(
         value,
         required={
@@ -1094,11 +1205,15 @@ def validate_release(document: Any, path: str = "release") -> Release:
             "compatibility",
             "schemaImpact",
             "migration",
-        },
+        }
+        | (
+            {"identity", "provenance", "changes"}
+            if schema_version == 2
+            else set()
+        ),
         optional={"$schema"},
         path=path,
     )
-    _schema_version(value, path)
     previous = _string(
         value["previousVersion"], f"{path}.previousVersion", max_length=64
     )
@@ -1164,6 +1279,231 @@ def validate_release(document: Any, path: str = "release") -> Release:
         raise ContractError(
             f"{path}.migration: backward-compatible releases must use null"
         )
+
+    package_name: str | None = None
+    distribution_name: str | None = None
+    tag: str | None = None
+    release_name: str | None = None
+    runtime_version_file: str | None = None
+    runtime_version_variable: str | None = None
+    artifacts: tuple[str, ...] = ()
+    receipt_asset: str | None = None
+    receipt_change_id: str | None = None
+    receipt_project: str | None = None
+    receipt_cycle: int | None = None
+    provenance_mode = "legacy"
+    if schema_version == 2:
+        changes = value["changes"]
+        if not isinstance(changes, list) or not changes:
+            raise ContractError(f"{path}.changes: must not be empty")
+        if len(changes) > MAX_CONTRACT_ITEMS:
+            raise ContractError(f"{path}.changes: exceeds {MAX_CONTRACT_ITEMS} items")
+        change_ids: list[str] = []
+        change_types: set[str] = set()
+        for index, raw_change in enumerate(changes):
+            change_path = f"{path}.changes[{index}]"
+            change = _object(raw_change, change_path)
+            _exact_keys(
+                change,
+                required={"id", "type", "surfaces", "rationale"},
+                path=change_path,
+            )
+            change_id = _string(change["id"], f"{change_path}.id", max_length=64)
+            if PROFILE_PATTERN.fullmatch(change_id) is None:
+                raise ContractError(f"{change_path}.id: invalid change id")
+            change_ids.append(change_id)
+            change_type = change["type"]
+            if change_type not in {"fix", "capability", "breaking"}:
+                raise ContractError(
+                    f"{change_path}.type: must be fix, capability, or breaking"
+                )
+            change_types.add(change_type)
+            surfaces = _string_list(
+                change["surfaces"],
+                f"{change_path}.surfaces",
+                pattern=PROFILE_PATTERN,
+            )
+            if surfaces != sorted(surfaces):
+                raise ContractError(f"{change_path}.surfaces: must be sorted")
+            _string(change["rationale"], f"{change_path}.rationale", max_length=1000)
+        if change_ids != sorted(change_ids):
+            raise ContractError(f"{path}.changes: must be sorted by id")
+        if len(change_ids) != len(set(change_ids)):
+            raise ContractError(f"{path}.changes: duplicate ids are not allowed")
+
+        derived_classification = (
+            "minor" if "breaking" in change_types and previous_parts[0] == 0
+            else "major" if "breaking" in change_types
+            else "minor" if "capability" in change_types
+            else "patch"
+        )
+        if classification != derived_classification:
+            raise ContractError(
+                f"{path}.classification: changes require {derived_classification}, "
+                f"not {classification}"
+            )
+        expected_compatibility = (
+            "incompatible" if "breaking" in change_types else "backward-compatible"
+        )
+        if compatibility != expected_compatibility:
+            raise ContractError(
+                f"{path}.compatibility: changes require {expected_compatibility}"
+            )
+        if schema_impact == "breaking" and "breaking" not in change_types:
+            raise ContractError(
+                f"{path}.changes: breaking schema impact requires a breaking change"
+            )
+        if schema_impact == "additive" and not change_types.intersection(
+            {"capability", "breaking"}
+        ):
+            raise ContractError(
+                f"{path}.changes: additive schema impact requires a capability change"
+            )
+
+        identity = _object(value["identity"], f"{path}.identity")
+        _exact_keys(
+            identity,
+            required={
+                "package",
+                "distribution",
+                "tag",
+                "releaseName",
+                "runtimeVersion",
+                "artifacts",
+                "receiptAsset",
+            },
+            path=f"{path}.identity",
+        )
+        package_name = _string(identity["package"], f"{path}.identity.package", max_length=128)
+        if NAME_PATTERN.fullmatch(package_name) is None:
+            raise ContractError(f"{path}.identity.package: invalid package name")
+        distribution_name = _string(
+            identity["distribution"], f"{path}.identity.distribution", max_length=128
+        )
+        expected_distribution = re.sub(r"[-_.]+", "_", package_name)
+        if distribution_name != expected_distribution:
+            raise ContractError(
+                f"{path}.identity.distribution: must be {expected_distribution}"
+            )
+        tag = _string(identity["tag"], f"{path}.identity.tag", max_length=80)
+        expected_tag = f"v{current}"
+        if tag != expected_tag:
+            raise ContractError(f"{path}.identity.tag: must be {expected_tag}")
+        release_name = _string(
+            identity["releaseName"], f"{path}.identity.releaseName", max_length=128
+        )
+        runtime = _object(identity["runtimeVersion"], f"{path}.identity.runtimeVersion")
+        _exact_keys(
+            runtime,
+            required={"path", "variable"},
+            path=f"{path}.identity.runtimeVersion",
+        )
+        runtime_version_file = _relative_tool_path(
+            runtime["path"], f"{path}.identity.runtimeVersion.path", strict_portable=True
+        )
+        runtime_version_variable = _string(
+            runtime["variable"],
+            f"{path}.identity.runtimeVersion.variable",
+            max_length=64,
+        )
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", runtime_version_variable) is None:
+            raise ContractError(
+                f"{path}.identity.runtimeVersion.variable: invalid constant name"
+            )
+        artifact_items = _string_list(
+            identity["artifacts"], f"{path}.identity.artifacts"
+        )
+        expected_artifacts = sorted(
+            [
+                f"{distribution_name}-{current}-py3-none-any.whl",
+                f"{distribution_name}-{current}.tar.gz",
+            ]
+        )
+        if artifact_items != expected_artifacts:
+            raise ContractError(
+                f"{path}.identity.artifacts: must be canonical artifacts "
+                + ", ".join(expected_artifacts)
+            )
+        artifacts = tuple(artifact_items)
+        receipt_asset = identity["receiptAsset"]
+        if receipt_asset is not None:
+            receipt_asset = _string(
+                receipt_asset, f"{path}.identity.receiptAsset", max_length=200
+            )
+
+        provenance = _object(value["provenance"], f"{path}.provenance")
+        _exact_keys(
+            provenance,
+            required={"mode", "statement", "lifecycleReceipt"},
+            path=f"{path}.provenance",
+        )
+        provenance_mode = provenance["mode"]
+        if provenance_mode not in {"bootstrap-history", "governed"}:
+            raise ContractError(
+                f"{path}.provenance.mode: must be bootstrap-history or governed"
+            )
+        _string(
+            provenance["statement"], f"{path}.provenance.statement", max_length=1000
+        )
+        lifecycle_receipt = provenance["lifecycleReceipt"]
+        if provenance_mode == "bootstrap-history":
+            if lifecycle_receipt is not None:
+                raise ContractError(
+                    f"{path}.provenance.lifecycleReceipt: bootstrap history must use null"
+                )
+            if receipt_asset is not None:
+                raise ContractError(
+                    f"{path}.identity.receiptAsset: bootstrap history must use null"
+                )
+        else:
+            if release_name != expected_tag:
+                raise ContractError(
+                    f"{path}.identity.releaseName: governed releases must use {expected_tag}"
+                )
+            expected_receipt_asset = f"{package_name}-{expected_tag}-evidence.json"
+            if receipt_asset != expected_receipt_asset:
+                raise ContractError(
+                    f"{path}.identity.receiptAsset: must be {expected_receipt_asset}"
+                )
+            receipt = _object(
+                lifecycle_receipt, f"{path}.provenance.lifecycleReceipt"
+            )
+            _exact_keys(
+                receipt,
+                required={"asset", "project", "changeId", "cycle"},
+                path=f"{path}.provenance.lifecycleReceipt",
+            )
+            if receipt["asset"] != receipt_asset:
+                raise ContractError(
+                    f"{path}.provenance.lifecycleReceipt.asset: must match receiptAsset"
+                )
+            receipt_project = _string(
+                receipt["project"],
+                f"{path}.provenance.lifecycleReceipt.project",
+                max_length=128,
+            )
+            if NAME_PATTERN.fullmatch(receipt_project) is None:
+                raise ContractError(
+                    f"{path}.provenance.lifecycleReceipt.project: invalid project id"
+                )
+            receipt_change_id = _string(
+                receipt["changeId"],
+                f"{path}.provenance.lifecycleReceipt.changeId",
+                max_length=64,
+            )
+            if PROFILE_PATTERN.fullmatch(receipt_change_id) is None:
+                raise ContractError(
+                    f"{path}.provenance.lifecycleReceipt.changeId: invalid change id"
+                )
+            if (
+                isinstance(receipt["cycle"], bool)
+                or not isinstance(receipt["cycle"], int)
+                or receipt["cycle"] < 1
+            ):
+                raise ContractError(
+                    f"{path}.provenance.lifecycleReceipt.cycle: must be a positive integer"
+                )
+            receipt_cycle = receipt["cycle"]
     return Release(
         previous_version=previous,
         version=current,
@@ -1171,31 +1511,47 @@ def validate_release(document: Any, path: str = "release") -> Release:
         compatibility=compatibility,
         schema_impact=schema_impact,
         migration=migration,
+        package_name=package_name,
+        distribution_name=distribution_name,
+        tag=tag,
+        release_name=release_name,
+        runtime_version_file=runtime_version_file,
+        runtime_version_variable=runtime_version_variable,
+        artifacts=artifacts,
+        receipt_asset=receipt_asset,
+        receipt_change_id=receipt_change_id,
+        receipt_project=receipt_project,
+        receipt_cycle=receipt_cycle,
+        provenance_mode=provenance_mode,
     )
 
 
 def validate_change(document: Any, path: str = "change") -> None:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 2 or 3")
+    required_keys = {
+        "schemaVersion",
+        "id",
+        "summary",
+        "source",
+        "comparisonBase",
+        "specification",
+        "risk",
+        "affectedProjects",
+        "acceptanceCriteria",
+        "requiredProfiles",
+        "signOff",
+    }
+    if schema_version == 3:
+        required_keys.add("quality")
     _exact_keys(
         value,
-        required={
-            "schemaVersion",
-            "id",
-            "summary",
-            "source",
-            "comparisonBase",
-            "specification",
-            "risk",
-            "affectedProjects",
-            "acceptanceCriteria",
-            "requiredProfiles",
-            "signOff",
-        },
+        required=required_keys,
         optional={"$schema"},
         path=path,
     )
-    if value.get("schemaVersion") != 2:
-        raise ContractError(f"{path}.schemaVersion: must be 2")
     identifier = _string(value["id"], f"{path}.id", max_length=64)
     if PROFILE_PATTERN.fullmatch(identifier) is None:
         raise ContractError(f"{path}.id: invalid change id")
@@ -1224,20 +1580,26 @@ def validate_change(document: Any, path: str = "change") -> None:
     )
     if value["risk"] not in {"low", "medium", "high"}:
         raise ContractError(f"{path}.risk: must be low, medium, or high")
-    _string_list(
+    affected_projects = _string_list(
         value["affectedProjects"],
         f"{path}.affectedProjects",
         pattern=NAME_PATTERN,
+        maximum=64,
     )
-    _string_list(
+    required_profiles = _string_list(
         value["requiredProfiles"],
         f"{path}.requiredProfiles",
         pattern=PROFILE_PATTERN,
+        maximum=MAX_PROJECT_PROFILES,
     )
 
     criteria = value["acceptanceCriteria"]
     if not isinstance(criteria, list) or not criteria:
         raise ContractError(f"{path}.acceptanceCriteria: must not be empty")
+    if len(criteria) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.acceptanceCriteria: exceeds {MAX_CONTRACT_ITEMS} items"
+        )
     criterion_ids: set[str] = set()
     for index, raw_criterion in enumerate(criteria):
         criterion_path = f"{path}.acceptanceCriteria[{index}]"
@@ -1258,6 +1620,103 @@ def validate_change(document: Any, path: str = "change") -> None:
             )
         criterion_ids.add(identifier)
         _string(criterion["outcome"], f"{criterion_path}.outcome", max_length=1000)
+
+    if schema_version == 3:
+        quality = _object(value["quality"], f"{path}.quality")
+        _exact_keys(
+            quality,
+            required={"standard", "assessments"},
+            path=f"{path}.quality",
+        )
+        if quality["standard"] != PRODUCTION_STANDARD:
+            raise ContractError(
+                f"{path}.quality.standard: must be {PRODUCTION_STANDARD}"
+            )
+        assessments = quality["assessments"]
+        if not isinstance(assessments, list) or not assessments:
+            raise ContractError(f"{path}.quality.assessments: must not be empty")
+        if len(assessments) > MAX_CONTRACT_ITEMS:
+            raise ContractError(
+                f"{path}.quality.assessments: exceeds {MAX_CONTRACT_ITEMS} items"
+            )
+        dimensions: list[str] = []
+        for index, raw_assessment in enumerate(assessments):
+            assessment_path = f"{path}.quality.assessments[{index}]"
+            assessment = _object(raw_assessment, assessment_path)
+            _exact_keys(
+                assessment,
+                required={"dimension", "status", "rationale", "criteria"},
+                path=assessment_path,
+            )
+            dimension = _string(
+                assessment["dimension"],
+                f"{assessment_path}.dimension",
+                max_length=64,
+            )
+            if (
+                PROFILE_PATTERN.fullmatch(dimension) is None
+                or (
+                    dimension not in CORE_QUALITY_DIMENSIONS
+                    and not dimension.startswith("project-")
+                )
+            ):
+                raise ContractError(
+                    f"{assessment_path}.dimension: must be a core or project-* dimension"
+                )
+            dimensions.append(dimension)
+            status = assessment["status"]
+            if status not in {"applicable", "not-applicable"}:
+                raise ContractError(
+                    f"{assessment_path}.status: must be applicable or not-applicable"
+                )
+            _string(
+                assessment["rationale"],
+                f"{assessment_path}.rationale",
+                max_length=1000,
+            )
+            mapped = _string_list(
+                assessment["criteria"],
+                f"{assessment_path}.criteria",
+                minimum=0,
+                pattern=PROFILE_PATTERN,
+            )
+            if mapped != sorted(mapped):
+                raise ContractError(
+                    f"{assessment_path}.criteria: must be sorted"
+                )
+            unknown = sorted(set(mapped) - criterion_ids)
+            if unknown:
+                raise ContractError(
+                    f"{assessment_path}.criteria: unknown acceptance criteria: "
+                    + ", ".join(unknown)
+                )
+            if status == "applicable" and not mapped:
+                raise ContractError(
+                    f"{assessment_path}.criteria: applicable dimensions require criteria"
+                )
+            if status == "not-applicable" and mapped:
+                raise ContractError(
+                    f"{assessment_path}.criteria: not-applicable dimensions require an empty list"
+                )
+        if dimensions != sorted(dimensions):
+            raise ContractError(
+                f"{path}.quality.assessments: must be sorted by dimension"
+            )
+        if len(dimensions) != len(set(dimensions)):
+            raise ContractError(
+                f"{path}.quality.assessments: duplicate dimensions are not allowed"
+            )
+        missing_core = sorted(set(CORE_QUALITY_DIMENSIONS) - set(dimensions))
+        if missing_core:
+            raise ContractError(
+                f"{path}.quality.assessments: missing core dimensions: "
+                + ", ".join(missing_core)
+            )
+        correctness = assessments[dimensions.index("correctness")]
+        if correctness["status"] != "applicable":
+            raise ContractError(
+                f"{path}.quality: correctness must be applicable"
+            )
 
     sign_off = _object(value["signOff"], f"{path}.signOff")
     _exact_keys(
@@ -1314,6 +1773,8 @@ def validate_plan(document: Any, path: str = "plan") -> None:
     work_items = value["workItems"]
     if not isinstance(work_items, list) or not work_items:
         raise ContractError(f"{path}.workItems: must not be empty")
+    if len(work_items) > MAX_CONTRACT_ITEMS:
+        raise ContractError(f"{path}.workItems: exceeds {MAX_CONTRACT_ITEMS} items")
     work_item_ids: set[str] = set()
     for index, raw_item in enumerate(work_items):
         item_path = f"{path}.workItems[{index}]"
@@ -1330,16 +1791,25 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             raise ContractError(f"{path}.workItems: duplicate id {item_id}")
         work_item_ids.add(item_id)
         _string(item["outcome"], f"{item_path}.outcome", max_length=1000)
-        _string_list(item["affectedPaths"], f"{item_path}.affectedPaths")
+        _string_list(
+            item["affectedPaths"],
+            f"{item_path}.affectedPaths",
+            maximum=MAX_CONTRACT_ITEMS,
+        )
         _string_list(
             item["verificationProfiles"],
             f"{item_path}.verificationProfiles",
             pattern=PROFILE_PATTERN,
+            maximum=MAX_PROJECT_PROFILES,
         )
 
     acceptance_plan = value["acceptancePlan"]
     if not isinstance(acceptance_plan, list) or not acceptance_plan:
         raise ContractError(f"{path}.acceptancePlan: must not be empty")
+    if len(acceptance_plan) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.acceptancePlan: exceeds {MAX_CONTRACT_ITEMS} items"
+        )
     criterion_ids: set[str] = set()
     for index, raw_mapping in enumerate(acceptance_plan):
         mapping_path = f"{path}.acceptancePlan[{index}]"
@@ -1360,7 +1830,10 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             )
         criterion_ids.add(criterion_id)
         mapped_items = _string_list(
-            mapping["workItems"], f"{mapping_path}.workItems", pattern=PROFILE_PATTERN
+            mapping["workItems"],
+            f"{mapping_path}.workItems",
+            pattern=PROFILE_PATTERN,
+            maximum=MAX_CONTRACT_ITEMS,
         )
         unknown_items = sorted(set(mapped_items) - work_item_ids)
         if unknown_items:
@@ -1371,11 +1844,14 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             mapping["verificationProfiles"],
             f"{mapping_path}.verificationProfiles",
             pattern=PROFILE_PATTERN,
+            maximum=MAX_PROJECT_PROFILES,
         )
 
     risks = value["risks"]
     if not isinstance(risks, list):
         raise ContractError(f"{path}.risks: must be an array")
+    if len(risks) > MAX_CONTRACT_ITEMS:
+        raise ContractError(f"{path}.risks: exceeds {MAX_CONTRACT_ITEMS} items")
     for index, raw_risk in enumerate(risks):
         risk_path = f"{path}.risks[{index}]"
         risk = _object(raw_risk, risk_path)
@@ -1386,8 +1862,14 @@ def validate_plan(document: Any, path: str = "plan") -> None:
     decisions = value["openDecisions"]
     if not isinstance(decisions, list):
         raise ContractError(f"{path}.openDecisions: must be an array")
+    if len(decisions) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.openDecisions: exceeds {MAX_CONTRACT_ITEMS} items"
+        )
     if decisions:
-        _string_list(decisions, f"{path}.openDecisions")
+        _string_list(
+            decisions, f"{path}.openDecisions", maximum=MAX_CONTRACT_ITEMS
+        )
 
 
 def _validate_actor(value: Any, path: str) -> dict[str, str]:
@@ -1408,25 +1890,29 @@ def _validate_review(
     allow_legacy_unresolved_approval: bool = False,
 ) -> None:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 2 or 3")
+    required_keys = {
+        "schemaVersion",
+        "changeId",
+        "cycle",
+        "checkpoint",
+        "workspaceFingerprint",
+        "comparisonBase",
+        "reviewer",
+        "independence",
+        "verdict",
+        "findings",
+    }
+    if schema_version == 3:
+        required_keys.add("quality")
     _exact_keys(
         value,
-        required={
-            "schemaVersion",
-            "changeId",
-            "cycle",
-            "checkpoint",
-            "workspaceFingerprint",
-            "comparisonBase",
-            "reviewer",
-            "independence",
-            "verdict",
-            "findings",
-        },
+        required=required_keys,
         optional={"$schema"},
         path=path,
     )
-    if value.get("schemaVersion") != 2:
-        raise ContractError(f"{path}.schemaVersion: must be 2")
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
     if PROFILE_PATTERN.fullmatch(change_id) is None:
         raise ContractError(f"{path}.changeId: invalid change id")
@@ -1468,9 +1954,105 @@ def _validate_review(
         raise ContractError(
             f"{path}.verdict: must be approved or changes-requested"
         )
+    if schema_version == 3:
+        quality = _object(value["quality"], f"{path}.quality")
+        _exact_keys(
+            quality,
+            required={"standard", "assessments"},
+            path=f"{path}.quality",
+        )
+        if quality["standard"] != PRODUCTION_STANDARD:
+            raise ContractError(
+                f"{path}.quality.standard: must be {PRODUCTION_STANDARD}"
+            )
+        assessments = quality["assessments"]
+        if not isinstance(assessments, list) or not assessments:
+            raise ContractError(f"{path}.quality.assessments: must not be empty")
+        if len(assessments) > MAX_CONTRACT_ITEMS:
+            raise ContractError(
+                f"{path}.quality.assessments: exceeds {MAX_CONTRACT_ITEMS} items"
+            )
+        quality_dimensions: list[str] = []
+        for index, raw_assessment in enumerate(assessments):
+            assessment_path = f"{path}.quality.assessments[{index}]"
+            assessment = _object(raw_assessment, assessment_path)
+            _exact_keys(
+                assessment,
+                required={"dimension", "status", "criteria", "evidence"},
+                path=assessment_path,
+            )
+            dimension = _string(
+                assessment["dimension"],
+                f"{assessment_path}.dimension",
+                max_length=64,
+            )
+            if (
+                PROFILE_PATTERN.fullmatch(dimension) is None
+                or (
+                    dimension not in CORE_QUALITY_DIMENSIONS
+                    and not dimension.startswith("project-")
+                )
+            ):
+                raise ContractError(f"{assessment_path}.dimension: invalid dimension")
+            quality_dimensions.append(dimension)
+            if assessment["status"] not in {
+                "verified",
+                "failed",
+                "not-applicable-confirmed",
+            }:
+                raise ContractError(f"{assessment_path}.status: invalid review status")
+            criteria = _string_list(
+                assessment["criteria"],
+                f"{assessment_path}.criteria",
+                minimum=0,
+                maximum=MAX_CONTRACT_ITEMS,
+                pattern=PROFILE_PATTERN,
+            )
+            if criteria != sorted(criteria):
+                raise ContractError(f"{assessment_path}.criteria: must be sorted")
+            if assessment["status"] in {"verified", "failed"} and not criteria:
+                raise ContractError(
+                    f"{assessment_path}.criteria: applicable dimensions require criteria"
+                )
+            if assessment["status"] == "not-applicable-confirmed" and criteria:
+                raise ContractError(
+                    f"{assessment_path}.criteria: confirmed N/A requires an empty list"
+                )
+            _string(
+                assessment["evidence"],
+                f"{assessment_path}.evidence",
+                max_length=2000,
+            )
+        if quality_dimensions != sorted(quality_dimensions):
+            raise ContractError(
+                f"{path}.quality.assessments: must be sorted by dimension"
+            )
+        if len(quality_dimensions) != len(set(quality_dimensions)):
+            raise ContractError(
+                f"{path}.quality.assessments: duplicate dimensions are not allowed"
+            )
+        missing_core = sorted(set(CORE_QUALITY_DIMENSIONS) - set(quality_dimensions))
+        if missing_core:
+            raise ContractError(
+                f"{path}.quality.assessments: missing core dimensions: "
+                + ", ".join(missing_core)
+            )
+        failed_quality = [
+            assessment
+            for assessment in assessments
+            if assessment["status"] == "failed"
+        ]
+        if verdict == "approved" and failed_quality:
+            raise ContractError(f"{path}.quality: approved review has failed dimensions")
+        if verdict == "changes-requested" and not failed_quality:
+            raise ContractError(
+                f"{path}.quality: changes-requested review requires a failed dimension"
+            )
     findings = value["findings"]
     if not isinstance(findings, list):
         raise ContractError(f"{path}.findings: must be an array")
+    if len(findings) > MAX_CONTRACT_ITEMS:
+        raise ContractError(f"{path}.findings: exceeds {MAX_CONTRACT_ITEMS} items")
     finding_ids: set[str] = set()
     unresolved_findings = 0
     for index, raw_finding in enumerate(findings):

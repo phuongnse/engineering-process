@@ -29,6 +29,14 @@ CLI, schemas, and tests.
 - Make schema changes backward compatible within a major version or provide a
   migration and major-version change.
 - Add regression coverage for every deterministic process defect.
+- Apply `PRODUCTION_STANDARD.md` to this repository and every portable consumer:
+  assess all core quality dimensions, bind applicable dimensions to measurable
+  criteria/evidence, and let projects add but never weaken `project-*` extensions.
+- Bound repository-controlled and remote work by time, count, item size, aggregate
+  size, output, and descendant lifetime. Keep lifecycle evidence durable; clean
+  ephemeral/build state deterministically on success, failure, timeout, and interrupt.
+- Derive package, runtime, tag, GitHub release title, artifact, receipt, and consumer
+  lock identity from the release contract; never update one surface independently.
 
 ## Verification
 

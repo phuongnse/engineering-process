@@ -1,4 +1,5 @@
 import os
+import io
 import signal
 import sys
 import tempfile
@@ -125,6 +126,36 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual("passed", report["status"])
             self.assertEqual(["sample-tool", "one", "two"], report["command"])
             self.assertEqual(f"one|two{os.linesep}", report["stdout"])
+
+    def test_streamed_output_is_bounded_but_full_digest_is_recorded(self):
+        class Sink:
+            def __init__(self):
+                self.buffer = io.BytesIO()
+
+            def write(self, value):
+                return self.buffer.write(value.encode("utf-8"))
+
+            def flush(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sink = Sink()
+            with patch("engineering_process.environment.sys.stderr", sink):
+                report = execute_command(
+                    root,
+                    identifier="bounded-log",
+                    run=(sys.executable, "-c", "print('x' * 1100000)"),
+                    timeout_seconds=30,
+                    working_directory=".",
+                    stream_output=True,
+                )
+
+            self.assertEqual("passed", report["status"])
+            self.assertGreater(report["stdoutBytes"], 1_000_000)
+            self.assertTrue(report["outputTruncated"])
+            self.assertTrue(report["streamOutputTruncated"])
+            self.assertLess(len(sink.buffer.getvalue()), 1_000_100)
 
     def test_doctor_is_read_only_and_reports_missing_requirement(self):
         with tempfile.TemporaryDirectory() as directory:

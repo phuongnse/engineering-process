@@ -45,6 +45,19 @@ assignment and report, carried finding resolutions, and completion artifact. A d
 or different checkpoint invalidates verification and approval instead of inheriting
 stale evidence.
 
+`.process/runs/` is durable local evidence, not a temporary directory. Active and
+failed runs are retained for recovery. A completed run may be pruned only through
+`processctl evidence prune --apply` after a bounded portable receipt has been
+exported and independently validated; release receipts remain attached to the
+immutable public release. Pruning first quarantines the exact run directory and
+restores it if deletion fails.
+
+The isolated public N environment and build/impact temporary directories have a
+single coordinator owner. Build and impact directories are removed on success,
+failure, timeout, and interruption. The N environment is removed only after the final
+N-governed completion/release transition; its version, wheel hash, process digest,
+and exported receipt remain as durable provenance.
+
 ## Release boundary
 
 Lifecycle completion proves engineering readiness only. It does not authorize a
@@ -52,4 +65,5 @@ version bump, tag, merge, publication, consumer lock update, or deployment. Thos
 actions follow `RELEASING.md` and require their own explicit authority.
 At that boundary, `release.json` adds a machine-validated SemVer and compatibility
 specification; the publication gate binds it to the exact latest public predecessor,
-release tag, source checkpoint, and `main` ancestry.
+canonical GitHub title/tag/package/runtime/artifact identity, exported N-1 receipt,
+source checkpoint, and `main` ancestry.

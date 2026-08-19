@@ -19,8 +19,13 @@ specific checkpoint without changing the reviewed source.
    checkpoint, comparison base, contract, plan, and required verification reports
    refer to the same immutable source.
 3. Read the diff and only the project-owned contracts needed to evaluate affected
-   behavior and trust boundaries.
+   behavior and trust boundaries. Reconcile every `production-v1` assessment,
+   including security, privacy, reliability, performance, observability, operability,
+   compatibility, maintainability, correctness, and supply-chain integrity.
 4. Record actionable findings with severity, exact location, evidence, and status.
+   Record one structured quality assessment per accepted contract dimension; a
+   requested change marks at least one applicable dimension failed, while approval
+   requires every applicable dimension verified and every N/A rationale confirmed.
    Separate defects from questions, optional improvements, and unsupported claims.
    Resolved, deferred, and false-positive findings require resolution evidence.
    Deferred remains unresolved and completion-blocking unless a future process

@@ -284,6 +284,10 @@ local path.
 
 `project.json.lifecycle.requiredProfiles` is the minimum evidence for every change.
 Individual change contracts may add profiles but cannot remove the baseline.
+Every new contract also applies [`production-v1`](PRODUCTION_STANDARD.md) to the ten
+portable quality dimensions. Projects may add declared `project-*` dimensions but
+cannot remove or weaken the shared minimum. The same contract governs this repository
+through its public N-1 self-hosting boundary.
 Agents enter non-trivial delivery through the synchronized `run-change` skill; phase
 skills are internal owners, not a workflow each project must reconnect.
 
@@ -343,6 +347,23 @@ pending findings before any transition is allowed.
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately authorized project workflows.
 
+Completed local evidence can be moved across machines or attached to a release as a
+bounded receipt. Export and validate it before any explicit prune:
+
+~~~text
+processctl evidence export --project-root . --change-id issue-123 \
+  --output issue-123-evidence.json
+processctl evidence validate issue-123-evidence.json
+processctl evidence prune --project-root . --change-id issue-123 \
+  --receipt issue-123-evidence.json
+processctl evidence prune --project-root . --change-id issue-123 \
+  --receipt issue-123-evidence.json --apply
+~~~
+
+The first prune command is a preview. `--apply` is accepted only for a completed run
+whose current state matches the validated external receipt. Active, failed,
+unexported, mismatched, or tampered evidence remains fail-closed.
+
 ## Publication contract
 
 Validate common metadata before creating or updating a review object:
@@ -356,7 +377,8 @@ processctl publication validate-pr --title "feat(scope): describe the change" \
   --branch feat/short-description --state draft --body-file pr.md
 processctl contract validate --kind release release.json
 processctl publication validate-release --project-root . \
-  --tag v0.2.0 --commit <checkpoint> --main-ref origin/main
+  --tag v0.2.0 --release-name v0.2.0 \
+  --commit <checkpoint> --main-ref origin/main
 ~~~
 
 Manual branches use `{type}/{kebab-description}`. Automation uses the provider-neutral
@@ -399,6 +421,11 @@ authenticates who produced it.
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest
   reachable prior tag, immutable checkpoint, and main ancestry.
+- `release.json` is the single release-identity owner. Governed GitHub tag and title
+  are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
+  lifecycle receipt, and later consumer locks must match it. Earlier immutable
+  releases are recorded explicitly as bootstrap history rather than retroactively
+  claimed as governed.
 - Project commands run without a shell and inherit the caller environment. Never put
   secrets in manifests, arguments, or reports.
 - Consumer skill roots are distribution-owned: unmanaged `SKILL.md` files or catalog

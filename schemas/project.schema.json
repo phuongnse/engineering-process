@@ -25,10 +25,20 @@
         "requiredProfiles": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 64,
           "uniqueItems": true,
           "items": {
             "type": "string",
             "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          }
+        },
+        "qualityExtensions": {
+          "type": "array",
+          "maxItems": 246,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^project-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
           }
         }
       }
@@ -36,12 +46,14 @@
     "profiles": {
       "type": "object",
       "minProperties": 1,
+      "maxProperties": 64,
       "propertyNames": {
         "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
       },
       "additionalProperties": {
         "type": "array",
         "minItems": 1,
+        "maxItems": 256,
         "items": {
           "$ref": "#/$defs/check"
         }
@@ -63,6 +75,16 @@
             {"required": ["environment"]},
             {"required": ["impact"]}
           ]
+        },
+        "properties": {
+          "lifecycle": {
+            "not": {"required": ["qualityExtensions"]}
+          },
+          "profiles": {
+            "additionalProperties": {
+              "items": {"not": {"required": ["components"]}}
+            }
+          }
         }
       }
     },
@@ -72,6 +94,14 @@
         "required": ["environment"],
         "not": {"required": ["impact"]},
         "properties": {
+          "lifecycle": {
+            "not": {"required": ["qualityExtensions"]}
+          },
+          "profiles": {
+            "additionalProperties": {
+              "items": {"not": {"required": ["components"]}}
+            }
+          },
           "environment": {
             "not": {"required": ["foregroundOnly"]},
             "properties": {
@@ -183,6 +213,7 @@
         "run": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 256,
           "items": {
             "type": "string",
             "minLength": 1
@@ -217,6 +248,7 @@
         "baseRefs": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 16,
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -250,12 +282,13 @@
         "paths": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 64,
           "uniqueItems": true,
           "items": {
             "type": "string",
             "minLength": 1,
             "maxLength": 512,
-            "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\*\\*\\*)(?!.*\\/$).+$"
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$)(?:(?:\\*\\*|(?:(?!\\*\\*)[^/])+)/)*(?:\\*\\*|(?:(?!\\*\\*)[^/])+)$"
           }
         },
         "affects": {
@@ -469,6 +502,7 @@
         "run": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 256,
           "items": {
             "type": "string",
             "minLength": 1
@@ -519,6 +553,7 @@
         "run": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 256,
           "items": {
             "type": "string",
             "minLength": 1

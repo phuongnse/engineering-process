@@ -21,6 +21,9 @@ without duplicating implementation, verification, or review.
    draft/ready state; then run any stronger project-declared publication checks.
 4. Perform only the authorized remote action. Preserve draft state unless ready state
    was explicitly requested.
+   For a release, export and validate the completion receipt, derive every identity
+   surface from `release.json`, and require GitHub tag and title to be the exact same
+   `v<SemVer>` before publication.
 5. Record the remote identifier and status. Treat any later source change as a new
    lifecycle cycle with invalidated publication readiness.
 
@@ -28,6 +31,8 @@ without duplicating implementation, verification, or review.
 
 - Never infer authorization to commit, push, open, merge, release, or deploy.
 - Do not publish source with stale evidence or unresolved required findings.
+- Do not hand-edit one release identity surface independently of the release contract
+  or update consumer locks before public artifact hashes are verified.
 - Do not replace, omit, or weaken the managed publication sections or standard
   requirements; projects may append stricter metadata and checklists.
 - Metadata-only work may skip code implementation only when project policy permits it.
