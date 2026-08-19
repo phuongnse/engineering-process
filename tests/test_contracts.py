@@ -83,10 +83,9 @@ class ProjectContractTests(unittest.TestCase):
         )
         self.assertEqual(project.impact.components["api"].affects, ("frontend",))
 
-    def test_impact_contract_is_additive_only_to_schema_four(self):
+    def test_impact_contract_is_additive_to_schema_three_but_not_older_majors(self):
         document = self.valid_project()
-        document["schemaVersion"] = 2
-        del document["environment"]["foregroundOnly"]
+        document["schemaVersion"] = 3
         document["impact"] = {
             "baseRefs": ["main"],
             "unmatchedPaths": "all-scoped-checks",
@@ -94,8 +93,20 @@ class ProjectContractTests(unittest.TestCase):
                 {"id": "source", "paths": ["src/**"], "affects": []}
             ],
         }
+        document["lifecycle"]["qualityExtensions"] = ["project-accessibility"]
+        document["profiles"]["development"][0]["components"] = ["source"]
 
-        with self.assertRaisesRegex(ContractError, "unknown properties: impact"):
+        project = validate_project(document)
+
+        self.assertEqual(("source",), project.profiles["development"][0].components)
+        self.assertEqual(("project-accessibility",), project.quality_extensions)
+
+        document["schemaVersion"] = 2
+        del document["environment"]["foregroundOnly"]
+
+        with self.assertRaisesRegex(
+            ContractError, "unknown properties: impact|qualityExtensions|components"
+        ):
             validate_project(document)
 
     def test_rejects_invalid_impact_references_and_portability(self):
@@ -192,6 +203,18 @@ class ProjectContractTests(unittest.TestCase):
         }
         legacy["lifecycle"]["requiredProfiles"] = ["profile-0"]
         self.assertEqual(65, len(validate_project(legacy).profiles))
+
+        schema_three = self.valid_project()
+        schema_three["schemaVersion"] = 3
+        schema_three["profiles"] = {
+            f"profile-{index}": [dict(check)] for index in range(65)
+        }
+        schema_three["lifecycle"]["requiredProfiles"] = ["profile-0"]
+        schema_three["environment"]["profiles"] = {
+            f"profile-{index}": ["python-runtime"] for index in range(65)
+        }
+        schema_three["environment"]["defaultProfile"] = "profile-0"
+        self.assertEqual(65, len(validate_project(schema_three).profiles))
 
         bounded = self.valid_project()
         bounded["profiles"] = {

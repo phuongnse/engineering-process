@@ -73,6 +73,25 @@ class SchemaTests(unittest.TestCase):
         document["schemaVersion"] = 2
         self.assertFalse(validator.is_valid(document))
 
+    def test_project_impact_is_additive_to_schema_three(self):
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "project.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "project.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["schemaVersion"] = 3
+        validator = jsonschema.Draft202012Validator(schema)
+
+        self.assertTrue(validator.is_valid(document))
+        document["schemaVersion"] = 2
+        document["environment"].pop("foregroundOnly")
+        self.assertFalse(validator.is_valid(document))
+
 
 if __name__ == "__main__":
     unittest.main()

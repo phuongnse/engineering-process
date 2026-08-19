@@ -200,18 +200,29 @@ HTTPS, declared size/checksum/archive/path boundaries and derives their approval
 managers or domain preparation that cannot be represented by the managed-tool
 primitive, and declare every possible scope truthfully. New consumers use
 project-manifest schema 4. Schema 1 (without an environment contract), schema 2
-(the original environment contract) remain readable for backward compatibility; they
-and schema 3 are not relabeled as newer shapes. Schema 3 introduced foreground-only
-task execution and managed script bindings; schema 4 adds bounded impact and quality
-extensions without tightening those published readers. New integrations
+(the original environment contract), and schema 3 remain readable for backward
+compatibility; they are not relabeled as newer shapes. Schema 3 introduced
+foreground-only task execution and managed script bindings. Portable impact
+declarations and quality extensions are additive optional schema-3 capabilities;
+schema 4 adds resource bounds to previously published fields without tightening those
+historical readers. New integrations
 receive the complete environment contract instead of creating a project-local doctor
 or setup lifecycle.
 
+To migrate a live project manifest from schema 3 to 4, keep the same field meanings
+and first reduce it to at most 64 profiles, 256 checks per profile, 1,024 checks in
+total, and 256 arguments per check, probe, or command setup action; then change
+`schemaVersion` and run `processctl contract validate --kind project`. Historical
+schema-3 artifacts do not need rewriting. Plan schema 1 follows the same policy:
+new plans use schema 2, with at most 256 work/mapping/risk/decision entries and 64
+verification profiles per mapping.
+
 ## Affected-check selection
 
-Schema 4 optionally declares a portable impact graph. Components own canonical
-forward-slash glob patterns and list downstream components in `affects`; profile
-checks list the components that can invalidate them. The distribution discovers the
+Schema 3 and schema 4 optionally declare the same portable impact graph. Components
+own canonical forward-slash glob patterns and list downstream components in
+`affects`; profile checks list the components that can invalidate them. The
+distribution discovers the
 committed diff from an exact Git merge base and combines staged, unstaged, and
 untracked paths, then computes the transitive component closure and runs only the
 selected checks.
@@ -422,10 +433,10 @@ authenticates who produced it.
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest
   reachable prior tag, immutable checkpoint, and main ancestry.
-- New lifecycle work uses bounded plan schema 2; selective-impact consumers use
-  project schema 4. Plan schema 1 and project schemas 1-3 retain their published
-  validation behavior for historical compatibility instead of being tightened in
-  place.
+- New lifecycle work uses bounded plan schema 2. Selective-impact consumers may add
+  the optional capability on project schema 3, while new integrations use bounded
+  project schema 4. Plan schema 1 and the pre-existing fields of project schemas 1-3
+  retain their published validation behavior instead of being tightened in place.
 - `release.json` is the single release-identity owner. Governed GitHub tag and title
   are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
   lifecycle receipt, and later consumer locks must match it. Earlier immutable

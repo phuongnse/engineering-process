@@ -57,8 +57,11 @@ impact algorithm; unmatched or ambiguous paths expand verification.
 
 Released serialized contracts are never tightened in place. A new resource bound or
 meaning-changing requirement uses a new integer schema major with explicit migration;
-historical readers retain their published behavior. New changes use the bounded plan
-and project schema majors while older artifacts remain readable as history.
+historical readers retain their published behavior. A new optional capability may
+expand an existing schema major without invalidating its prior documents: portable
+impact and quality declarations therefore remain additive on project schema 3. New
+integrations use the bounded plan and project schema majors while older artifacts
+remain readable as history.
 
 Ephemeral files use private temporary directories and are removed on success,
 failure, timeout, and interruption. Build outputs are created in an isolated tracked

@@ -988,7 +988,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
         value,
         required={"schemaVersion", "project", "lifecycle", "profiles"}
         | ({"environment"} if schema_version >= 2 else set()),
-        optional={"$schema"} | ({"impact"} if schema_version == 4 else set()),
+        optional={"$schema"} | ({"impact"} if schema_version >= 3 else set()),
         path=path,
     )
     identifier = _string(value["project"], f"{path}.project", max_length=128)
@@ -999,7 +999,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
     _exact_keys(
         lifecycle,
         required={"requiredProfiles"},
-        optional={"qualityExtensions"} if schema_version == 4 else set(),
+        optional={"qualityExtensions"} if schema_version >= 3 else set(),
         path=f"{path}.lifecycle",
     )
     required_profiles = _string_list(
@@ -1077,7 +1077,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
                 check,
                 required={"id", "run", "timeoutSeconds"},
                 optional={"workingDirectory"}
-                | ({"components"} if schema_version == 4 else set()),
+                | ({"components"} if schema_version >= 3 else set()),
                 path=check_path,
             )
             check_id = _string(check["id"], f"{check_path}.id", max_length=64)

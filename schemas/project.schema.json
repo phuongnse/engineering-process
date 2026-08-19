@@ -123,22 +123,6 @@
       }
     },
     {
-      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
-      "then": {
-        "not": {"required": ["impact"]},
-        "properties": {
-          "lifecycle": {
-            "not": {"required": ["qualityExtensions"]}
-          },
-          "profiles": {
-            "additionalProperties": {
-              "items": {"not": {"required": ["components"]}}
-            }
-          }
-        }
-      }
-    },
-    {
       "if": {"properties": {"schemaVersion": {"enum": [3, 4]}}, "required": ["schemaVersion"]},
       "then": {
         "required": ["environment"],
