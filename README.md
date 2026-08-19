@@ -70,7 +70,7 @@ Install `processctl` from a tagged release and create a candidate manifest from
 standard in one command:
 
 ~~~text
-python -m pip install "engineering-process==0.1.0"
+python -m pip install "engineering-process==0.1.1"
 processctl project init --project-root . --manifest project.json \
   --bundle core --bundle delivery --bundle product
 processctl doctor --project-root .

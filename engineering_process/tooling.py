@@ -19,13 +19,14 @@ import urllib.request
 from urllib.parse import urljoin, urlsplit
 import zipfile
 
+from . import VERSION
 from .contracts import ContractError, ManagedTool, ManagedToolArtifact
 from .helper_launch import isolated_helper_command
 
 
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30
 MARKER_NAME = ".engineering-process-tool.json"
-USER_AGENT = "engineering-process/0.1.0"
+USER_AGENT = f"engineering-process/{VERSION}"
 
 
 @dataclass(frozen=True)
@@ -340,6 +341,15 @@ def _set_response_read_timeout(response: object, timeout: float) -> None:
         raise ContractError(f"cannot update the managed download timeout: {error}") from error
 
 
+def _response_is_closed(response: object) -> bool:
+    """Report a consumed HTTP response without depending on its private socket."""
+
+    is_closed = getattr(response, "isclosed", None)
+    if callable(is_closed):
+        return bool(is_closed())
+    return bool(getattr(response, "closed", False))
+
+
 def _download_artifact_direct(
     artifact: ManagedToolArtifact,
     destination: Path,
@@ -353,11 +363,14 @@ def _download_artifact_direct(
     ) as response:
         _validated_https_target(artifact.url, response.geturl())
         content_length = response.headers.get("Content-Length")
+        declared_size = None
         if content_length is not None:
             try:
                 declared_size = int(content_length)
             except ValueError as error:
                 raise ContractError("tool response has an invalid Content-Length") from error
+            if declared_size < 0:
+                raise ContractError("tool response has an invalid Content-Length")
             if declared_size > artifact.max_download_bytes:
                 raise ContractError(
                     f"tool artifact exceeds maxDownloadBytes: {declared_size} > "
@@ -367,6 +380,10 @@ def _download_artifact_direct(
         total = 0
         with destination.open("xb") as output:
             while True:
+                if declared_size is not None and total == declared_size:
+                    break
+                if _response_is_closed(response):
+                    break
                 _set_response_read_timeout(
                     response,
                     min(DOWNLOAD_READ_TIMEOUT_SECONDS, _remaining(deadline)),
