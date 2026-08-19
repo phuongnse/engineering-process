@@ -11,6 +11,7 @@ from . import VERSION
 from .bundles import load_bundles
 from .contracts import ContractError, ProcessLock, read_json, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
+from .git_attributes import managed_attributes_issues, merge_managed_attributes
 from .managed import (
     managed_agents_block,
     managed_agents_visibility_issues,
@@ -143,6 +144,20 @@ def selected_skill_target_issues(
     return issues
 
 
+def git_attributes_target_issues(project_root: Path) -> list[str]:
+    target = project_root / ".gitattributes"
+    if target.is_symlink():
+        return [f"{target}: managed Git attributes must not be a symlink"]
+    if os.path.lexists(target) and not target.is_file():
+        return [f"{target}: managed Git attributes must be a regular file"]
+    if target.is_file():
+        try:
+            merge_managed_attributes(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ContractError) as error:
+            return [f"{target}: invalid managed Git attributes: {error}"]
+    return []
+
+
 def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
     path = asset_root(process_root) / "templates" / "PULL_REQUEST_TEMPLATE.md"
     if not path.is_file():
@@ -246,6 +261,34 @@ def _sync_pull_request_template(project_root: Path, process_root: Path) -> None:
         target.write_text(updated, encoding="utf-8")
 
 
+def _git_attributes_issues(project_root: Path) -> list[str]:
+    target = project_root / ".gitattributes"
+    if target.is_symlink():
+        return [f"{target}: managed Git attributes must not be a symlink"]
+    if not target.is_file():
+        return [f"{target}: missing managed engineering-process Git attributes"]
+    try:
+        current = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        return [f"{target}: invalid managed Git attributes: {error}"]
+    return [f"{target}: {issue}" for issue in managed_attributes_issues(current)]
+
+
+def _sync_git_attributes(project_root: Path) -> None:
+    target = project_root / ".gitattributes"
+    if target.is_symlink():
+        raise ContractError(f"{target}: managed Git attributes must not be a symlink")
+    if os.path.lexists(target) and not target.is_file():
+        raise ContractError(f"{target}: managed Git attributes must be a regular file")
+    try:
+        current = target.read_text(encoding="utf-8") if target.is_file() else ""
+    except (OSError, UnicodeError) as error:
+        raise ContractError(f"{target}: cannot read Git attributes: {error}") from error
+    updated = merge_managed_attributes(current)
+    if current != updated:
+        target.write_text(updated, encoding="utf-8")
+
+
 def synchronized_state(
     project_root: Path,
     process_root: Path,
@@ -294,6 +337,7 @@ def synchronized_state(
                 issues.append(f"{target}: stale managed skill is not present in process.lock")
     issues.extend(_agents_issues(project_root, process_root))
     issues.extend(_pull_request_template_issues(project_root, process_root))
+    issues.extend(_git_attributes_issues(project_root))
     return issues
 
 
@@ -305,6 +349,7 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
         *managed_parent_issues(project_root),
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, lock.skills),
+        *git_attributes_target_issues(project_root),
     ]
     if ownership_issues and not check:
         raise ContractError("\n".join(ownership_issues))
@@ -348,6 +393,7 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
 
     _sync_agents(project_root, process_root)
     _sync_pull_request_template(project_root, process_root)
+    _sync_git_attributes(project_root)
 
     target_root.mkdir(parents=True, exist_ok=True)
 

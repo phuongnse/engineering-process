@@ -42,6 +42,10 @@ for their own application logs. Distributed tracing is required only when the
 affected architecture needs it; every project still needs enough correlation to
 explain a failed operation.
 
+Environment probe regular expressions evaluate a bounded view whose CRLF and CR line
+boundaries are canonicalized to LF. Captured output, byte counts, truncation state,
+and digests retain the original bytes so portability does not weaken evidence.
+
 Missing, stale, truncated beyond a declared policy, blocked, or unverifiable evidence
 never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares
@@ -71,6 +75,9 @@ validated against `schemas/evidence-receipt.schema.json` and its semantic cross-
 before an explicit prune; active or unexported evidence is not deleted.
 Verification isolates interpreter bytecode caches from the checkout and rejects
 ignored sourceless bytecode that could shadow checkpoint-owned source.
+Managed skill text is checked out with canonical LF through a final process-owned
+Git attributes block. Integrity comparison remains byte-exact; newline variants are
+not accepted as alternate distribution bytes.
 
 ## Release identity
 

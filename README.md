@@ -85,11 +85,15 @@ processctl doctor --project-root .
 
 `project init` validates the manifest, preflights ownership conflicts, writes the
 lock, installs the managed `AGENTS.md` and pull-request contracts, adds the ignored
-lifecycle-state path, and synchronizes the selected skills. It refuses to replace
-differing project configuration or unmanaged skills unless the conflict is resolved
-explicitly. `sync --check` and `doctor` detect drift in skills, the managed agent
-contract, and the pull-request block. A consumer never authors or maintains process
-skills locally.
+lifecycle-state path and canonical managed-skill Git attributes, and synchronizes
+the selected skills. It refuses to replace differing project configuration or
+unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
+`doctor` detect drift in skills, the managed agent contract, the pull-request block,
+and the process-owned `.gitattributes` block. The managed attributes are kept last so
+project rules cannot change the canonical LF checkout of text assets under
+`.agents/skills`; binary detection remains automatic. Byte-exact distribution
+attestation is unchanged. A consumer never authors or maintains process skills
+locally.
 
 The single project-manifest contract includes environment profiles, project-attested
 read-only requirement probes, remediation, declarative managed-tool artifacts, and

@@ -9,6 +9,7 @@ from . import VERSION
 from .bundles import load_bundles, select_bundles
 from .contracts import ContractError, read_json, validate_project, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
+from .git_attributes import managed_attributes_issues, merge_managed_attributes
 from .managed import (
     AGENTS_END,
     AGENTS_START,
@@ -22,6 +23,7 @@ from .publication import (
     validate_project_extensions,
 )
 from .syncing import (
+    git_attributes_target_issues,
     managed_parent_issues,
     selected_skill_target_issues,
     skill_target_ownership_issues,
@@ -135,6 +137,16 @@ def _ignore_update(project_root: Path) -> tuple[Path, str]:
     return path, updated
 
 
+def _attributes_update(project_root: Path) -> tuple[Path, str]:
+    path = project_root / ".gitattributes"
+    current = _read_optional_text(path)
+    updated = merge_managed_attributes(current)
+    issues = managed_attributes_issues(updated)
+    if issues:
+        raise ContractError(f"{path}: " + "; ".join(issues))
+    return path, updated
+
+
 def initialize_project(
     project_root: Path,
     process_root: Path,
@@ -174,6 +186,7 @@ def initialize_project(
         *managed_parent_issues(project_root),
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, skills),
+        *git_attributes_target_issues(project_root),
     ]
     if ownership_issues:
         raise ContractError("\n".join(ownership_issues))
@@ -184,6 +197,7 @@ def initialize_project(
     agents_target = project_root / "AGENTS.md"
     pr_target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
     ignore_target = project_root / ".gitignore"
+    attributes_target = project_root / ".gitattributes"
     _preflight_parents(
         project_root,
         target_manifest,
@@ -191,6 +205,7 @@ def initialize_project(
         agents_target,
         pr_target,
         ignore_target,
+        attributes_target,
         project_root / ".agents" / "skills" / "__process_probe__",
     )
     _preflight_file(target_manifest, manifest_content, replace=replace)
@@ -198,12 +213,14 @@ def initialize_project(
     agents_path, agents_content = _agents_update(project_root, process_root)
     pr_path, pr_content = _pull_request_template_update(project_root, process_root)
     ignore_path, ignore_content = _ignore_update(project_root)
+    attributes_path, attributes_content = _attributes_update(project_root)
 
     _write_text(target_manifest, manifest_content)
     _write_text(lock_path, lock_content)
     _write_text(agents_path, agents_content)
     _write_text(pr_path, pr_content)
     _write_text(ignore_path, ignore_content)
+    _write_text(attributes_path, attributes_content)
     issues = sync_skills(project_root, process_root, check=False)
     if issues:
         raise ContractError("\n".join(issues))

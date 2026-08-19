@@ -45,6 +45,10 @@ def _timestamp() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _canonical_regex_output(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _contained_working_directory(root: Path, relative: str) -> Path:
     resolved_root = root.resolve()
     working = (resolved_root / relative).resolve()
@@ -496,7 +500,7 @@ def _probe_requirement(
                 output_matches = (
                     bounded_regex.search(
                         probe.output_regex,
-                        stream,
+                        _canonical_regex_output(stream),
                         bounded_regex.MULTILINE,
                         timeout=min(remaining, OUTPUT_REGEX_TIMEOUT_SECONDS),
                         concurrent=True,

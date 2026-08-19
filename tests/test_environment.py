@@ -1,5 +1,6 @@
-import os
+import hashlib
 import io
+import os
 import signal
 import sys
 import tempfile
@@ -300,6 +301,38 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual("passed", report["status"])
             self.assertTrue(requirement["outputTruncated"])
             self.assertLessEqual(len(requirement["stdout"].encode()), 16_384)
+
+    def test_probe_regex_canonicalizes_line_endings_without_changing_evidence(self):
+        for line_ending in (b"\n", b"\r\n", b"\r"):
+            with (
+                self.subTest(line_ending=line_ending),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                payload = b"v24.18.0" + line_ending
+                document = project_document()
+                probe = document["environment"]["requirements"][0]["probe"]
+                probe["run"] = [
+                    sys.executable,
+                    "-c",
+                    f"import os; os.write(1, {payload!r})",
+                ]
+                probe["outputRegex"] = r"^v24\.18\.0$"
+                probe["outputStream"] = "stdout"
+                project = validate_project(document)
+
+                report = doctor_environment(root, project)
+                requirement = report["requirements"][0]
+
+                self.assertEqual("passed", report["status"])
+                self.assertEqual("satisfied", requirement["status"])
+                self.assertTrue(requirement["outputMatched"])
+                self.assertEqual(payload.decode(), requirement["stdout"])
+                self.assertEqual(len(payload), requirement["stdoutBytes"])
+                self.assertEqual(
+                    hashlib.sha256(payload).hexdigest(),
+                    requirement["stdoutSha256"],
+                )
 
     def test_probe_output_regex_is_bounded_by_the_probe_timeout(self):
         with tempfile.TemporaryDirectory() as directory:
