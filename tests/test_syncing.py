@@ -133,7 +133,8 @@ class SyncTests(unittest.TestCase):
             project_root = Path(directory)
             self.prepare_project(project_root)
             (project_root / ".gitattributes").write_text(
-                "/.agents/skills/** text eol=crlf\n",
+                "/.agents/skills/** text eol=crlf "
+                "working-tree-encoding=UTF-16 filter=project ident\n",
                 encoding="utf-8",
             )
             self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
@@ -167,7 +168,17 @@ class SyncTests(unittest.TestCase):
                 check=True,
             )
             effective = subprocess.run(
-                ["git", "check-attr", "text", "eol", "--", relative],
+                [
+                    "git",
+                    "check-attr",
+                    "text",
+                    "eol",
+                    "working-tree-encoding",
+                    "filter",
+                    "ident",
+                    "--",
+                    relative,
+                ],
                 cwd=project_root,
                 check=True,
                 capture_output=True,
@@ -175,6 +186,9 @@ class SyncTests(unittest.TestCase):
             )
             self.assertIn("text: auto", effective.stdout)
             self.assertIn("eol: lf", effective.stdout)
+            self.assertIn("working-tree-encoding: unset", effective.stdout)
+            self.assertIn("filter: unset", effective.stdout)
+            self.assertIn("ident: unset", effective.stdout)
             target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
             self.assertIn(b"\r\n", target.read_bytes())
 

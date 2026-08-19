@@ -90,9 +90,11 @@ the selected skills. It refuses to replace differing project configuration or
 unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
 `doctor` detect drift in skills, the managed agent contract, the pull-request block,
 and the bounded process-owned `.agents/.gitattributes` file. That file is closer to
-the managed tree than project-root attributes and canonicalizes LF only for text
-assets under `.agents/skills`; binary detection remains automatic. Deeper repository
-attribute files are rejected by existing managed-tree ownership and content checks.
+the managed tree than project-root attributes, canonicalizes LF only for text assets
+under `.agents/skills`, and disables inherited working-tree encoding, filter, and
+ident transforms for those assets; binary detection remains automatic. Deeper
+repository attribute files are rejected by existing managed-tree ownership and
+content checks.
 External Git overrides that alter a checkout still fail byte-exact distribution
 attestation. A consumer never authors or maintains process skills locally.
 
