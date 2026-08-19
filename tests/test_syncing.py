@@ -133,6 +133,21 @@ class SyncTests(unittest.TestCase):
                 )
             )
 
+    def test_sync_manages_adoption_runner_and_refuses_unmanaged_collision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            self.prepare_project(project_root)
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            runner = project_root / ".process" / "adopt-process.py"
+            self.assertEqual(
+                (PROCESS_ROOT / "templates" / "adopt-process.py").read_bytes(),
+                runner.read_bytes(),
+            )
+            runner.write_text("print('unmanaged')\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContractError, "unmanaged adoption runner"):
+                sync_skills(project_root, PROCESS_ROOT, check=False)
+
     def test_sync_repairs_managed_attributes_and_preserves_project_rules(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

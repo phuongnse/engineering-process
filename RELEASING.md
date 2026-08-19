@@ -39,6 +39,12 @@ clarification, lock regeneration, or failed publication does not advance it by
 itself. Consumer process locks change only after the public artifact and its hashes
 have been verified.
 
+After publication, Renovate updates `requirements/process.in`, regenerates the
+complete `requirements/process.txt` hash graph through pip-compile, and runs the
+managed adoption runner before creating its draft. That single PR must contain the
+new process lock and managed assets, pass CI and independent review, and then be
+merged explicitly. No synchronization is permitted after merge.
+
 ## One-time GitHub controls
 
 Complete these controls before publishing the first release:

@@ -70,6 +70,7 @@ project/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .gitignore             # includes .process/runs/
 └── .process/
+    ├── adopt-process.py   # managed hash-locked adoption runner
     └── project.json       # project profiles and lifecycle baseline
 ~~~
 
@@ -87,8 +88,8 @@ processctl doctor --project-root .
 `project init` validates the manifest, preflights ownership conflicts, writes the
 lock, installs the managed `AGENTS.md` and pull-request contracts, adds the ignored
 lifecycle-state path and canonical managed-skill Git attributes, and synchronizes
-the selected skills. It refuses to replace differing project configuration or
-unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
+the selected skills and adoption runner. It refuses to replace differing project
+configuration or unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
 `doctor` detect drift in skills, the managed agent contract, the pull-request block,
 and the bounded process-owned `.agents/.gitattributes` file. That file is closer to
 the managed tree than project-root attributes, canonicalizes LF only for text assets
@@ -445,6 +446,12 @@ authenticates who produced it.
   templates, bundle catalog, and
   complete selected skill resources. Startup fails when installed runtime dependency
   versions differ from that lock.
+- `requirements/process.in` owns the direct authority pin. Renovate uses the
+  pip-compile manager to update its complete binary-only hash lock, then the managed
+  `.process/adopt-process.py` runner installs that graph outside the checkout and
+  invokes `processctl adoption apply`. The resulting draft contains the new lock,
+  managed contracts, and skill snapshots; after CI and independent review, merge is
+  the end of adoption.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest

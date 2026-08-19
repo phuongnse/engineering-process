@@ -36,6 +36,9 @@ without duplicating implementation, verification, or review.
   or update consumer locks before public artifact hashes are verified.
 - Do not treat a Renovate proposal as adoption evidence or allow a process-authority
   update to automerge.
+- Require one process-adoption PR to contain its compiled hash lock, process lock,
+  managed contract, and selected skill snapshots before review. Merge ends adoption;
+  never defer synchronization to a post-merge step.
 - Do not replace, omit, or weaken the managed publication sections or standard
   requirements; projects may append stricter metadata and checklists.
 - Metadata-only work may skip code implementation only when project policy permits it.

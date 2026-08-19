@@ -23,6 +23,7 @@ from .publication import (
     validate_project_extensions,
 )
 from .syncing import (
+    adoption_runner_target_issues,
     git_attributes_target_issues,
     managed_parent_issues,
     selected_skill_target_issues,
@@ -197,6 +198,7 @@ def initialize_project(
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, skills),
         *git_attributes_target_issues(project_root),
+        *adoption_runner_target_issues(project_root, process_root),
     ]
     if ownership_issues:
         raise ContractError("\n".join(ownership_issues))
@@ -216,6 +218,7 @@ def initialize_project(
         pr_target,
         ignore_target,
         attributes_target,
+        project_root / ".process" / "adopt-process.py",
         project_root / ".agents" / "skills" / "__process_probe__",
     )
     _preflight_file(target_manifest, manifest_content, replace=replace)

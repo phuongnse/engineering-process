@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import VERSION
+from .adoption import apply_adoption, check_adoption
 from .artifact_attestation import validate_distribution_attestation
 from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
@@ -202,6 +203,28 @@ def command_lock_create(args: argparse.Namespace) -> int:
         ),
     )
     return 0
+
+
+def command_adoption_apply(args: argparse.Namespace) -> int:
+    details = apply_adoption(
+        args.project_root,
+        args.process_root,
+        args.requirements_lock,
+    )
+    _emit(args, _result("adoption apply", **details))
+    return 0
+
+
+def command_adoption_check(args: argparse.Namespace) -> int:
+    details = check_adoption(
+        args.project_root,
+        args.process_root,
+        args.requirements_lock,
+    )
+    issues = details.pop("issues")
+    status = "failed" if issues else "passed"
+    _emit(args, _result("adoption check", status=status, issues=issues, **details))
+    return 1 if issues else 0
 
 
 def command_contract_validate(args: argparse.Namespace) -> int:
@@ -890,6 +913,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json(lock_create)
     lock_create.set_defaults(handler=command_lock_create)
+
+    adoption = commands.add_parser(
+        "adoption", help="Apply or validate a hash-locked process-authority adoption"
+    )
+    adoption_commands = adoption.add_subparsers(
+        dest="adoption_command", required=True
+    )
+    adoption_apply = adoption_commands.add_parser(
+        "apply", help="Materialize the proposed authority and all managed assets"
+    )
+    _add_project_root(adoption_apply)
+    _add_process_root(adoption_apply)
+    adoption_apply.add_argument(
+        "--requirements-lock",
+        type=Path,
+        required=True,
+        help="Hash-locked requirements file inside the consumer checkout",
+    )
+    _add_json(adoption_apply)
+    adoption_apply.set_defaults(handler=command_adoption_apply)
+    adoption_check = adoption_commands.add_parser(
+        "check", help="Validate that authority, lock, and managed assets agree"
+    )
+    _add_project_root(adoption_check)
+    _add_process_root(adoption_check)
+    adoption_check.add_argument(
+        "--requirements-lock",
+        type=Path,
+        required=True,
+        help="Hash-locked requirements file inside the consumer checkout",
+    )
+    _add_json(adoption_check)
+    adoption_check.set_defaults(handler=command_adoption_check)
 
     contract = commands.add_parser("contract", help="Validate process artifacts")
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)

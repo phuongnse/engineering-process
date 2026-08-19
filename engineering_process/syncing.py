@@ -39,6 +39,8 @@ MAX_SKILL_ENTRIES = 500
 MAX_SKILL_FILE_BYTES = 1_000_000
 MAX_SKILL_TOTAL_BYTES = 8_000_000
 SKILL_COMPARISON_TIMEOUT_SECONDS = 10.0
+MAX_ADOPTION_RUNNER_BYTES = 128_000
+ADOPTION_RUNNER_MARKER = "# Managed by engineering-process; do not edit."
 
 
 def default_process_root() -> Path:
@@ -303,6 +305,97 @@ def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
         raise ContractError(f"{path}: cannot read pull-request template: {error}") from error
 
 
+def _adoption_runner_source(process_root: Path) -> tuple[Path, bytes]:
+    path = asset_root(process_root) / "templates" / "adopt-process.py"
+    if not path.is_file() or path.is_symlink():
+        raise ContractError(f"{path}: missing regular adoption runner template")
+    try:
+        if path.stat().st_size > MAX_ADOPTION_RUNNER_BYTES:
+            raise ContractError(
+                f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+            )
+        content = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot read adoption runner: {error}") from error
+    if len(content) > MAX_ADOPTION_RUNNER_BYTES:
+        raise ContractError(
+            f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+        )
+    if not content.startswith((ADOPTION_RUNNER_MARKER + "\n").encode("utf-8")):
+        raise ContractError(f"{path}: adoption runner is missing its managed marker")
+    return path, content
+
+
+def _read_adoption_runner_target(path: Path) -> bytes | None:
+    if path.is_symlink():
+        raise ContractError(f"{path}: managed adoption runner must not be a symlink")
+    if not os.path.lexists(path):
+        return None
+    if not path.is_file():
+        raise ContractError(f"{path}: managed adoption runner must be a regular file")
+    try:
+        size = path.stat().st_size
+        if size > MAX_ADOPTION_RUNNER_BYTES:
+            raise ContractError(
+                f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+            )
+        content = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot read adoption runner: {error}") from error
+    if len(content) > MAX_ADOPTION_RUNNER_BYTES:
+        raise ContractError(
+            f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+        )
+    return content
+
+
+def adoption_runner_target_issues(
+    project_root: Path, process_root: Path
+) -> list[str]:
+    target = project_root / ".process" / "adopt-process.py"
+    try:
+        current = _read_adoption_runner_target(target)
+        _, source = _adoption_runner_source(process_root)
+    except ContractError as error:
+        return [str(error)]
+    if (
+        current is not None
+        and current != source
+        and not current.startswith((ADOPTION_RUNNER_MARKER + "\n").encode("utf-8"))
+    ):
+        return [f"{target}: refusing to overwrite unmanaged adoption runner"]
+    return []
+
+
+def _adoption_runner_issues(project_root: Path, process_root: Path) -> list[str]:
+    target = project_root / ".process" / "adopt-process.py"
+    try:
+        current = _read_adoption_runner_target(target)
+        _, source = _adoption_runner_source(process_root)
+    except ContractError as error:
+        return [str(error)]
+    if current is None:
+        return [f"{target}: missing managed adoption runner"]
+    if current != source:
+        return [f"{target}: managed adoption runner differs from the pinned distribution"]
+    return []
+
+
+def _sync_adoption_runner(project_root: Path, process_root: Path) -> None:
+    target = project_root / ".process" / "adopt-process.py"
+    current = _read_adoption_runner_target(target)
+    _, source = _adoption_runner_source(process_root)
+    if (
+        current is not None
+        and current != source
+        and not current.startswith((ADOPTION_RUNNER_MARKER + "\n").encode("utf-8"))
+    ):
+        raise ContractError(f"{target}: refusing to overwrite unmanaged adoption runner")
+    if current != source:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source)
+
+
 def _agents_source(process_root: Path) -> tuple[Path, str]:
     path = asset_root(process_root) / "templates" / "AGENTS.process.md"
     if not path.is_file():
@@ -473,6 +566,7 @@ def synchronized_state(
     issues.extend(_agents_issues(project_root, process_root))
     issues.extend(_pull_request_template_issues(project_root, process_root))
     issues.extend(_git_attributes_issues(project_root))
+    issues.extend(_adoption_runner_issues(project_root, process_root))
     return issues
 
 
@@ -485,6 +579,7 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, lock.skills),
         *git_attributes_target_issues(project_root),
+        *adoption_runner_target_issues(project_root, process_root),
     ]
     if ownership_issues and not check:
         raise ContractError("\n".join(ownership_issues))
@@ -529,6 +624,7 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
     _sync_agents(project_root, process_root)
     _sync_pull_request_template(project_root, process_root)
     _sync_git_attributes(project_root)
+    _sync_adoption_runner(project_root, process_root)
 
     target_root.mkdir(parents=True, exist_ok=True)
 

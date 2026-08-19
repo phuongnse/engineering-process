@@ -61,28 +61,38 @@ Release, self-adoption, and consumer adoption are separate changes:
 
 1. Release N governs and verifies the source of N+1.
 2. N+1 is published as an immutable release and its public hashes are verified.
-3. Renovate may open a draft adoption PR, but it never changes authority by itself.
-4. The adoption owner installs the exact hash-locked release outside the checkout,
-   regenerates the process lock, synchronizes managed assets, runs doctor and all
-   required verification, obtains independent review, and explicitly merges.
+3. Renovate updates the direct input pin, regenerates the complete hash-locked
+   dependency graph, and runs the managed adoption runner before it creates one
+   draft PR containing the process lock and every selected managed asset.
+4. CI validates dependency integrity and the fully materialized adoption, then the
+   adoption owner obtains independent review and explicitly merges that same
+   checkpoint. Merge completes adoption; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the adoption checkpoint.
 
-Renovate PRs are discovery and transport, not trusted adoption evidence. Automerge is
-forbidden for process-authority updates. A PR that changes only the requirement pin
-must remain failing until `.process/process.lock`, selected managed skills, and every
-consumer-owned migration are synchronized from the verified public distribution.
+Renovate PRs are generated adoption candidates, not trusted adoption evidence.
+Automerge is forbidden for process-authority updates. A PR that changes only a
+requirement pin, omits generated hashes or managed assets, or requires a post-merge
+step must fail closed.
 
-For this producer, install the Renovate-proposed `requirements/process.txt` into a
-temporary environment outside the checkout, then run that installed `processctl`
-with `project init --replace`, the current manifest, and the intentionally selected
-bundles. Review the resulting lock and managed-tree diff before verification. Never
-run the checkout under development as the adoption authority.
+`requirements/process.in` owns the direct public pin and `requirements/process.txt`
+is its pip-compile hash lock. Renovate's exact allowlisted post-upgrade command runs
+`.process/adopt-process.py`; that managed runner creates a bounded temporary
+environment outside the checkout, installs only the hash-locked binary graph, and
+invokes the installed distribution's `processctl adoption apply`. The command
+preserves selected optional skills, adds newly mandatory core skills, regenerates
+`.process/process.lock`, and synchronizes all managed assets in the draft. Never run
+the checkout under development as the adoption authority.
+
+The Renovate administrator must allow only the literal managed runner command. If
+post-upgrade commands are unavailable or the pip-compile artifact update fails,
+Renovate cannot produce an adoptable PR and the update remains blocked rather than
+falling back to a partial proposal.
 
 ## Responsibility
 
 - Change owners classify public behavior; they do not choose a version number.
 - The release owner freezes scope and records the exact ordered change set.
 - `processctl` derives and validates classification, compatibility, and identity.
-- Renovate proposes available dependency versions without merge authority.
+- Renovate generates complete draft adoption candidates without merge authority.
 - Independent review verifies the classification and migration evidence.
 - The repository owner alone authorizes release and adoption merges.

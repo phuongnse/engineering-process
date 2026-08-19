@@ -16,7 +16,7 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
-    def test_renovate_proposes_draft_adoption_without_merge_authority(self):
+    def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
         renovate = json.loads(
             (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
         )
@@ -41,7 +41,32 @@ class SelfHostingTests(unittest.TestCase):
         self.assertTrue(authority_rule["enabled"])
         self.assertFalse(authority_rule["automerge"])
         self.assertEqual(
-            ["requirements/process.txt"], authority_rule["matchFileNames"]
+            ["requirements/process.in", "requirements/process.txt"],
+            authority_rule["matchFileNames"],
+        )
+        self.assertEqual(
+            ["/^requirements\\/process\\.txt$/"],
+            renovate["pip-compile"]["managerFilePatterns"],
+        )
+        self.assertFalse(renovate["pip_requirements"]["enabled"])
+        task = renovate["postUpgradeTasks"]
+        self.assertEqual("branch", task["executionMode"])
+        self.assertEqual(
+            [
+                "python .process/adopt-process.py --project-root . "
+                "--requirements-lock requirements/process.txt"
+            ],
+            task["commands"],
+        )
+        self.assertEqual({"python": {}}, task["installTools"])
+        self.assertTrue(
+            {
+                ".agents/skills/**",
+                ".process/adopt-process.py",
+                ".process/process.lock",
+                "requirements/process.in",
+                "requirements/process.txt",
+            }.issubset(task["fileFilters"])
         )
 
     def test_release_assets_are_prepared_before_immutable_publication(self):
@@ -145,6 +170,25 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertIsNotNone(match)
         self.assertEqual(lock["process"]["version"], match.group("version"))
+        source = (PROCESS_ROOT / "requirements" / "process.in").read_text(
+            encoding="utf-8"
+        )
+        source_match = re.search(
+            r"(?m)^engineering-process==(?P<version>\S+)$", source
+        )
+        self.assertIsNotNone(source_match)
+        self.assertEqual(lock["process"]["version"], source_match.group("version"))
+
+    def test_managed_adoption_runner_matches_packaged_template(self):
+        managed = PROCESS_ROOT / ".process" / "adopt-process.py"
+        template = PROCESS_ROOT / "templates" / "adopt-process.py"
+
+        self.assertEqual(template.read_bytes(), managed.read_bytes())
+        self.assertTrue(
+            template.read_text(encoding="utf-8").startswith(
+                "# Managed by engineering-process; do not edit.\n"
+            )
+        )
 
     def test_distribution_never_packages_managed_skill_copies(self):
         pyproject = (PROCESS_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -153,6 +197,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('"process_assets/skills/', pyproject)
         self.assertNotIn('".agents/skills/', pyproject)
         self.assertIn('"VERSIONING.md"', pyproject)
+        self.assertIn('"templates/adopt-process.py"', pyproject)
         self.assertIn("prune .agents\n", manifest)
         self.assertIn("prune .process\n", manifest)
 

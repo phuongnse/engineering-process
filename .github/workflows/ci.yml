@@ -47,6 +47,15 @@ jobs:
       - name: Install built wheel
         run: python -m pip install --force-reinstall "$RUNNER_TEMP"/dist/*.whl
 
+      - name: Validate complete self-adoption candidate
+        if: >-
+          github.event_name == 'pull_request' &&
+          startsWith(github.head_ref, 'automation/renovate/engineering-process')
+        run: >-
+          processctl adoption check
+          --project-root .
+          --requirements-lock requirements/process.txt
+
       - name: Validate publication metadata
         if: github.event_name == 'pull_request'
         run: |

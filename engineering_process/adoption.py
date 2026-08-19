@@ -1,0 +1,481 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import stat
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import VERSION
+from .bundles import load_bundles
+from .contracts import ContractError, ProcessLock, read_json
+from .distribution import distribution_digest
+from .syncing import (
+    _files as _managed_files,
+    adoption_runner_target_issues,
+    git_attributes_target_issues,
+    load_lock,
+    managed_parent_issues,
+    process_skills_root,
+    selected_skill_target_issues,
+    skill_target_ownership_issues,
+    sync_skills,
+    synchronized_state,
+)
+from .skills import MARKER_NAME
+
+
+MAX_REQUIREMENTS_BYTES = 1_000_000
+MAX_REQUIREMENTS = 256
+MAX_MANAGED_ADOPTION_TARGETS = 256
+MAX_MANAGED_ADOPTION_FILE_BYTES = 1_000_000
+MAX_MANAGED_ADOPTION_TOTAL_BYTES = 16_000_000
+PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PACKAGE_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]*$")
+HASH_PATTERN = re.compile(r"^--hash=sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class RequirementPin:
+    name: str
+    version: str
+    hashes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RequirementsLock:
+    path: Path
+    digest: str
+    pins: tuple[RequirementPin, ...]
+
+
+def _canonical_package_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def _read_bounded_regular_file(path: Path) -> bytes:
+    if path.is_symlink():
+        raise ContractError(f"{path}: requirements lock must not be a symlink")
+    try:
+        before = path.stat()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot inspect requirements lock: {error}") from error
+    if not stat.S_ISREG(before.st_mode):
+        raise ContractError(f"{path}: requirements lock must be a regular file")
+    if before.st_size > MAX_REQUIREMENTS_BYTES:
+        raise ContractError(
+            f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
+        )
+    try:
+        with path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_dev != before.st_dev
+                or opened.st_ino != before.st_ino
+            ):
+                raise ContractError(f"{path}: requirements lock changed while opening")
+            content = stream.read(MAX_REQUIREMENTS_BYTES + 1)
+        after = path.stat()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot read requirements lock: {error}") from error
+    if len(content) > MAX_REQUIREMENTS_BYTES:
+        raise ContractError(
+            f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
+        )
+    if (
+        len(content) != before.st_size
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+    ):
+        raise ContractError(f"{path}: requirements lock changed while reading")
+    return content
+
+
+def _logical_lines(content: str, path: Path) -> tuple[str, ...]:
+    result: list[str] = []
+    continuation: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            if continuation:
+                raise ContractError(f"{path}: interrupted requirement continuation")
+            continue
+        if line.endswith("\\"):
+            continuation.append(line[:-1].rstrip())
+            continue
+        logical = " ".join([*continuation, line])
+        continuation.clear()
+        result.append(logical)
+    if continuation:
+        raise ContractError(f"{path}: unterminated requirement continuation")
+    return tuple(result)
+
+
+def validate_requirements_lock(path: Path) -> RequirementsLock:
+    if path.is_symlink():
+        raise ContractError(f"{path}: requirements lock must not be a symlink")
+    resolved = path.resolve()
+    content = _read_bounded_regular_file(resolved)
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError(f"{resolved}: requirements lock must use UTF-8") from error
+
+    pins: list[RequirementPin] = []
+    only_binary = False
+    for logical in _logical_lines(text, resolved):
+        try:
+            tokens = shlex.split(logical, posix=True)
+        except ValueError as error:
+            raise ContractError(f"{resolved}: invalid requirements syntax: {error}") from error
+        if tokens == ["--only-binary", ":all:"]:
+            if only_binary:
+                raise ContractError(f"{resolved}: duplicate --only-binary directive")
+            only_binary = True
+            continue
+        if not tokens or "==" not in tokens[0]:
+            raise ContractError(
+                f"{resolved}: every dependency must be an exact name==version pin"
+            )
+        raw_name, version = tokens[0].split("==", 1)
+        if (
+            PACKAGE_NAME_PATTERN.fullmatch(raw_name) is None
+            or PACKAGE_VERSION_PATTERN.fullmatch(version) is None
+        ):
+            raise ContractError(f"{resolved}: invalid exact dependency pin {tokens[0]}")
+        hashes = tuple(token for token in tokens[1:] if HASH_PATTERN.fullmatch(token))
+        if len(hashes) != len(tokens) - 1 or not hashes:
+            raise ContractError(
+                f"{resolved}: {raw_name} must contain only lowercase sha256 hashes"
+            )
+        pins.append(
+            RequirementPin(
+                name=_canonical_package_name(raw_name),
+                version=version,
+                hashes=tuple(sorted(set(hashes))),
+            )
+        )
+        if len(pins) > MAX_REQUIREMENTS:
+            raise ContractError(
+                f"{resolved}: dependency count exceeds {MAX_REQUIREMENTS}"
+            )
+
+    if not only_binary:
+        raise ContractError(f"{resolved}: requires --only-binary :all:")
+    names = [pin.name for pin in pins]
+    if not pins or names != sorted(names) or len(names) != len(set(names)):
+        raise ContractError(
+            f"{resolved}: dependency pins must be non-empty, sorted, and unique"
+        )
+    authority = next(
+        (pin for pin in pins if pin.name == "engineering-process"), None
+    )
+    if authority is None:
+        raise ContractError(f"{resolved}: missing engineering-process pin")
+    if authority.version != VERSION:
+        raise ContractError(
+            f"{resolved}: pins engineering-process {authority.version}, "
+            f"but processctl is {VERSION}"
+        )
+    return RequirementsLock(
+        path=resolved,
+        digest=f"sha256:{hashlib.sha256(content).hexdigest()}",
+        pins=tuple(pins),
+    )
+
+
+def _require_external_authority(project_root: Path, process_root: Path) -> None:
+    try:
+        process_root.relative_to(project_root)
+    except ValueError:
+        return
+    raise ContractError(
+        "adoption authority must be installed outside the consumer checkout"
+    )
+
+
+def _lock_document(process_root: Path, previous: ProcessLock) -> dict[str, object]:
+    bundles = load_bundles(process_root, process_skills_root(process_root))
+    skills = tuple(sorted(set(previous.skills) | set(bundles["core"])))
+    return {
+        "schemaVersion": 1,
+        "process": {
+            "version": VERSION,
+            "digest": distribution_digest(process_root, skills),
+        },
+        "skills": list(skills),
+    }
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mode = 0o644
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            os.chmod(temporary, mode)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _managed_skill_targets(project_root: Path, selected: tuple[str, ...]) -> tuple[Path, ...]:
+    root = project_root / ".agents" / "skills"
+    targets = {root / skill for skill in selected}
+    if not root.is_dir():
+        return tuple(sorted(targets))
+    entries = 0
+    for candidate in root.iterdir():
+        entries += 1
+        if entries > MAX_MANAGED_ADOPTION_TARGETS:
+            raise ContractError(
+                f"{root}: managed skill target count exceeds "
+                f"{MAX_MANAGED_ADOPTION_TARGETS}"
+            )
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        marker = candidate / MARKER_NAME
+        if not marker.is_file() or marker.is_symlink():
+            continue
+        value = read_json(marker)
+        if isinstance(value, dict) and value.get("distribution") == "engineering-process":
+            targets.add(candidate)
+    return tuple(sorted(targets))
+
+
+def _snapshot_targets(
+    project_root: Path,
+    selected: tuple[str, ...],
+    backup_root: Path,
+) -> list[tuple[Path, Path, bool]]:
+    targets = [
+        project_root / ".process" / "process.lock",
+        project_root / ".process" / "adopt-process.py",
+        project_root / "AGENTS.md",
+        project_root / ".github" / "PULL_REQUEST_TEMPLATE.md",
+        project_root / ".agents" / ".gitattributes",
+        *_managed_skill_targets(project_root, selected),
+    ]
+    snapshots: list[tuple[Path, Path, bool]] = []
+    total_bytes = 0
+    for index, target in enumerate(targets):
+        backup = backup_root / str(index)
+        exists = os.path.lexists(target)
+        if exists:
+            if target.is_symlink():
+                raise ContractError(f"{target}: managed adoption target must not be a symlink")
+            if target.is_dir():
+                before = _managed_files(target, ignore_marker=False)
+                total_bytes += sum(size for size, _ in before.values())
+                if total_bytes > MAX_MANAGED_ADOPTION_TOTAL_BYTES:
+                    raise ContractError(
+                        "managed adoption snapshot exceeds "
+                        f"{MAX_MANAGED_ADOPTION_TOTAL_BYTES} bytes"
+                    )
+                shutil.copytree(target, backup)
+                if (
+                    _managed_files(target, ignore_marker=False) != before
+                    or _managed_files(backup, ignore_marker=False) != before
+                ):
+                    raise ContractError(
+                        f"{target}: managed adoption target changed while snapshotting"
+                    )
+            elif target.is_file():
+                before = target.stat()
+                if before.st_size > MAX_MANAGED_ADOPTION_FILE_BYTES:
+                    raise ContractError(
+                        f"{target}: managed adoption file exceeds "
+                        f"{MAX_MANAGED_ADOPTION_FILE_BYTES} bytes"
+                    )
+                total_bytes += before.st_size
+                if total_bytes > MAX_MANAGED_ADOPTION_TOTAL_BYTES:
+                    raise ContractError(
+                        "managed adoption snapshot exceeds "
+                        f"{MAX_MANAGED_ADOPTION_TOTAL_BYTES} bytes"
+                    )
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (
+                        opened.st_dev != before.st_dev
+                        or opened.st_ino != before.st_ino
+                        or not stat.S_ISREG(opened.st_mode)
+                    ):
+                        raise ContractError(
+                            f"{target}: managed adoption target changed while opening"
+                        )
+                    content = stream.read(MAX_MANAGED_ADOPTION_FILE_BYTES + 1)
+                if len(content) > MAX_MANAGED_ADOPTION_FILE_BYTES:
+                    raise ContractError(
+                        f"{target}: managed adoption file exceeds "
+                        f"{MAX_MANAGED_ADOPTION_FILE_BYTES} bytes"
+                    )
+                after = target.stat()
+                if (
+                    len(content) != before.st_size
+                    or after.st_size != before.st_size
+                    or after.st_mtime_ns != before.st_mtime_ns
+                    or after.st_dev != before.st_dev
+                    or after.st_ino != before.st_ino
+                ):
+                    raise ContractError(
+                        f"{target}: managed adoption target changed while snapshotting"
+                    )
+                backup.write_bytes(content)
+                os.chmod(backup, stat.S_IMODE(before.st_mode))
+            else:
+                raise ContractError(
+                    f"{target}: managed adoption target must be a regular file or directory"
+                )
+        snapshots.append((target, backup, exists))
+    return snapshots
+
+
+def _restore_targets(snapshots: list[tuple[Path, Path, bool]]) -> list[str]:
+    issues: list[str] = []
+    for target, backup, existed in reversed(snapshots):
+        try:
+            if os.path.lexists(target):
+                if target.is_symlink() or target.is_file():
+                    target.unlink()
+                elif target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    raise OSError("unsupported managed target type")
+            if existed:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if backup.is_dir():
+                    shutil.copytree(backup, target)
+                else:
+                    shutil.copy2(backup, target)
+        except OSError as error:
+            issues.append(f"{target}: adoption rollback failed: {error}")
+    return issues
+
+
+def check_adoption(
+    project_root: Path,
+    process_root: Path,
+    requirements_lock: Path,
+) -> dict[str, object]:
+    project_root = project_root.resolve()
+    process_root = process_root.resolve()
+    _require_external_authority(project_root, process_root)
+    requirement_candidate = (
+        requirements_lock
+        if requirements_lock.is_absolute()
+        else project_root / requirements_lock
+    )
+    requirement_path = requirement_candidate.resolve()
+    try:
+        requirement_path.relative_to(project_root)
+    except ValueError as error:
+        raise ContractError(
+            "requirements lock must be inside the consumer checkout"
+        ) from error
+    requirement = validate_requirements_lock(requirement_candidate)
+    lock = load_lock(project_root)
+    issues = synchronized_state(project_root, process_root, lock)
+    return {
+        "version": VERSION,
+        "digest": lock.digest,
+        "requirementsDigest": requirement.digest,
+        "skills": list(lock.skills),
+        "issues": issues,
+    }
+
+
+def apply_adoption(
+    project_root: Path,
+    process_root: Path,
+    requirements_lock: Path,
+) -> dict[str, object]:
+    project_root = project_root.resolve()
+    process_root = process_root.resolve()
+    _require_external_authority(project_root, process_root)
+    requirement_candidate = (
+        requirements_lock
+        if requirements_lock.is_absolute()
+        else project_root / requirements_lock
+    )
+    requirement_path = requirement_candidate.resolve()
+    try:
+        requirement_path.relative_to(project_root)
+    except ValueError as error:
+        raise ContractError(
+            "requirements lock must be inside the consumer checkout"
+        ) from error
+    requirement = validate_requirements_lock(requirement_candidate)
+
+    lock_path = project_root / ".process" / "process.lock"
+    if lock_path.is_symlink():
+        raise ContractError(f"{lock_path}: process lock must not be a symlink")
+    previous = load_lock(project_root)
+    document = _lock_document(process_root, previous)
+    selected = tuple(document["skills"])
+    ownership_issues = [
+        *managed_parent_issues(project_root),
+        *skill_target_ownership_issues(project_root),
+        *selected_skill_target_issues(project_root, selected),
+        *git_attributes_target_issues(project_root),
+        *adoption_runner_target_issues(project_root, process_root),
+    ]
+    if ownership_issues:
+        raise ContractError("\n".join(ownership_issues))
+    updated = (json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
+
+    with tempfile.TemporaryDirectory(prefix="engineering-process-adoption-backup-") as directory:
+        backup_root = Path(directory).resolve()
+        try:
+            backup_root.relative_to(project_root)
+        except ValueError:
+            pass
+        else:
+            raise ContractError(
+                "temporary adoption backup must be outside the consumer checkout"
+            )
+        snapshots = _snapshot_targets(
+            project_root,
+            selected,
+            backup_root,
+        )
+        _atomic_write(lock_path, updated)
+        try:
+            issues = sync_skills(project_root, process_root, check=False)
+            if issues:
+                raise ContractError("\n".join(issues))
+        except BaseException as error:
+            rollback_issues = _restore_targets(snapshots)
+            if rollback_issues:
+                raise ContractError("\n".join(rollback_issues)) from error
+            raise
+
+    return {
+        "previousVersion": previous.version,
+        "version": VERSION,
+        "digest": document["process"]["digest"],
+        "requirementsDigest": requirement.digest,
+        "skills": document["skills"],
+    }
