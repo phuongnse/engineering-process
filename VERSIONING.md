@@ -77,16 +77,16 @@ step must fail closed.
 `requirements/process.in` owns the direct public pin and `requirements/process.txt`
 is its pip-compile hash lock. Renovate's exact allowlisted post-upgrade command runs
 `.process/adopt-process.py`; that managed runner creates a bounded temporary
-environment outside the checkout, rejects symlinked lock input, and makes one stable
-private snapshot. Canonical binding and component identities neutralize symlink,
-junction, reparse, and concurrent parent retargeting. Both the binary-only
+environment outside the checkout, rejects symlink, junction, or reparse input in
+every supplied lock-path component, and makes one stable private snapshot. Component
+identities reject concurrent parent retargeting. Both the binary-only
 installation and the installed distribution's `processctl adoption apply` are bound
 to that snapshot digest; a live-lock change fails and rolls back materialization.
 POSIX process groups and the side-by-side managed Windows kill-on-close Job Object
-helper bounds descendant
-lifetimes. The command preserves selected optional skills, adds newly mandatory core
-skills, regenerates `.process/process.lock`, and synchronizes all managed assets in
-the draft. Never run the checkout under development as the adoption authority.
+helper bound descendant lifetimes. The command preserves selected optional skills,
+adds newly mandatory core skills, regenerates `.process/process.lock`, and
+synchronizes all managed assets in the draft. Never run the checkout under
+development as the adoption authority.
 
 The Renovate administrator must allow only the literal managed runner command. If
 post-upgrade commands are unavailable or the pip-compile artifact update fails,

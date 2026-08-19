@@ -258,7 +258,7 @@ class AdoptionRunnerTests(unittest.TestCase):
 
             with (
                 mock.patch.object(runner, "_run") as run,
-                self.assertRaisesRegex(RuntimeError, "must not be a link"),
+                self.assertRaisesRegex(RuntimeError, "link or reparse"),
             ):
                 runner.main(
                     [
@@ -302,37 +302,114 @@ class AdoptionRunnerTests(unittest.TestCase):
                 )
             self.assertEqual(2, calls)
 
-    def test_parent_link_retarget_cannot_change_canonical_source(self):
+    def test_requirements_source_rejects_a_link_in_its_parent_chain(self):
         runner = load_runner()
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            tempfile.TemporaryDirectory() as outside_directory,
-        ):
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             inside = root / "inside"
-            outside = Path(outside_directory).resolve()
             inside.mkdir()
             (inside / "process.txt").write_bytes(b"authority A\n")
-            (outside / "process.txt").write_bytes(b"authority B\n")
             alias = root / "requirements"
             try:
                 alias.symlink_to(inside, target_is_directory=True)
             except OSError as error:
                 self.skipTest(f"directory symlink unavailable: {error}")
 
-            accepted = runner._requirements_source(
-                root, alias / "process.txt"
-            )
-            self.assertEqual(inside / "process.txt", accepted)
-            alias.unlink()
-            alias.symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "link or reparse"):
+                runner._requirements_source(root, alias / "process.txt")
 
-            self.assertEqual(
-                b"authority A\n",
-                runner._read_stable_requirements(
-                    accepted, containment_root=root
+    def test_requirements_source_rejects_a_link_created_during_validation(self):
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            requirements = root / "requirements"
+            saved = root / "saved-requirements"
+            alternate = root / "alternate"
+            requirements.mkdir()
+            alternate.mkdir()
+            (requirements / "process.txt").write_bytes(b"authority A\n")
+            (alternate / "process.txt").write_bytes(b"authority B\n")
+            real_chain = runner._path_identity_chain
+            calls = 0
+
+            def swap_after_chain(chain_root, path):
+                nonlocal calls
+                result = real_chain(chain_root, path)
+                calls += 1
+                if calls == 1:
+                    requirements.rename(saved)
+                    try:
+                        requirements.symlink_to(
+                            alternate, target_is_directory=True
+                        )
+                    except OSError as error:
+                        self.skipTest(
+                            f"directory symlink unavailable: {error}"
+                        )
+                return result
+
+            with (
+                mock.patch.object(
+                    runner,
+                    "_path_identity_chain",
+                    side_effect=swap_after_chain,
                 ),
-            )
+                self.assertRaisesRegex(RuntimeError, "link or reparse"),
+            ):
+                runner._requirements_source(
+                    root, requirements / "process.txt"
+                )
+
+    def test_main_fails_if_parent_becomes_a_link_during_first_command(self):
+        runner = load_runner()
+        content = b"locked authority A\n"
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside_directory,
+        ):
+            root = Path(directory).resolve()
+            requirements = root / "requirements"
+            saved = root / "saved-requirements"
+            outside = Path(outside_directory).resolve()
+            requirements.mkdir()
+            source = requirements / "process.txt"
+            source.write_bytes(content)
+            (outside / "process.txt").write_bytes(b"locked authority B\n")
+            calls = 0
+
+            def fake_run(argv, *, cwd):
+                nonlocal calls
+                del cwd
+                calls += 1
+                if calls == 1:
+                    requirements.rename(saved)
+                    try:
+                        requirements.symlink_to(
+                            outside, target_is_directory=True
+                        )
+                    except OSError as error:
+                        self.skipTest(
+                            f"directory symlink unavailable: {error}"
+                        )
+                elif "pip" in argv:
+                    self.assertEqual(content, Path(argv[-1]).read_bytes())
+                return ""
+
+            with (
+                mock.patch.object(runner, "_run", side_effect=fake_run),
+                self.assertRaisesRegex(RuntimeError, "link or reparse"),
+            ):
+                runner.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--requirements-lock",
+                        "requirements/process.txt",
+                    ]
+                )
+
+            self.assertEqual(2, calls)
+            self.assertFalse((root / ".process" / "process.lock").exists())
 
     def test_path_identity_rejects_windows_reparse_attributes(self):
         runner = load_runner()

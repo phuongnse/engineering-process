@@ -303,17 +303,15 @@ def _require_external_authority(project_root: Path, process_root: Path) -> None:
 
 
 def _checkout_requirements_path(project_root: Path, path: Path) -> Path:
-    candidate = path if path.is_absolute() else project_root / path
+    supplied = path if path.is_absolute() else project_root / path
+    candidate = Path(os.path.abspath(os.fspath(supplied)))
     try:
-        candidate_value = candidate.lstat()
-    except OSError as error:
+        candidate.relative_to(project_root)
+    except ValueError as error:
         raise ContractError(
-            f"{candidate}: cannot inspect requirements lock: {error}"
+            "requirements source must be a regular file inside the consumer checkout"
         ) from error
-    if _is_link_or_reparse(candidate_value):
-        raise ContractError(
-            f"{candidate}: requirements lock must not be a link or reparse point"
-        )
+    before_chain = _path_identity_chain(project_root, candidate)
     try:
         resolved = candidate.resolve(strict=True)
         resolved.relative_to(project_root)
@@ -321,7 +319,14 @@ def _checkout_requirements_path(project_root: Path, path: Path) -> Path:
         raise ContractError(
             "requirements source must be a regular file inside the consumer checkout"
         ) from error
-    _path_identity_chain(project_root, resolved)
+    if resolved != candidate:
+        raise ContractError(
+            f"{candidate}: requirements path must not traverse a link or reparse point"
+        )
+    if _path_identity_chain(project_root, candidate) != before_chain:
+        raise ContractError(
+            f"{candidate}: requirements path changed while validating"
+        )
     return resolved
 
 

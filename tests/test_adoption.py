@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import engineering_process.adoption as adoption
 from engineering_process import VERSION
 from engineering_process.adoption import (
     _checkout_requirements_path,
@@ -297,21 +298,14 @@ class AdoptionTests(unittest.TestCase):
 
             self.assertEqual(before, lock.read_bytes())
 
-    def test_checkout_path_binds_parent_link_to_canonical_target(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            tempfile.TemporaryDirectory() as outside_directory,
-        ):
+    def test_checkout_path_rejects_a_link_in_its_parent_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             inside = root / "inside"
-            outside = Path(outside_directory).resolve()
             inside.mkdir()
             source = inside / "process.txt"
             source.write_bytes(
                 (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
-            )
-            (outside / "process.txt").write_text(
-                "outside\n", encoding="utf-8"
             )
             alias = root / "requirements"
             try:
@@ -319,21 +313,48 @@ class AdoptionTests(unittest.TestCase):
             except OSError as error:
                 self.skipTest(f"directory symlink unavailable: {error}")
 
-            accepted = _checkout_requirements_path(
-                root, alias / "process.txt"
-            )
-            self.assertEqual(source, accepted)
-            alias.unlink()
-            alias.symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(ContractError, "link or reparse"):
+                _checkout_requirements_path(root, alias / "process.txt")
 
-            self.assertEqual(
-                validate_requirements_lock(
-                    source, containment_root=root
-                ).digest,
-                validate_requirements_lock(
-                    accepted, containment_root=root
-                ).digest,
-            )
+    def test_checkout_path_rejects_a_parent_link_created_during_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            requirements = root / "requirements"
+            saved = root / "saved-requirements"
+            alternate = root / "alternate"
+            requirements.mkdir()
+            alternate.mkdir()
+            (requirements / "process.txt").write_bytes(b"authority A\n")
+            (alternate / "process.txt").write_bytes(b"authority B\n")
+            real_chain = adoption._path_identity_chain
+            calls = 0
+
+            def swap_after_chain(chain_root, path):
+                nonlocal calls
+                result = real_chain(chain_root, path)
+                calls += 1
+                if calls == 1:
+                    requirements.rename(saved)
+                    try:
+                        requirements.symlink_to(
+                            alternate, target_is_directory=True
+                        )
+                    except OSError as error:
+                        self.skipTest(
+                            f"directory symlink unavailable: {error}"
+                        )
+                return result
+
+            with (
+                mock.patch(
+                    "engineering_process.adoption._path_identity_chain",
+                    side_effect=swap_after_chain,
+                ),
+                self.assertRaisesRegex(ContractError, "link or reparse"),
+            ):
+                _checkout_requirements_path(
+                    root, requirements / "process.txt"
+                )
 
     def test_parent_swap_during_installed_authority_read_is_detected(self):
         with (

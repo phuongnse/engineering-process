@@ -227,15 +227,15 @@ def _path_identity_chain(
 
 
 def _requirements_source(project_root: Path, supplied: Path) -> Path:
-    candidate = supplied if supplied.is_absolute() else project_root / supplied
+    requested = supplied if supplied.is_absolute() else project_root / supplied
+    candidate = Path(os.path.abspath(os.fspath(requested)))
     try:
-        candidate_value = candidate.lstat()
-    except OSError as error:
-        raise RuntimeError(f"cannot inspect requirements lock: {error}") from error
-    if _is_link_or_reparse(candidate_value):
+        candidate.relative_to(project_root)
+    except ValueError as error:
         raise RuntimeError(
-            "requirements lock must not be a link or reparse point"
-        )
+            "requirements lock must be a regular file inside the checkout"
+        ) from error
+    before_chain = _path_identity_chain(project_root, candidate)
     try:
         resolved = candidate.resolve(strict=True)
         resolved.relative_to(project_root)
@@ -243,7 +243,12 @@ def _requirements_source(project_root: Path, supplied: Path) -> Path:
         raise RuntimeError(
             "requirements lock must be a regular file inside the checkout"
         ) from error
-    _path_identity_chain(project_root, resolved)
+    if resolved != candidate:
+        raise RuntimeError(
+            "requirements path must not traverse a link or reparse point"
+        )
+    if _path_identity_chain(project_root, candidate) != before_chain:
+        raise RuntimeError("requirements path changed while validating")
     return resolved
 
 

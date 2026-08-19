@@ -449,13 +449,13 @@ authenticates who produced it.
   versions differ from that lock.
 - `requirements/process.in` owns the direct authority pin. Renovate uses the
   pip-compile manager to update its complete binary-only hash lock, then the managed
-  `.process/adopt-process.py` runner rejects symlinked input, snapshots one bounded
-  stable copy outside the checkout, binds every canonical path component against
-  symlink/junction retargeting, and uses that exact digest for installation and
-  `processctl adoption apply`. POSIX process groups and a managed Windows
-  kill-on-close Job Object contain every child. The resulting draft contains the new
-  lock, managed contracts, and skill snapshots; after CI and independent review,
-  merge is the end of adoption.
+  `.process/adopt-process.py` runner rejects symlink, junction, or reparse input in
+  every supplied path component, snapshots one bounded stable copy outside the
+  checkout, binds every path component against concurrent retargeting, and uses that
+  exact digest for installation and `processctl adoption apply`. POSIX process groups
+  and a managed Windows kill-on-close Job Object contain every child. The resulting
+  draft contains the new lock, managed contracts, and skill snapshots; after CI and
+  independent review, merge is the end of adoption.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest
