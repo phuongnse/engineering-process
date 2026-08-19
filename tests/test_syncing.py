@@ -133,11 +133,14 @@ class SyncTests(unittest.TestCase):
             project_root = Path(directory)
             self.prepare_project(project_root)
             (project_root / ".gitattributes").write_text(
+                "/.agents/.gitattributes text eol=crlf "
+                "working-tree-encoding=UTF-16 filter=project ident\n"
                 "/.agents/skills/** text eol=crlf "
                 "working-tree-encoding=UTF-16 filter=project ident\n",
                 encoding="utf-8",
             )
             self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            attributes = project_root / ".agents" / ".gitattributes"
             target = (
                 project_root
                 / ".agents"
@@ -146,6 +149,7 @@ class SyncTests(unittest.TestCase):
                 / "SKILL.md"
             )
             relative = target.relative_to(project_root).as_posix()
+            attributes_relative = attributes.relative_to(project_root).as_posix()
             subprocess.run(
                 ["git", "init", "--quiet"],
                 cwd=project_root,
@@ -189,15 +193,42 @@ class SyncTests(unittest.TestCase):
             self.assertIn("working-tree-encoding: unset", effective.stdout)
             self.assertIn("filter: unset", effective.stdout)
             self.assertIn("ident: unset", effective.stdout)
+            attributes_effective = subprocess.run(
+                [
+                    "git",
+                    "check-attr",
+                    "text",
+                    "eol",
+                    "working-tree-encoding",
+                    "filter",
+                    "ident",
+                    "--",
+                    attributes_relative,
+                ],
+                cwd=project_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("text: auto", attributes_effective.stdout)
+            self.assertIn("eol: lf", attributes_effective.stdout)
+            self.assertIn(
+                "working-tree-encoding: unset", attributes_effective.stdout
+            )
+            self.assertIn("filter: unset", attributes_effective.stdout)
+            self.assertIn("ident: unset", attributes_effective.stdout)
+            attributes.write_bytes(attributes.read_bytes().replace(b"\n", b"\r\n"))
             target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+            self.assertIn(b"\r\n", attributes.read_bytes())
             self.assertIn(b"\r\n", target.read_bytes())
 
             subprocess.run(
-                ["git", "checkout", "--", relative],
+                ["git", "checkout", "--", attributes_relative, relative],
                 cwd=project_root,
                 check=True,
             )
 
+            self.assertNotIn(b"\r\n", attributes.read_bytes())
             self.assertNotIn(b"\r\n", target.read_bytes())
 
             (project_root / ".git" / "info" / "attributes").write_text(

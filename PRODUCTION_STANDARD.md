@@ -78,10 +78,10 @@ ignored sourceless bytecode that could shadow checkpoint-owned source.
 Managed skill text is checked out with canonical LF through a bounded process-owned
 `.agents/.gitattributes` file whose directory precedence is above project-root
 rules. The closer rule also disables inherited working-tree encoding, filter, and
-ident transforms that could otherwise rewrite managed bytes. Deeper repository
-attribute files remain subject to managed-tree ownership and content checks.
-Integrity comparison remains byte-exact; newline variants are not accepted as
-alternate distribution bytes.
+ident transforms that could otherwise rewrite managed bytes, and a self-rule gives
+the attributes file the same byte-stable checkout policy. Deeper repository attribute
+files remain subject to managed-tree ownership and content checks. Integrity comparison
+remains byte-exact; newline variants are not accepted as alternate distribution bytes.
 
 ## Release identity
 

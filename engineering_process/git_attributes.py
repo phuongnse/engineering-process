@@ -9,10 +9,9 @@ from .contracts import ContractError
 
 ATTRIBUTES_START = "# engineering-process:attributes:start"
 ATTRIBUTES_END = "# engineering-process:attributes:end"
-MANAGED_SKILLS_ATTRIBUTES = (
-    "skills/** text=auto eol=lf "
-    "-working-tree-encoding -filter -ident"
-)
+BYTE_STABLE_ATTRIBUTES = "text=auto eol=lf -working-tree-encoding -filter -ident"
+MANAGED_ATTRIBUTES_SELF = f".gitattributes {BYTE_STABLE_ATTRIBUTES}"
+MANAGED_SKILLS_ATTRIBUTES = f"skills/** {BYTE_STABLE_ATTRIBUTES}"
 ATTRIBUTES_INPUT_LIMIT = 4_096
 
 
@@ -22,7 +21,12 @@ def _normalized_text(text: str) -> str:
 
 def canonical_attributes_block() -> str:
     return "\n".join(
-        (ATTRIBUTES_START, MANAGED_SKILLS_ATTRIBUTES, ATTRIBUTES_END)
+        (
+            ATTRIBUTES_START,
+            MANAGED_ATTRIBUTES_SELF,
+            MANAGED_SKILLS_ATTRIBUTES,
+            ATTRIBUTES_END,
+        )
     ) + "\n"
 
 
