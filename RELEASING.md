@@ -89,8 +89,9 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
    and digest attestation to the still-editable draft, and fails if any asset exists
    unexpectedly. Only after that workflow passes, publish the immutable release.
 4. Observe the `Publish` workflow. It never mutates the published release. Its no-OIDC
-   build job downloads the immutable assets, verifies GitHub's release attestation
-   and each local asset against it, then checks release identity, N-1 receipt,
+   build job downloads the immutable assets, verifies GitHub's release attestation,
+   rejects an incomplete or extended immutable asset set, and verifies each local
+   asset against the attestation before checking release identity, N-1 receipt,
    artifact digests, installed wheel, and the portable
    validation suite. The separately gated PyPI job downloads and validates those same
    immutable assets again immediately before publishing both distributions with PyPI

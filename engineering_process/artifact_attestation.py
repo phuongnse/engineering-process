@@ -155,10 +155,15 @@ def _receipt_identity(
     return None
 
 
-def _artifact_entries(artifact_root: Path, release: Release) -> list[dict[str, Any]]:
+def bounded_artifact_names(
+    artifact_root: Path,
+    expected_names: tuple[str, ...],
+    *,
+    label: str,
+) -> list[str]:
     if not artifact_root.is_dir() or artifact_root.is_symlink():
-        raise ContractError("artifact attestation input must be a non-symlink directory")
-    expected = list(release.artifacts)
+        raise ContractError(f"{label} must be a non-symlink directory")
+    expected = list(expected_names)
     actual: list[str] = []
     name_bytes = 0
     deadline = time.monotonic() + ARTIFACT_ENUMERATION_TIMEOUT_SECONDS
@@ -167,23 +172,23 @@ def _artifact_entries(artifact_root: Path, release: Release) -> list[dict[str, A
             for item in iterator:
                 if time.monotonic() >= deadline:
                     raise ContractError(
-                        "artifact attestation enumeration exceeded "
+                        f"{label} enumeration exceeded "
                         f"{ARTIFACT_ENUMERATION_TIMEOUT_SECONDS:g} seconds"
                     )
                 if len(actual) >= len(expected):
                     raise ContractError(
-                        "artifact attestation input exceeds the declared artifact count"
+                        f"{label} exceeds the declared artifact count"
                     )
                 try:
                     encoded_name = item.name.encode("utf-8")
                 except UnicodeEncodeError as error:
                     raise ContractError(
-                        "artifact attestation names must use UTF-8"
+                        f"{label} names must use UTF-8"
                     ) from error
                 name_bytes += len(encoded_name)
                 if name_bytes > MAX_ARTIFACT_NAME_BYTES:
                     raise ContractError(
-                        "artifact attestation names exceed "
+                        f"{label} names exceed "
                         f"{MAX_ARTIFACT_NAME_BYTES} bytes"
                     )
                 item_stat = item.stat(follow_symlinks=False)
@@ -191,17 +196,26 @@ def _artifact_entries(artifact_root: Path, release: Release) -> list[dict[str, A
                     item_stat.st_mode
                 ):
                     raise ContractError(
-                        "artifact attestation inputs must be regular non-symlink files"
+                        f"{label} must contain only regular non-symlink files"
                     )
                 actual.append(item.name)
     except OSError as error:
-        raise ContractError(f"cannot enumerate distribution artifacts: {error}") from error
+        raise ContractError(f"cannot enumerate {label}: {error}") from error
     actual.sort()
     if actual != expected:
         raise ContractError(
-            "artifact attestation inputs do not match release identity: "
+            f"{label} does not match release identity: "
             f"expected {expected}, got {actual}"
         )
+    return actual
+
+
+def _artifact_entries(artifact_root: Path, release: Release) -> list[dict[str, Any]]:
+    bounded_artifact_names(
+        artifact_root,
+        release.artifacts,
+        label="artifact attestation input",
+    )
     entries: list[dict[str, Any]] = []
     total = 0
     for name in release.artifacts:

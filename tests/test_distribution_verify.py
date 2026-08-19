@@ -1,6 +1,7 @@
-import tempfile
-import tarfile
+import os
 import subprocess
+import tarfile
+import tempfile
 import unittest
 import warnings
 import zipfile
@@ -11,6 +12,7 @@ from engineering_process.contracts import ContractError
 from engineering_process.distribution_verify import (
     _tracked_paths,
     _validate_archive_members,
+    _validate_archives,
     _validate_tar_archive,
     _validate_zip_archive,
     verify_distribution,
@@ -131,6 +133,41 @@ class DistributionVerificationTests(unittest.TestCase):
                 archive.addfile(fifo)
             with self.assertRaisesRegex(ContractError, "non-regular member"):
                 _validate_tar_archive(sdist)
+
+    def test_distribution_output_enumeration_is_count_and_time_bounded(self):
+        expected = ("one.whl", "two.tar.gz")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in expected:
+                (root / name).write_bytes(b"placeholder")
+            (root / "extra.bin").write_bytes(b"extra")
+            with self.assertRaisesRegex(ContractError, "declared artifact count"):
+                _validate_archives(root, expected)
+
+            (root / "extra.bin").unlink()
+            with (
+                patch(
+                    "engineering_process.artifact_attestation."
+                    "ARTIFACT_ENUMERATION_TIMEOUT_SECONDS",
+                    0,
+                ),
+                self.assertRaisesRegex(ContractError, "enumeration exceeded 0 seconds"),
+            ):
+                _validate_archives(root, expected)
+
+    @unittest.skipIf(os.name == "nt", "creating symlinks is not generally available")
+    def test_distribution_output_enumeration_rejects_symlinks(self):
+        expected = ("one.whl", "two.tar.gz")
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "artifacts"
+            root.mkdir()
+            target = base / "target"
+            target.write_bytes(b"target")
+            (root / expected[0]).symlink_to(target)
+            (root / expected[1]).write_bytes(b"placeholder")
+            with self.assertRaisesRegex(ContractError, "regular non-symlink"):
+                _validate_archives(root, expected)
 
     def test_verified_outputs_cannot_be_written_into_the_checkout(self):
         with tempfile.TemporaryDirectory() as directory:

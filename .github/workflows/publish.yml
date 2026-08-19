@@ -46,6 +46,10 @@ jobs:
             --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
           python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
             > "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          {
+            printf '%s\n' "$receipt_asset" "$attestation_asset"
+            cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
           while IFS= read -r artifact; do
             gh release download "$GITHUB_REF_NAME" \
               --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
@@ -61,6 +65,10 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
         run: |
           gh release verify "$GITHUB_REF_NAME"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
+          cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
+            "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
           gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
           gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
           while IFS= read -r artifact; do
@@ -136,6 +144,10 @@ jobs:
             --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
           python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
             > "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          {
+            printf '%s\n' "$receipt_asset" "$attestation_asset"
+            cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
           while IFS= read -r artifact; do
             gh release download "$GITHUB_REF_NAME" \
               --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
@@ -151,6 +163,10 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
         run: |
           gh release verify "$GITHUB_REF_NAME"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
+          cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
+            "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
           gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
           gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
           while IFS= read -r artifact; do

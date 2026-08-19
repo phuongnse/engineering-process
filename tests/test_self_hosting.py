@@ -31,6 +31,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertGreaterEqual(publish.count("gh release verify"), 2)
         self.assertGreaterEqual(publish.count("gh release verify-asset"), 2)
         self.assertGreaterEqual(publish.count("attestations: read"), 2)
+        self.assertGreaterEqual(publish.count("expected-release-assets.txt"), 4)
+        self.assertGreaterEqual(publish.count("actual-release-assets.txt"), 4)
+        self.assertGreaterEqual(
+            publish.count("gh release view \"$GITHUB_REF_NAME\" --json assets"),
+            2,
+        )
         self.assertIn(
             "Revalidate immutable release immediately before publication", publish
         )

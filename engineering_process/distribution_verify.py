@@ -9,7 +9,10 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from .artifact_attestation import create_distribution_attestation
+from .artifact_attestation import (
+    bounded_artifact_names,
+    create_distribution_attestation,
+)
 from .contracts import ContractError, read_json, validate_release
 from .environment import execute_command
 from .git import portable_git_path, remaining_seconds, tracked_index_paths, run_git
@@ -358,12 +361,11 @@ def _validate_tar_archive(path: Path) -> None:
 
 
 def _validate_archives(artifact_root: Path, expected_names: tuple[str, ...]) -> None:
-    actual = tuple(sorted(path.name for path in artifact_root.iterdir() if path.is_file()))
-    if actual != expected_names:
-        raise ContractError(
-            "distribution artifacts do not match release identity: "
-            f"expected {list(expected_names)}, got {list(actual)}"
-        )
+    bounded_artifact_names(
+        artifact_root,
+        expected_names,
+        label="distribution artifact output",
+    )
     for path in (artifact_root / name for name in expected_names):
         if path.stat().st_size > MAX_ARCHIVE_BYTES:
             raise ContractError(f"{path.name}: exceeds {MAX_ARCHIVE_BYTES} bytes")
