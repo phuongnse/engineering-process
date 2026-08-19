@@ -156,6 +156,26 @@ class BootstrapTests(unittest.TestCase):
             self.assertFalse((root / ".process").exists())
             self.assertFalse((root / "AGENTS.md").exists())
 
+    def test_selected_skill_collision_is_detected_before_bootstrap_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".agents" / "skills" / "run-change").mkdir(parents=True)
+            manifest = self.write_manifest(root)
+
+            with self.assertRaisesRegex(ContractError, "unmanaged skill target"):
+                initialize_project(
+                    root,
+                    PROCESS_ROOT,
+                    manifest_path=manifest,
+                    requested_bundles=[],
+                    replace=False,
+                )
+
+            self.assertFalse((root / ".process").exists())
+            self.assertFalse((root / "AGENTS.md").exists())
+            self.assertFalse((root / ".github").exists())
+            self.assertFalse((root / ".gitignore").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

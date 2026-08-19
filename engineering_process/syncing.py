@@ -10,7 +10,11 @@ from . import VERSION
 from .bundles import load_bundles
 from .contracts import ContractError, ProcessLock, read_json, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
-from .managed import managed_agents_block, merge_managed_agents
+from .managed import (
+    managed_agents_block,
+    managed_agents_visibility_issues,
+    merge_managed_agents,
+)
 from .publication import (
     managed_pull_request_block,
     managed_pull_request_visibility_issues,
@@ -95,6 +99,24 @@ def skill_target_ownership_issues(project_root: Path) -> list[str]:
     return issues
 
 
+def selected_skill_target_issues(
+    project_root: Path, skills: tuple[str, ...]
+) -> list[str]:
+    target_root = project_root / ".agents" / "skills"
+    issues: list[str] = []
+    for skill in skills:
+        target = target_root / skill
+        if not target.exists():
+            continue
+        if not target.is_dir():
+            issues.append(f"{target}: selected managed skill target must be a directory")
+            continue
+        marker = _read_marker(target)
+        if not marker or marker.get("distribution") != "engineering-process":
+            issues.append(f"{target}: refusing to overwrite an unmanaged skill target")
+    return issues
+
+
 def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
     path = asset_root(process_root) / "templates" / "PULL_REQUEST_TEMPLATE.md"
     if not path.is_file():
@@ -127,8 +149,15 @@ def _agents_issues(project_root: Path, process_root: Path) -> list[str]:
     except (OSError, UnicodeError, ContractError) as error:
         return [f"{target}: invalid managed agent contract: {error}"]
     if source_block != target_block:
-        return [f"{target}: managed agent contract differs from the pinned distribution"]
-    return []
+        issues = [
+            f"{target}: managed agent contract differs from the pinned distribution"
+        ]
+    else:
+        issues = []
+    issues.extend(
+        f"{target}: {issue}" for issue in managed_agents_visibility_issues(current)
+    )
+    return issues
 
 
 def _sync_agents(project_root: Path, process_root: Path) -> None:
@@ -233,7 +262,10 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
     project_root = project_root.resolve()
     process_root = process_root.resolve()
     lock = load_lock(project_root)
-    ownership_issues = skill_target_ownership_issues(project_root)
+    ownership_issues = [
+        *skill_target_ownership_issues(project_root),
+        *selected_skill_target_issues(project_root, lock.skills),
+    ]
     if ownership_issues and not check:
         raise ContractError("\n".join(ownership_issues))
     issues = synchronized_state(project_root, process_root, lock)
@@ -262,27 +294,22 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
             f"process.lock digest {lock.digest} does not match source {actual_digest}"
         )
 
+    target_root = project_root / ".agents" / "skills"
+    existing_targets = [target_root / skill for skill in lock.skills]
+    stale_targets: list[Path] = []
+    if target_root.is_dir():
+        for target in target_root.iterdir():
+            if not target.is_dir():
+                continue
+            marker = _read_marker(target)
+            if marker and marker.get("distribution") == "engineering-process":
+                if target.name not in lock.skills:
+                    stale_targets.append(target)
+
     _sync_agents(project_root, process_root)
     _sync_pull_request_template(project_root, process_root)
 
-    target_root = project_root / ".agents" / "skills"
     target_root.mkdir(parents=True, exist_ok=True)
-    existing_targets = [target_root / skill for skill in lock.skills]
-    stale_targets: list[Path] = []
-    for target in target_root.iterdir():
-        if not target.is_dir():
-            continue
-        marker = _read_marker(target)
-        if marker and marker.get("distribution") == "engineering-process":
-            if target.name not in lock.skills:
-                stale_targets.append(target)
-    for target in existing_targets:
-        if target.exists():
-            marker = _read_marker(target)
-            if not marker or marker.get("distribution") != "engineering-process":
-                raise ContractError(
-                    f"{target}: refusing to overwrite an unmanaged skill"
-                )
 
     stage_parent = target_root.parent
     stage = Path(tempfile.mkdtemp(prefix=".engineering-process-stage-", dir=stage_parent))

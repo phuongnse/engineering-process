@@ -366,6 +366,12 @@ def _migrate_state(
     migrated["pendingFindings"] = _replay_pending_findings(
         project_root, state, path
     )
+    if migrated["pendingFindings"] and migrated.get("phase") in {
+        "approved",
+        "completed",
+    }:
+        migrated["phase"] = "changes-requested"
+        migrated["completion"] = None
     migrated["schemaVersion"] = 2
     return migrated
 

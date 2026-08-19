@@ -95,6 +95,25 @@ class PublicationTests(unittest.TestCase):
             ),
         )
 
+    def test_project_extensions_cannot_redefine_common_policy(self):
+        duplicate_section = pr_body() + (
+            "\n## Independent review\n\nIndependent review is not required here.\n"
+        )
+        duplicate_requirement = pr_body() + (
+            "\n- [x] **Independent review** — project-local review is optional. "
+            "[status: satisfied]\n"
+        )
+
+        for body in (duplicate_section, duplicate_requirement):
+            with self.subTest(body=body[-100:]):
+                issues = validate_pull_request(
+                    title="feat(process): standardize publication",
+                    body=body,
+                    branch="feat/standardize-publication",
+                    state="ready",
+                )
+                self.assertTrue(any("must not duplicate" in issue for issue in issues))
+
     def test_rejects_markerless_hidden_and_weakened_managed_content(self):
         markerless = pr_body().replace(PR_DESCRIPTION_START, "").replace(
             PR_DESCRIPTION_END, ""

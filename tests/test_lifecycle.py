@@ -487,11 +487,13 @@ class LifecycleTests(unittest.TestCase):
             legacy = json.loads(state_path.read_text(encoding="utf-8"))
             legacy["schemaVersion"] = 1
             del legacy["pendingFindings"]
+            legacy["phase"] = "approved"
             state_path.write_text(json.dumps(legacy), encoding="utf-8")
 
             migrated = load_state(root, "change-1")
 
             self.assertEqual(2, migrated["schemaVersion"])
+            self.assertEqual("changes-requested", migrated["phase"])
             self.assertEqual(
                 ["legacy-finding"],
                 [finding["id"] for finding in migrated["pendingFindings"]],

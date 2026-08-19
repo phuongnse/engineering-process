@@ -14,7 +14,11 @@ from .publication import (
     PR_DESCRIPTION_START,
     merge_managed_pull_request_template,
 )
-from .syncing import skill_target_ownership_issues, sync_skills
+from .syncing import (
+    selected_skill_target_issues,
+    skill_target_ownership_issues,
+    sync_skills,
+)
 
 
 RUNS_IGNORE = "/.process/runs/"
@@ -142,7 +146,10 @@ def initialize_project(
         "skills": list(skills),
     }
     validate_process_lock(lock_document, str(project_root / ".process" / "process.lock"))
-    ownership_issues = skill_target_ownership_issues(project_root)
+    ownership_issues = [
+        *skill_target_ownership_issues(project_root),
+        *selected_skill_target_issues(project_root, skills),
+    ]
     if ownership_issues:
         raise ContractError("\n".join(ownership_issues))
 

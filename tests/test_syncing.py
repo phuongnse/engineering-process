@@ -154,6 +154,17 @@ class SyncTests(unittest.TestCase):
             )
             self.assertIn("# Project rules", repaired)
 
+            target.write_text(
+                "```markdown\n" + repaired + "```\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                any(
+                    "outside comments or code fences" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+
     def test_refuses_to_overwrite_unmanaged_skill(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

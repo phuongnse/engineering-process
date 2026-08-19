@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .contracts import ContractError
+from .markdown import COMMENT_RE, mask_fenced_code, strip_html_comments
 
 
 CONVENTIONAL_SUBJECT_MAX_LENGTH = 72
@@ -22,10 +23,13 @@ AUTOMATION_BRANCH_RE = re.compile(
 GIT_RANGE_RE = re.compile(
     r"^[0-9A-Za-z][0-9A-Za-z._/~^-]*(?:\.\.\.?[0-9A-Za-z][0-9A-Za-z._/~^-]*)?$"
 )
-COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 CHECKBOX_RE = re.compile(
     r"^\s*-\s+\[(?P<state>[ xX])\]\s+\*\*(?P<label>[^*]+)\*\*(?P<detail>.*)$",
+    re.MULTILINE,
+)
+EXTENSION_CHECKBOX_RE = re.compile(
+    r"^\s*-\s+\[[ xX]\]\s+(?P<label>.+?)\s*$",
     re.MULTILINE,
 )
 CHECKLIST_STATUS_RE = re.compile(
@@ -39,7 +43,6 @@ PR_DESCRIPTION_START = "<!-- engineering-process:pr-description:start -->"
 PR_DESCRIPTION_END = "<!-- engineering-process:pr-description:end -->"
 _START_TOKEN = "ENGINEERING_PROCESS_MANAGED_PR_DESCRIPTION_START"
 _END_TOKEN = "ENGINEERING_PROCESS_MANAGED_PR_DESCRIPTION_END"
-FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})[^\r\n]*$")
 RAW_HTML_BLOCK_RE = re.compile(r"(?m)^ {0,3}</?[A-Za-z][^>]*>")
 REQUIRED_SECTIONS = (
     "Summary",
@@ -185,33 +188,6 @@ def merge_managed_pull_request_template(current: str, block: str) -> str:
     return "\n\n".join(parts) + "\n"
 
 
-def _without_fenced_code(text: str) -> str:
-    visible: list[str] = []
-    active_character: str | None = None
-    active_length = 0
-    for line in text.splitlines():
-        match = FENCE_RE.fullmatch(line)
-        if active_character is None:
-            if match is None:
-                visible.append(line)
-                continue
-            fence = match.group("fence")
-            active_character = fence[0]
-            active_length = len(fence)
-            visible.append("")
-            continue
-        stripped = line.strip()
-        if (
-            stripped
-            and set(stripped) == {active_character}
-            and len(stripped) >= active_length
-        ):
-            active_character = None
-            active_length = 0
-        visible.append("")
-    return "\n".join(visible)
-
-
 def _visible_managed_content(body: str) -> tuple[str | None, list[str]]:
     try:
         start, _ = _managed_span(body)
@@ -227,10 +203,10 @@ def _visible_managed_content(body: str) -> tuple[str | None, list[str]]:
     visible = body.replace(PR_DESCRIPTION_START, _START_TOKEN).replace(
         PR_DESCRIPTION_END, _END_TOKEN
     )
-    visible = COMMENT_RE.sub("", visible)
-    if "<!--" in visible or "-->" in visible:
+    visible, malformed_comments = strip_html_comments(visible)
+    if malformed_comments:
         return None, ["PR body contains an unterminated or malformed HTML comment"]
-    structural = _without_fenced_code(visible)
+    structural = mask_fenced_code(visible)
     lines = structural.splitlines()
     starts = [index for index, line in enumerate(lines) if line.strip() == _START_TOKEN]
     ends = [index for index, line in enumerate(lines) if line.strip() == _END_TOKEN]
@@ -246,6 +222,39 @@ def _visible_managed_content(body: str) -> tuple[str | None, list[str]]:
 
 def managed_pull_request_visibility_issues(body: str) -> list[str]:
     _, issues = _visible_managed_content(_normalized_markdown(body))
+    return issues
+
+
+def _extension_policy_issues(body: str) -> list[str]:
+    _, end = _managed_span(body)
+    extension, malformed_comments = strip_html_comments(body[end:])
+    if malformed_comments:
+        return ["PR extension contains an unterminated or malformed HTML comment"]
+    structural = mask_fenced_code(extension)
+    issues: list[str] = []
+    for match in HEADING_RE.finditer(structural):
+        name = match.group(1).strip()
+        folded = name.casefold()
+        for canonical in REQUIRED_SECTIONS:
+            if folded == canonical.casefold() or folded.startswith(
+                canonical.casefold() + " "
+            ):
+                issues.append(
+                    f"Project extension must not duplicate managed section: ## {canonical}"
+                )
+                break
+    for match in EXTENSION_CHECKBOX_RE.finditer(structural):
+        label = match.group("label").strip().replace("**", "")
+        folded = label.casefold()
+        for canonical in REQUIRED_REQUIREMENTS:
+            if folded == canonical.casefold() or folded.startswith(
+                canonical.casefold() + " "
+            ):
+                issues.append(
+                    "Project extension must not duplicate managed standard requirement: "
+                    + canonical
+                )
+                break
     return issues
 
 
@@ -327,6 +336,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
             issues.append(
                 f"Not-applicable requirement must include `[reason: ...]`: {line}"
             )
+    issues.extend(_extension_policy_issues(body))
     return issues
 
 
