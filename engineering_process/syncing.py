@@ -41,6 +41,10 @@ MAX_SKILL_TOTAL_BYTES = 8_000_000
 SKILL_COMPARISON_TIMEOUT_SECONDS = 10.0
 MAX_ADOPTION_RUNNER_BYTES = 128_000
 ADOPTION_RUNNER_MARKER = "# Managed by engineering-process; do not edit."
+ADOPTION_SCRIPT_NAMES = (
+    "adopt-process.py",
+    "adopt-process-windows-job.py",
+)
 
 
 def default_process_root() -> Path:
@@ -305,8 +309,12 @@ def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
         raise ContractError(f"{path}: cannot read pull-request template: {error}") from error
 
 
-def _adoption_runner_source(process_root: Path) -> tuple[Path, bytes]:
-    path = asset_root(process_root) / "templates" / "adopt-process.py"
+def _adoption_runner_source(
+    process_root: Path, name: str = "adopt-process.py"
+) -> tuple[Path, bytes]:
+    if name not in ADOPTION_SCRIPT_NAMES:
+        raise ContractError(f"unsupported adoption script: {name}")
+    path = asset_root(process_root) / "templates" / name
     if not path.is_file() or path.is_symlink():
         raise ContractError(f"{path}: missing regular adoption runner template")
     try:
@@ -352,48 +360,65 @@ def _read_adoption_runner_target(path: Path) -> bytes | None:
 def adoption_runner_target_issues(
     project_root: Path, process_root: Path
 ) -> list[str]:
-    target = project_root / ".process" / "adopt-process.py"
-    try:
-        current = _read_adoption_runner_target(target)
-        _, source = _adoption_runner_source(process_root)
-    except ContractError as error:
-        return [str(error)]
-    if (
-        current is not None
-        and current != source
-        and not current.startswith((ADOPTION_RUNNER_MARKER + "\n").encode("utf-8"))
-    ):
-        return [f"{target}: refusing to overwrite unmanaged adoption runner"]
-    return []
+    issues: list[str] = []
+    for name in ADOPTION_SCRIPT_NAMES:
+        target = project_root / ".process" / name
+        try:
+            current = _read_adoption_runner_target(target)
+            _, source = _adoption_runner_source(process_root, name)
+        except ContractError as error:
+            issues.append(str(error))
+            continue
+        if (
+            current is not None
+            and current != source
+            and not current.startswith(
+                (ADOPTION_RUNNER_MARKER + "\n").encode("utf-8")
+            )
+        ):
+            issues.append(
+                f"{target}: refusing to overwrite unmanaged adoption runner"
+            )
+    return issues
 
 
 def _adoption_runner_issues(project_root: Path, process_root: Path) -> list[str]:
-    target = project_root / ".process" / "adopt-process.py"
-    try:
-        current = _read_adoption_runner_target(target)
-        _, source = _adoption_runner_source(process_root)
-    except ContractError as error:
-        return [str(error)]
-    if current is None:
-        return [f"{target}: missing managed adoption runner"]
-    if current != source:
-        return [f"{target}: managed adoption runner differs from the pinned distribution"]
-    return []
+    issues: list[str] = []
+    for name in ADOPTION_SCRIPT_NAMES:
+        target = project_root / ".process" / name
+        try:
+            current = _read_adoption_runner_target(target)
+            _, source = _adoption_runner_source(process_root, name)
+        except ContractError as error:
+            issues.append(str(error))
+            continue
+        if current is None:
+            issues.append(f"{target}: missing managed adoption runner")
+        elif current != source:
+            issues.append(
+                f"{target}: managed adoption runner differs from the pinned distribution"
+            )
+    return issues
 
 
 def _sync_adoption_runner(project_root: Path, process_root: Path) -> None:
-    target = project_root / ".process" / "adopt-process.py"
-    current = _read_adoption_runner_target(target)
-    _, source = _adoption_runner_source(process_root)
-    if (
-        current is not None
-        and current != source
-        and not current.startswith((ADOPTION_RUNNER_MARKER + "\n").encode("utf-8"))
-    ):
-        raise ContractError(f"{target}: refusing to overwrite unmanaged adoption runner")
-    if current != source:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(source)
+    for name in ADOPTION_SCRIPT_NAMES:
+        target = project_root / ".process" / name
+        current = _read_adoption_runner_target(target)
+        _, source = _adoption_runner_source(process_root, name)
+        if (
+            current is not None
+            and current != source
+            and not current.startswith(
+                (ADOPTION_RUNNER_MARKER + "\n").encode("utf-8")
+            )
+        ):
+            raise ContractError(
+                f"{target}: refusing to overwrite unmanaged adoption runner"
+            )
+        if current != source:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source)
 
 
 def _agents_source(process_root: Path) -> tuple[Path, str]:

@@ -143,8 +143,24 @@ class SyncTests(unittest.TestCase):
                 (PROCESS_ROOT / "templates" / "adopt-process.py").read_bytes(),
                 runner.read_bytes(),
             )
+            windows_helper = (
+                project_root / ".process" / "adopt-process-windows-job.py"
+            )
+            self.assertEqual(
+                (
+                    PROCESS_ROOT / "templates" / "adopt-process-windows-job.py"
+                ).read_bytes(),
+                windows_helper.read_bytes(),
+            )
             runner.write_text("print('unmanaged')\n", encoding="utf-8")
 
+            with self.assertRaisesRegex(ContractError, "unmanaged adoption runner"):
+                sync_skills(project_root, PROCESS_ROOT, check=False)
+
+            runner.write_bytes(
+                (PROCESS_ROOT / "templates" / "adopt-process.py").read_bytes()
+            )
+            windows_helper.write_text("print('unmanaged')\n", encoding="utf-8")
             with self.assertRaisesRegex(ContractError, "unmanaged adoption runner"):
                 sync_skills(project_root, PROCESS_ROOT, check=False)
 

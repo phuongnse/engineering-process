@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,34 +51,96 @@ def _drain(stream: object, capture: Capture) -> None:
         stream.close()
 
 
-def _terminate_tree(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
+def _process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_group(process_group: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _process_group_exists(process_group):
+            return True
+        time.sleep(0.02)
+    return not _process_group_exists(process_group)
+
+
+def _terminate_posix_group(process_group: int) -> bool:
+    if not _process_group_exists(process_group):
+        return False
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+        return True
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    if not _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+        raise RuntimeError("command process group survived bounded termination")
+    return True
+
+
+def _terminate_tree(process: subprocess.Popen[bytes]) -> bool:
     if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=TERMINATION_TIMEOUT_SECONDS,
-            check=False,
-        )
-    else:
+        if process.poll() is not None:
+            return False
+        process.terminate()
+        try:
+            process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+        return True
+
+    if process.poll() is None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
-            return
-    try:
-        process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            process.kill()
-        else:
+            pass
+        try:
+            process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+            try:
+                process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(
+                    "command root process survived bounded termination"
+                ) from error
+    return _terminate_posix_group(process.pid)
+
+
+def _windows_wrapped_command(argv: list[str]) -> list[str]:
+    supplied = Path(argv[0])
+    if not supplied.is_absolute() or supplied.suffix.casefold() != ".exe":
+        raise RuntimeError("Windows adoption commands require an absolute .exe path")
+    try:
+        application = supplied.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError("Windows adoption command executable is unavailable") from error
+    helper = Path(__file__).resolve().with_name("adopt-process-windows-job.py")
+    if helper.is_symlink() or not helper.is_file():
+        raise RuntimeError("managed Windows Job Object helper is unavailable")
+    return [
+        sys.executable,
+        "-I",
+        str(helper),
+        "--application",
+        str(application),
+        "--",
+        *argv,
+    ]
 
 
 def _child_environment() -> dict[str, str]:
@@ -104,6 +167,7 @@ def _child_environment() -> dict[str, str]:
 
 
 def _run(argv: list[str], *, cwd: Path) -> str:
+    command = _windows_wrapped_command(argv) if os.name == "nt" else argv
     options: dict[str, object] = {
         "cwd": cwd,
         "env": _child_environment(),
@@ -115,7 +179,7 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         options["start_new_session"] = True
-    process = subprocess.Popen(argv, **options)
+    process = subprocess.Popen(command, **options)
     stdout = Capture()
     stderr = Capture()
     stdout_thread = threading.Thread(
@@ -129,19 +193,31 @@ def _run(argv: list[str], *, cwd: Path) -> str:
     try:
         return_code = process.wait(timeout=COMMAND_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
-        _terminate_tree(process)
+        try:
+            _terminate_tree(process)
+        finally:
+            stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
         raise RuntimeError(
             f"command timed out after {COMMAND_TIMEOUT_SECONDS} seconds"
         ) from error
     except BaseException:
-        _terminate_tree(process)
+        try:
+            _terminate_tree(process)
+        finally:
+            stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
         raise
+    try:
+        descendants_found = _terminate_tree(process)
     finally:
         stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
         stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
     if stdout_thread.is_alive() or stderr_thread.is_alive():
         _terminate_tree(process)
         raise RuntimeError("command output readers did not terminate")
+    if descendants_found:
+        raise RuntimeError("command left descendant processes; they were terminated")
     if return_code != 0:
         raise RuntimeError(
             f"command failed with exit status {return_code}\n"

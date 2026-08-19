@@ -48,6 +48,7 @@ engineering_process = ["requirements-*.txt"]
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
   "templates/adopt-process.py",
+  "templates/adopt-process-windows-job.py",
 ]
 "share/engineering-process/schemas" = [
   "schemas/change.schema.json",

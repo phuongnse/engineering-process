@@ -18,6 +18,7 @@ from .distribution import distribution_digest
 from .syncing import (
     _files as _managed_files,
     adoption_runner_target_issues,
+    default_process_root,
     git_attributes_target_issues,
     load_lock,
     managed_parent_issues,
@@ -193,6 +194,11 @@ def validate_requirements_lock(path: Path) -> RequirementsLock:
 
 
 def _require_external_authority(project_root: Path, process_root: Path) -> None:
+    installed_root = default_process_root().resolve()
+    if process_root != installed_root:
+        raise ContractError(
+            "adoption authority must be the active installed process root"
+        )
     try:
         process_root.relative_to(project_root)
     except ValueError:
@@ -271,6 +277,7 @@ def _snapshot_targets(
     targets = [
         project_root / ".process" / "process.lock",
         project_root / ".process" / "adopt-process.py",
+        project_root / ".process" / "adopt-process-windows-job.py",
         project_root / "AGENTS.md",
         project_root / ".github" / "PULL_REQUEST_TEMPLATE.md",
         project_root / ".agents" / ".gitattributes",

@@ -97,6 +97,16 @@ class AdoptionTests(unittest.TestCase):
                 managed.read_bytes(),
             )
             self.assertEqual(
+                (
+                    PROCESS_ROOT
+                    / "templates"
+                    / "adopt-process-windows-job.py"
+                ).read_bytes(),
+                (
+                    root / ".process" / "adopt-process-windows-job.py"
+                ).read_bytes(),
+            )
+            self.assertEqual(
                 [],
                 check_adoption(root, PROCESS_ROOT, requirements)["issues"],
             )
@@ -121,14 +131,18 @@ class AdoptionTests(unittest.TestCase):
             lock = root / ".process" / "process.lock"
             agents = root / "AGENTS.md"
             runner = root / ".process" / "adopt-process.py"
+            windows_helper = (
+                root / ".process" / "adopt-process-windows-job.py"
+            )
             before = {
                 path: path.read_bytes()
-                for path in (lock, agents, runner)
+                for path in (lock, agents, runner, windows_helper)
             }
 
             def fail_after_partial_write(*args, **kwargs):
                 agents.write_text("partial\n", encoding="utf-8")
                 runner.write_text("partial\n", encoding="utf-8")
+                windows_helper.write_text("partial\n", encoding="utf-8")
                 raise ContractError("injected adoption failure")
 
             with (
@@ -142,7 +156,10 @@ class AdoptionTests(unittest.TestCase):
 
             self.assertEqual(
                 before,
-                {path: path.read_bytes() for path in (lock, agents, runner)},
+                {
+                    path: path.read_bytes()
+                    for path in (lock, agents, runner, windows_helper)
+                },
             )
 
     def test_requirements_lock_rejects_unhashed_or_mismatched_authority(self):
@@ -172,6 +189,16 @@ class AdoptionTests(unittest.TestCase):
                 PROCESS_ROOT,
                 PROCESS_ROOT / "requirements" / "process.txt",
             )
+
+    def test_apply_rejects_an_arbitrary_external_process_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            external = Path(directory) / "untrusted-authority"
+            with self.assertRaisesRegex(ContractError, "active installed process root"):
+                apply_adoption(
+                    PROCESS_ROOT,
+                    external,
+                    PROCESS_ROOT / "requirements" / "process.txt",
+                )
 
 
 if __name__ == "__main__":

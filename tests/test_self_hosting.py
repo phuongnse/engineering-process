@@ -63,6 +63,7 @@ class SelfHostingTests(unittest.TestCase):
             {
                 ".agents/skills/**",
                 ".process/adopt-process.py",
+                ".process/adopt-process-windows-job.py",
                 ".process/process.lock",
                 "requirements/process.in",
                 "requirements/process.txt",
@@ -182,12 +183,25 @@ class SelfHostingTests(unittest.TestCase):
     def test_managed_adoption_runner_matches_packaged_template(self):
         managed = PROCESS_ROOT / ".process" / "adopt-process.py"
         template = PROCESS_ROOT / "templates" / "adopt-process.py"
+        managed_windows_helper = (
+            PROCESS_ROOT / ".process" / "adopt-process-windows-job.py"
+        )
+        template_windows_helper = (
+            PROCESS_ROOT / "templates" / "adopt-process-windows-job.py"
+        )
+        windows_helper = PROCESS_ROOT / "engineering_process" / "_windows_job.py"
 
         self.assertEqual(template.read_bytes(), managed.read_bytes())
         self.assertTrue(
             template.read_text(encoding="utf-8").startswith(
                 "# Managed by engineering-process; do not edit.\n"
             )
+        )
+        self.assertEqual(
+            windows_helper.read_bytes(), managed_windows_helper.read_bytes()
+        )
+        self.assertEqual(
+            windows_helper.read_bytes(), template_windows_helper.read_bytes()
         )
 
     def test_distribution_never_packages_managed_skill_copies(self):
@@ -198,6 +212,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn('".agents/skills/', pyproject)
         self.assertIn('"VERSIONING.md"', pyproject)
         self.assertIn('"templates/adopt-process.py"', pyproject)
+        self.assertIn('"templates/adopt-process-windows-job.py"', pyproject)
+        self.assertTrue(
+            (PROCESS_ROOT / "engineering_process" / "_windows_job.py")
+            .read_text(encoding="utf-8")
+            .startswith("# Managed by engineering-process; do not edit.\n")
+        )
         self.assertIn("prune .agents\n", manifest)
         self.assertIn("prune .process\n", manifest)
 
