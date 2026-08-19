@@ -15,6 +15,25 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_producer_environment_binds_the_exact_build_backend(self):
+        project = json.loads(
+            (PROCESS_ROOT / ".process" / "project.json").read_text(encoding="utf-8")
+        )
+        requirement = next(
+            item
+            for item in project["environment"]["requirements"]
+            if item["id"] == "development-runtime"
+        )
+
+        self.assertIn(
+            "version('setuptools') == '84.0.0'",
+            requirement["probe"]["run"][2],
+        )
+        self.assertIn(
+            "engineering_process/requirements-build.txt",
+            requirement["remediation"],
+        )
+
     def test_distribution_verifier_resolves_the_checkout_before_installed_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             shadow_package = Path(directory) / "engineering_process"

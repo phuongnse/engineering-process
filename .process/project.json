@@ -71,14 +71,14 @@
           "run": [
             "python",
             "-c",
-            "import build, jsonschema, regex; print('producer dependencies ready')"
+            "from importlib.metadata import version; import build, jsonschema, regex; assert version('setuptools') == '84.0.0'; print('producer dependencies ready')"
           ],
           "timeoutSeconds": 15,
           "readOnly": true,
           "outputStream": "stdout",
           "outputRegex": "^producer dependencies ready$"
         },
-        "remediation": "Install engineering_process/requirements-runtime.txt and engineering_process/requirements-dev.txt into the isolated process environment."
+        "remediation": "Install engineering_process/requirements-runtime.txt, engineering_process/requirements-dev.txt, and engineering_process/requirements-build.txt into the isolated process environment."
       },
       {
         "id": "git-runtime",
