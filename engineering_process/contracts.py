@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import regex as bounded_regex
+
 
 NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 PROFILE_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
@@ -96,6 +98,7 @@ class SetupAction:
 @dataclass(frozen=True)
 class ProjectEnvironment:
     default_profile: str
+    foreground_only: bool
     profiles: dict[str, tuple[str, ...]]
     requirements: dict[str, EnvironmentRequirement]
     managed_tools: dict[str, ManagedTool]
@@ -238,7 +241,13 @@ def _relative_tool_path(value: Any, path: str) -> str:
 
 def _https_url(value: Any, path: str) -> str:
     text = _string(value, path, max_length=2048)
-    parsed = urlsplit(text)
+    if any(ord(character) < 0x21 or ord(character) > 0x7e for character in text):
+        raise ContractError(f"{path}: must contain only printable ASCII URI characters")
+    try:
+        parsed = urlsplit(text)
+        parsed_port = parsed.port
+    except ValueError as error:
+        raise ContractError(f"{path}: invalid HTTPS URL: {error}") from error
     if (
         parsed.scheme != "https"
         or not parsed.hostname
@@ -249,6 +258,8 @@ def _https_url(value: Any, path: str) -> str:
         raise ContractError(
             f"{path}: must be an HTTPS URL without credentials or a fragment"
         )
+    if parsed_port == 0:
+        raise ContractError(f"{path}: HTTPS port must be from 1 to 65535")
     return text
 
 
@@ -258,6 +269,7 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
         value,
         required={
             "defaultProfile",
+            "foregroundOnly",
             "managedTools",
             "profiles",
             "requirements",
@@ -270,6 +282,8 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
     )
     if PROFILE_PATTERN.fullmatch(default_profile) is None:
         raise ContractError(f"{path}.defaultProfile: invalid profile name")
+    if value["foregroundOnly"] is not True:
+        raise ContractError(f"{path}.foregroundOnly: must attest true")
 
     raw_tools = value["managedTools"]
     if not isinstance(raw_tools, list):
@@ -576,8 +590,8 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
                 max_length=1024,
             )
             try:
-                re.compile(output_regex)
-            except re.error as error:
+                bounded_regex.compile(output_regex)
+            except bounded_regex.error as error:
                 raise ContractError(
                     f"{requirement_path}.probe.outputRegex: invalid regex: {error}"
                 ) from error
@@ -649,6 +663,7 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
         raise ContractError(f"{path}.defaultProfile: profile is not defined")
     return ProjectEnvironment(
         default_profile=default_profile,
+        foreground_only=True,
         profiles=profiles,
         requirements=requirements,
         managed_tools=managed_tools,
@@ -658,13 +673,17 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
 
 def validate_project(document: Any, path: str = "project") -> Project:
     value = _object(document, path)
-    schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2}:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    if value.get("schemaVersion") != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
     _exact_keys(
         value,
-        required={"schemaVersion", "project", "lifecycle", "profiles"}
-        | ({"environment"} if schema_version == 2 else set()),
+        required={
+            "schemaVersion",
+            "project",
+            "lifecycle",
+            "profiles",
+            "environment",
+        },
         optional={"$schema"},
         path=path,
     )
@@ -741,18 +760,15 @@ def validate_project(document: Any, path: str = "project") -> Project:
             f"{path}.lifecycle.requiredProfiles: undefined profiles: "
             f"{', '.join(missing_required)}"
         )
-    environment = (
-        _validate_environment(value["environment"], f"{path}.environment")
-        if schema_version == 2
-        else None
+    environment = _validate_environment(
+        value["environment"], f"{path}.environment"
     )
-    if environment is not None:
-        missing_environment_profiles = sorted(set(profiles) - set(environment.profiles))
-        if missing_environment_profiles:
-            raise ContractError(
-                f"{path}.environment.profiles: missing verification profiles: "
-                + ", ".join(missing_environment_profiles)
-            )
+    missing_environment_profiles = sorted(set(profiles) - set(environment.profiles))
+    if missing_environment_profiles:
+        raise ContractError(
+            f"{path}.environment.profiles: missing verification profiles: "
+            + ", ".join(missing_environment_profiles)
+        )
     return Project(
         identifier=identifier,
         profiles=profiles,
@@ -810,8 +826,8 @@ def validate_change(document: Any, path: str = "change") -> None:
         optional={"$schema"},
         path=path,
     )
-    if value.get("schemaVersion") != 2:
-        raise ContractError(f"{path}.schemaVersion: must be 2")
+    if value.get("schemaVersion") != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
     identifier = _string(value["id"], f"{path}.id", max_length=64)
     if PROFILE_PATTERN.fullmatch(identifier) is None:
         raise ContractError(f"{path}.id: invalid change id")
@@ -1020,8 +1036,6 @@ def _validate_actor(value: Any, path: str) -> dict[str, str]:
 def _validate_review(
     document: Any,
     path: str = "review",
-    *,
-    allow_legacy_unresolved_approval: bool = False,
 ) -> None:
     value = _object(document, path)
     _exact_keys(
@@ -1041,8 +1055,8 @@ def _validate_review(
         optional={"$schema"},
         path=path,
     )
-    if value.get("schemaVersion") != 2:
-        raise ContractError(f"{path}.schemaVersion: must be 2")
+    if value.get("schemaVersion") != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
     if PROFILE_PATTERN.fullmatch(change_id) is None:
         raise ContractError(f"{path}.changeId: invalid change id")
@@ -1147,7 +1161,6 @@ def _validate_review(
     if (
         verdict == "approved"
         and unresolved_findings
-        and not allow_legacy_unresolved_approval
     ):
         raise ContractError(
             f"{path}: approved review cannot contain open or deferred findings"
@@ -1159,8 +1172,4 @@ def _validate_review(
 
 
 def validate_review(document: Any, path: str = "review") -> None:
-    _validate_review(document, path, allow_legacy_unresolved_approval=False)
-
-
-def _validate_legacy_review(document: Any, path: str) -> None:
-    _validate_review(document, path, allow_legacy_unresolved_approval=True)
+    _validate_review(document, path)

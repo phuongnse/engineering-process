@@ -39,6 +39,9 @@ repeatable execution deterministic.
 - Do not install tools, change host trust, or mutate external state without authority.
 - Treat `readOnly` and command mutation scopes as project-owner attestations, not a
   sandbox. Reject an incomplete scope declaration instead of assuming confinement.
+- Run only foreground commands. A declared command must not daemonize, create a
+  detached session, or leave background work behind; portable POSIX execution cannot
+  contain a process that deliberately escapes its owned process group.
 - An installer exit code is not readiness evidence; the declared probe must pass after
   setup.
 

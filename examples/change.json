@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "id": "issue-123",
   "summary": "Add a bounded product capability",
   "source": "issue-123",

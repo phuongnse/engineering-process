@@ -18,7 +18,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"const": 2},
+    "schemaVersion": {"const": 1},
     "changeId": {
       "type": "string",
       "maxLength": 64,

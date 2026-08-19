@@ -5,15 +5,15 @@ import json
 import os
 import platform
 import posixpath
-import shutil
 import stat
 import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import BinaryIO, Mapping
 import urllib.request
+from urllib.parse import urljoin, urlsplit
 import zipfile
 
 from .contracts import ContractError, ManagedTool, ManagedToolArtifact
@@ -22,6 +22,39 @@ from .contracts import ContractError, ManagedTool, ManagedToolArtifact
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30
 MARKER_NAME = ".engineering-process-tool.json"
 USER_AGENT = "engineering-process/0.1.0"
+
+
+def _validated_https_target(base_url: str, target_url: str) -> str:
+    resolved = urljoin(base_url, target_url)
+    try:
+        parsed = urlsplit(resolved)
+        parsed.port
+    except ValueError as error:
+        raise ContractError(f"invalid HTTPS redirect URL: {error}") from error
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ContractError(f"tool download redirect is not a safe HTTPS URL: {resolved}")
+    return resolved
+
+
+class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        target = _validated_https_target(request.full_url, new_url)
+        return super().redirect_request(
+            request,
+            response,
+            code,
+            message,
+            headers,
+            target,
+        )
+
+
+_HTTPS_OPENER = urllib.request.build_opener(_HTTPSOnlyRedirectHandler())
 
 
 def platform_identifier(
@@ -116,6 +149,31 @@ def install_root(
     return root / tool.identifier / tool.version / _artifact_key(artifact)
 
 
+def managed_tool_preflight(
+    tool: ManagedTool,
+    *,
+    current_platform: str | None = None,
+    tools_root: Path | None = None,
+) -> str | None:
+    artifact = selected_artifact(tool, current_platform=current_platform)
+    base = managed_tools_root() if tools_root is None else tools_root
+    root = install_root(tool, artifact, tools_root=base)
+    for directory in (base, base / tool.identifier, root.parent):
+        if directory.is_symlink():
+            return f"managed tool directory must not be a symlink: {directory}"
+        if directory.exists() and not directory.is_dir():
+            return f"managed tool directory is not a directory: {directory}"
+    if root.is_symlink():
+        return f"managed tool installation must not be a symlink: {root}"
+    if root.exists() and not installed_commands(
+        tool,
+        current_platform=artifact.platform,
+        tools_root=base,
+    ):
+        return f"managed tool installation is invalid or unmanaged: {root}"
+    return None
+
+
 def _marker_document(tool: ManagedTool, artifact: ManagedToolArtifact) -> dict[str, object]:
     return {
         "schemaVersion": 1,
@@ -199,15 +257,11 @@ def download_artifact(
     deadline: float,
 ) -> None:
     request = urllib.request.Request(artifact.url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(
+    with _HTTPS_OPENER.open(
         request,
         timeout=min(DOWNLOAD_READ_TIMEOUT_SECONDS, _remaining(deadline)),
     ) as response:
-        final_url = response.geturl()
-        if not final_url.lower().startswith("https://"):
-            raise ContractError(
-                f"HTTPS tool download redirected to a non-HTTPS URL: {final_url}"
-            )
+        _validated_https_target(artifact.url, response.geturl())
         content_length = response.headers.get("Content-Length")
         if content_length is not None:
             try:
@@ -296,6 +350,146 @@ def _validate_archive_limits(
         )
 
 
+def _copy_stream(
+    source: BinaryIO,
+    destination: Path,
+    *,
+    deadline: float,
+    max_bytes: int,
+    expected_bytes: int | None = None,
+) -> int:
+    written = 0
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("xb") as output:
+        while True:
+            _remaining(deadline)
+            block = source.read(min(1024 * 1024, max_bytes - written + 1))
+            if not block:
+                break
+            written += len(block)
+            if written > max_bytes:
+                raise ContractError(
+                    f"extracted artifact exceeds its {max_bytes}-byte limit"
+                )
+            output.write(block)
+    if expected_bytes is not None and written != expected_bytes:
+        raise ContractError(
+            f"archive member size mismatch: expected {expected_bytes}, got {written}"
+        )
+    return written
+
+
+def _apply_mode(path: Path, mode: int) -> None:
+    if os.name != "nt" and mode:
+        path.chmod(mode & 0o777)
+
+
+def _extract_zip(
+    archive: Path,
+    target: Path,
+    artifact: ManagedToolArtifact,
+    *,
+    deadline: float,
+) -> None:
+    with zipfile.ZipFile(archive) as handle:
+        members = handle.infolist()
+        normalized_names = [
+            member.filename.replace("\\", "/").casefold() for member in members
+        ]
+        if len(normalized_names) != len(set(normalized_names)):
+            raise ContractError("tool archive contains duplicate member paths")
+        _validate_archive_limits(
+            count=len(members),
+            size=sum(member.file_size for member in members),
+            artifact=artifact,
+        )
+        for member in members:
+            _remaining(deadline)
+            destination = _safe_member_path(member.filename, target)
+            member_mode = member.external_attr >> 16
+            if stat.S_ISLNK(member_mode):
+                raise ContractError(f"zip symlinks are unsupported: {member.filename}")
+            if member.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+                _apply_mode(destination, member_mode)
+                continue
+            with handle.open(member, "r") as source:
+                _copy_stream(
+                    source,
+                    destination,
+                    deadline=deadline,
+                    max_bytes=member.file_size,
+                    expected_bytes=member.file_size,
+                )
+            _apply_mode(destination, member_mode)
+
+
+def _extract_tar(
+    archive: Path,
+    target: Path,
+    artifact: ManagedToolArtifact,
+    *,
+    deadline: float,
+) -> None:
+    names: set[str] = set()
+    count = 0
+    extracted_bytes = 0
+    directory_modes: list[tuple[Path, int]] = []
+    pending_hard_links: list[tuple[Path, Path]] = []
+    with tarfile.open(archive, "r:gz") as handle:
+        for member in handle:
+            _remaining(deadline)
+            normalized_name = member.name.replace("\\", "/").casefold()
+            if normalized_name in names:
+                raise ContractError("tool archive contains duplicate member paths")
+            names.add(normalized_name)
+            count += 1
+            if member.isfile():
+                extracted_bytes += member.size
+            _validate_archive_limits(
+                count=count,
+                size=extracted_bytes,
+                artifact=artifact,
+            )
+            destination = _safe_member_path(member.name, target)
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                directory_modes.append((destination, member.mode))
+            elif member.isfile():
+                source = handle.extractfile(member)
+                if source is None:
+                    raise ContractError(f"cannot read archive member: {member.name}")
+                with source:
+                    _copy_stream(
+                        source,
+                        destination,
+                        deadline=deadline,
+                        max_bytes=member.size,
+                        expected_bytes=member.size,
+                    )
+                _apply_mode(destination, member.mode)
+            elif member.issym():
+                _safe_tar_link(member, target)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(member.linkname, destination)
+            elif member.islnk():
+                _safe_tar_link(member, target)
+                source = _safe_member_path(member.linkname, target)
+                pending_hard_links.append((source, destination))
+            else:
+                raise ContractError(f"unsupported archive member type: {member.name}")
+    for source, destination in pending_hard_links:
+        _remaining(deadline)
+        if not source.is_file():
+            raise ContractError(f"archive hard-link target is missing: {source.name}")
+        _safe_member_path(str(destination.relative_to(target)), target)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.link(source, destination)
+    for directory, mode in reversed(directory_modes):
+        _remaining(deadline)
+        _apply_mode(directory, mode)
+
+
 def extract_artifact(
     archive: Path,
     target: Path,
@@ -306,61 +500,13 @@ def extract_artifact(
     target.mkdir(parents=True, exist_ok=False)
     if artifact.archive_format == "zip":
         try:
-            with zipfile.ZipFile(archive) as handle:
-                members = handle.infolist()
-                normalized_names = [
-                    member.filename.replace("\\", "/").casefold()
-                    for member in members
-                ]
-                if len(normalized_names) != len(set(normalized_names)):
-                    raise ContractError("tool archive contains duplicate member paths")
-                _validate_archive_limits(
-                    count=len(members),
-                    size=sum(member.file_size for member in members),
-                    artifact=artifact,
-                )
-                for member in members:
-                    _remaining(deadline)
-                    _safe_member_path(member.filename, target)
-                    member_mode = member.external_attr >> 16
-                    if stat.S_ISLNK(member_mode):
-                        raise ContractError(
-                            f"zip symlinks are unsupported: {member.filename}"
-                        )
-                handle.extractall(target)
+            _extract_zip(archive, target, artifact, deadline=deadline)
         except (zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError) as error:
             raise ContractError(f"invalid zip artifact: {error}") from error
         return
     if artifact.archive_format == "tar.gz":
         try:
-            with tarfile.open(archive, "r:gz") as handle:
-                members = handle.getmembers()
-                normalized_names = [
-                    member.name.replace("\\", "/").casefold()
-                    for member in members
-                ]
-                if len(normalized_names) != len(set(normalized_names)):
-                    raise ContractError("tool archive contains duplicate member paths")
-                _validate_archive_limits(
-                    count=len(members),
-                    size=sum(member.size for member in members if member.isfile()),
-                    artifact=artifact,
-                )
-                for member in members:
-                    _remaining(deadline)
-                    _safe_member_path(member.name, target)
-                    if not (
-                        member.isfile()
-                        or member.isdir()
-                        or member.issym()
-                        or member.islnk()
-                    ):
-                        raise ContractError(
-                            f"unsupported archive member type: {member.name}"
-                        )
-                    if member.issym() or member.islnk():
-                        _safe_tar_link(member, target)
-                handle.extractall(target, filter="data")
+            _extract_tar(archive, target, artifact, deadline=deadline)
         except (tarfile.TarError, EOFError) as error:
             raise ContractError(f"invalid tar artifact: {error}") from error
         return
@@ -401,6 +547,13 @@ def install_managed_tool(
 ) -> dict[str, Path]:
     artifact = selected_artifact(tool, current_platform=current_platform)
     root = install_root(tool, artifact, tools_root=tools_root)
+    preflight_issue = managed_tool_preflight(
+        tool,
+        current_platform=artifact.platform,
+        tools_root=tools_root,
+    )
+    if preflight_issue is not None:
+        raise ContractError(preflight_issue)
     existing = installed_commands(
         tool,
         current_platform=artifact.platform,
@@ -408,11 +561,6 @@ def install_managed_tool(
     )
     if existing:
         return existing
-    if root.exists() or root.is_symlink():
-        raise ContractError(
-            f"refusing to replace invalid or unmanaged tool installation: {root}"
-        )
-
     deadline = time.monotonic() + timeout_seconds
     parent = root.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -439,7 +587,14 @@ def install_managed_tool(
             relative = next(iter(artifact.commands.values()))
             target = staged / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(archive, target)
+            with archive.open("rb") as source:
+                _copy_stream(
+                    source,
+                    target,
+                    deadline=deadline,
+                    max_bytes=artifact.max_extracted_bytes,
+                    expected_bytes=archive.stat().st_size,
+                )
         else:
             payload = temporary / "payload"
             extract_artifact(archive, payload, artifact, deadline=deadline)

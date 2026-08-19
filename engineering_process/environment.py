@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import signal
 import shutil
 import subprocess
@@ -13,6 +12,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import regex as bounded_regex
 
 from .contracts import (
     ContractError,
@@ -24,12 +25,14 @@ from .contracts import (
 )
 from .tooling import (
     install_managed_tool,
+    managed_tool_preflight,
     managed_path_entries,
     selected_artifact,
 )
 
 
 OUTPUT_LIMIT = 16_384
+OUTPUT_REGEX_TIMEOUT_SECONDS = 0.1
 TERMINATION_GRACE_SECONDS = 1.0
 
 
@@ -91,7 +94,7 @@ def _terminate_posix_process_group(process_group: int) -> tuple[bool, bool]:
 
 
 def _stop_command_tree(process: subprocess.Popen[bytes]) -> bool:
-    """Stop the complete command tree and return whether cleanup was bounded."""
+    """Stop the owned process group/job and report whether cleanup was bounded."""
 
     if os.name == "posix":
         try:
@@ -301,10 +304,14 @@ def execute_command(
             thread.join(timeout=TERMINATION_GRACE_SECONDS)
         if any(thread.is_alive() for thread in drain_threads):
             status = "failed"
-            error_message = "command tree retained output streams after bounded termination"
+            error_message = (
+                "command process group retained output streams after bounded termination"
+            )
         if not command_tree_bounded:
             status = "failed"
-            error_message = "command tree could not be terminated within the bounded grace period"
+            error_message = (
+                "command process group could not be terminated within the bounded grace period"
+            )
             for thread in drain_threads:
                 thread.join(timeout=1)
     stdout = bytes(stdout_capture["data"]).decode("utf-8", errors="replace")
@@ -337,7 +344,7 @@ def _profile_environment(
     if environment is None:
         if profile is not None:
             raise ContractError(
-                "environment profile requested, but project schema version 1 has no "
+                "environment profile requested for an internal Project without an "
                 "environment contract"
             )
         return None, None, ()
@@ -413,6 +420,7 @@ def _probe_requirement(
     path_entries: tuple[Path, ...],
 ) -> dict[str, Any]:
     probe = requirement.probe
+    deadline = time.monotonic() + probe.timeout_seconds
     execution = execute_command(
         root,
         identifier=requirement.identifier,
@@ -426,10 +434,28 @@ def _probe_requirement(
         "stderr": execution["stderr"],
         "combined": execution["stdout"] + "\n" + execution["stderr"],
     }[probe.output_stream]
-    output_matches = (
-        probe.output_regex is None
-        or re.search(probe.output_regex, stream, re.MULTILINE) is not None
-    )
+    output_matches = probe.output_regex is None
+    output_match_error: str | None = None
+    if probe.output_regex is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            output_matches = False
+            output_match_error = "probe timeout expired before output matching"
+        else:
+            try:
+                output_matches = (
+                    bounded_regex.search(
+                        probe.output_regex,
+                        stream,
+                        bounded_regex.MULTILINE,
+                        timeout=min(remaining, OUTPUT_REGEX_TIMEOUT_SECONDS),
+                        concurrent=True,
+                    )
+                    is not None
+                )
+            except TimeoutError:
+                output_matches = False
+                output_match_error = "outputRegex exceeded its bounded match timeout"
     satisfied = execution["status"] == "passed" and output_matches
     return {
         **execution,
@@ -438,6 +464,7 @@ def _probe_requirement(
         "outputStream": probe.output_stream,
         "outputRegex": probe.output_regex,
         "outputMatched": output_matches,
+        "outputMatchError": output_match_error,
         "remediation": requirement.remediation,
         "setupAction": requirement.setup_action,
     }
@@ -469,6 +496,7 @@ def doctor_environment(
             else "failed"
         ),
         "profile": selected,
+        "foregroundOnly": environment.foreground_only,
         "requirements": results,
     }
 
@@ -526,7 +554,7 @@ def setup_environment(
     environment, selected, _ = _profile_environment(project, profile)
     if environment is None:
         raise ContractError(
-            "setup requires a schema-version-2 project environment contract"
+            "setup requires a project environment contract"
         )
     if allowed_mutations and not apply:
         raise ContractError("--allow is valid only together with --apply")
@@ -581,8 +609,12 @@ def setup_environment(
         try:
             if action.kind == "managed-tool":
                 assert action.tool is not None
-                artifact = selected_artifact(environment.managed_tools[action.tool])
+                tool = environment.managed_tools[action.tool]
+                artifact = selected_artifact(tool)
                 issue = None
+                install_issue = managed_tool_preflight(tool)
+                if install_issue is not None:
+                    issue = f"setup action {action.identifier}: {install_issue}"
                 for command_name in artifact.commands:
                     previous = provided_commands.get(command_name)
                     if previous is not None and previous != action.identifier:
@@ -611,7 +643,7 @@ def setup_environment(
                     path_entries=installed_paths,
                     planned_commands=planned_commands,
                 )
-        except (ContractError, OSError) as error:
+        except Exception as error:
             issue = f"setup action {action.identifier}: {error}"
         if issue is not None:
             preflight_issues.append(issue)
@@ -718,7 +750,7 @@ def setup_environment(
                         for identifier in sorted(planned_tool_ids)
                     ),
                 )
-        except (ContractError, OSError) as error:
+        except Exception as error:
             result = {
                 "id": action.identifier,
                 "kind": action.kind,
@@ -730,6 +762,7 @@ def setup_environment(
                 ),
                 "workingDirectory": action.working_directory,
                 "error": str(error),
+                "errorType": type(error).__name__,
             }
         result["mutations"] = list(action.mutations)
         result["requires"] = list(action.requires)
@@ -745,7 +778,15 @@ def setup_environment(
                 "blocked": [],
                 "final": None,
             }
-    final = doctor_environment(root, project, profile=selected)
+    try:
+        final = doctor_environment(root, project, profile=selected)
+    except Exception as error:
+        final = {
+            "status": "failed-to-start",
+            "error": str(error),
+            "errorType": type(error).__name__,
+            "requirements": [],
+        }
     return {
         "status": "passed" if final["status"] == "passed" else "failed",
         "mode": "apply",

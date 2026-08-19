@@ -25,6 +25,25 @@ class ProjectContractTests(unittest.TestCase):
                     }
                 ]
             },
+            "environment": {
+                "defaultProfile": "development",
+                "foregroundOnly": True,
+                "managedTools": [],
+                "profiles": {"development": ["python-runtime"]},
+                "requirements": [
+                    {
+                        "id": "python-runtime",
+                        "description": "Supported Python runtime",
+                        "probe": {
+                            "run": ["python", "--version"],
+                            "timeoutSeconds": 15,
+                            "readOnly": True,
+                        },
+                        "remediation": "Install a supported Python runtime.",
+                    }
+                ],
+                "setupActions": [],
+            },
         }
 
     def test_accepts_argument_array_checks(self):
@@ -32,6 +51,13 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_rejects_a_second_project_manifest_version_during_development(self):
+        document = self.valid_project()
+        document["schemaVersion"] = 2
+
+        with self.assertRaisesRegex(ContractError, "schemaVersion: must be 1"):
+            validate_project(document)
 
     def test_rejects_shell_string(self):
         document = self.valid_project()
@@ -54,6 +80,13 @@ class ProjectContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "unknown properties"):
             validate_project(document)
 
+    def test_environment_requires_foreground_only_attestation(self):
+        document = self.valid_project()
+        document["environment"]["foregroundOnly"] = False
+
+        with self.assertRaisesRegex(ContractError, "foregroundOnly: must attest true"):
+            validate_project(document)
+
 
 class ArtifactContractTests(unittest.TestCase):
     def test_lock_requires_sorted_skills_and_digest(self):
@@ -71,7 +104,7 @@ class ArtifactContractTests(unittest.TestCase):
 
     def test_change_requires_approval_evidence(self):
         document = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "id": "sec-12",
             "summary": "Change authentication policy",
             "source": "SEC-12",
@@ -99,7 +132,7 @@ class ArtifactContractTests(unittest.TestCase):
 
     def test_approved_review_cannot_have_open_findings(self):
         document = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "changeId": "sec-12",
             "cycle": 1,
             "checkpoint": "abc",

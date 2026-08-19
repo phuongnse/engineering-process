@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "project": "sample-project",
   "lifecycle": {
     "requiredProfiles": ["development", "review"]
@@ -22,6 +22,7 @@
   },
   "environment": {
     "defaultProfile": "development",
+    "foregroundOnly": true,
     "managedTools": [],
     "profiles": {
       "development": [

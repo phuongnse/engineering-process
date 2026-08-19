@@ -57,7 +57,7 @@ class LifecycleTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 2,
+                    "schemaVersion": 1,
                     "id": "change-1",
                     "summary": "Change tracked behavior",
                     "source": "request-1",
@@ -214,7 +214,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 1,
                         "changeId": "change-1",
                         "cycle": 1,
                         "checkpoint": assignment["checkpoint"],
@@ -263,7 +263,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 1,
                         "changeId": "change-1",
                         "cycle": 1,
                         "checkpoint": assignment["checkpoint"],
@@ -335,7 +335,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 1,
                         "changeId": "change-1",
                         "cycle": 2,
                         "checkpoint": next_assignment["checkpoint"],
@@ -355,7 +355,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 1,
                         "changeId": "change-1",
                         "cycle": 2,
                         "checkpoint": next_assignment["checkpoint"],
@@ -378,7 +378,7 @@ class LifecycleTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 1,
                         "changeId": "change-1",
                         "cycle": 2,
                         "checkpoint": next_assignment["checkpoint"],
@@ -426,78 +426,6 @@ class LifecycleTests(unittest.TestCase):
                     attested_by="test-host",
                     evidence="The test host created an isolated context",
                 )
-
-    def test_schema_one_state_reconstructs_findings_after_review_was_cleared(self):
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory)
-            root = base / "project"
-            inputs = base / "inputs"
-            root.mkdir()
-            inputs.mkdir()
-            self.initialize_repository(root)
-            self.prepare_verified_change(root, inputs)
-            _, assignment = start_review(
-                root,
-                "change-1",
-                actor_id="reviewer",
-                context_id="review-context",
-                kind="agent",
-                method="isolated-context",
-                attested_by="test-host",
-                evidence="The test host created an isolated review context",
-            )
-            report_path = inputs / "review.json"
-            report_path.write_text(
-                json.dumps(
-                    {
-                        "schemaVersion": 2,
-                        "changeId": "change-1",
-                        "cycle": 1,
-                        "checkpoint": assignment["checkpoint"],
-                        "workspaceFingerprint": assignment["workspaceFingerprint"],
-                        "comparisonBase": assignment["comparisonBase"],
-                        "reviewer": assignment["reviewer"],
-                        "independence": assignment["independence"],
-                        "verdict": "changes-requested",
-                        "findings": [
-                            {
-                                "id": "legacy-finding",
-                                "severity": "high",
-                                "path": "tracked.txt",
-                                "line": 1,
-                                "summary": "Legacy state must preserve this finding",
-                                "evidence": "The reviewed behavior remains incomplete",
-                                "status": "open",
-                                "resolutionEvidence": None,
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            submit_review(root, "change-1", report_path)
-            begin_implementation(
-                root,
-                "change-1",
-                actor_id="implementer",
-                context_id="fix-context",
-                kind="agent",
-            )
-            state_path = root / ".process" / "runs" / "change-1" / "state.json"
-            legacy = json.loads(state_path.read_text(encoding="utf-8"))
-            legacy["schemaVersion"] = 1
-            del legacy["pendingFindings"]
-            legacy["phase"] = "approved"
-            state_path.write_text(json.dumps(legacy), encoding="utf-8")
-
-            migrated = load_state(root, "change-1")
-
-            self.assertEqual(2, migrated["schemaVersion"])
-            self.assertEqual("changes-requested", migrated["phase"])
-            self.assertEqual(
-                ["legacy-finding"],
-                [finding["id"] for finding in migrated["pendingFindings"]],
-            )
 
     @unittest.skipIf(sys.platform == "win32", "same-process Windows lock semantics differ")
     def test_concurrent_mutation_is_rejected(self):

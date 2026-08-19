@@ -129,7 +129,7 @@ class CliTests(unittest.TestCase):
             manifest.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": 2,
+                        "schemaVersion": 1,
                         "project": "sample",
                         "lifecycle": {
                             "requiredProfiles": ["development", "review"]
@@ -150,6 +150,7 @@ class CliTests(unittest.TestCase):
                         },
                         "environment": {
                             "defaultProfile": "development",
+                            "foregroundOnly": True,
                             "managedTools": [],
                             "profiles": {
                                 "development": ["ready"],

@@ -82,6 +82,14 @@ def _normalized_markdown(text: str) -> str:
     return text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _policy_key(text: str) -> str:
+    return "".join(
+        character
+        for character in normalized_rendered_inline_text(text)
+        if character.isalnum()
+    )
+
+
 def validate_conventional_subject(subject: str, *, label: str) -> list[str]:
     stripped = subject.strip()
     if not stripped:
@@ -269,9 +277,9 @@ def validate_project_extensions(body: str, *, allow_pending: bool) -> list[str]:
         if folded in labels:
             issues.append(f"Duplicate project-specific requirement: {label}")
         labels.add(folded)
-        normalized_line = normalized_rendered_inline_text(line)
+        normalized_line = _policy_key(line)
         if any(
-            required.casefold() in normalized_line
+            _policy_key(required) in normalized_line
             for required in REQUIRED_REQUIREMENTS
         ):
             issues.append(

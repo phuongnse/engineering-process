@@ -19,7 +19,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"const": 2},
+    "schemaVersion": {"const": 1},
     "id": {
       "type": "string",
       "maxLength": 64,

@@ -14,7 +14,6 @@ from .contracts import (
     ContractError,
     PROFILE_PATTERN,
     Project,
-    _validate_legacy_review,
     read_json,
     validate_change,
     validate_plan,
@@ -304,8 +303,8 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         if extra:
             detail.append(f"unknown: {', '.join(extra)}")
         raise ContractError(f"{path}: invalid lifecycle state ({'; '.join(detail)})")
-    if state["schemaVersion"] != 2:
-        raise ContractError(f"{path}.schemaVersion: must be 2")
+    if state["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
     if state["phase"] not in PHASES:
         raise ContractError(f"{path}.phase: invalid phase")
     if not isinstance(state["cycle"], int) or state["cycle"] < 1:
@@ -319,68 +318,9 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
     return state
 
 
-def _same_finding_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return all(left.get(field) == right.get(field) for field in FINDING_IDENTITY_FIELDS)
-
-
-def _replay_pending_findings(
-    project_root: Path, state: dict[str, Any], path: Path
-) -> list[dict[str, Any]]:
-    pending: dict[str, dict[str, Any]] = {}
-    review_events = 0
-    for event in state.get("history", []):
-        if not isinstance(event, dict) or event.get("event") != "review-submitted":
-            continue
-        review_events += 1
-        artifact = event.get("report")
-        if not isinstance(artifact, dict):
-            raise ContractError(
-                f"{path}: cannot safely migrate review history without report artifacts"
-            )
-        report_path = _artifact_path(project_root, artifact)
-        report = read_json(report_path)
-        _validate_legacy_review(report, str(report_path))
-        for finding in report["findings"]:
-            identifier = finding["id"]
-            previous = pending.get(identifier)
-            if previous is not None and not _same_finding_identity(previous, finding):
-                raise ContractError(
-                    f"{path}: cannot safely migrate finding {identifier} because its "
-                    "identity changed"
-                )
-            if finding["status"] in UNRESOLVED_FINDING_STATUSES:
-                pending[identifier] = dict(finding)
-            elif previous is not None:
-                del pending[identifier]
-    existing = state.get("pendingFindings")
-    if review_events == 0 and isinstance(existing, list):
-        return [dict(finding) for finding in existing]
-    return list(pending.values())
-
-
-def _migrate_state(
-    project_root: Path, state: Any, path: Path
-) -> dict[str, Any]:
-    if not isinstance(state, dict) or state.get("schemaVersion") != 1:
-        return state
-    migrated = dict(state)
-    migrated["pendingFindings"] = _replay_pending_findings(
-        project_root, state, path
-    )
-    if migrated["pendingFindings"] and migrated.get("phase") in {
-        "approved",
-        "completed",
-    }:
-        migrated["phase"] = "changes-requested"
-        migrated["completion"] = None
-    migrated["schemaVersion"] = 2
-    return migrated
-
-
 def load_state(project_root: Path, change_id: str) -> dict[str, Any]:
     path = _state_path(project_root, change_id)
-    state = _migrate_state(project_root, read_json(path), path)
-    return _validate_state(state, path)
+    return _validate_state(read_json(path), path)
 
 
 def _save_state(project_root: Path, state: dict[str, Any]) -> None:
@@ -447,7 +387,7 @@ def _start_change_unlocked(
     contract = _copy_document(project_root, contract_path, run_root / "contract.json")
     now = _timestamp()
     state: dict[str, Any] = {
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "changeId": change_id,
         "project": project.identifier,
         "phase": "specified",

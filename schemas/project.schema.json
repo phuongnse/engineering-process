@@ -4,13 +4,13 @@
   "title": "Engineering process project manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "project", "lifecycle", "profiles"],
+  "required": ["schemaVersion", "project", "lifecycle", "profiles", "environment"],
   "properties": {
     "$schema": {
       "type": "string"
     },
     "schemaVersion": {
-      "enum": [1, 2]
+      "const": 1
     },
     "project": {
       "type": "string",
@@ -51,26 +51,6 @@
       "$ref": "#/$defs/environment"
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "schemaVersion": {
-            "const": 2
-          }
-        },
-        "required": ["schemaVersion"]
-      },
-      "then": {
-        "required": ["environment"]
-      },
-      "else": {
-        "not": {
-          "required": ["environment"]
-        }
-      }
-    }
-  ],
   "$defs": {
     "check": {
       "type": "object",
@@ -105,11 +85,14 @@
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["defaultProfile", "profiles", "requirements", "managedTools", "setupActions"],
+      "required": ["defaultProfile", "foregroundOnly", "profiles", "requirements", "managedTools", "setupActions"],
       "properties": {
         "defaultProfile": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "foregroundOnly": {
+          "const": true
         },
         "profiles": {
           "type": "object",

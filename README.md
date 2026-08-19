@@ -63,7 +63,7 @@ explicitly. `sync --check` and `doctor` detect drift in skills, the managed agen
 contract, and the pull-request block. A consumer never authors or maintains process
 skills locally.
 
-Schema-version-2 project manifests also declare environment profiles, project-attested
+The single project-manifest contract includes environment profiles, project-attested
 read-only requirement probes, remediation, declarative managed-tool artifacts, and
 optional setup actions. Use the same interface in every consumer:
 
@@ -110,13 +110,14 @@ The zero checksum above is a shape example only; a real manifest must contain th
 publisher artifact's verified digest and declare every supported platform explicitly.
 
 `doctor` executes only probes explicitly attested `readOnly: true` and never invokes
-setup actions. The project owner remains responsible for the truth of that attestation.
+setup actions. The environment contract must also attest `foregroundOnly: true` for
+every project command. The project owner remains responsible for those attestations.
 `setup` is plan-only unless `--apply` is present, computes
 the full dependency-ordered action plan before execution, and refuses to run any
 action until every declared mutation scope has been approved. Supported scopes are
 `network`, `project-files`, `user-files`, and `host-configuration`. Commands are
 argument arrays executed without a shell, with bounded output, timeout, exit status,
-complete process-tree termination, and command digest evidence. `exec` runs an
+owned process-group/job cleanup, and command digest evidence. `exec` runs an
 ad-hoc project command only after the selected environment passes and injects paths
 for verified managed tools. After applying a plan, processctl reruns the original
 probes; an installer exit code alone never proves readiness.
@@ -129,15 +130,18 @@ project-native dependency commands, dependency edges, and remediation. Project s
 does not carry a generic downloader, archive installer, doctor, or setup lifecycle.
 Host prerequisites with no safe automated setup action stay blocking.
 
-Probe `readOnly` and command-action mutation scopes are project-owner attestations,
-not an operating-system sandbox: `processctl` cannot infer arbitrary subprocess side
-effects. Managed-tool actions are stronger—the distribution constrains them to
+Probe `readOnly`, foreground-only execution, and command-action mutation scopes are
+project-owner attestations, not an operating-system sandbox: `processctl` cannot infer
+arbitrary subprocess side effects. Commands must not daemonize, start a detached
+session, or leave background work behind. The runner owns a POSIX process group and a
+Windows Job Object, but no portable POSIX primitive can contain a deliberately detached
+process. Managed-tool actions are stronger—the distribution constrains them to
 HTTPS, declared size/checksum/archive/path boundaries and derives their approvals as
 `network` plus `user-files`. Use a command action only for project-native package
 managers or domain preparation that cannot be represented by the managed-tool
-primitive, and declare every possible scope truthfully. Schema-version-1 manifests
-remain readable during the pilot, but cannot use `processctl setup`; migrate them to
-version 2 rather than creating a project-local doctor or setup lifecycle.
+primitive, and declare every possible scope truthfully. There is no legacy manifest
+mode during unpublished development: every consumer receives the complete environment
+contract instead of creating a project-local doctor or setup lifecycle.
 
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
