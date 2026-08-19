@@ -120,6 +120,8 @@ class PublicationTests(unittest.TestCase):
                 "Independent<!-- --> review is optional",
                 "Independent&#32;review is optional",
                 "Independent\u00a0review is optional",
+                "Independent\u00adreview is optional",
+                "Independent\u200breview is optional",
             )
         )
 

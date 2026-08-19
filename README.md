@@ -63,16 +63,51 @@ explicitly. `sync --check` and `doctor` detect drift in skills, the managed agen
 contract, and the pull-request block. A consumer never authors or maintains process
 skills locally.
 
-Schema-version-2 project manifests also declare environment profiles, project-attested read-only
-requirement probes, remediation, and optional setup actions. Use the same interface
-in every consumer:
+Schema-version-2 project manifests also declare environment profiles, project-attested
+read-only requirement probes, remediation, declarative managed-tool artifacts, and
+optional setup actions. Use the same interface in every consumer:
 
 ~~~text
 processctl doctor --project-root . --profile development
 processctl setup --project-root . --profile development
 processctl setup --project-root . --profile development --apply \
-  --allow network --allow project-files
+  --allow network --allow user-files --allow project-files
+processctl exec --project-root . --profile development -- \
+  python scripts/project.py local-dev
 ~~~
+
+A portable tool is data, not a consumer-owned installer. Each project pins the
+version and one immutable artifact contract per supported platform, then references
+the tool from a `managed-tool` setup action:
+
+~~~json
+{
+  "managedTools": [{
+    "id": "sample-tool",
+    "version": "1.2.3",
+    "artifacts": [{
+      "platform": "linux-glibc-x64",
+      "url": "https://publisher.example/sample-tool-1.2.3.tar.gz",
+      "checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "archiveFormat": "tar.gz",
+      "stripComponents": 1,
+      "maxDownloadBytes": 50000000,
+      "maxExtractedBytes": 200000000,
+      "maxFiles": 10000,
+      "commands": {"sample-tool": "bin/sample-tool"}
+    }]
+  }],
+  "setupActions": [{
+    "id": "install-sample-tool",
+    "kind": "managed-tool",
+    "tool": "sample-tool",
+    "timeoutSeconds": 600
+  }]
+}
+~~~
+
+The zero checksum above is a shape example only; a real manifest must contain the
+publisher artifact's verified digest and declare every supported platform explicitly.
 
 `doctor` executes only probes explicitly attested `readOnly: true` and never invokes
 setup actions. The project owner remains responsible for the truth of that attestation.
@@ -81,15 +116,28 @@ the full dependency-ordered action plan before execution, and refuses to run any
 action until every declared mutation scope has been approved. Supported scopes are
 `network`, `project-files`, `user-files`, and `host-configuration`. Commands are
 argument arrays executed without a shell, with bounded output, timeout, exit status,
-and command digest evidence. After applying a plan, processctl reruns the original
+complete process-tree termination, and command digest evidence. `exec` runs an
+ad-hoc project command only after the selected environment passes and injects paths
+for verified managed tools. After applying a plan, processctl reruns the original
 probes; an installer exit code alone never proves readiness.
 
-The distribution owns this detection/planning/execution machinery. A consumer owns
-only its environment data: exact probes, versions expressed by output regex, setup
-argv, dependency edges, and remediation. Host prerequisites with no safe automated
-setup action stay blocking. Schema-version-1 manifests remain readable during the
-pilot, but cannot use `processctl setup`; migrate them to version 2 rather than
-creating a project-local doctor or setup lifecycle.
+The distribution owns detection, planning, bounded execution, HTTPS acquisition,
+size limits, checksum verification, safe archive extraction, atomic user-local tool
+installation, and managed PATH injection. A consumer owns only declarative environment
+data: exact probes, tool versions and per-platform artifacts, immutable checksums,
+project-native dependency commands, dependency edges, and remediation. Project source
+does not carry a generic downloader, archive installer, doctor, or setup lifecycle.
+Host prerequisites with no safe automated setup action stay blocking.
+
+Probe `readOnly` and command-action mutation scopes are project-owner attestations,
+not an operating-system sandbox: `processctl` cannot infer arbitrary subprocess side
+effects. Managed-tool actions are stronger—the distribution constrains them to
+HTTPS, declared size/checksum/archive/path boundaries and derives their approvals as
+`network` plus `user-files`. Use a command action only for project-native package
+managers or domain preparation that cannot be represented by the managed-tool
+primitive, and declare every possible scope truthfully. Schema-version-1 manifests
+remain readable during the pilot, but cannot use `processctl setup`; migrate them to
+version 2 rather than creating a project-local doctor or setup lifecycle.
 
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
@@ -209,7 +257,10 @@ authenticates who produced it.
 
 - `project.json` declares baseline profiles and exact argument-array checks.
 - `process.lock` pins the process version, selected skills, and a digest covering the
-  runtime, schemas, templates, bundle catalog, and complete selected skill resources.
+  runtime, canonical exact runtime/build/development dependency locks, schemas,
+  templates, bundle catalog, and
+  complete selected skill resources. Startup fails when installed runtime dependency
+  versions differ from that lock.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle, and
   completion-related artifacts.
 - Project commands run without a shell and inherit the caller environment. Never put
@@ -227,9 +278,11 @@ authenticates who produced it.
 ## Development
 
 ~~~text
-python -m unittest discover -s tests -p 'test_*.py'
-python processctl.py skills validate --root .agents/skills
-python processctl.py digest
+python -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python processctl.py skills validate --root .agents/skills
+.venv/bin/python processctl.py digest
 ~~~
 
 Version 0.x remains a compatibility pilot. A 1.0 release requires publishing the CLI,

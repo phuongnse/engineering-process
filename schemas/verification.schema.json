@@ -103,6 +103,12 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "pathEntries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "error": {
             "type": "string"
           }

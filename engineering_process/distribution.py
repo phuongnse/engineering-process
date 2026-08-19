@@ -58,7 +58,7 @@ def distribution_digest(
     )
     entries: list[tuple[str, Path]] = []
     for path in _files(runtime_root):
-        if path.suffix == ".py":
+        if path.suffix in {".py", ".txt"}:
             entries.append(
                 (
                     f"runtime/engineering_process/{path.relative_to(runtime_root).as_posix()}",

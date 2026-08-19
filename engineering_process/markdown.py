@@ -7,6 +7,11 @@ import unicodedata
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from .runtime import assert_runtime_dependencies
+
+
+assert_runtime_dependencies()
+
 
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 RAW_HTML_LIKE_LINE_RE = re.compile(r"(?m)^ {0,3}<(?:/?[A-Za-z]|[!?])")
@@ -66,4 +71,8 @@ def normalized_rendered_inline_text(text: str) -> str:
 
     rendered = _inline_text(_COMMONMARK.parseInline(text))
     normalized = unicodedata.normalize("NFKC", rendered)
+    normalized = "".join(
+        " " if unicodedata.category(character) == "Cf" else character
+        for character in normalized
+    )
     return " ".join(normalized.split()).casefold()

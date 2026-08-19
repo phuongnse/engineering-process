@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-import signal
 import stat
 import subprocess
 import sys
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .contracts import Check, ContractError, Project
+from .environment import environment_path_entries, execute_command
 
 
 def _timestamp() -> str:
@@ -108,102 +106,32 @@ def source_state(root: Path) -> dict[str, Any]:
     return _source_state(root)
 
 
-def _contained_working_directory(root: Path, relative: str) -> Path:
-    resolved_root = root.resolve()
-    working = (resolved_root / relative).resolve()
-    try:
-        working.relative_to(resolved_root)
-    except ValueError as error:
-        raise ContractError(
-            f"working directory escapes the project root: {relative}"
-        ) from error
-    if not working.is_dir():
-        raise ContractError(f"working directory does not exist: {relative}")
-    return working
-
-
-def _stop_process(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        if os.name == "posix":
-            os.killpg(process.pid, signal.SIGTERM)
-        else:
-            process.terminate()
-        process.wait(timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        try:
-            if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-        except OSError:
-            pass
-        process.wait()
-
-
-def _run_check(root: Path, check: Check) -> dict[str, Any]:
-    working = _contained_working_directory(root, check.working_directory)
-    started = _timestamp()
-    monotonic_start = time.monotonic()
-    command_digest = hashlib.sha256(
-        json.dumps(check.run, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+def _run_check(
+    root: Path, check: Check, *, path_entries: tuple[Path, ...] = ()
+) -> dict[str, Any]:
     print(f"[{check.identifier}] {' '.join(check.run)}", file=sys.stderr)
-    creation_flags = (
-        subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    execution = execute_command(
+        root,
+        identifier=check.identifier,
+        run=check.run,
+        timeout_seconds=check.timeout_seconds,
+        working_directory=check.working_directory,
+        path_entries=path_entries,
+        stream_output=True,
     )
-    try:
-        process = subprocess.Popen(
-            check.run,
-            cwd=working,
-            stdin=subprocess.DEVNULL,
-            stdout=sys.stderr,
-            stderr=sys.stderr,
-            shell=False,
-            start_new_session=os.name == "posix",
-            creationflags=creation_flags,
-        )
-    except OSError as error:
-        return {
-            "id": check.identifier,
-            "status": "failed-to-start",
-            "exitCode": None,
-            "startedAt": started,
-            "durationMs": round((time.monotonic() - monotonic_start) * 1000),
-            "workingDirectory": check.working_directory,
-            "command": list(check.run),
-            "commandSha256": command_digest,
-            "error": str(error),
-        }
-    status = "passed"
-    exit_code: int | None
-    error_message: str | None = None
-    try:
-        exit_code = process.wait(timeout=check.timeout_seconds)
-        if exit_code != 0:
-            status = "failed"
-    except subprocess.TimeoutExpired:
-        status = "timed-out"
-        error_message = f"exceeded {check.timeout_seconds} seconds"
-        _stop_process(process)
-        exit_code = process.returncode
-    except KeyboardInterrupt:
-        _stop_process(process)
-        raise
-    result: dict[str, Any] = {
-        "id": check.identifier,
-        "status": status,
-        "exitCode": exit_code,
-        "startedAt": started,
-        "durationMs": round((time.monotonic() - monotonic_start) * 1000),
-        "workingDirectory": check.working_directory,
-        "command": list(check.run),
-        "commandSha256": command_digest,
+    allowed = {
+        "id",
+        "status",
+        "exitCode",
+        "startedAt",
+        "durationMs",
+        "workingDirectory",
+        "command",
+        "commandSha256",
+        "error",
+        "pathEntries",
     }
-    if error_message is not None:
-        result["error"] = error_message
-    return result
+    return {key: value for key, value in execution.items() if key in allowed}
 
 
 def run_profile(root: Path, project: Project, profile: str) -> dict[str, Any]:
@@ -215,7 +143,10 @@ def run_profile(root: Path, project: Project, profile: str) -> dict[str, Any]:
         )
     started = _timestamp()
     source_before = _source_state(root)
-    results = [_run_check(root, check) for check in checks]
+    path_entries = environment_path_entries(project, profile=profile)
+    results = [
+        _run_check(root, check, path_entries=path_entries) for check in checks
+    ]
     source_after = _source_state(root)
     source_changed = (
         source_before["fingerprint"] is not None

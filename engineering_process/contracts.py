@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
@@ -22,6 +23,12 @@ MUTATION_SCOPES = {
     "project-files",
     "user-files",
 }
+TOOL_VERSION_PATTERN = re.compile(r"^[0-9A-Za-z](?:[0-9A-Za-z._+-]*[0-9A-Za-z])?$")
+PLATFORM_PATTERN = re.compile(
+    r"^(?:linux-(?:glibc|musl)-(?:x64|arm64)|macos-(?:x64|arm64)|windows-(?:x64|arm64))$"
+)
+COMMAND_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+CHECKSUM_PATTERN = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$")
 
 
 class ContractError(ValueError):
@@ -55,9 +62,31 @@ class EnvironmentRequirement:
 
 
 @dataclass(frozen=True)
+class ManagedToolArtifact:
+    platform: str
+    url: str
+    checksum: str
+    archive_format: str
+    strip_components: int
+    max_download_bytes: int
+    max_extracted_bytes: int
+    max_files: int
+    commands: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ManagedTool:
+    identifier: str
+    version: str
+    artifacts: dict[str, ManagedToolArtifact]
+
+
+@dataclass(frozen=True)
 class SetupAction:
     identifier: str
+    kind: str
     run: tuple[str, ...]
+    tool: str | None
     timeout_seconds: int
     working_directory: str
     mutations: tuple[str, ...]
@@ -69,6 +98,7 @@ class ProjectEnvironment:
     default_profile: str
     profiles: dict[str, tuple[str, ...]]
     requirements: dict[str, EnvironmentRequirement]
+    managed_tools: dict[str, ManagedTool]
     setup_actions: dict[str, SetupAction]
 
 
@@ -185,11 +215,54 @@ def _working_directory(value: Any, path: str) -> str:
     return working_directory
 
 
+def _bounded_integer(value: Any, path: str, *, minimum: int, maximum: int) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < minimum
+        or value > maximum
+    ):
+        raise ContractError(
+            f"{path}: must be an integer from {minimum} to {maximum}"
+        )
+    return value
+
+
+def _relative_tool_path(value: Any, path: str) -> str:
+    text = _string(value, path, max_length=512)
+    candidate = Path(text)
+    if candidate.is_absolute() or ".." in candidate.parts or text in {".", ".."}:
+        raise ContractError(f"{path}: must be a contained relative file path")
+    return candidate.as_posix()
+
+
+def _https_url(value: Any, path: str) -> str:
+    text = _string(value, path, max_length=2048)
+    parsed = urlsplit(text)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ContractError(
+            f"{path}: must be an HTTPS URL without credentials or a fragment"
+        )
+    return text
+
+
 def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
     value = _object(document, path)
     _exact_keys(
         value,
-        required={"defaultProfile", "profiles", "requirements", "setupActions"},
+        required={
+            "defaultProfile",
+            "managedTools",
+            "profiles",
+            "requirements",
+            "setupActions",
+        },
         path=path,
     )
     default_profile = _string(
@@ -197,6 +270,151 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
     )
     if PROFILE_PATTERN.fullmatch(default_profile) is None:
         raise ContractError(f"{path}.defaultProfile: invalid profile name")
+
+    raw_tools = value["managedTools"]
+    if not isinstance(raw_tools, list):
+        raise ContractError(f"{path}.managedTools: must be an array")
+    if len(raw_tools) > 64:
+        raise ContractError(f"{path}.managedTools: exceeds 64 items")
+    managed_tools: dict[str, ManagedTool] = {}
+    for tool_index, raw_tool in enumerate(raw_tools):
+        tool_path = f"{path}.managedTools[{tool_index}]"
+        tool = _object(raw_tool, tool_path)
+        _exact_keys(
+            tool,
+            required={"id", "version", "artifacts"},
+            path=tool_path,
+        )
+        identifier = _string(tool["id"], f"{tool_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{tool_path}.id: invalid tool name")
+        if identifier in managed_tools:
+            raise ContractError(f"{path}.managedTools: duplicate tool id {identifier}")
+        version = _string(tool["version"], f"{tool_path}.version", max_length=128)
+        if TOOL_VERSION_PATTERN.fullmatch(version) is None:
+            raise ContractError(f"{tool_path}.version: invalid portable version")
+        raw_artifacts = tool["artifacts"]
+        if not isinstance(raw_artifacts, list) or not raw_artifacts:
+            raise ContractError(f"{tool_path}.artifacts: must contain at least one item")
+        if len(raw_artifacts) > 16:
+            raise ContractError(f"{tool_path}.artifacts: exceeds 16 items")
+        artifacts: dict[str, ManagedToolArtifact] = {}
+        for artifact_index, raw_artifact in enumerate(raw_artifacts):
+            artifact_path = f"{tool_path}.artifacts[{artifact_index}]"
+            artifact = _object(raw_artifact, artifact_path)
+            _exact_keys(
+                artifact,
+                required={
+                    "archiveFormat",
+                    "checksum",
+                    "commands",
+                    "maxDownloadBytes",
+                    "maxExtractedBytes",
+                    "maxFiles",
+                    "platform",
+                    "stripComponents",
+                    "url",
+                },
+                path=artifact_path,
+            )
+            platform_name = _string(
+                artifact["platform"], f"{artifact_path}.platform", max_length=32
+            )
+            if PLATFORM_PATTERN.fullmatch(platform_name) is None:
+                raise ContractError(f"{artifact_path}.platform: unsupported platform")
+            if platform_name in artifacts:
+                raise ContractError(
+                    f"{tool_path}.artifacts: duplicate platform {platform_name}"
+                )
+            archive_format = artifact["archiveFormat"]
+            if archive_format not in {"file", "tar.gz", "zip"}:
+                raise ContractError(
+                    f"{artifact_path}.archiveFormat: unsupported format"
+                )
+            strip_components = _bounded_integer(
+                artifact["stripComponents"],
+                f"{artifact_path}.stripComponents",
+                minimum=0,
+                maximum=1,
+            )
+            raw_commands = _object(artifact["commands"], f"{artifact_path}.commands")
+            if not raw_commands:
+                raise ContractError(
+                    f"{artifact_path}.commands: must define at least one command"
+                )
+            commands: dict[str, str] = {}
+            for command_name, relative_path in raw_commands.items():
+                if COMMAND_PATTERN.fullmatch(command_name) is None:
+                    raise ContractError(
+                        f"{artifact_path}.commands.{command_name}: invalid command name"
+                    )
+                commands[command_name] = _relative_tool_path(
+                    relative_path, f"{artifact_path}.commands.{command_name}"
+                )
+                basename = Path(commands[command_name]).name
+                allowed_basenames = (
+                    {
+                        command_name.casefold(),
+                        f"{command_name}.bat".casefold(),
+                        f"{command_name}.cmd".casefold(),
+                        f"{command_name}.exe".casefold(),
+                    }
+                    if platform_name.startswith("windows-")
+                    else {command_name.casefold()}
+                )
+                if basename.casefold() not in allowed_basenames:
+                    raise ContractError(
+                        f"{artifact_path}.commands.{command_name}: executable basename "
+                        "must match the command name"
+                    )
+            if list(commands) != sorted(commands):
+                raise ContractError(f"{artifact_path}.commands: must be sorted")
+            if archive_format == "file" and (
+                strip_components != 0 or len(commands) != 1
+            ):
+                raise ContractError(
+                    f"{artifact_path}: file artifacts require stripComponents 0 and one command"
+                )
+            checksum = _string(
+                artifact["checksum"], f"{artifact_path}.checksum", max_length=136
+            )
+            if CHECKSUM_PATTERN.fullmatch(checksum) is None:
+                raise ContractError(f"{artifact_path}.checksum: invalid checksum")
+            artifacts[platform_name] = ManagedToolArtifact(
+                platform=platform_name,
+                url=_https_url(artifact["url"], f"{artifact_path}.url"),
+                checksum=checksum,
+                archive_format=archive_format,
+                strip_components=strip_components,
+                max_download_bytes=_bounded_integer(
+                    artifact["maxDownloadBytes"],
+                    f"{artifact_path}.maxDownloadBytes",
+                    minimum=1,
+                    maximum=4_294_967_296,
+                ),
+                max_extracted_bytes=_bounded_integer(
+                    artifact["maxExtractedBytes"],
+                    f"{artifact_path}.maxExtractedBytes",
+                    minimum=1,
+                    maximum=8_589_934_592,
+                ),
+                max_files=_bounded_integer(
+                    artifact["maxFiles"],
+                    f"{artifact_path}.maxFiles",
+                    minimum=1,
+                    maximum=1_000_000,
+                ),
+                commands=commands,
+            )
+        if list(artifacts) != sorted(artifacts):
+            raise ContractError(f"{tool_path}.artifacts: must be sorted by platform")
+        managed_tools[identifier] = ManagedTool(
+            identifier=identifier,
+            version=version,
+            artifacts=artifacts,
+        )
+    if list(managed_tools) != sorted(managed_tools):
+        raise ContractError(f"{path}.managedTools: must be sorted by id")
 
     raw_actions = value["setupActions"]
     if not isinstance(raw_actions, list):
@@ -207,26 +425,57 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
     for index, raw_action in enumerate(raw_actions):
         action_path = f"{path}.setupActions[{index}]"
         action = _object(raw_action, action_path)
-        _exact_keys(
-            action,
-            required={"id", "run", "timeoutSeconds", "mutations"},
-            optional={"workingDirectory", "requires"},
-            path=action_path,
-        )
+        kind = action.get("kind")
+        if kind == "command":
+            _exact_keys(
+                action,
+                required={"id", "kind", "run", "timeoutSeconds", "mutations"},
+                optional={"workingDirectory", "requires"},
+                path=action_path,
+            )
+        elif kind == "managed-tool":
+            _exact_keys(
+                action,
+                required={"id", "kind", "timeoutSeconds", "tool"},
+                optional={"requires"},
+                path=action_path,
+            )
+        else:
+            raise ContractError(
+                f"{action_path}.kind: must be command or managed-tool"
+            )
         identifier = _string(action["id"], f"{action_path}.id", max_length=64)
         if PROFILE_PATTERN.fullmatch(identifier) is None:
             raise ContractError(f"{action_path}.id: invalid action name")
         if identifier in actions:
             raise ContractError(f"{path}.setupActions: duplicate action id {identifier}")
-        mutations = _string_list(
-            action["mutations"], f"{action_path}.mutations", minimum=1
-        )
-        invalid_mutations = sorted(set(mutations) - MUTATION_SCOPES)
-        if invalid_mutations:
-            raise ContractError(
-                f"{action_path}.mutations: unsupported scopes: "
-                + ", ".join(invalid_mutations)
+        if kind == "command":
+            mutations = _string_list(
+                action["mutations"], f"{action_path}.mutations", minimum=1
             )
+            invalid_mutations = sorted(set(mutations) - MUTATION_SCOPES)
+            if invalid_mutations:
+                raise ContractError(
+                    f"{action_path}.mutations: unsupported scopes: "
+                    + ", ".join(invalid_mutations)
+                )
+            run = tuple(_string_list(action["run"], f"{action_path}.run"))
+            tool_identifier = None
+            working_directory = _working_directory(
+                action.get("workingDirectory", "."),
+                f"{action_path}.workingDirectory",
+            )
+        else:
+            mutations = ["network", "user-files"]
+            run = ()
+            tool_identifier = _string(
+                action["tool"], f"{action_path}.tool", max_length=64
+            )
+            if tool_identifier not in managed_tools:
+                raise ContractError(
+                    f"{action_path}.tool: undefined managed tool {tool_identifier}"
+                )
+            working_directory = "."
         requires = _string_list(
             action.get("requires", []),
             f"{action_path}.requires",
@@ -239,14 +488,13 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
             raise ContractError(f"{action_path}.requires: must be sorted")
         actions[identifier] = SetupAction(
             identifier=identifier,
-            run=tuple(_string_list(action["run"], f"{action_path}.run")),
+            kind=kind,
+            run=run,
+            tool=tool_identifier,
             timeout_seconds=_timeout(
                 action["timeoutSeconds"], f"{action_path}.timeoutSeconds"
             ),
-            working_directory=_working_directory(
-                action.get("workingDirectory", "."),
-                f"{action_path}.workingDirectory",
-            ),
+            working_directory=working_directory,
             mutations=tuple(sorted(mutations)),
             requires=tuple(requires),
         )
@@ -403,6 +651,7 @@ def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
         default_profile=default_profile,
         profiles=profiles,
         requirements=requirements,
+        managed_tools=managed_tools,
         setup_actions=actions,
     )
 

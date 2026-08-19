@@ -22,6 +22,8 @@ from .contracts import (
 from .distribution import distribution_digest
 from .environment import (
     doctor_environment,
+    environment_path_entries,
+    execute_command,
     require_environment_profile,
     setup_environment,
 )
@@ -96,6 +98,11 @@ def command_project_validate(args: argparse.Namespace) -> int:
             requiredProfiles=list(project.required_profiles),
             environmentProfiles=(
                 sorted(project.environment.profiles) if project.environment else []
+            ),
+            managedTools=(
+                sorted(project.environment.managed_tools)
+                if project.environment
+                else []
             ),
         ),
     )
@@ -515,6 +522,45 @@ def command_setup(args: argparse.Namespace) -> int:
     return 0 if report["status"] in {"passed", "planned"} else 1
 
 
+def command_exec(args: argparse.Namespace) -> int:
+    run = args.run[1:] if args.run[:1] == ["--"] else args.run
+    if not run:
+        raise ContractError("exec requires a command after `--`")
+    if args.timeout_seconds < 1 or args.timeout_seconds > 86_400:
+        raise ContractError("--timeout-seconds must be from 1 to 86400")
+    lock = load_lock(args.project_root)
+    issues = synchronized_state(args.project_root, args.process_root, lock)
+    if issues:
+        raise ContractError("\n".join(issues))
+    project_path = args.project_root / ".process" / "project.json"
+    project = validate_project(read_json(project_path), str(project_path))
+    require_environment_profile(args.project_root, project, profile=args.profile)
+    report = execute_command(
+        args.project_root,
+        identifier="project-command",
+        run=tuple(run),
+        timeout_seconds=args.timeout_seconds,
+        working_directory=args.working_directory,
+        path_entries=environment_path_entries(project, profile=args.profile),
+        stream_output=not args.json,
+    )
+    if args.json:
+        _emit(args, _result("exec", status=report["status"], execution=report))
+    else:
+        _emit(
+            args,
+            _result(
+                "exec",
+                status=report["status"],
+                exitCode=report["exitCode"],
+                durationMs=report["durationMs"],
+                commandExecuted=report["command"],
+                error=report.get("error"),
+            ),
+        )
+    return 0 if report["status"] == "passed" else 1
+
+
 def command_verify(args: argparse.Namespace) -> int:
     lock = load_lock(args.project_root)
     integration_issues = synchronized_state(
@@ -807,6 +853,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json(setup)
     setup.set_defaults(handler=command_setup)
+
+    execute = commands.add_parser(
+        "exec",
+        help="Run one project command with its verified managed-tool environment",
+    )
+    _add_project_root(execute)
+    _add_process_root(execute)
+    execute.add_argument("--profile", required=True)
+    execute.add_argument("--timeout-seconds", type=int, default=3600)
+    execute.add_argument("--working-directory", default=".")
+    _add_json(execute)
+    execute.add_argument("run", nargs=argparse.REMAINDER)
+    execute.set_defaults(handler=command_exec)
 
     verify = commands.add_parser("verify", help="Run a project-owned verification profile")
     _add_project_root(verify)

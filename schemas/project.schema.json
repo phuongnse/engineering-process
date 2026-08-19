@@ -105,7 +105,7 @@
     "environment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["defaultProfile", "profiles", "requirements", "setupActions"],
+      "required": ["defaultProfile", "profiles", "requirements", "managedTools", "setupActions"],
       "properties": {
         "defaultProfile": {
           "type": "string",
@@ -135,11 +135,108 @@
             "$ref": "#/$defs/environmentRequirement"
           }
         },
+        "managedTools": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/managedTool"
+          }
+        },
         "setupActions": {
           "type": "array",
           "maxItems": 128,
           "items": {
             "$ref": "#/$defs/setupAction"
+          }
+        }
+      }
+    },
+    "managedTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "artifacts"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[0-9A-Za-z](?:[0-9A-Za-z._+-]*[0-9A-Za-z])?$"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/managedToolArtifact"
+          }
+        }
+      }
+    },
+    "managedToolArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "url",
+        "checksum",
+        "archiveFormat",
+        "stripComponents",
+        "maxDownloadBytes",
+        "maxExtractedBytes",
+        "maxFiles",
+        "commands"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "pattern": "^(?:linux-(?:glibc|musl)-(?:x64|arm64)|macos-(?:x64|arm64)|windows-(?:x64|arm64))$"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://"
+        },
+        "checksum": {
+          "type": "string",
+          "pattern": "^(?:sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$"
+        },
+        "archiveFormat": {
+          "enum": ["file", "tar.gz", "zip"]
+        },
+        "stripComponents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maxDownloadBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967296
+        },
+        "maxExtractedBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8589934592
+        },
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "commands": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
           }
         }
       }
@@ -211,14 +308,23 @@
       }
     },
     "setupAction": {
+      "oneOf": [
+        {"$ref": "#/$defs/commandSetupAction"},
+        {"$ref": "#/$defs/managedToolSetupAction"}
+      ]
+    },
+    "commandSetupAction": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "run", "timeoutSeconds", "mutations"],
+      "required": ["id", "kind", "run", "timeoutSeconds", "mutations"],
       "properties": {
         "id": {
           "type": "string",
           "maxLength": 64,
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "kind": {
+          "const": "command"
         },
         "run": {
           "type": "array",
@@ -250,6 +356,39 @@
               "user-files"
             ]
           }
+        },
+        "requires": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          }
+        }
+      }
+    },
+    "managedToolSetupAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "tool", "timeoutSeconds"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "kind": {
+          "const": "managed-tool"
+        },
+        "tool": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
         },
         "requires": {
           "type": "array",

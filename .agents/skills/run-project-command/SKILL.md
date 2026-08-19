@@ -19,20 +19,26 @@ repeatable execution deterministic.
    command, environment, and acceptance boundary remain valid.
 3. Select the narrowest declared command. Use a broad profile only for cross-cutting
    invalidation, an inseparable dependency, or an explicit project requirement.
-4. Execute argument arrays without a shell. Keep secrets out of arguments and
+4. Execute declared checks through `processctl verify`, or ad-hoc project commands
+   through `processctl exec --profile ... -- ...` so verified managed-tool paths are
+   injected. Keep secrets out of arguments and
    evidence. Do not run commands concurrently when they share mutable build outputs.
 5. On a missing prerequisite, use `processctl setup` to inspect the complete plan.
    Apply it only with explicit approval for every declared mutation scope. On failure,
    preserve the exact command, exit status, environment, and missing prerequisite. Do
    not substitute another runtime or evidence boundary.
-6. Add a reusable command or deterministic check only in its distribution owner;
-   consumer manifests bind project data and commands but do not reimplement process.
+6. Declare pinned portable tool artifacts with immutable checksums; acquisition,
+   verification, safe extraction, atomic installation, and PATH injection remain
+   distribution-owned. Add project-native dependency commands or deterministic checks
+   only in the manifest; consumers do not reimplement process machinery.
 
 ## Hard gates
 
 - Native read-only inspection is not verification evidence unless declared as such.
 - Do not replace focused missing evidence with an unrelated broad suite.
 - Do not install tools, change host trust, or mutate external state without authority.
+- Treat `readOnly` and command mutation scopes as project-owner attestations, not a
+  sandbox. Reject an incomplete scope declaration instead of assuming confinement.
 - An installer exit code is not readiness evidence; the declared probe must pass after
   setup.
 

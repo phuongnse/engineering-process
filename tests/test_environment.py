@@ -1,5 +1,8 @@
+import os
+import signal
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -17,6 +20,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
         actions.append(
             {
                 "id": "prepare-parent",
+                "kind": "command",
                 "run": [
                     sys.executable,
                     "-c",
@@ -33,6 +37,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
         command += "Path('ready.txt').write_text('ready')"
         action = {
             "id": "prepare-environment",
+            "kind": "command",
             "run": [sys.executable, "-c", command],
             "timeoutSeconds": 30,
             "mutations": ["project-files"],
@@ -75,6 +80,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
         },
         "environment": {
             "defaultProfile": "development",
+            "managedTools": [],
             "profiles": {
                 "development": ["project-environment"],
                 "review": ["project-environment"],
@@ -132,6 +138,28 @@ class EnvironmentTests(unittest.TestCase):
             self.assertIn("unapproved mutation scopes", report["blocked"][0])
             self.assertFalse((root / "ready.txt").exists())
 
+    def test_setup_preflights_every_working_directory_before_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = project_document(dependency=True)
+            document["environment"]["setupActions"][1][
+                "workingDirectory"
+            ] = "missing"
+            project = validate_project(document)
+
+            report = setup_environment(
+                root,
+                project,
+                profile=None,
+                apply=True,
+                allowed_mutations={"project-files"},
+            )
+
+            self.assertEqual("blocked", report["status"])
+            self.assertIn("working directory does not exist", report["blocked"][0])
+            self.assertFalse((root / "parent.txt").exists())
+            self.assertFalse((root / "ready.txt").exists())
+
     def test_setup_applies_dependency_order_and_reprobes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -186,6 +214,61 @@ class EnvironmentTests(unittest.TestCase):
             self.assertTrue(requirement["outputTruncated"])
             self.assertLessEqual(len(requirement["stdout"].encode()), 16_384)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
+    def test_probe_terminates_descendant_that_ignores_sigterm(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child_pid = root / "child.pid"
+            child_code = (
+                "import os, signal, sys, time; "
+                "from pathlib import Path; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "Path(sys.argv[1]).write_text(str(os.getpid())); "
+                "time.sleep(60)"
+            )
+            parent_code = (
+                "import subprocess, sys, time; "
+                "from pathlib import Path; "
+                "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]]); "
+                "p=Path(sys.argv[2]); "
+                "deadline=time.monotonic()+5; "
+                "\nwhile not p.exists() and time.monotonic() < deadline: time.sleep(0.01)\n"
+                "raise SystemExit(0 if p.exists() else 2)"
+            )
+            document = project_document()
+            probe = document["environment"]["requirements"][0]["probe"]
+            probe["run"] = [
+                sys.executable,
+                "-c",
+                parent_code,
+                child_code,
+                str(child_pid),
+            ]
+            probe["timeoutSeconds"] = 10
+            project = validate_project(document)
+
+            started = time.monotonic()
+            report = doctor_environment(root, project)
+            elapsed = time.monotonic() - started
+
+            self.assertLess(elapsed, 5)
+            requirement = report["requirements"][0]
+            self.assertEqual("missing", requirement["status"])
+            self.assertIn("descendant processes", requirement["error"])
+            pid = int(child_pid.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                status_path = Path(f"/proc/{pid}/stat")
+                if status_path.is_file() and status_path.read_text().split()[2] == "Z":
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail(f"descendant process {pid} survived bounded termination")
+
     def test_schema_one_remains_readable_but_cannot_run_setup(self):
         document = project_document()
         document["schemaVersion"] = 1
@@ -212,6 +295,51 @@ class EnvironmentTests(unittest.TestCase):
         document = project_document()
         document["environment"]["profiles"]["development"] = ["missing"]
         with self.assertRaisesRegex(ContractError, "undefined requirements"):
+            validate_project(document)
+
+    def test_managed_tool_action_derives_scopes_and_validates_artifact(self):
+        document = project_document(setup=False)
+        document["environment"]["managedTools"] = [
+            {
+                "id": "sample",
+                "version": "1.2.3",
+                "artifacts": [
+                    {
+                        "platform": "linux-glibc-x64",
+                        "url": "https://downloads.example.test/sample.tar.gz",
+                        "checksum": f"sha256:{'0' * 64}",
+                        "archiveFormat": "tar.gz",
+                        "stripComponents": 1,
+                        "maxDownloadBytes": 1000,
+                        "maxExtractedBytes": 2000,
+                        "maxFiles": 20,
+                        "commands": {"sample": "bin/sample"},
+                    }
+                ],
+            }
+        ]
+        document["environment"]["setupActions"] = [
+            {
+                "id": "install-sample",
+                "kind": "managed-tool",
+                "tool": "sample",
+                "timeoutSeconds": 300,
+            }
+        ]
+        document["environment"]["requirements"][0][
+            "setupAction"
+        ] = "install-sample"
+
+        project = validate_project(document)
+
+        action = project.environment.setup_actions["install-sample"]
+        self.assertEqual(("network", "user-files"), action.mutations)
+        self.assertEqual("sample", action.tool)
+
+        document["environment"]["managedTools"][0]["artifacts"][0][
+            "url"
+        ] = "http://downloads.example.test/sample.tar.gz"
+        with self.assertRaisesRegex(ContractError, "must be an HTTPS URL"):
             validate_project(document)
 
 

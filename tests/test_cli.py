@@ -150,6 +150,7 @@ class CliTests(unittest.TestCase):
                         },
                         "environment": {
                             "defaultProfile": "development",
+                            "managedTools": [],
                             "profiles": {
                                 "development": ["ready"],
                                 "review": ["ready"],
@@ -175,6 +176,7 @@ class CliTests(unittest.TestCase):
                             "setupActions": [
                                 {
                                     "id": "prepare",
+                                    "kind": "command",
                                     "run": [
                                         sys.executable,
                                         "-c",
@@ -220,3 +222,26 @@ class CliTests(unittest.TestCase):
                     0,
                 )
             self.assertTrue((project_root / "ready").is_file())
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(
+                    main(
+                        [
+                            "exec",
+                            *common,
+                            "--profile",
+                            "development",
+                            "--timeout-seconds",
+                            "30",
+                            "--",
+                            sys.executable,
+                            "-c",
+                            "print('project command')",
+                        ]
+                    ),
+                    0,
+                )
+            report = json.loads(output.getvalue())
+            self.assertEqual("passed", report["status"])
+            self.assertIn("project command", report["execution"]["stdout"])

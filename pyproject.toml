@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,16 +7,22 @@ name = "engineering-process"
 version = "0.1.0"
 description = "Agent-neutral end-to-end engineering lifecycle and deterministic process CLI"
 requires-python = ">=3.11"
-dependencies = ["markdown-it-py==4.2.0"]
-
-[project.optional-dependencies]
-dev = ["build==1.5.0", "jsonschema==4.26.0"]
+dynamic = ["dependencies", "optional-dependencies"]
 
 [project.scripts]
 processctl = "engineering_process.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["engineering_process*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["engineering_process/requirements-runtime.txt"]}
+
+[tool.setuptools.dynamic.optional-dependencies]
+dev = {file = ["engineering_process/requirements-dev.txt"]}
+
+[tool.setuptools.package-data]
+engineering_process = ["requirements-*.txt"]
 
 [tool.setuptools.data-files]
 "share/engineering-process" = ["bundles.json"]

@@ -44,6 +44,7 @@ class BootstrapTests(unittest.TestCase):
                     },
                     "environment": {
                         "defaultProfile": "development",
+                        "managedTools": [],
                         "profiles": {
                             "development": ["python-runtime"],
                             "review": ["python-runtime"],

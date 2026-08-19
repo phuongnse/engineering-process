@@ -43,6 +43,8 @@ class DistributionDigestTests(unittest.TestCase):
             package.mkdir()
             runtime = package / "module.py"
             runtime.write_text("VALUE = 1\n", encoding="utf-8")
+            dependency_lock = package / "requirements-runtime.txt"
+            dependency_lock.write_text("parser==1.0\n", encoding="utf-8")
 
             baseline = distribution_digest(root, selected, package_root=package)
 
@@ -51,6 +53,13 @@ class DistributionDigestTests(unittest.TestCase):
             self.assertNotEqual(baseline, runtime_changed)
 
             runtime.write_text("VALUE = 1\n", encoding="utf-8")
+            dependency_lock.write_text("parser==2.0\n", encoding="utf-8")
+            dependency_changed = distribution_digest(
+                root, selected, package_root=package
+            )
+            self.assertNotEqual(baseline, dependency_changed)
+
+            dependency_lock.write_text("parser==1.0\n", encoding="utf-8")
             schema = root / "schemas" / "sample.schema.json"
             schema.write_text('{"type":"object"}\n', encoding="utf-8")
             schema_changed = distribution_digest(root, selected, package_root=package)
