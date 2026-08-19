@@ -14,14 +14,17 @@ repeatable execution deterministic.
 
 1. Classify the moment as setup, diagnosis, exploration, implementation proof,
    lifecycle verification, publication, or continuous-integration reproduction.
-2. Read `.process/project.json` and the nearest project owner. Reuse current evidence
-   while its checkpoint, command, environment, and acceptance boundary remain valid.
+2. Read `.process/project.json` and the nearest project owner. Run `processctl doctor`
+   for the selected environment profile. Reuse current evidence while its checkpoint,
+   command, environment, and acceptance boundary remain valid.
 3. Select the narrowest declared command. Use a broad profile only for cross-cutting
    invalidation, an inseparable dependency, or an explicit project requirement.
 4. Execute argument arrays without a shell. Keep secrets out of arguments and
    evidence. Do not run commands concurrently when they share mutable build outputs.
-5. On failure, preserve the exact command, exit status, environment, and missing
-   prerequisite. Do not substitute another runtime or evidence boundary.
+5. On a missing prerequisite, use `processctl setup` to inspect the complete plan.
+   Apply it only with explicit approval for every declared mutation scope. On failure,
+   preserve the exact command, exit status, environment, and missing prerequisite. Do
+   not substitute another runtime or evidence boundary.
 6. Add a reusable command or deterministic check only in its distribution owner;
    consumer manifests bind project data and commands but do not reimplement process.
 
@@ -30,6 +33,8 @@ repeatable execution deterministic.
 - Native read-only inspection is not verification evidence unless declared as such.
 - Do not replace focused missing evidence with an unrelated broad suite.
 - Do not install tools, change host trust, or mutate external state without authority.
+- An installer exit code is not readiness evidence; the declared probe must pass after
+  setup.
 
 ## Output
 

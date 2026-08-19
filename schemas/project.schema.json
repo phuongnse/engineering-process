@@ -10,7 +10,7 @@
       "type": "string"
     },
     "schemaVersion": {
-      "const": 1
+      "enum": [1, 2]
     },
     "project": {
       "type": "string",
@@ -46,8 +46,31 @@
           "$ref": "#/$defs/check"
         }
       }
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 2
+          }
+        },
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["environment"]
+      },
+      "else": {
+        "not": {
+          "required": ["environment"]
+        }
+      }
+    }
+  ],
   "$defs": {
     "check": {
       "type": "object",
@@ -76,6 +99,165 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultProfile", "profiles", "requirements", "setupActions"],
+      "properties": {
+        "defaultProfile": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "profiles": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            }
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/environmentRequirement"
+          }
+        },
+        "setupActions": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/setupAction"
+          }
+        }
+      }
+    },
+    "environmentRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "probe", "remediation"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "probe": {
+          "$ref": "#/$defs/environmentCommand"
+        },
+        "remediation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "setupAction": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        }
+      }
+    },
+    "environmentCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "timeoutSeconds", "readOnly"],
+      "properties": {
+        "run": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "readOnly": {
+          "const": true
+        },
+        "workingDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "outputStream": {
+          "enum": ["combined", "stderr", "stdout"]
+        },
+        "outputRegex": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "setupAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run", "timeoutSeconds", "mutations"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "run": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "workingDirectory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "mutations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "host-configuration",
+              "network",
+              "project-files",
+              "user-files"
+            ]
+          }
+        },
+        "requires": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          }
         }
       }
     }

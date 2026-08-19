@@ -20,6 +20,11 @@ from .contracts import (
     validate_review,
 )
 from .distribution import distribution_digest
+from .environment import (
+    doctor_environment,
+    require_environment_profile,
+    setup_environment,
+)
 from .lifecycle import (
     begin_implementation,
     finish_change,
@@ -89,6 +94,9 @@ def command_project_validate(args: argparse.Namespace) -> int:
             project=project.identifier,
             profiles=sorted(project.profiles),
             requiredProfiles=list(project.required_profiles),
+            environmentProfiles=(
+                sorted(project.environment.profiles) if project.environment else []
+            ),
         ),
     )
     return 0
@@ -462,6 +470,18 @@ def command_doctor(args: argparse.Namespace) -> int:
     lock = load_lock(args.project_root)
     issues = synchronized_state(args.project_root, args.process_root, lock)
     issues.extend(lifecycle_environment_issues(args.project_root))
+    environment = doctor_environment(
+        args.project_root,
+        project,
+        profile=args.profile,
+    )
+    if environment["status"] == "failed":
+        issues.extend(
+            f"environment requirement {requirement['id']}: "
+            f"{requirement['remediation']}"
+            for requirement in environment["requirements"]
+            if requirement["status"] != "satisfied"
+        )
     value = _result(
         "doctor",
         status="failed" if issues else "passed",
@@ -470,10 +490,29 @@ def command_doctor(args: argparse.Namespace) -> int:
         profiles=sorted(project.profiles),
         requiredProfiles=list(project.required_profiles),
         skills=list(lock.skills),
+        environment=environment,
         issues=issues,
     )
     _emit(args, value)
     return 1 if issues else 0
+
+
+def command_setup(args: argparse.Namespace) -> int:
+    project_path = args.project_root / ".process" / "project.json"
+    project = validate_project(read_json(project_path), str(project_path))
+    lock = load_lock(args.project_root)
+    issues = synchronized_state(args.project_root, args.process_root, lock)
+    if issues:
+        raise ContractError("\n".join(issues))
+    report = setup_environment(
+        args.project_root,
+        project,
+        profile=args.profile,
+        apply=args.apply,
+        allowed_mutations=set(args.allow),
+    )
+    _emit(args, _result("setup", **report))
+    return 0 if report["status"] in {"passed", "planned"} else 1
 
 
 def command_verify(args: argparse.Namespace) -> int:
@@ -487,6 +526,7 @@ def command_verify(args: argparse.Namespace) -> int:
         raise ContractError("\n".join(integration_issues))
     project_path = args.project_root / ".process" / "project.json"
     project = validate_project(read_json(project_path), str(project_path))
+    require_environment_profile(args.project_root, project, profile=args.profile)
     report = run_profile(args.project_root, project, args.profile)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -736,8 +776,37 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = commands.add_parser("doctor", help="Validate a consumer integration")
     _add_project_root(doctor)
     _add_process_root(doctor)
+    doctor.add_argument(
+        "--profile",
+        help="Environment profile; defaults to environment.defaultProfile",
+    )
     _add_json(doctor)
     doctor.set_defaults(handler=command_doctor)
+
+    setup = commands.add_parser(
+        "setup",
+        help="Plan or explicitly apply project-declared environment setup",
+    )
+    _add_project_root(setup)
+    _add_process_root(setup)
+    setup.add_argument(
+        "--profile",
+        help="Environment profile; defaults to environment.defaultProfile",
+    )
+    setup.add_argument(
+        "--apply",
+        action="store_true",
+        help="Execute the complete preflighted setup plan",
+    )
+    setup.add_argument(
+        "--allow",
+        action="append",
+        default=[],
+        choices=("host-configuration", "network", "project-files", "user-files"),
+        help="Approve one mutation scope for --apply; repeat as needed",
+    )
+    _add_json(setup)
+    setup.set_defaults(handler=command_setup)
 
     verify = commands.add_parser("verify", help="Run a project-owned verification profile")
     _add_project_root(verify)

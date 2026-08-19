@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -120,3 +121,102 @@ class CliTests(unittest.TestCase):
                 )
 
             self.assertEqual(2, result)
+
+    def test_setup_cli_plans_then_requires_explicit_mutation_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            manifest = project_root / "candidate.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 2,
+                        "project": "sample",
+                        "lifecycle": {
+                            "requiredProfiles": ["development", "review"]
+                        },
+                        "profiles": {
+                            profile: [
+                                {
+                                    "id": profile,
+                                    "run": [
+                                        sys.executable,
+                                        "-c",
+                                        "raise SystemExit(0)",
+                                    ],
+                                    "timeoutSeconds": 30,
+                                }
+                            ]
+                            for profile in ("development", "review")
+                        },
+                        "environment": {
+                            "defaultProfile": "development",
+                            "profiles": {
+                                "development": ["ready"],
+                                "review": ["ready"],
+                            },
+                            "requirements": [
+                                {
+                                    "id": "ready",
+                                    "description": "Ready marker",
+                                    "probe": {
+                                        "run": [
+                                            sys.executable,
+                                            "-c",
+                                            "from pathlib import Path; "
+                                            "raise SystemExit(not Path('ready').is_file())",
+                                        ],
+                                        "timeoutSeconds": 30,
+                                        "readOnly": True,
+                                    },
+                                    "remediation": "Create the ready marker.",
+                                    "setupAction": "prepare",
+                                }
+                            ],
+                            "setupActions": [
+                                {
+                                    "id": "prepare",
+                                    "run": [
+                                        sys.executable,
+                                        "-c",
+                                        "from pathlib import Path; "
+                                        "Path('ready').write_text('ready')",
+                                    ],
+                                    "timeoutSeconds": 30,
+                                    "mutations": ["project-files"],
+                                }
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            common = [
+                "--project-root",
+                str(project_root),
+                "--process-root",
+                str(PROCESS_ROOT),
+                "--json",
+            ]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    main(["project", "init", *common, "--manifest", str(manifest)]),
+                    0,
+                )
+                self.assertEqual(main(["setup", *common]), 0)
+                self.assertEqual(main(["setup", *common, "--apply"]), 1)
+            self.assertFalse((project_root / "ready").exists())
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    main(
+                        [
+                            "setup",
+                            *common,
+                            "--apply",
+                            "--allow",
+                            "project-files",
+                        ]
+                    ),
+                    0,
+                )
+            self.assertTrue((project_root / "ready").is_file())

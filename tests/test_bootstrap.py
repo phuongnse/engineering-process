@@ -23,7 +23,7 @@ class BootstrapTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "project": project,
                     "lifecycle": {"requiredProfiles": ["development", "review"]},
                     "profiles": {
@@ -41,6 +41,28 @@ class BootstrapTests(unittest.TestCase):
                                 "timeoutSeconds": 30,
                             }
                         ],
+                    },
+                    "environment": {
+                        "defaultProfile": "development",
+                        "profiles": {
+                            "development": ["python-runtime"],
+                            "review": ["python-runtime"],
+                        },
+                        "requirements": [
+                            {
+                                "id": "python-runtime",
+                                "description": "Supported Python runtime",
+                                "probe": {
+                                    "run": ["python", "--version"],
+                                    "timeoutSeconds": 15,
+                                    "readOnly": True,
+                                    "outputStream": "combined",
+                                    "outputRegex": "^Python 3[.]",
+                                },
+                                "remediation": "Install a supported Python runtime.",
+                            }
+                        ],
+                        "setupActions": [],
                     },
                 },
                 indent=2,

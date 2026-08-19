@@ -9,6 +9,9 @@ description = "Agent-neutral end-to-end engineering lifecycle and deterministic 
 requires-python = ">=3.11"
 dependencies = ["markdown-it-py==4.2.0"]
 
+[project.optional-dependencies]
+dev = ["build==1.5.0", "jsonschema==4.26.0"]
+
 [project.scripts]
 processctl = "engineering_process.cli:main"
 

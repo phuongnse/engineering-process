@@ -20,6 +20,7 @@ from .contracts import (
     validate_plan,
     validate_review,
 )
+from .environment import require_environment_profile
 from .runner import run_profile, source_state
 
 
@@ -585,6 +586,7 @@ def _verify_change_unlocked(
         raise ContractError("only a registered implementation actor may record verification")
     if profile not in contract["requiredProfiles"]:
         raise ContractError(f"profile {profile} is not required by change {change_id}")
+    require_environment_profile(project_root, project, profile=profile)
     report = run_profile(project_root, project, profile)
     report_path = (
         _run_root(project_root, change_id)

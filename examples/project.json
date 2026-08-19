@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "project": "sample-project",
   "lifecycle": {
     "requiredProfiles": ["development", "review"]
@@ -19,5 +19,34 @@
         "timeoutSeconds": 1800
       }
     ]
+  },
+  "environment": {
+    "defaultProfile": "development",
+    "profiles": {
+      "development": [
+        "python-runtime"
+      ],
+      "review": [
+        "python-runtime"
+      ]
+    },
+    "requirements": [
+      {
+        "id": "python-runtime",
+        "description": "Supported CPython runtime",
+        "probe": {
+          "run": [
+            "python",
+            "--version"
+          ],
+          "timeoutSeconds": 15,
+          "readOnly": true,
+          "outputStream": "combined",
+          "outputRegex": "^Python 3\\.(?:11|12|13|14)\\."
+        },
+        "remediation": "Install a supported Python runtime before running processctl."
+      }
+    ],
+    "setupActions": []
   }
 }

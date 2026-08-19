@@ -16,6 +16,12 @@ SEMVER_PATTERN = re.compile(
 )
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 SKILL_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MUTATION_SCOPES = {
+    "host-configuration",
+    "network",
+    "project-files",
+    "user-files",
+}
 
 
 class ContractError(ValueError):
@@ -31,10 +37,47 @@ class Check:
 
 
 @dataclass(frozen=True)
+class EnvironmentProbe:
+    run: tuple[str, ...]
+    timeout_seconds: int
+    working_directory: str
+    output_stream: str
+    output_regex: str | None
+
+
+@dataclass(frozen=True)
+class EnvironmentRequirement:
+    identifier: str
+    description: str
+    probe: EnvironmentProbe
+    remediation: str
+    setup_action: str | None
+
+
+@dataclass(frozen=True)
+class SetupAction:
+    identifier: str
+    run: tuple[str, ...]
+    timeout_seconds: int
+    working_directory: str
+    mutations: tuple[str, ...]
+    requires: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProjectEnvironment:
+    default_profile: str
+    profiles: dict[str, tuple[str, ...]]
+    requirements: dict[str, EnvironmentRequirement]
+    setup_actions: dict[str, SetupAction]
+
+
+@dataclass(frozen=True)
 class Project:
     identifier: str
     profiles: dict[str, tuple[Check, ...]]
     required_profiles: tuple[str, ...] = ()
+    environment: ProjectEnvironment | None = None
 
 
 @dataclass(frozen=True)
@@ -123,15 +166,259 @@ def _schema_version(document: dict[str, Any], path: str) -> None:
         raise ContractError(f"{path}.schemaVersion: must be 1")
 
 
-def validate_project(document: Any, path: str = "project") -> Project:
+def _timeout(value: Any, path: str) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        or value > 86_400
+    ):
+        raise ContractError(f"{path}: must be an integer from 1 to 86400")
+    return value
+
+
+def _working_directory(value: Any, path: str) -> str:
+    working_directory = _string(value, path, max_length=512)
+    work_path = Path(working_directory)
+    if work_path.is_absolute() or ".." in work_path.parts:
+        raise ContractError(f"{path}: must stay within the project")
+    return working_directory
+
+
+def _validate_environment(document: Any, path: str) -> ProjectEnvironment:
     value = _object(document, path)
     _exact_keys(
         value,
-        required={"schemaVersion", "project", "lifecycle", "profiles"},
+        required={"defaultProfile", "profiles", "requirements", "setupActions"},
+        path=path,
+    )
+    default_profile = _string(
+        value["defaultProfile"], f"{path}.defaultProfile", max_length=64
+    )
+    if PROFILE_PATTERN.fullmatch(default_profile) is None:
+        raise ContractError(f"{path}.defaultProfile: invalid profile name")
+
+    raw_actions = value["setupActions"]
+    if not isinstance(raw_actions, list):
+        raise ContractError(f"{path}.setupActions: must be an array")
+    if len(raw_actions) > 128:
+        raise ContractError(f"{path}.setupActions: exceeds 128 items")
+    actions: dict[str, SetupAction] = {}
+    for index, raw_action in enumerate(raw_actions):
+        action_path = f"{path}.setupActions[{index}]"
+        action = _object(raw_action, action_path)
+        _exact_keys(
+            action,
+            required={"id", "run", "timeoutSeconds", "mutations"},
+            optional={"workingDirectory", "requires"},
+            path=action_path,
+        )
+        identifier = _string(action["id"], f"{action_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{action_path}.id: invalid action name")
+        if identifier in actions:
+            raise ContractError(f"{path}.setupActions: duplicate action id {identifier}")
+        mutations = _string_list(
+            action["mutations"], f"{action_path}.mutations", minimum=1
+        )
+        invalid_mutations = sorted(set(mutations) - MUTATION_SCOPES)
+        if invalid_mutations:
+            raise ContractError(
+                f"{action_path}.mutations: unsupported scopes: "
+                + ", ".join(invalid_mutations)
+            )
+        requires = _string_list(
+            action.get("requires", []),
+            f"{action_path}.requires",
+            minimum=0,
+            pattern=PROFILE_PATTERN,
+        )
+        if mutations != sorted(mutations):
+            raise ContractError(f"{action_path}.mutations: must be sorted")
+        if requires != sorted(requires):
+            raise ContractError(f"{action_path}.requires: must be sorted")
+        actions[identifier] = SetupAction(
+            identifier=identifier,
+            run=tuple(_string_list(action["run"], f"{action_path}.run")),
+            timeout_seconds=_timeout(
+                action["timeoutSeconds"], f"{action_path}.timeoutSeconds"
+            ),
+            working_directory=_working_directory(
+                action.get("workingDirectory", "."),
+                f"{action_path}.workingDirectory",
+            ),
+            mutations=tuple(sorted(mutations)),
+            requires=tuple(requires),
+        )
+    if list(actions) != sorted(actions):
+        raise ContractError(f"{path}.setupActions: must be sorted by id")
+
+    for identifier, action in actions.items():
+        missing = sorted(set(action.requires) - set(actions))
+        if missing:
+            raise ContractError(
+                f"{path}.setupActions.{identifier}.requires: undefined actions: "
+                + ", ".join(missing)
+            )
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(identifier: str) -> None:
+        if identifier in visiting:
+            raise ContractError(
+                f"{path}.setupActions: dependency cycle includes {identifier}"
+            )
+        if identifier in visited:
+            return
+        visiting.add(identifier)
+        for dependency in actions[identifier].requires:
+            visit(dependency)
+        visiting.remove(identifier)
+        visited.add(identifier)
+
+    for identifier in actions:
+        visit(identifier)
+
+    raw_requirements = value["requirements"]
+    if not isinstance(raw_requirements, list) or not raw_requirements:
+        raise ContractError(f"{path}.requirements: must contain at least one item")
+    if len(raw_requirements) > 128:
+        raise ContractError(f"{path}.requirements: exceeds 128 items")
+    requirements: dict[str, EnvironmentRequirement] = {}
+    for index, raw_requirement in enumerate(raw_requirements):
+        requirement_path = f"{path}.requirements[{index}]"
+        requirement = _object(raw_requirement, requirement_path)
+        _exact_keys(
+            requirement,
+            required={"id", "description", "probe", "remediation"},
+            optional={"setupAction"},
+            path=requirement_path,
+        )
+        identifier = _string(
+            requirement["id"], f"{requirement_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{requirement_path}.id: invalid requirement name")
+        if identifier in requirements:
+            raise ContractError(
+                f"{path}.requirements: duplicate requirement id {identifier}"
+            )
+        raw_probe = _object(requirement["probe"], f"{requirement_path}.probe")
+        _exact_keys(
+            raw_probe,
+            required={"run", "timeoutSeconds", "readOnly"},
+            optional={"workingDirectory", "outputRegex", "outputStream"},
+            path=f"{requirement_path}.probe",
+        )
+        if raw_probe["readOnly"] is not True:
+            raise ContractError(
+                f"{requirement_path}.probe.readOnly: must attest true"
+            )
+        output_stream = raw_probe.get("outputStream", "combined")
+        if output_stream not in {"combined", "stderr", "stdout"}:
+            raise ContractError(
+                f"{requirement_path}.probe.outputStream: unsupported stream"
+            )
+        output_regex = raw_probe.get("outputRegex")
+        if output_regex is not None:
+            output_regex = _string(
+                output_regex,
+                f"{requirement_path}.probe.outputRegex",
+                max_length=1024,
+            )
+            try:
+                re.compile(output_regex)
+            except re.error as error:
+                raise ContractError(
+                    f"{requirement_path}.probe.outputRegex: invalid regex: {error}"
+                ) from error
+        setup_action = requirement.get("setupAction")
+        if setup_action is not None:
+            setup_action = _string(
+                setup_action, f"{requirement_path}.setupAction", max_length=64
+            )
+            if setup_action not in actions:
+                raise ContractError(
+                    f"{requirement_path}.setupAction: undefined action {setup_action}"
+                )
+        requirements[identifier] = EnvironmentRequirement(
+            identifier=identifier,
+            description=_string(
+                requirement["description"],
+                f"{requirement_path}.description",
+                max_length=512,
+            ),
+            probe=EnvironmentProbe(
+                run=tuple(
+                    _string_list(raw_probe["run"], f"{requirement_path}.probe.run")
+                ),
+                timeout_seconds=_timeout(
+                    raw_probe["timeoutSeconds"],
+                    f"{requirement_path}.probe.timeoutSeconds",
+                ),
+                working_directory=_working_directory(
+                    raw_probe.get("workingDirectory", "."),
+                    f"{requirement_path}.probe.workingDirectory",
+                ),
+                output_stream=output_stream,
+                output_regex=output_regex,
+            ),
+            remediation=_string(
+                requirement["remediation"],
+                f"{requirement_path}.remediation",
+                max_length=1024,
+            ),
+            setup_action=setup_action,
+        )
+    if list(requirements) != sorted(requirements):
+        raise ContractError(f"{path}.requirements: must be sorted by id")
+
+    raw_profiles = _object(value["profiles"], f"{path}.profiles")
+    if not raw_profiles:
+        raise ContractError(f"{path}.profiles: must define at least one profile")
+    profiles: dict[str, tuple[str, ...]] = {}
+    for profile_name, raw_ids in raw_profiles.items():
+        if PROFILE_PATTERN.fullmatch(profile_name) is None:
+            raise ContractError(f"{path}.profiles.{profile_name}: invalid profile name")
+        identifiers = _string_list(
+            raw_ids,
+            f"{path}.profiles.{profile_name}",
+            pattern=PROFILE_PATTERN,
+        )
+        if identifiers != sorted(identifiers):
+            raise ContractError(
+                f"{path}.profiles.{profile_name}: requirements must be sorted"
+            )
+        missing = sorted(set(identifiers) - set(requirements))
+        if missing:
+            raise ContractError(
+                f"{path}.profiles.{profile_name}: undefined requirements: "
+                + ", ".join(missing)
+            )
+        profiles[profile_name] = tuple(identifiers)
+    if default_profile not in profiles:
+        raise ContractError(f"{path}.defaultProfile: profile is not defined")
+    return ProjectEnvironment(
+        default_profile=default_profile,
+        profiles=profiles,
+        requirements=requirements,
+        setup_actions=actions,
+    )
+
+
+def validate_project(document: Any, path: str = "project") -> Project:
+    value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    _exact_keys(
+        value,
+        required={"schemaVersion", "project", "lifecycle", "profiles"}
+        | ({"environment"} if schema_version == 2 else set()),
         optional={"$schema"},
         path=path,
     )
-    _schema_version(value, path)
     identifier = _string(value["project"], f"{path}.project", max_length=128)
     if NAME_PATTERN.fullmatch(identifier) is None:
         raise ContractError(f"{path}.project: must use lowercase project-id format")
@@ -185,25 +472,11 @@ def validate_project(document: Any, path: str = "project") -> Project:
                 )
             identifiers.add(check_id)
             argv = _string_list(check["run"], f"{check_path}.run")
-            timeout = check["timeoutSeconds"]
-            if (
-                isinstance(timeout, bool)
-                or not isinstance(timeout, int)
-                or timeout < 1
-                or timeout > 86_400
-            ):
-                raise ContractError(
-                    f"{check_path}.timeoutSeconds: must be an integer from 1 to 86400"
-                )
-            working_directory = check.get("workingDirectory", ".")
-            working_directory = _string(
-                working_directory, f"{check_path}.workingDirectory", max_length=512
+            timeout = _timeout(check["timeoutSeconds"], f"{check_path}.timeoutSeconds")
+            working_directory = _working_directory(
+                check.get("workingDirectory", "."),
+                f"{check_path}.workingDirectory",
             )
-            work_path = Path(working_directory)
-            if work_path.is_absolute() or ".." in work_path.parts:
-                raise ContractError(
-                    f"{check_path}.workingDirectory: must stay within the project"
-                )
             checks.append(
                 Check(
                     identifier=check_id,
@@ -219,10 +492,23 @@ def validate_project(document: Any, path: str = "project") -> Project:
             f"{path}.lifecycle.requiredProfiles: undefined profiles: "
             f"{', '.join(missing_required)}"
         )
+    environment = (
+        _validate_environment(value["environment"], f"{path}.environment")
+        if schema_version == 2
+        else None
+    )
+    if environment is not None:
+        missing_environment_profiles = sorted(set(profiles) - set(environment.profiles))
+        if missing_environment_profiles:
+            raise ContractError(
+                f"{path}.environment.profiles: missing verification profiles: "
+                + ", ".join(missing_environment_profiles)
+            )
     return Project(
         identifier=identifier,
         profiles=profiles,
         required_profiles=tuple(required_profiles),
+        environment=environment,
     )
 
 
