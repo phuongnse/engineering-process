@@ -83,6 +83,12 @@ the attributes file the same byte-stable checkout policy. Deeper repository attr
 files remain subject to managed-tree ownership and content checks. Integrity comparison
 remains byte-exact; newline variants are not accepted as alternate distribution bytes.
 
+The producer repository applies the same LF and byte-transform isolation to its
+own automatically detected text sources through a tracked root `.gitattributes`
+policy. This keeps distribution input bytes platform-independent. The producer
+root policy is not a consumer-managed asset and is never written by bootstrap or
+sync.
+
 ## Release identity
 
 The release contract is the source of truth for package name, distribution name,

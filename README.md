@@ -98,6 +98,12 @@ attribute files are rejected by existing managed-tree ownership and content chec
 External Git overrides that alter a checkout still fail byte-exact distribution
 attestation. A consumer never authors or maintains process skills locally.
 
+The engineering-process producer repository separately owns its root
+`.gitattributes` policy so tracked text sources and distribution inputs are LF and
+byte-stable on every supported checkout. That producer policy is not synchronized
+into a consumer root; consumers receive only the bounded `.agents/.gitattributes`
+asset described above.
+
 The single project-manifest contract includes environment profiles, project-attested
 read-only requirement probes, remediation, declarative managed-tool artifacts, and
 optional setup actions. Use the same interface in every consumer:
