@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,7 @@ COMMAND_TIMEOUT_SECONDS = 300
 TERMINATION_TIMEOUT_SECONDS = 5
 MAX_CAPTURE_BYTES = 128_000
 READ_CHUNK_BYTES = 64 * 1024
+MAX_REQUIREMENTS_BYTES = 1_000_000
 
 
 @dataclass
@@ -166,6 +169,88 @@ def _child_environment() -> dict[str, str]:
     return environment
 
 
+def _requirements_source(project_root: Path, supplied: Path) -> Path:
+    candidate = supplied if supplied.is_absolute() else project_root / supplied
+    if candidate.is_symlink():
+        raise RuntimeError("requirements lock must not be a symlink")
+    try:
+        candidate.resolve(strict=True).relative_to(project_root)
+    except (OSError, ValueError) as error:
+        raise RuntimeError(
+            "requirements lock must be a regular file inside the checkout"
+        ) from error
+    return candidate
+
+
+def _read_stable_requirements(path: Path) -> bytes:
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeError("requirements lock must be a regular file")
+        if before.st_size > MAX_REQUIREMENTS_BYTES:
+            raise RuntimeError(
+                f"requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
+            )
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = -1
+                opened = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or opened.st_dev != before.st_dev
+                    or opened.st_ino != before.st_ino
+                ):
+                    raise RuntimeError("requirements lock changed while opening")
+                content = stream.read(MAX_REQUIREMENTS_BYTES + 1)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        after = path.lstat()
+    except OSError as error:
+        raise RuntimeError(f"cannot read requirements lock: {error}") from error
+    if len(content) > MAX_REQUIREMENTS_BYTES:
+        raise RuntimeError(
+            f"requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
+        )
+    if (
+        len(content) != before.st_size
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+        or after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+    ):
+        raise RuntimeError("requirements lock changed while reading")
+    return content
+
+
+def _write_private_snapshot(path: Path, content: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _require_unchanged(path: Path, expected: bytes, label: str) -> None:
+    current = _read_stable_requirements(path)
+    if current != expected:
+        before = hashlib.sha256(expected).hexdigest()
+        after = hashlib.sha256(current).hexdigest()
+        raise RuntimeError(
+            f"{label} changed during adoption: sha256:{before} -> sha256:{after}"
+        )
+
+
 def _run(argv: list[str], *, cwd: Path) -> str:
     command = _windows_wrapped_command(argv) if os.name == "nt" else argv
     options: dict[str, object] = {
@@ -238,22 +323,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     project_root = args.project_root.resolve()
-    requirements_lock = (
-        args.requirements_lock
-        if args.requirements_lock.is_absolute()
-        else project_root / args.requirements_lock
-    ).resolve()
+    requirements_source = _requirements_source(
+        project_root, args.requirements_lock
+    )
+    requirements_content = _read_stable_requirements(requirements_source)
+    requirements_digest = (
+        "sha256:" + hashlib.sha256(requirements_content).hexdigest()
+    )
 
-    with tempfile.TemporaryDirectory(prefix="engineering-process-adoption-") as directory:
-        environment_root = Path(directory).resolve()
+    with tempfile.TemporaryDirectory(
+        prefix="engineering-process-adoption-"
+    ) as directory:
+        temporary_root = Path(directory).resolve()
         try:
-            environment_root.relative_to(project_root)
+            temporary_root.relative_to(project_root)
         except ValueError:
             pass
         else:
             raise RuntimeError("temporary adoption environment must be outside checkout")
-        _run([sys.executable, "-I", "-m", "venv", str(environment_root)], cwd=project_root)
-        python = environment_root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        environment_root = temporary_root / "environment"
+        requirements_snapshot = temporary_root / "requirements.process.snapshot.txt"
+        _write_private_snapshot(requirements_snapshot, requirements_content)
+        _run(
+            [sys.executable, "-I", "-m", "venv", str(environment_root)],
+            cwd=project_root,
+        )
+        python = environment_root / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
         _run(
             [
                 str(python),
@@ -268,9 +365,17 @@ def main(argv: list[str] | None = None) -> int:
                 "--only-binary",
                 ":all:",
                 "-r",
-                str(requirements_lock),
+                str(requirements_snapshot),
             ],
             cwd=environment_root,
+        )
+        _require_unchanged(
+            requirements_snapshot,
+            requirements_content,
+            "private requirements snapshot",
+        )
+        _require_unchanged(
+            requirements_source, requirements_content, "checkout requirements lock"
         )
         output = _run(
             [
@@ -283,11 +388,34 @@ def main(argv: list[str] | None = None) -> int:
                 "--project-root",
                 str(project_root),
                 "--requirements-lock",
-                str(requirements_lock),
+                str(requirements_snapshot),
+                "--requirements-source",
+                str(requirements_source),
+                "--expected-requirements-digest",
+                requirements_digest,
                 "--json",
             ],
             cwd=environment_root,
         )
+        _require_unchanged(
+            requirements_snapshot,
+            requirements_content,
+            "private requirements snapshot",
+        )
+        _require_unchanged(
+            requirements_source, requirements_content, "checkout requirements lock"
+        )
+        try:
+            result = json.loads(output)
+        except (json.JSONDecodeError, UnicodeError) as error:
+            raise RuntimeError("adoption authority returned invalid JSON") from error
+        if (
+            not isinstance(result, dict)
+            or result.get("requirementsDigest") != requirements_digest
+        ):
+            raise RuntimeError(
+                "adoption authority did not attest the private requirements snapshot"
+            )
     sys.stdout.write(output)
     return 0
 

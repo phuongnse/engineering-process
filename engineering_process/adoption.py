@@ -60,12 +60,12 @@ def _canonical_package_name(value: str) -> str:
 
 
 def _read_bounded_regular_file(path: Path) -> bytes:
-    if path.is_symlink():
-        raise ContractError(f"{path}: requirements lock must not be a symlink")
     try:
-        before = path.stat()
+        before = path.lstat()
     except OSError as error:
-        raise ContractError(f"{path}: cannot inspect requirements lock: {error}") from error
+        raise ContractError(
+            f"{path}: cannot inspect requirements lock: {error}"
+        ) from error
     if not stat.S_ISREG(before.st_mode):
         raise ContractError(f"{path}: requirements lock must be a regular file")
     if before.st_size > MAX_REQUIREMENTS_BYTES:
@@ -73,18 +73,30 @@ def _read_bounded_regular_file(path: Path) -> bytes:
             f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
         )
     try:
-        with path.open("rb") as stream:
-            opened = os.fstat(stream.fileno())
-            if (
-                not stat.S_ISREG(opened.st_mode)
-                or opened.st_dev != before.st_dev
-                or opened.st_ino != before.st_ino
-            ):
-                raise ContractError(f"{path}: requirements lock changed while opening")
-            content = stream.read(MAX_REQUIREMENTS_BYTES + 1)
-        after = path.stat()
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = -1
+                opened = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or opened.st_dev != before.st_dev
+                    or opened.st_ino != before.st_ino
+                ):
+                    raise ContractError(
+                        f"{path}: requirements lock changed while opening"
+                    )
+                content = stream.read(MAX_REQUIREMENTS_BYTES + 1)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        after = path.lstat()
     except OSError as error:
-        raise ContractError(f"{path}: cannot read requirements lock: {error}") from error
+        raise ContractError(
+            f"{path}: cannot read requirements lock: {error}"
+        ) from error
     if len(content) > MAX_REQUIREMENTS_BYTES:
         raise ContractError(
             f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
@@ -93,6 +105,7 @@ def _read_bounded_regular_file(path: Path) -> bytes:
         len(content) != before.st_size
         or after.st_size != before.st_size
         or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
         or after.st_dev != before.st_dev
         or after.st_ino != before.st_ino
     ):
@@ -121,9 +134,7 @@ def _logical_lines(content: str, path: Path) -> tuple[str, ...]:
 
 
 def validate_requirements_lock(path: Path) -> RequirementsLock:
-    if path.is_symlink():
-        raise ContractError(f"{path}: requirements lock must not be a symlink")
-    resolved = path.resolve()
+    resolved = Path(os.path.abspath(os.fspath(path)))
     content = _read_bounded_regular_file(resolved)
     try:
         text = content.decode("utf-8")
@@ -206,6 +217,32 @@ def _require_external_authority(project_root: Path, process_root: Path) -> None:
     raise ContractError(
         "adoption authority must be installed outside the consumer checkout"
     )
+
+
+def _checkout_requirements_path(project_root: Path, path: Path) -> Path:
+    candidate = path if path.is_absolute() else project_root / path
+    if candidate.is_symlink():
+        raise ContractError(
+            f"{candidate}: requirements lock must not be a symlink"
+        )
+    try:
+        candidate.resolve(strict=True).relative_to(project_root)
+    except (OSError, ValueError) as error:
+        raise ContractError(
+            "requirements source must be a regular file inside the consumer checkout"
+        ) from error
+    return candidate
+
+
+def _require_matching_requirements_source(
+    source: Path, expected_digest: str
+) -> None:
+    current = validate_requirements_lock(source)
+    if current.digest != expected_digest:
+        raise ContractError(
+            f"{source}: requirements source changed from {expected_digest} "
+            f"to {current.digest}"
+        )
 
 
 def _lock_document(process_root: Path, previous: ProcessLock) -> dict[str, object]:
@@ -388,19 +425,10 @@ def check_adoption(
     project_root = project_root.resolve()
     process_root = process_root.resolve()
     _require_external_authority(project_root, process_root)
-    requirement_candidate = (
-        requirements_lock
-        if requirements_lock.is_absolute()
-        else project_root / requirements_lock
+    requirement_path = _checkout_requirements_path(
+        project_root, requirements_lock
     )
-    requirement_path = requirement_candidate.resolve()
-    try:
-        requirement_path.relative_to(project_root)
-    except ValueError as error:
-        raise ContractError(
-            "requirements lock must be inside the consumer checkout"
-        ) from error
-    requirement = validate_requirements_lock(requirement_candidate)
+    requirement = validate_requirements_lock(requirement_path)
     lock = load_lock(project_root)
     issues = synchronized_state(project_root, process_root, lock)
     return {
@@ -416,23 +444,52 @@ def apply_adoption(
     project_root: Path,
     process_root: Path,
     requirements_lock: Path,
+    *,
+    requirements_source: Path | None = None,
+    expected_requirements_digest: str | None = None,
 ) -> dict[str, object]:
     project_root = project_root.resolve()
     process_root = process_root.resolve()
     _require_external_authority(project_root, process_root)
-    requirement_candidate = (
-        requirements_lock
-        if requirements_lock.is_absolute()
-        else project_root / requirements_lock
-    )
-    requirement_path = requirement_candidate.resolve()
-    try:
-        requirement_path.relative_to(project_root)
-    except ValueError as error:
+    if requirements_source is None:
+        requirement_path = _checkout_requirements_path(
+            project_root, requirements_lock
+        )
+        source_path = requirement_path
+    else:
+        source_path = _checkout_requirements_path(
+            project_root, requirements_source
+        )
+        requirement_path = Path(
+            os.path.abspath(os.fspath(requirements_lock))
+        )
+        if requirement_path.is_symlink():
+            raise ContractError(
+                f"{requirement_path}: requirements snapshot must not be a symlink"
+            )
+        try:
+            resolved_snapshot = requirement_path.resolve(strict=True)
+        except OSError as error:
+            raise ContractError(
+                f"{requirement_path}: cannot inspect requirements snapshot: {error}"
+            ) from error
+        try:
+            resolved_snapshot.relative_to(project_root)
+        except ValueError:
+            pass
+        else:
+            raise ContractError(
+                "requirements snapshot must be outside the consumer checkout"
+            )
+    requirement = validate_requirements_lock(requirement_path)
+    if (
+        expected_requirements_digest is not None
+        and requirement.digest != expected_requirements_digest
+    ):
         raise ContractError(
-            "requirements lock must be inside the consumer checkout"
-        ) from error
-    requirement = validate_requirements_lock(requirement_candidate)
+            "requirements snapshot digest does not match the runner expectation"
+        )
+    _require_matching_requirements_source(source_path, requirement.digest)
 
     lock_path = project_root / ".process" / "process.lock"
     if lock_path.is_symlink():
@@ -473,6 +530,12 @@ def apply_adoption(
             issues = sync_skills(project_root, process_root, check=False)
             if issues:
                 raise ContractError("\n".join(issues))
+            _require_matching_requirements_source(
+                requirement_path, requirement.digest
+            )
+            _require_matching_requirements_source(
+                source_path, requirement.digest
+            )
         except BaseException as error:
             rollback_issues = _restore_targets(snapshots)
             if rollback_issues:

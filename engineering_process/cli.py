@@ -210,6 +210,8 @@ def command_adoption_apply(args: argparse.Namespace) -> int:
         args.project_root,
         args.process_root,
         args.requirements_lock,
+        requirements_source=args.requirements_source,
+        expected_requirements_digest=args.expected_requirements_digest,
     )
     _emit(args, _result("adoption apply", **details))
     return 0
@@ -929,7 +931,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--requirements-lock",
         type=Path,
         required=True,
-        help="Hash-locked requirements file inside the consumer checkout",
+        help="Hash-locked requirements file or private runner snapshot",
+    )
+    adoption_apply.add_argument(
+        "--requirements-source",
+        type=Path,
+        help=(
+            "Original requirements lock inside the consumer checkout; required "
+            "when --requirements-lock is an external private snapshot"
+        ),
+    )
+    adoption_apply.add_argument(
+        "--expected-requirements-digest",
+        help="Expected sha256 digest of the private requirements snapshot",
     )
     _add_json(adoption_apply)
     adoption_apply.set_defaults(handler=command_adoption_apply)

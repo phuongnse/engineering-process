@@ -70,8 +70,9 @@ project/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .gitignore             # includes .process/runs/
 └── .process/
-    ├── adopt-process.py   # managed hash-locked adoption runner
-    └── project.json       # project profiles and lifecycle baseline
+    ├── adopt-process.py             # hash-locked adoption runner
+    ├── adopt-process-windows-job.py # Windows process containment
+    └── project.json                 # profiles and lifecycle baseline
 ~~~
 
 Install `processctl` from a tagged release and create a candidate manifest from
@@ -448,10 +449,12 @@ authenticates who produced it.
   versions differ from that lock.
 - `requirements/process.in` owns the direct authority pin. Renovate uses the
   pip-compile manager to update its complete binary-only hash lock, then the managed
-  `.process/adopt-process.py` runner installs that graph outside the checkout and
-  invokes `processctl adoption apply`. The resulting draft contains the new lock,
-  managed contracts, and skill snapshots; after CI and independent review, merge is
-  the end of adoption.
+  `.process/adopt-process.py` runner rejects symlinked input, snapshots one bounded
+  stable copy outside the checkout, and uses that exact digest for installation and
+  `processctl adoption apply`. POSIX process groups and a managed Windows kill-on-close
+  Job Object contain every child. The resulting draft contains the new lock, managed
+  contracts, and skill snapshots; after CI and independent review, merge is the end
+  of adoption.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest

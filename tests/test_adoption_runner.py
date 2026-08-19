@@ -1,11 +1,14 @@
-import importlib.util
 import ctypes
+import hashlib
+import importlib.util
+import json
 import os
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -191,6 +194,111 @@ class AdoptionRunnerTests(unittest.TestCase):
         self.assertNotIn("PIP_INDEX_URL", environment)
         self.assertNotIn("PYTHONPATH", environment)
         self.assertEqual(os.devnull, environment["PIP_CONFIG_FILE"])
+
+    def test_main_uses_one_private_snapshot_for_install_and_apply(self):
+        runner = load_runner()
+        content = b"--only-binary :all:\nengineering-process==0.1.1\n"
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "requirements" / "process.txt"
+            source.parent.mkdir()
+            source.write_bytes(content)
+            observed_snapshot: list[Path] = []
+
+            def fake_run(argv, *, cwd):
+                del cwd
+                if "pip" in argv:
+                    snapshot = Path(argv[-1])
+                    self.assertEqual(content, snapshot.read_bytes())
+                    self.assertNotEqual(source.resolve(), snapshot)
+                    observed_snapshot.append(snapshot)
+                    return ""
+                if "adoption" in argv:
+                    snapshot = Path(argv[argv.index("--requirements-lock") + 1])
+                    checkout = Path(argv[argv.index("--requirements-source") + 1])
+                    expected = argv[
+                        argv.index("--expected-requirements-digest") + 1
+                    ]
+                    self.assertEqual(observed_snapshot, [snapshot])
+                    self.assertEqual(source.resolve(), checkout)
+                    self.assertEqual(digest, expected)
+                    return json.dumps({"requirementsDigest": digest})
+                return ""
+
+            with (
+                mock.patch.object(runner, "_run", side_effect=fake_run),
+                mock.patch.object(runner.sys.stdout, "write"),
+            ):
+                self.assertEqual(
+                    0,
+                    runner.main(
+                        [
+                            "--project-root",
+                            str(root),
+                            "--requirements-lock",
+                            "requirements/process.txt",
+                        ]
+                    ),
+                )
+
+    def test_main_rejects_requirements_symlink_before_running_commands(self):
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "canonical.txt"
+            target.write_text("locked\n", encoding="utf-8")
+            source = root / "process.txt"
+            try:
+                source.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            with (
+                mock.patch.object(runner, "_run") as run,
+                self.assertRaisesRegex(RuntimeError, "must not be a symlink"),
+            ):
+                runner.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--requirements-lock",
+                        str(source),
+                    ]
+                )
+            run.assert_not_called()
+
+    def test_main_detects_checkout_mutation_between_install_and_apply(self):
+        runner = load_runner()
+        content = b"locked authority A\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "process.txt"
+            source.write_bytes(content)
+            calls = 0
+
+            def fake_run(argv, *, cwd):
+                nonlocal calls
+                del cwd
+                calls += 1
+                if "pip" in argv:
+                    self.assertEqual(content, Path(argv[-1]).read_bytes())
+                    source.write_bytes(b"locked authority B\n")
+                return ""
+
+            with (
+                mock.patch.object(runner, "_run", side_effect=fake_run),
+                self.assertRaisesRegex(RuntimeError, "changed during adoption"),
+            ):
+                runner.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--requirements-lock",
+                        str(source),
+                    ]
+                )
+            self.assertEqual(2, calls)
 
 
 if __name__ == "__main__":

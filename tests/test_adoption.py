@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -124,6 +125,78 @@ class AdoptionTests(unittest.TestCase):
             self.assertEqual(first["digest"], second["digest"])
             self.assertIn("maintain-docs", second["skills"])
 
+    def test_apply_binds_private_snapshot_to_checkout_requirements_source(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as snapshot_directory,
+        ):
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            snapshot = Path(snapshot_directory) / "process.snapshot.txt"
+            snapshot.write_bytes(requirements.read_bytes())
+
+            result = apply_adoption(
+                root,
+                PROCESS_ROOT,
+                snapshot,
+                requirements_source=requirements,
+                expected_requirements_digest=(
+                    "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                ),
+            )
+
+            self.assertEqual(
+                "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+                result["requirementsDigest"],
+            )
+
+    def test_apply_rolls_back_if_checkout_requirements_change(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as snapshot_directory,
+        ):
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            snapshot = Path(snapshot_directory) / "process.snapshot.txt"
+            snapshot.write_bytes(requirements.read_bytes())
+            lock = root / ".process" / "process.lock"
+            agents = root / "AGENTS.md"
+            runner = root / ".process" / "adopt-process.py"
+            before = {
+                path: path.read_bytes() for path in (lock, agents, runner)
+            }
+
+            def mutate_requirements(*args, **kwargs):
+                del args, kwargs
+                agents.write_text("partial\n", encoding="utf-8")
+                runner.write_text("partial\n", encoding="utf-8")
+                requirements.write_bytes(
+                    requirements.read_bytes() + b"\n# concurrent mutation\n"
+                )
+                return []
+
+            with (
+                mock.patch(
+                    "engineering_process.adoption.sync_skills",
+                    side_effect=mutate_requirements,
+                ),
+                self.assertRaisesRegex(ContractError, "requirements source changed"),
+            ):
+                apply_adoption(
+                    root,
+                    PROCESS_ROOT,
+                    snapshot,
+                    requirements_source=requirements,
+                    expected_requirements_digest=(
+                        "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                    ),
+                )
+
+            self.assertEqual(
+                before,
+                {path: path.read_bytes() for path in (lock, agents, runner)},
+            )
+
     def test_apply_rolls_back_every_managed_target_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -181,6 +254,45 @@ class AdoptionTests(unittest.TestCase):
                     path.write_text(content, encoding="utf-8")
                     with self.assertRaises(ContractError):
                         validate_requirements_lock(path)
+
+    def test_requirements_lock_rejects_a_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.txt"
+            target.write_bytes(
+                (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
+            )
+            link = root / "process.txt"
+            try:
+                link.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            with self.assertRaisesRegex(ContractError, "regular file"):
+                validate_requirements_lock(link)
+
+    def test_apply_rejects_unexpected_snapshot_digest_before_writes(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as snapshot_directory,
+        ):
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            snapshot = Path(snapshot_directory) / "process.snapshot.txt"
+            snapshot.write_bytes(requirements.read_bytes())
+            lock = root / ".process" / "process.lock"
+            before = lock.read_bytes()
+
+            with self.assertRaisesRegex(ContractError, "runner expectation"):
+                apply_adoption(
+                    root,
+                    PROCESS_ROOT,
+                    snapshot,
+                    requirements_source=requirements,
+                    expected_requirements_digest=f"sha256:{'0' * 64}",
+                )
+
+            self.assertEqual(before, lock.read_bytes())
 
     def test_apply_rejects_checkout_as_its_own_adoption_authority(self):
         with self.assertRaisesRegex(ContractError, "installed outside"):
