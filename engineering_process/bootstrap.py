@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,10 @@ from .publication import (
     PR_DESCRIPTION_END,
     PR_DESCRIPTION_START,
     merge_managed_pull_request_template,
+    validate_project_extensions,
 )
 from .syncing import (
+    managed_parent_issues,
     selected_skill_target_issues,
     skill_target_ownership_issues,
     sync_skills,
@@ -29,7 +32,9 @@ def _serialized(document: Any) -> str:
 
 
 def _read_optional_text(path: Path) -> str:
-    if not path.exists():
+    if path.is_symlink():
+        raise ContractError(f"{path}: managed file target must not be a symlink")
+    if not os.path.lexists(path):
         return ""
     if not path.is_file():
         raise ContractError(f"{path}: expected a regular file")
@@ -40,7 +45,9 @@ def _read_optional_text(path: Path) -> str:
 
 
 def _preflight_file(path: Path, content: str, *, replace: bool) -> None:
-    if path.exists():
+    if path.is_symlink():
+        raise ContractError(f"{path}: managed file target must not be a symlink")
+    if os.path.lexists(path):
         current = _read_optional_text(path)
         if current == content:
             return
@@ -52,7 +59,11 @@ def _preflight_parents(project_root: Path, *paths: Path) -> None:
     for path in paths:
         parent = path.parent
         while parent != project_root.parent:
-            if parent.exists() and not parent.is_dir():
+            if parent.is_symlink():
+                raise ContractError(
+                    f"{parent}: managed target parent must not be a symlink"
+                )
+            if os.path.lexists(parent) and not parent.is_dir():
                 raise ContractError(
                     f"{parent}: target parent must be a directory before bootstrap"
                 )
@@ -93,7 +104,11 @@ def _pull_request_template_update(
         raise ContractError(f"{source}: cannot read template: {error}") from error
     path = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
     current = _read_optional_text(path)
-    return path, merge_managed_pull_request_template(current, block)
+    updated = merge_managed_pull_request_template(current, block)
+    issues = validate_project_extensions(updated, allow_pending=True)
+    if issues:
+        raise ContractError(f"{path}: " + "; ".join(issues))
+    return path, updated
 
 
 def _ignore_update(project_root: Path) -> tuple[Path, str]:
@@ -147,6 +162,7 @@ def initialize_project(
     }
     validate_process_lock(lock_document, str(project_root / ".process" / "process.lock"))
     ownership_issues = [
+        *managed_parent_issues(project_root),
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, skills),
     ]

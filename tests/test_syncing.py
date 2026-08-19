@@ -88,7 +88,9 @@ class SyncTests(unittest.TestCase):
                     "accepted scope is implemented without unapproved expansion",
                     "scope is optional",
                 )
-                + "\n## Project evidence\n\nProject-owned details.\n",
+                + "\n## Project-specific requirements\n\n"
+                + "- [ ] **Project-specific: UI evidence** — record project evidence. "
+                + "[status: pending]\n",
                 encoding="utf-8",
             )
             lock = validate_process_lock(
@@ -107,7 +109,7 @@ class SyncTests(unittest.TestCase):
                 "accepted scope is implemented without unapproved expansion",
                 repaired,
             )
-            self.assertIn("## Project evidence", repaired)
+            self.assertIn("**Project-specific: UI evidence**", repaired)
 
             target.unlink()
             self.assertTrue(
@@ -160,7 +162,18 @@ class SyncTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    "outside comments or code fences" in issue
+                    "managed block must be visible" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+
+            target.write_text(
+                "<pre>\n" + repaired + "</pre>\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                any(
+                    "managed block must be visible" in issue
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
             )

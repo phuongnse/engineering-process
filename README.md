@@ -154,7 +154,10 @@ Manual branches use `{type}/{kebab-description}`. Automation uses the provider-n
 Conventional Commit syntax and are limited to 72 characters. Draft PRs may retain
 explicitly pending checklist items; every ready PR, including automation, must satisfy
 them. The managed template owns the ordered shared sections and immutable standard
-checklist meaning; project extensions are appended after its closing marker.
+checklist meaning. An optional extension after its closing marker uses only
+`## Project-specific requirements` plus one-line
+`**Project-specific: Label**` checklist items; arbitrary headings, prose, HTML, and
+code fences are rejected so an extension cannot shadow common policy.
 
 ## Trust boundary
 

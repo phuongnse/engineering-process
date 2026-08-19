@@ -3,7 +3,11 @@ from __future__ import annotations
 import re
 
 from .contracts import ContractError
-from .markdown import mask_fenced_code, strip_html_comments
+from .markdown import (
+    mask_fenced_code,
+    mask_raw_html_containers,
+    strip_html_comments,
+)
 
 
 AGENTS_START = "<!-- engineering-process:start -->"
@@ -50,7 +54,7 @@ def managed_agents_visibility_issues(text: str) -> list[str]:
     visible, malformed_comments = strip_html_comments(visible)
     if malformed_comments:
         return ["AGENTS.md contains an unterminated or malformed HTML comment"]
-    structural = mask_fenced_code(visible)
+    structural = mask_raw_html_containers(mask_fenced_code(visible))
     lines = structural.splitlines()
     starts = [
         index for index, line in enumerate(lines) if line == _AGENTS_START_TOKEN
@@ -58,7 +62,8 @@ def managed_agents_visibility_issues(text: str) -> list[str]:
     ends = [index for index, line in enumerate(lines) if line == _AGENTS_END_TOKEN]
     if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
         return [
-            "AGENTS.md managed block must be visible and outside comments or code fences"
+            "AGENTS.md managed block must be visible and outside comments, code fences, "
+            "or raw HTML containers"
         ]
     return []
 

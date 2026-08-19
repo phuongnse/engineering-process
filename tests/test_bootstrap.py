@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -163,6 +164,29 @@ class BootstrapTests(unittest.TestCase):
             manifest = self.write_manifest(root)
 
             with self.assertRaisesRegex(ContractError, "unmanaged skill target"):
+                initialize_project(
+                    root,
+                    PROCESS_ROOT,
+                    manifest_path=manifest,
+                    requested_bundles=[],
+                    replace=False,
+                )
+
+            self.assertFalse((root / ".process").exists())
+            self.assertFalse((root / "AGENTS.md").exists())
+            self.assertFalse((root / ".github").exists())
+            self.assertFalse((root / ".gitignore").exists())
+
+    @unittest.skipIf(os.name == "nt", "symlink creation requires elevated Windows policy")
+    def test_dangling_selected_skill_symlink_is_rejected_before_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / ".agents" / "skills" / "run-change"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(root / "missing-skill", target_is_directory=True)
+            manifest = self.write_manifest(root)
+
+            with self.assertRaisesRegex(ContractError, "must not be a symlink"):
                 initialize_project(
                     root,
                     PROCESS_ROOT,

@@ -28,9 +28,10 @@ CHECKBOX_RE = re.compile(
     r"^\s*-\s+\[(?P<state>[ xX])\]\s+\*\*(?P<label>[^*]+)\*\*(?P<detail>.*)$",
     re.MULTILINE,
 )
-EXTENSION_CHECKBOX_RE = re.compile(
-    r"^\s*-\s+\[[ xX]\]\s+(?P<label>.+?)\s*$",
-    re.MULTILINE,
+PROJECT_REQUIREMENT_RE = re.compile(
+    r"^- \[(?P<state>[ xX])\] \*\*Project-specific: "
+    r"(?P<label>[A-Za-z0-9][A-Za-z0-9 /_.-]{0,99})\*\* "
+    r"— (?P<detail>\S.*)$"
 )
 CHECKLIST_STATUS_RE = re.compile(
     r"\[status:\s*(?P<status>[a-z-]+)\]\s*$", re.IGNORECASE
@@ -225,36 +226,77 @@ def managed_pull_request_visibility_issues(body: str) -> list[str]:
     return issues
 
 
-def _extension_policy_issues(body: str) -> list[str]:
+PROJECT_EXTENSION_HEADING = "## Project-specific requirements"
+
+
+def validate_project_extensions(body: str, *, allow_pending: bool) -> list[str]:
+    body = _normalized_markdown(body)
     _, end = _managed_span(body)
-    extension, malformed_comments = strip_html_comments(body[end:])
-    if malformed_comments:
-        return ["PR extension contains an unterminated or malformed HTML comment"]
-    structural = mask_fenced_code(extension)
+    extension = body[end:]
+    if not extension.strip():
+        return []
+    lines = extension.strip().splitlines()
+    if not lines or lines[0] != PROJECT_EXTENSION_HEADING:
+        return [
+            "PR extension must use only the supported project-specific checklist grammar"
+        ]
     issues: list[str] = []
-    for match in HEADING_RE.finditer(structural):
-        name = match.group(1).strip()
-        folded = name.casefold()
-        for canonical in REQUIRED_SECTIONS:
-            if folded == canonical.casefold() or folded.startswith(
-                canonical.casefold() + " "
-            ):
-                issues.append(
-                    f"Project extension must not duplicate managed section: ## {canonical}"
-                )
-                break
-    for match in EXTENSION_CHECKBOX_RE.finditer(structural):
-        label = match.group("label").strip().replace("**", "")
+    labels: set[str] = set()
+    requirements = 0
+    for line in lines[1:]:
+        if not line:
+            continue
+        match = PROJECT_REQUIREMENT_RE.fullmatch(line)
+        if match is None:
+            issues.append(
+                "Unsupported PR extension content; use `- [ ] **Project-specific: "
+                "Label** — detail. [status: pending]`"
+            )
+            continue
+        requirements += 1
+        label = match.group("label").strip()
         folded = label.casefold()
-        for canonical in REQUIRED_REQUIREMENTS:
-            if folded == canonical.casefold() or folded.startswith(
-                canonical.casefold() + " "
-            ):
+        if folded in labels:
+            issues.append(f"Duplicate project-specific requirement: {label}")
+        labels.add(folded)
+        if any(required.casefold() in folded for required in REQUIRED_REQUIREMENTS):
+            issues.append(
+                f"Project-specific requirement label is reserved by core policy: {label}"
+            )
+        line_status = CHECKLIST_STATUS_RE.search(line)
+        if line_status is None:
+            issues.append(f"Project-specific requirement is missing a status: {line}")
+            continue
+        status = line_status.group("status").lower()
+        checked = match.group("state").lower() == "x"
+        if status not in CHECKLIST_STATUSES:
+            issues.append(
+                f"Project-specific requirement has invalid status `{status}`: {line}"
+            )
+        elif status == "pending":
+            if checked:
                 issues.append(
-                    "Project extension must not duplicate managed standard requirement: "
-                    + canonical
+                    f"Pending project-specific requirement must be unchecked: {line}"
                 )
-                break
+            if not allow_pending:
+                issues.append(
+                    "Pending project-specific requirement is not ready for publication: "
+                    + line
+                )
+        elif not checked:
+            issues.append(
+                f"Resolved project-specific requirement must be checked: {line}"
+            )
+        if (
+            status == "not-applicable"
+            and CHECKLIST_REASON_RE.search(line) is None
+        ):
+            issues.append(
+                "Not-applicable project-specific requirement must include "
+                f"`[reason: ...]`: {line}"
+            )
+    if requirements == 0:
+        issues.append("PR extension must contain a project-specific checklist item")
     return issues
 
 
@@ -336,7 +378,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
             issues.append(
                 f"Not-applicable requirement must include `[reason: ...]`: {line}"
             )
-    issues.extend(_extension_policy_issues(body))
+    issues.extend(validate_project_extensions(body, allow_pending=allow_pending))
     return issues
 
 

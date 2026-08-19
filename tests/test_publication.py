@@ -82,7 +82,8 @@ class PublicationTests(unittest.TestCase):
 
     def test_ready_pr_accepts_complete_body_and_project_requirements(self):
         body = pr_body() + (
-            "- [x] **UI evidence** — no UI surface changed. "
+            "\n## Project-specific requirements\n\n"
+            "- [x] **Project-specific: UI evidence** — no UI surface changed. "
             "[reason: process-only change] [status: not-applicable]\n"
         )
         self.assertEqual(
@@ -112,7 +113,27 @@ class PublicationTests(unittest.TestCase):
                     branch="feat/standardize-publication",
                     state="ready",
                 )
-                self.assertTrue(any("must not duplicate" in issue for issue in issues))
+                self.assertTrue(issues)
+
+    def test_rejects_markdown_variants_outside_extension_grammar(self):
+        variants = (
+            " ## Independent review\n",
+            "## Independent review:\n",
+            "Independent review\n---\n",
+            "<h2>Independent review</h2>\n",
+            "* [x] **Independent review** — optional. [status: satisfied]\n",
+            "```bad`\n## Independent review\n",
+        )
+
+        for extension in variants:
+            with self.subTest(extension=extension):
+                issues = validate_pull_request(
+                    title="feat(process): standardize publication",
+                    body=pr_body() + extension,
+                    branch="feat/standardize-publication",
+                    state="ready",
+                )
+                self.assertTrue(issues)
 
     def test_rejects_markerless_hidden_and_weakened_managed_content(self):
         markerless = pr_body().replace(PR_DESCRIPTION_START, "").replace(

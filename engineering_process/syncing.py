@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sysconfig
 import tempfile
@@ -19,6 +20,7 @@ from .publication import (
     managed_pull_request_block,
     managed_pull_request_visibility_issues,
     merge_managed_pull_request_template,
+    validate_project_extensions,
 )
 from .skills import MARKER_NAME, validate_skills
 
@@ -73,22 +75,43 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, bytes]:
     return result
 
 
+def managed_parent_issues(project_root: Path) -> list[str]:
+    issues: list[str] = []
+    for path in (
+        project_root / ".process",
+        project_root / ".agents",
+        project_root / ".agents" / "skills",
+        project_root / ".github",
+    ):
+        if path.is_symlink():
+            issues.append(f"{path}: managed parent must not be a symlink")
+    return issues
+
+
 def skill_target_ownership_issues(project_root: Path) -> list[str]:
     target_root = project_root / ".agents" / "skills"
-    if not target_root.exists():
+    if target_root.is_symlink():
+        return [f"{target_root}: managed skills root must not be a symlink"]
+    if not os.path.lexists(target_root):
         return []
     if not target_root.is_dir():
         return [f"{target_root}: managed skills root must be a directory"]
 
     issues: list[str] = []
     for target in target_root.iterdir():
+        if target.is_symlink():
+            issues.append(f"{target}: unmanaged symlink in managed skills root")
+            continue
         if target.is_file():
             issues.append(
                 f"{target}: unmanaged project skill asset; process capabilities must come "
                 "from the pinned engineering-process distribution"
             )
             continue
-        if not target.is_dir() or not (target / "SKILL.md").is_file():
+        if not target.is_dir():
+            issues.append(f"{target}: unsupported entry in managed skills root")
+            continue
+        if not (target / "SKILL.md").is_file():
             continue
         marker = _read_marker(target)
         if not marker or marker.get("distribution") != "engineering-process":
@@ -106,7 +129,10 @@ def selected_skill_target_issues(
     issues: list[str] = []
     for skill in skills:
         target = target_root / skill
-        if not target.exists():
+        if target.is_symlink():
+            issues.append(f"{target}: selected managed skill target must not be a symlink")
+            continue
+        if not os.path.lexists(target):
             continue
         if not target.is_dir():
             issues.append(f"{target}: selected managed skill target must be a directory")
@@ -140,6 +166,8 @@ def _agents_source(process_root: Path) -> tuple[Path, str]:
 def _agents_issues(project_root: Path, process_root: Path) -> list[str]:
     _, source = _agents_source(process_root)
     target = project_root / "AGENTS.md"
+    if target.is_symlink():
+        return [f"{target}: managed agent contract must not be a symlink"]
     if not target.is_file():
         return [f"{target}: missing managed engineering-process agent contract"]
     try:
@@ -163,6 +191,8 @@ def _agents_issues(project_root: Path, process_root: Path) -> list[str]:
 def _sync_agents(project_root: Path, process_root: Path) -> None:
     _, source = _agents_source(process_root)
     target = project_root / "AGENTS.md"
+    if target.is_symlink():
+        raise ContractError(f"{target}: managed agent contract must not be a symlink")
     try:
         current = target.read_text(encoding="utf-8") if target.is_file() else ""
     except (OSError, UnicodeError) as error:
@@ -177,6 +207,8 @@ def _pull_request_template_issues(
 ) -> list[str]:
     _, source = _pull_request_template_source(process_root)
     target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    if target.is_symlink():
+        return [f"{target}: managed pull-request template must not be a symlink"]
     if not target.is_file():
         return [f"{target}: missing managed pull-request template"]
     try:
@@ -192,12 +224,18 @@ def _pull_request_template_issues(
         f"{target}: {issue}"
         for issue in managed_pull_request_visibility_issues(current)
     )
+    issues.extend(
+        f"{target}: {issue}"
+        for issue in validate_project_extensions(current, allow_pending=True)
+    )
     return issues
 
 
 def _sync_pull_request_template(project_root: Path, process_root: Path) -> None:
     _, source = _pull_request_template_source(process_root)
     target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    if target.is_symlink():
+        raise ContractError(f"{target}: managed pull-request template must not be a symlink")
     try:
         current = target.read_text(encoding="utf-8") if target.is_file() else ""
     except (OSError, UnicodeError) as error:
@@ -242,6 +280,7 @@ def synchronized_state(
         if _files(source, ignore_marker=True) != _files(target, ignore_marker=True):
             issues.append(f"{target}: content differs from the pinned skill")
     issues.extend(skill_target_ownership_issues(project_root))
+    issues.extend(managed_parent_issues(project_root))
     if target_root.is_dir():
         for target in target_root.iterdir():
             if not target.is_dir() or not (target / "SKILL.md").is_file():
@@ -263,6 +302,7 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
     process_root = process_root.resolve()
     lock = load_lock(project_root)
     ownership_issues = [
+        *managed_parent_issues(project_root),
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, lock.skills),
     ]
