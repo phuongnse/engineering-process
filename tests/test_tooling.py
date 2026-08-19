@@ -162,6 +162,74 @@ class ManagedToolTests(unittest.TestCase):
             self.assertEqual(b"payload", destination.read_bytes())
             self.assertEqual([0.25, 0.1], response.socket.timeouts)
 
+    def test_download_does_not_touch_socket_after_content_length_closes_response(self):
+        class Socket:
+            def __init__(self):
+                self.timeouts = []
+
+            def settimeout(self, value):
+                self.timeouts.append(value)
+
+        class Raw:
+            def __init__(self, active_socket):
+                self._sock = active_socket
+
+        class Stream:
+            def __init__(self, active_socket):
+                self.raw = Raw(active_socket)
+
+        class Response:
+            def __init__(self):
+                self.socket = Socket()
+                self.fp = Stream(self.socket)
+                self.headers = {"Content-Length": "7"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *unused):
+                return False
+
+            def geturl(self):
+                return "https://downloads.example.test/sample"
+
+            def isclosed(self):
+                return self.fp is None
+
+            def read(self, size):
+                del size
+                self.fp = None
+                return b"payload"
+
+        artifact = ManagedToolArtifact(
+            platform="linux-glibc-x64",
+            url="https://downloads.example.test/sample",
+            checksum=f"sha256:{'0' * 64}",
+            archive_format="file",
+            strip_components=0,
+            max_download_bytes=100,
+            max_extracted_bytes=100,
+            max_files=1,
+            commands={"sample": ManagedCommand("sample", None)},
+        )
+        response = Response()
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "artifact"
+            with (
+                patch(
+                    "engineering_process.tooling._HTTPS_OPENER.open",
+                    return_value=response,
+                ),
+                patch(
+                    "engineering_process.tooling._remaining",
+                    side_effect=[10.0, 0.25],
+                ),
+            ):
+                _download_artifact_direct(artifact, destination, deadline=123.0)
+
+            self.assertEqual(b"payload", destination.read_bytes())
+            self.assertEqual([0.25], response.socket.timeouts)
+
     def test_download_worker_is_force_terminated_at_the_wall_clock_deadline(self):
         artifact = ManagedToolArtifact(
             platform="linux-glibc-x64",
