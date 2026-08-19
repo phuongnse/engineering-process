@@ -11,7 +11,12 @@ from . import VERSION
 from .bundles import load_bundles
 from .contracts import ContractError, ProcessLock, read_json, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
-from .git_attributes import managed_attributes_issues, merge_managed_attributes
+from .git_attributes import (
+    canonical_attributes_block,
+    has_managed_attributes_marker,
+    managed_attributes_issues,
+    read_managed_attributes,
+)
 from .managed import (
     managed_agents_block,
     managed_agents_visibility_issues,
@@ -145,16 +150,17 @@ def selected_skill_target_issues(
 
 
 def git_attributes_target_issues(project_root: Path) -> list[str]:
-    target = project_root / ".gitattributes"
-    if target.is_symlink():
-        return [f"{target}: managed Git attributes must not be a symlink"]
-    if os.path.lexists(target) and not target.is_file():
-        return [f"{target}: managed Git attributes must be a regular file"]
-    if target.is_file():
-        try:
-            merge_managed_attributes(target.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ContractError) as error:
-            return [f"{target}: invalid managed Git attributes: {error}"]
+    target = project_root / ".agents" / ".gitattributes"
+    try:
+        current = read_managed_attributes(target)
+    except ContractError as error:
+        return [f"{target}: {error}"]
+    if (
+        current is not None
+        and managed_attributes_issues(current)
+        and not has_managed_attributes_marker(current)
+    ):
+        return [f"{target}: refusing to overwrite unmanaged Git attributes"]
     return []
 
 
@@ -262,31 +268,31 @@ def _sync_pull_request_template(project_root: Path, process_root: Path) -> None:
 
 
 def _git_attributes_issues(project_root: Path) -> list[str]:
-    target = project_root / ".gitattributes"
-    if target.is_symlink():
-        return [f"{target}: managed Git attributes must not be a symlink"]
-    if not target.is_file():
-        return [f"{target}: missing managed engineering-process Git attributes"]
+    target = project_root / ".agents" / ".gitattributes"
     try:
-        current = target.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        return [f"{target}: invalid managed Git attributes: {error}"]
+        current = read_managed_attributes(target)
+    except ContractError as error:
+        return [f"{target}: {error}"]
+    if current is None:
+        return [f"{target}: missing managed engineering-process Git attributes"]
     return [f"{target}: {issue}" for issue in managed_attributes_issues(current)]
 
 
 def _sync_git_attributes(project_root: Path) -> None:
-    target = project_root / ".gitattributes"
-    if target.is_symlink():
-        raise ContractError(f"{target}: managed Git attributes must not be a symlink")
-    if os.path.lexists(target) and not target.is_file():
-        raise ContractError(f"{target}: managed Git attributes must be a regular file")
+    target = project_root / ".agents" / ".gitattributes"
     try:
-        current = target.read_text(encoding="utf-8") if target.is_file() else ""
-    except (OSError, UnicodeError) as error:
-        raise ContractError(f"{target}: cannot read Git attributes: {error}") from error
-    updated = merge_managed_attributes(current)
-    if current != updated:
-        target.write_text(updated, encoding="utf-8")
+        current = read_managed_attributes(target)
+    except ContractError as error:
+        raise ContractError(f"{target}: {error}") from error
+    if (
+        current is not None
+        and managed_attributes_issues(current)
+        and not has_managed_attributes_marker(current)
+    ):
+        raise ContractError(f"{target}: refusing to overwrite unmanaged Git attributes")
+    if current is None or managed_attributes_issues(current):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(canonical_attributes_block(), encoding="utf-8")
 
 
 def synchronized_state(

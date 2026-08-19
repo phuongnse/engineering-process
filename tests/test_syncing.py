@@ -8,11 +8,23 @@ from unittest import mock
 
 from engineering_process import syncing
 from engineering_process import VERSION
-from engineering_process.contracts import ContractError, ProcessLock
+from engineering_process.contracts import (
+    ContractError,
+    ProcessLock,
+    read_json,
+    validate_process_lock,
+)
 from engineering_process.distribution import distribution_digest
-from engineering_process.git_attributes import ATTRIBUTES_END, ATTRIBUTES_START
-from engineering_process.syncing import sync_skills, synchronized_state
-from engineering_process.contracts import read_json, validate_process_lock
+from engineering_process.git_attributes import (
+    ATTRIBUTES_END,
+    ATTRIBUTES_INPUT_LIMIT,
+    ATTRIBUTES_START,
+)
+from engineering_process.syncing import (
+    git_attributes_target_issues,
+    sync_skills,
+    synchronized_state,
+)
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -62,7 +74,7 @@ class SyncTests(unittest.TestCase):
                 synchronized_state(project_root, PROCESS_ROOT, lock),
                 [],
             )
-            attributes = (project_root / ".gitattributes").read_text(
+            attributes = (project_root / ".agents" / ".gitattributes").read_text(
                 encoding="utf-8"
             )
             self.assertTrue(attributes.rstrip().endswith(ATTRIBUTES_END))
@@ -87,14 +99,16 @@ class SyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
             self.prepare_project(project_root)
-            attributes = project_root / ".gitattributes"
-            attributes.write_text("*.png binary\n", encoding="utf-8")
+            project_attributes = project_root / ".gitattributes"
+            project_bytes = b"  # project comment\r\n*.png binary  \r\n\r\n"
+            project_attributes.write_bytes(project_bytes)
             self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
 
+            attributes = project_root / ".agents" / ".gitattributes"
             current = attributes.read_text(encoding="utf-8")
             attributes.write_text(
                 current.replace("text=auto eol=lf", "-text")
-                + "*.md text eol=crlf\n",
+                + "skills/** text eol=crlf\n",
                 encoding="utf-8",
             )
             lock = validate_process_lock(
@@ -105,20 +119,23 @@ class SyncTests(unittest.TestCase):
 
             self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
             repaired = attributes.read_text(encoding="utf-8")
-            self.assertIn("*.png binary", repaired)
-            self.assertIn("*.md text eol=crlf", repaired)
             self.assertIn(
-                "/.agents/skills/** text=auto eol=lf",
+                "skills/** text=auto eol=lf",
                 repaired,
             )
             self.assertEqual(1, repaired.count(ATTRIBUTES_START))
             self.assertEqual(1, repaired.count(ATTRIBUTES_END))
             self.assertTrue(repaired.rstrip().endswith(ATTRIBUTES_END))
+            self.assertEqual(project_bytes, project_attributes.read_bytes())
 
     def test_managed_attributes_keep_skill_checkout_bytes_canonical(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
             self.prepare_project(project_root)
+            (project_root / ".gitattributes").write_text(
+                "/.agents/skills/** text eol=crlf\n",
+                encoding="utf-8",
+            )
             self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
             target = (
                 project_root
@@ -139,10 +156,25 @@ class SyncTests(unittest.TestCase):
                 check=True,
             )
             subprocess.run(
-                ["git", "add", ".gitattributes", relative],
+                [
+                    "git",
+                    "add",
+                    ".gitattributes",
+                    ".agents/.gitattributes",
+                    relative,
+                ],
                 cwd=project_root,
                 check=True,
             )
+            effective = subprocess.run(
+                ["git", "check-attr", "text", "eol", "--", relative],
+                cwd=project_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("text: auto", effective.stdout)
+            self.assertIn("eol: lf", effective.stdout)
             target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
             self.assertIn(b"\r\n", target.read_bytes())
 
@@ -154,6 +186,27 @@ class SyncTests(unittest.TestCase):
 
             self.assertNotIn(b"\r\n", target.read_bytes())
 
+            (project_root / ".git" / "info" / "attributes").write_text(
+                ".agents/skills/** text eol=crlf\n",
+                encoding="utf-8",
+            )
+            target.unlink()
+            subprocess.run(
+                ["git", "checkout", "--", relative],
+                cwd=project_root,
+                check=True,
+            )
+            self.assertIn(b"\r\n", target.read_bytes())
+            lock = validate_process_lock(
+                read_json(project_root / ".process" / "process.lock")
+            )
+            self.assertTrue(
+                any(
+                    "content differs" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+
     @unittest.skipIf(
         os.name == "nt", "symlink creation requires elevated Windows policy"
     )
@@ -161,7 +214,8 @@ class SyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
             self.prepare_project(project_root)
-            attributes = project_root / ".gitattributes"
+            attributes = project_root / ".agents" / ".gitattributes"
+            attributes.parent.mkdir()
             attributes.symlink_to(project_root / "outside-attributes")
 
             with self.assertRaisesRegex(ContractError, "must not be a symlink"):
@@ -169,25 +223,55 @@ class SyncTests(unittest.TestCase):
 
             self.assertFalse((project_root / "AGENTS.md").exists())
             self.assertFalse((project_root / ".github").exists())
-            self.assertFalse((project_root / ".agents").exists())
+            self.assertFalse((project_root / ".agents" / "skills").exists())
 
-    def test_sync_preflights_malformed_attributes_before_writes(self):
+    def test_sync_refuses_unmanaged_agent_attributes_before_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
             self.prepare_project(project_root)
-            (project_root / ".gitattributes").write_text(
-                f"{ATTRIBUTES_START}\n",
+            attributes = project_root / ".agents" / ".gitattributes"
+            attributes.parent.mkdir()
+            attributes.write_text(
+                "skills/** text eol=crlf\n",
                 encoding="utf-8",
             )
 
             with self.assertRaisesRegex(
-                ContractError, "invalid engineering-process managed block"
+                ContractError, "refusing to overwrite unmanaged Git attributes"
             ):
                 sync_skills(project_root, PROCESS_ROOT, check=False)
 
             self.assertFalse((project_root / "AGENTS.md").exists())
             self.assertFalse((project_root / ".github").exists())
-            self.assertFalse((project_root / ".agents").exists())
+            self.assertFalse((project_root / ".agents" / "skills").exists())
+
+    def test_managed_attributes_input_is_bounded(self):
+        marker = f"{ATTRIBUTES_START}\n".encode()
+        for extra in (0, 1):
+            with (
+                self.subTest(extra=extra),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                project_root = Path(directory)
+                self.prepare_project(project_root)
+                attributes = project_root / ".agents" / ".gitattributes"
+                attributes.parent.mkdir()
+                size = ATTRIBUTES_INPUT_LIMIT + extra
+                attributes.write_bytes(marker + b"#" * (size - len(marker)))
+
+                issues = git_attributes_target_issues(project_root)
+                if extra == 0:
+                    self.assertEqual([], issues)
+                    self.assertEqual(
+                        [], sync_skills(project_root, PROCESS_ROOT, check=False)
+                    )
+                else:
+                    self.assertTrue(any("exceed" in issue for issue in issues))
+                    with self.assertRaisesRegex(ContractError, "exceed"):
+                        sync_skills(project_root, PROCESS_ROOT, check=False)
+                    self.assertFalse((project_root / "AGENTS.md").exists())
+                    self.assertFalse((project_root / ".github").exists())
+                    self.assertFalse((project_root / ".agents" / "skills").exists())
 
     def test_sync_maintains_pr_template_block_and_preserves_extensions(self):
         with tempfile.TemporaryDirectory() as directory:

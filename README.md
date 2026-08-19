@@ -89,11 +89,12 @@ lifecycle-state path and canonical managed-skill Git attributes, and synchronize
 the selected skills. It refuses to replace differing project configuration or
 unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
 `doctor` detect drift in skills, the managed agent contract, the pull-request block,
-and the process-owned `.gitattributes` block. The managed attributes are kept last so
-project rules cannot change the canonical LF checkout of text assets under
-`.agents/skills`; binary detection remains automatic. Byte-exact distribution
-attestation is unchanged. A consumer never authors or maintains process skills
-locally.
+and the bounded process-owned `.agents/.gitattributes` file. That file is closer to
+the managed tree than project-root attributes and canonicalizes LF only for text
+assets under `.agents/skills`; binary detection remains automatic. Deeper repository
+attribute files are rejected by existing managed-tree ownership and content checks.
+External Git overrides that alter a checkout still fail byte-exact distribution
+attestation. A consumer never authors or maintains process skills locally.
 
 The single project-manifest contract includes environment profiles, project-attested
 read-only requirement probes, remediation, declarative managed-tool artifacts, and

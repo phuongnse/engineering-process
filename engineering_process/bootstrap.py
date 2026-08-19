@@ -9,7 +9,7 @@ from . import VERSION
 from .bundles import load_bundles, select_bundles
 from .contracts import ContractError, read_json, validate_project, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
-from .git_attributes import managed_attributes_issues, merge_managed_attributes
+from .git_attributes import canonical_attributes_block, read_managed_attributes
 from .managed import (
     AGENTS_END,
     AGENTS_START,
@@ -138,13 +138,23 @@ def _ignore_update(project_root: Path) -> tuple[Path, str]:
 
 
 def _attributes_update(project_root: Path) -> tuple[Path, str]:
-    path = project_root / ".gitattributes"
-    current = _read_optional_text(path)
-    updated = merge_managed_attributes(current)
-    issues = managed_attributes_issues(updated)
-    if issues:
-        raise ContractError(f"{path}: " + "; ".join(issues))
-    return path, updated
+    path = project_root / ".agents" / ".gitattributes"
+    try:
+        read_managed_attributes(path)
+    except ContractError as error:
+        raise ContractError(f"{path}: {error}") from error
+    return path, canonical_attributes_block()
+
+
+def _write_attributes(path: Path, content: str) -> None:
+    try:
+        current = read_managed_attributes(path)
+    except ContractError as error:
+        raise ContractError(f"{path}: {error}") from error
+    if current == content:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def initialize_project(
@@ -197,7 +207,7 @@ def initialize_project(
     agents_target = project_root / "AGENTS.md"
     pr_target = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
     ignore_target = project_root / ".gitignore"
-    attributes_target = project_root / ".gitattributes"
+    attributes_target = project_root / ".agents" / ".gitattributes"
     _preflight_parents(
         project_root,
         target_manifest,
@@ -220,7 +230,7 @@ def initialize_project(
     _write_text(agents_path, agents_content)
     _write_text(pr_path, pr_content)
     _write_text(ignore_path, ignore_content)
-    _write_text(attributes_path, attributes_content)
+    _write_attributes(attributes_path, attributes_content)
     issues = sync_skills(project_root, process_root, check=False)
     if issues:
         raise ContractError("\n".join(issues))

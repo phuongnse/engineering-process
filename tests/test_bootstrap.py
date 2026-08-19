@@ -80,9 +80,8 @@ class BootstrapTests(unittest.TestCase):
             root = Path(directory)
             (root / "AGENTS.md").write_text("# Product rules\n", encoding="utf-8")
             (root / ".gitignore").write_text("dist/\n.process/runs/\n", encoding="utf-8")
-            (root / ".gitattributes").write_text(
-                "*.png binary\n", encoding="utf-8"
-            )
+            project_attributes = b"  # project attributes\r\n*.png binary  \r\n\r\n"
+            (root / ".gitattributes").write_bytes(project_attributes)
             manifest = self.write_manifest(root)
             first = initialize_project(
                 root,
@@ -108,13 +107,18 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("/.process/runs/", ignore)
             self.assertNotIn("\n.process/runs/", ignore)
             self.assertEqual(ignore.count("/.process/runs/"), 1)
-            attributes = (root / ".gitattributes").read_text(encoding="utf-8")
-            self.assertIn("*.png binary", attributes)
+            self.assertEqual(
+                project_attributes,
+                (root / ".gitattributes").read_bytes(),
+            )
+            attributes = (root / ".agents" / ".gitattributes").read_text(
+                encoding="utf-8"
+            )
             self.assertEqual(attributes.count(ATTRIBUTES_START), 1)
             self.assertEqual(attributes.count(ATTRIBUTES_END), 1)
             self.assertTrue(attributes.rstrip().endswith(ATTRIBUTES_END))
             self.assertIn(
-                "/.agents/skills/** text=auto eol=lf",
+                "skills/** text=auto eol=lf",
                 attributes,
             )
             lock = read_json(root / ".process" / "process.lock")

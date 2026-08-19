@@ -75,8 +75,10 @@ validated against `schemas/evidence-receipt.schema.json` and its semantic cross-
 before an explicit prune; active or unexported evidence is not deleted.
 Verification isolates interpreter bytecode caches from the checkout and rejects
 ignored sourceless bytecode that could shadow checkpoint-owned source.
-Managed skill text is checked out with canonical LF through a final process-owned
-Git attributes block. Integrity comparison remains byte-exact; newline variants are
+Managed skill text is checked out with canonical LF through a bounded process-owned
+`.agents/.gitattributes` file whose directory precedence is above project-root
+rules. Deeper repository attribute files remain subject to managed-tree ownership
+and content checks. Integrity comparison remains byte-exact; newline variants are
 not accepted as alternate distribution bytes.
 
 ## Release identity

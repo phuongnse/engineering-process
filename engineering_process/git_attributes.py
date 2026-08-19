@@ -1,72 +1,74 @@
 from __future__ import annotations
 
-import re
+import os
+import stat
+from pathlib import Path
 
 from .contracts import ContractError
 
 
 ATTRIBUTES_START = "# engineering-process:attributes:start"
 ATTRIBUTES_END = "# engineering-process:attributes:end"
-MANAGED_SKILLS_ATTRIBUTES = "/.agents/skills/** text=auto eol=lf"
+MANAGED_SKILLS_ATTRIBUTES = "skills/** text=auto eol=lf"
+ATTRIBUTES_INPUT_LIMIT = 4_096
 
 
 def _normalized_text(text: str) -> str:
-    return text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _managed_span(text: str) -> tuple[int, int]:
-    if text.count(ATTRIBUTES_START) != 1 or text.count(ATTRIBUTES_END) != 1:
-        raise ContractError(
-            ".gitattributes: invalid engineering-process managed block"
-        )
-    starts = list(re.finditer(rf"(?m)^{re.escape(ATTRIBUTES_START)}$", text))
-    ends = list(re.finditer(rf"(?m)^{re.escape(ATTRIBUTES_END)}$", text))
-    if len(starts) != 1 or len(ends) != 1:
-        raise ContractError(
-            ".gitattributes: managed markers must each occupy their own line"
-        )
-    if starts[0].end() >= ends[0].start():
-        raise ContractError(
-            ".gitattributes: engineering-process managed markers are out of order"
-        )
-    return starts[0].start(), ends[0].end()
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def canonical_attributes_block() -> str:
     return "\n".join(
         (ATTRIBUTES_START, MANAGED_SKILLS_ATTRIBUTES, ATTRIBUTES_END)
+    ) + "\n"
+
+
+def read_managed_attributes(path: Path) -> str | None:
+    if path.is_symlink():
+        raise ContractError("managed Git attributes must not be a symlink")
+    if not os.path.lexists(path):
+        return None
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
     )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ContractError(f"cannot read managed Git attributes: {error}") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ContractError("managed Git attributes must be a regular file")
+        if metadata.st_size > ATTRIBUTES_INPUT_LIMIT:
+            raise ContractError(
+                "managed Git attributes exceed "
+                f"{ATTRIBUTES_INPUT_LIMIT} bytes"
+            )
+        data = os.read(descriptor, ATTRIBUTES_INPUT_LIMIT + 1)
+    finally:
+        os.close(descriptor)
+    if len(data) > ATTRIBUTES_INPUT_LIMIT:
+        raise ContractError(
+            "managed Git attributes exceed "
+            f"{ATTRIBUTES_INPUT_LIMIT} bytes"
+        )
+    try:
+        return data.decode("utf-8")
+    except UnicodeError as error:
+        raise ContractError(
+            f"managed Git attributes are not valid UTF-8: {error}"
+        ) from error
+
+
+def has_managed_attributes_marker(text: str) -> bool:
+    lines = _normalized_text(text).splitlines()
+    return ATTRIBUTES_START in lines or ATTRIBUTES_END in lines
 
 
 def managed_attributes_issues(text: str) -> list[str]:
-    normalized = _normalized_text(text)
-    try:
-        start, end = _managed_span(normalized)
-    except ContractError as error:
-        return [str(error)]
-    issues: list[str] = []
-    if normalized[start:end] != canonical_attributes_block():
-        issues.append(
-            ".gitattributes: managed block differs from the pinned distribution"
-        )
-    if normalized[end:].strip():
-        issues.append(
-            ".gitattributes: managed block must be the final non-whitespace content"
-        )
-    return issues
-
-
-def merge_managed_attributes(current: str) -> str:
-    normalized = _normalized_text(current)
-    start_count = normalized.count(ATTRIBUTES_START)
-    end_count = normalized.count(ATTRIBUTES_END)
-    project_content = normalized.strip()
-    if start_count or end_count:
-        start, end = _managed_span(normalized)
-        project_content = "\n\n".join(
-            part
-            for part in (normalized[:start].strip(), normalized[end:].strip())
-            if part
-        )
-    parts = [part for part in (project_content, canonical_attributes_block()) if part]
-    return "\n\n".join(parts) + "\n"
+    if _normalized_text(text) != canonical_attributes_block():
+        return ["managed Git attributes differ from the pinned distribution"]
+    return []
