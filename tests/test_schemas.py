@@ -20,6 +20,7 @@ class SchemaTests(unittest.TestCase):
             "change": "change",
             "plan": "plan",
             "project": "project",
+            "release": "release",
             "review": "review",
         }
         for example_name, schema_name in mappings.items():

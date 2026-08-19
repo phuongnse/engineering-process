@@ -5,7 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from engineering_process.contracts import Check, ContractError, Project
+from engineering_process.contracts import (
+    Check,
+    ContractError,
+    ImpactComponent,
+    Project,
+    ProjectImpact,
+)
 from engineering_process.lifecycle import (
     _change_lock,
     begin_implementation,
@@ -164,6 +170,73 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(state["phase"], "verified")
         return state
+
+    def test_verification_uses_registered_contract_comparison_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            unscoped = self.project()
+            project = Project(
+                identifier=unscoped.identifier,
+                profiles=unscoped.profiles,
+                required_profiles=unscoped.required_profiles,
+                impact=ProjectImpact(
+                    base_refs=("missing-default",),
+                    unmatched_paths="all-scoped-checks",
+                    components={
+                        "source": ImpactComponent(
+                            identifier="source",
+                            paths=("tracked.txt",),
+                            affects=(),
+                        )
+                    },
+                ),
+            )
+            state = start_change(
+                root,
+                project,
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                project,
+                "change-1",
+                plan_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            begin_implementation(
+                root,
+                "change-1",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            _, report = verify_change(
+                root,
+                project,
+                "change-1",
+                "development",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            self.assertEqual(report["impact"]["baseRef"], "HEAD")
+            self.assertEqual(report["impact"]["changedPaths"], [])
 
     def test_full_lifecycle_requires_independent_review(self):
         with tempfile.TemporaryDirectory() as directory:

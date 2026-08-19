@@ -17,6 +17,7 @@ from .contracts import (
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_release,
     validate_review,
 )
 from .distribution import distribution_digest
@@ -28,6 +29,7 @@ from .environment import (
     require_environment_profile,
     setup_environment,
 )
+from .impact import plan_profile
 from .lifecycle import (
     begin_implementation,
     finish_change,
@@ -46,6 +48,7 @@ from .publication import (
     validate_commit_subject,
     validate_pull_request,
 )
+from .release import validate_release_checkpoint
 from .skills import validate_skills
 from .syncing import (
     default_process_root,
@@ -202,6 +205,7 @@ def command_contract_validate(args: argparse.Namespace) -> int:
     validators: dict[str, Callable[[Any, str], None]] = {
         "change": validate_change,
         "plan": validate_plan,
+        "release": validate_release,
         "review": validate_review,
     }
     validators[args.kind](document, str(args.path))
@@ -574,8 +578,49 @@ def command_verify(args: argparse.Namespace) -> int:
         raise ContractError("\n".join(integration_issues))
     project_path = args.project_root / ".process" / "project.json"
     project = validate_project(read_json(project_path), str(project_path))
+    if args.plan_only:
+        plan = plan_profile(
+            args.project_root,
+            project,
+            args.profile,
+            base_ref=args.base_ref,
+        ).evidence
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if args.json:
+            _write_json(plan)
+        else:
+            print(f"verify plan {args.profile}: {plan['mode']}")
+            if plan["mode"] == "affected-checks":
+                print(f"  base: {plan['baseRef']} ({plan['mergeBase']})")
+                print(f"  changed paths: {len(plan['changedPaths'])}")
+                print(
+                    "  affected components: "
+                    + (", ".join(plan["affectedComponents"]) or "none")
+                )
+                print(f"  unmatched paths: {len(plan['unmatchedPaths'])}")
+            print(
+                "  selected checks: "
+                + (", ".join(plan["selectedCheckIds"]) or "none")
+            )
+            print(
+                "  skipped checks: "
+                + (", ".join(plan["skippedCheckIds"]) or "none")
+            )
+            if args.output:
+                print(f"  report: {args.output}")
+        return 0
     require_environment_profile(args.project_root, project, profile=args.profile)
-    report = run_profile(args.project_root, project, args.profile)
+    report = run_profile(
+        args.project_root,
+        project,
+        args.profile,
+        base_ref=args.base_ref,
+    )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
@@ -676,6 +721,17 @@ def command_publication_validate_pr(args: argparse.Namespace) -> int:
         state=args.state,
         title=args.title,
     )
+
+
+def command_publication_validate_release(args: argparse.Namespace) -> int:
+    details = validate_release_checkpoint(
+        args.project_root,
+        tag=args.tag,
+        commit=args.commit,
+        main_ref=args.main_ref,
+    )
+    _emit(args, _result("publication validate-release", **details))
+    return 0
 
 
 def _add_json(parser: argparse.ArgumentParser) -> None:
@@ -782,7 +838,7 @@ def build_parser() -> argparse.ArgumentParser:
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)
     contract_validate = contract_commands.add_parser("validate")
     contract_validate.add_argument(
-        "--kind", choices=("change", "plan", "review"), required=True
+        "--kind", choices=("change", "plan", "release", "review"), required=True
     )
     contract_validate.add_argument("path", type=Path)
     _add_json(contract_validate)
@@ -873,6 +929,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_project_root(verify)
     _add_process_root(verify)
     verify.add_argument("--profile", required=True)
+    verify.add_argument(
+        "--base-ref",
+        help="Explicit Git comparison base; lifecycle verification uses its contract base",
+    )
+    verify.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Report affected-check selection without probing the environment or running checks",
+    )
     verify.add_argument("--output", type=Path)
     _add_json(verify)
     verify.set_defaults(handler=command_verify)
@@ -916,6 +981,17 @@ def build_parser() -> argparse.ArgumentParser:
     publication_pr.add_argument("--body-file", type=Path)
     _add_json(publication_pr)
     publication_pr.set_defaults(handler=command_publication_validate_pr)
+
+    publication_release = publication_commands.add_parser(
+        "validate-release",
+        help="Validate a release contract, immutable tag, and main ancestry",
+    )
+    _add_project_root(publication_release)
+    publication_release.add_argument("--tag", required=True)
+    publication_release.add_argument("--commit", required=True)
+    publication_release.add_argument("--main-ref", default="origin/main")
+    _add_json(publication_release)
+    publication_release.set_defaults(handler=command_publication_validate_release)
 
     change = commands.add_parser("change", help="Run the canonical change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)

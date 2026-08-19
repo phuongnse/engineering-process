@@ -17,6 +17,9 @@ SEMVER_PATTERN = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+FINAL_SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+)
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 SKILL_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MUTATION_SCOPES = {
@@ -31,6 +34,7 @@ PLATFORM_PATTERN = re.compile(
 )
 COMMAND_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 CHECKSUM_PATTERN = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$")
+BASE_REF_PATTERN = re.compile(r"^(?!-)[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$")
 
 
 class ContractError(ValueError):
@@ -43,6 +47,21 @@ class Check:
     run: tuple[str, ...]
     timeout_seconds: int
     working_directory: str
+    components: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class ImpactComponent:
+    identifier: str
+    paths: tuple[str, ...]
+    affects: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProjectImpact:
+    base_refs: tuple[str, ...]
+    unmatched_paths: str
+    components: dict[str, ImpactComponent]
 
 
 @dataclass(frozen=True)
@@ -117,6 +136,7 @@ class Project:
     profiles: dict[str, tuple[Check, ...]]
     required_profiles: tuple[str, ...] = ()
     environment: ProjectEnvironment | None = None
+    impact: ProjectImpact | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +144,16 @@ class ProcessLock:
     version: str
     digest: str
     skills: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Release:
+    previous_version: str
+    version: str
+    classification: str
+    compatibility: str
+    schema_impact: str
+    migration: str | None
 
 
 def read_json(path: Path) -> Any:
@@ -222,6 +252,128 @@ def _working_directory(value: Any, path: str) -> str:
     if work_path.is_absolute() or ".." in work_path.parts:
         raise ContractError(f"{path}: must stay within the project")
     return working_directory
+
+
+def _portable_glob(value: Any, path: str) -> str:
+    pattern = _string(value, path, max_length=512)
+    candidate = PurePosixPath(pattern)
+    if (
+        "\\" in pattern
+        or ":" in pattern
+        or "***" in pattern
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+        or pattern in {".", ".."}
+        or pattern.endswith("/")
+        or candidate.as_posix() != pattern
+    ):
+        raise ContractError(
+            f"{path}: must use canonical portable relative glob syntax"
+        )
+    return pattern
+
+
+def _validate_impact(value: Any, path: str) -> ProjectImpact:
+    impact = _object(value, path)
+    _exact_keys(
+        impact,
+        required={"baseRefs", "components", "unmatchedPaths"},
+        path=path,
+    )
+    base_refs = _string_list(impact["baseRefs"], f"{path}.baseRefs")
+    for index, base_ref in enumerate(base_refs):
+        if (
+            BASE_REF_PATTERN.fullmatch(base_ref) is None
+            or ".." in base_ref
+            or "//" in base_ref
+            or base_ref.endswith(("/", "."))
+        ):
+            raise ContractError(
+                f"{path}.baseRefs[{index}]: must be a portable Git ref or object id"
+            )
+
+    unmatched_paths = _string(
+        impact["unmatchedPaths"], f"{path}.unmatchedPaths", max_length=32
+    )
+    if unmatched_paths != "all-scoped-checks":
+        raise ContractError(
+            f"{path}.unmatchedPaths: must be all-scoped-checks"
+        )
+
+    raw_components = impact["components"]
+    if not isinstance(raw_components, list) or not raw_components:
+        raise ContractError(f"{path}.components: must contain at least 1 item(s)")
+    if len(raw_components) > 256:
+        raise ContractError(f"{path}.components: exceeds 256 items")
+
+    components: dict[str, ImpactComponent] = {}
+    for index, raw_component in enumerate(raw_components):
+        component_path = f"{path}.components[{index}]"
+        component = _object(raw_component, component_path)
+        _exact_keys(
+            component,
+            required={"id", "paths", "affects"},
+            path=component_path,
+        )
+        identifier = _string(
+            component["id"], f"{component_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{component_path}.id: invalid component name")
+        if identifier in components:
+            raise ContractError(
+                f"{path}.components: duplicate component {identifier}"
+            )
+
+        raw_paths = component["paths"]
+        if not isinstance(raw_paths, list) or not raw_paths:
+            raise ContractError(
+                f"{component_path}.paths: must contain at least 1 item(s)"
+            )
+        patterns = [
+            _portable_glob(item, f"{component_path}.paths[{path_index}]")
+            for path_index, item in enumerate(raw_paths)
+        ]
+        if len(set(patterns)) != len(patterns):
+            raise ContractError(
+                f"{component_path}.paths: duplicate items are not allowed"
+            )
+        if patterns != sorted(patterns):
+            raise ContractError(f"{component_path}.paths: patterns must be sorted")
+
+        affects = _string_list(
+            component["affects"],
+            f"{component_path}.affects",
+            minimum=0,
+            pattern=PROFILE_PATTERN,
+        )
+        if affects != sorted(affects):
+            raise ContractError(
+                f"{component_path}.affects: components must be sorted"
+            )
+        components[identifier] = ImpactComponent(
+            identifier=identifier,
+            paths=tuple(patterns),
+            affects=tuple(affects),
+        )
+
+    for component in components.values():
+        unknown = sorted(set(component.affects) - set(components))
+        if unknown:
+            raise ContractError(
+                f"{path}.components.{component.identifier}.affects: "
+                f"undefined components: {', '.join(unknown)}"
+            )
+        if component.identifier in component.affects:
+            raise ContractError(
+                f"{path}.components.{component.identifier}.affects: "
+                "cannot affect itself"
+            )
+    return ProjectImpact(
+        base_refs=tuple(base_refs),
+        unmatched_paths=unmatched_paths,
+        components=components,
+    )
 
 
 def _bounded_integer(value: Any, path: str, *, minimum: int, maximum: int) -> int:
@@ -768,7 +920,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
         value,
         required={"schemaVersion", "project", "lifecycle", "profiles"}
         | ({"environment"} if schema_version >= 2 else set()),
-        optional={"$schema"},
+        optional={"$schema"} | ({"impact"} if schema_version == 3 else set()),
         path=path,
     )
     identifier = _string(value["project"], f"{path}.project", max_length=128)
@@ -791,6 +943,12 @@ def validate_project(document: Any, path: str = "project") -> Project:
             f"{path}.lifecycle.requiredProfiles: must be sorted"
         )
 
+    impact = (
+        _validate_impact(value["impact"], f"{path}.impact")
+        if "impact" in value
+        else None
+    )
+
     raw_profiles = _object(value["profiles"], f"{path}.profiles")
     if not raw_profiles:
         raise ContractError(f"{path}.profiles: must define at least one profile")
@@ -812,7 +970,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
             _exact_keys(
                 check,
                 required={"id", "run", "timeoutSeconds"},
-                optional={"workingDirectory"},
+                optional={"workingDirectory", "components"},
                 path=check_path,
             )
             check_id = _string(check["id"], f"{check_path}.id", max_length=64)
@@ -829,12 +987,37 @@ def validate_project(document: Any, path: str = "project") -> Project:
                 check.get("workingDirectory", "."),
                 f"{check_path}.workingDirectory",
             )
+            components = (
+                _string_list(
+                    check["components"],
+                    f"{check_path}.components",
+                    pattern=PROFILE_PATTERN,
+                )
+                if "components" in check
+                else None
+            )
+            if components is not None:
+                if impact is None:
+                    raise ContractError(
+                        f"{check_path}.components: requires a project impact contract"
+                    )
+                if components != sorted(components):
+                    raise ContractError(
+                        f"{check_path}.components: components must be sorted"
+                    )
+                unknown_components = sorted(set(components) - set(impact.components))
+                if unknown_components:
+                    raise ContractError(
+                        f"{check_path}.components: undefined components: "
+                        + ", ".join(unknown_components)
+                    )
             checks.append(
                 Check(
                     identifier=check_id,
                     run=tuple(argv),
                     timeout_seconds=timeout,
                     working_directory=working_directory,
+                    components=tuple(components) if components is not None else None,
                 )
             )
         profiles[profile_name] = tuple(checks)
@@ -866,6 +1049,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
         profiles=profiles,
         required_profiles=tuple(required_profiles),
         environment=environment,
+        impact=impact,
     )
 
 
@@ -896,6 +1080,98 @@ def validate_process_lock(document: Any, path: str = "process.lock") -> ProcessL
     if skills != sorted(skills):
         raise ContractError(f"{path}.skills: must be sorted")
     return ProcessLock(version=version, digest=digest, skills=tuple(skills))
+
+
+def validate_release(document: Any, path: str = "release") -> Release:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "previousVersion",
+            "version",
+            "classification",
+            "compatibility",
+            "schemaImpact",
+            "migration",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    _schema_version(value, path)
+    previous = _string(
+        value["previousVersion"], f"{path}.previousVersion", max_length=64
+    )
+    current = _string(value["version"], f"{path}.version", max_length=64)
+    previous_match = FINAL_SEMVER_PATTERN.fullmatch(previous)
+    current_match = FINAL_SEMVER_PATTERN.fullmatch(current)
+    if previous_match is None:
+        raise ContractError(f"{path}.previousVersion: must be final SemVer X.Y.Z")
+    if current_match is None:
+        raise ContractError(f"{path}.version: must be final SemVer X.Y.Z")
+    previous_parts = tuple(int(part) for part in previous_match.groups())
+    current_parts = tuple(int(part) for part in current_match.groups())
+
+    classification = value["classification"]
+    if classification not in {"patch", "minor", "major"}:
+        raise ContractError(f"{path}.classification: must be patch, minor, or major")
+    expected = {
+        "patch": (
+            previous_parts[0],
+            previous_parts[1],
+            previous_parts[2] + 1,
+        ),
+        "minor": (previous_parts[0], previous_parts[1] + 1, 0),
+        "major": (previous_parts[0] + 1, 0, 0),
+    }[classification]
+    if current_parts != expected:
+        expected_text = ".".join(str(part) for part in expected)
+        raise ContractError(
+            f"{path}.version: {classification} after {previous} must be {expected_text}"
+        )
+
+    compatibility = value["compatibility"]
+    if compatibility not in {"backward-compatible", "incompatible"}:
+        raise ContractError(
+            f"{path}.compatibility: must be backward-compatible or incompatible"
+        )
+    schema_impact = value["schemaImpact"]
+    if schema_impact not in {"unchanged", "additive", "breaking"}:
+        raise ContractError(
+            f"{path}.schemaImpact: must be unchanged, additive, or breaking"
+        )
+    migration = value["migration"]
+    if migration is not None:
+        _string(migration, f"{path}.migration", max_length=1000)
+
+    if classification == "patch" and compatibility != "backward-compatible":
+        raise ContractError(f"{path}: a patch release must be backward-compatible")
+    if (
+        classification == "minor"
+        and previous_parts[0] > 0
+        and compatibility != "backward-compatible"
+    ):
+        raise ContractError(
+            f"{path}: an incompatible stable release requires a major classification"
+        )
+    if schema_impact == "breaking" and compatibility != "incompatible":
+        raise ContractError(
+            f"{path}: a breaking schema impact must declare incompatible compatibility"
+        )
+    if compatibility == "incompatible" and migration is None:
+        raise ContractError(f"{path}.migration: incompatible releases require guidance")
+    if compatibility == "backward-compatible" and migration is not None:
+        raise ContractError(
+            f"{path}.migration: backward-compatible releases must use null"
+        )
+    return Release(
+        previous_version=previous,
+        version=current,
+        classification=classification,
+        compatibility=compatibility,
+        schema_impact=schema_impact,
+        migration=migration,
+    )
 
 
 def validate_change(document: Any, path: str = "change") -> None:

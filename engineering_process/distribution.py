@@ -15,14 +15,17 @@ def asset_root(process_root: Path) -> Path:
     for candidate in candidates:
         if (candidate / "bundles.json").is_file() and (candidate / "skills").is_dir():
             return candidate
-        if (candidate / "bundles.json").is_file() and (candidate / ".agents" / "skills").is_dir():
+        if (
+            (candidate / "bundles.json").is_file()
+            and (candidate / "process_assets" / "skills").is_dir()
+        ):
             return candidate
     raise ContractError(f"{process_root}: cannot locate engineering-process assets")
 
 
 def skills_root(process_root: Path) -> Path:
     root = asset_root(process_root)
-    candidates = (root / ".agents" / "skills", root / "skills")
+    candidates = (root / "process_assets" / "skills", root / "skills")
     for candidate in candidates:
         if candidate.is_dir():
             return candidate
@@ -67,6 +70,9 @@ def distribution_digest(
             )
 
     entries.append(("assets/bundles.json", root / "bundles.json"))
+    release_contract = root / "release.json"
+    if release_contract.is_file():
+        entries.append(("assets/release.json", release_contract))
     for directory in ("schemas", "examples", "templates"):
         candidate = root / directory
         if candidate.is_dir():

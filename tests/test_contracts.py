@@ -6,6 +6,7 @@ from engineering_process.contracts import (
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_release,
     validate_review,
 )
 
@@ -51,6 +52,100 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_accepts_schema_three_impact_graph(self):
+        document = self.valid_project()
+        document["impact"] = {
+            "baseRefs": ["origin/main", "main"],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {
+                    "id": "api",
+                    "paths": ["openapi.json", "src/api/**"],
+                    "affects": ["frontend"],
+                },
+                {
+                    "id": "frontend",
+                    "paths": ["frontend/**"],
+                    "affects": [],
+                },
+            ],
+        }
+        document["profiles"]["development"][0]["components"] = ["frontend"]
+
+        project = validate_project(document)
+
+        self.assertEqual(project.impact.base_refs, ("origin/main", "main"))
+        self.assertEqual(
+            project.profiles["development"][0].components,
+            ("frontend",),
+        )
+        self.assertEqual(project.impact.components["api"].affects, ("frontend",))
+
+    def test_impact_contract_is_additive_only_to_schema_three(self):
+        document = self.valid_project()
+        document["schemaVersion"] = 2
+        del document["environment"]["foregroundOnly"]
+        document["impact"] = {
+            "baseRefs": ["main"],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {"id": "source", "paths": ["src/**"], "affects": []}
+            ],
+        }
+
+        with self.assertRaisesRegex(ContractError, "unknown properties: impact"):
+            validate_project(document)
+
+    def test_rejects_invalid_impact_references_and_portability(self):
+        cases = (
+            (
+                {
+                    "baseRefs": ["main"],
+                    "unmatchedPaths": "all-scoped-checks",
+                    "components": [
+                        {
+                            "id": "source",
+                            "paths": ["src\\**"],
+                            "affects": [],
+                        }
+                    ],
+                },
+                "portable relative glob",
+            ),
+            (
+                {
+                    "baseRefs": ["main"],
+                    "unmatchedPaths": "all-scoped-checks",
+                    "components": [
+                        {
+                            "id": "source",
+                            "paths": ["src/**"],
+                            "affects": ["missing"],
+                        }
+                    ],
+                },
+                "undefined components: missing",
+            ),
+        )
+        for impact, message in cases:
+            with self.subTest(message=message):
+                document = self.valid_project()
+                document["impact"] = impact
+                with self.assertRaisesRegex(ContractError, message):
+                    validate_project(document)
+
+        document = self.valid_project()
+        document["impact"] = {
+            "baseRefs": ["main"],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {"id": "source", "paths": ["src/**"], "affects": []}
+            ],
+        }
+        document["profiles"]["development"][0]["components"] = ["missing"]
+        with self.assertRaisesRegex(ContractError, "undefined components: missing"):
+            validate_project(document)
 
     def test_preserves_historical_project_manifest_versions(self):
         schema_one = self.valid_project()
@@ -193,6 +288,59 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_release_requires_the_exact_declared_semver_increment(self):
+        document = {
+            "schemaVersion": 1,
+            "previousVersion": "0.1.1",
+            "version": "0.2.0",
+            "classification": "minor",
+            "compatibility": "backward-compatible",
+            "schemaImpact": "additive",
+            "migration": None,
+        }
+
+        release = validate_release(document)
+
+        self.assertEqual("0.2.0", release.version)
+        document["version"] = "0.4.0"
+        with self.assertRaisesRegex(ContractError, "must be 0.2.0"):
+            validate_release(document)
+
+    def test_release_requires_compatible_patch_and_migration_for_breaking_change(self):
+        document = {
+            "schemaVersion": 1,
+            "previousVersion": "1.2.3",
+            "version": "1.2.4",
+            "classification": "patch",
+            "compatibility": "incompatible",
+            "schemaImpact": "breaking",
+            "migration": "Migrate the project contract before upgrade.",
+        }
+        with self.assertRaisesRegex(ContractError, "patch release"):
+            validate_release(document)
+
+        document.update(
+            version="2.0.0",
+            classification="major",
+            migration=None,
+        )
+        with self.assertRaisesRegex(ContractError, "require guidance"):
+            validate_release(document)
+
+    def test_stable_incompatible_minor_is_rejected(self):
+        with self.assertRaisesRegex(ContractError, "requires a major"):
+            validate_release(
+                {
+                    "schemaVersion": 1,
+                    "previousVersion": "1.2.3",
+                    "version": "1.3.0",
+                    "classification": "minor",
+                    "compatibility": "incompatible",
+                    "schemaImpact": "unchanged",
+                    "migration": "Replace the removed command.",
+                }
+            )
+
     def test_lock_requires_sorted_skills_and_digest(self):
         with self.assertRaisesRegex(ContractError, "must be sorted"):
             validate_process_lock(

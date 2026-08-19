@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 import subprocess
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .contracts import Check, ContractError, Project
+from .contracts import Check, Project
 from .environment import (
     environment_command_bindings,
     environment_path_entries,
     execute_command,
 )
+from .impact import IMPACT_FILE_ENV, plan_profile
 from .tooling import ManagedCommandBinding
 
 
@@ -117,6 +120,7 @@ def _run_check(
     *,
     path_entries: tuple[Path, ...] = (),
     command_bindings: dict[str, ManagedCommandBinding] | None = None,
+    impact_file: Path | None = None,
 ) -> dict[str, Any]:
     print(f"[{check.identifier}] {' '.join(check.run)}", file=sys.stderr)
     execution = execute_command(
@@ -127,6 +131,9 @@ def _run_check(
         working_directory=check.working_directory,
         path_entries=path_entries,
         command_bindings=command_bindings,
+        environment_overrides={
+            IMPACT_FILE_ENV: str(impact_file) if impact_file is not None else None
+        },
         stream_output=True,
     )
     allowed = {
@@ -144,26 +151,35 @@ def _run_check(
     return {key: value for key, value in execution.items() if key in allowed}
 
 
-def run_profile(root: Path, project: Project, profile: str) -> dict[str, Any]:
-    checks = project.profiles.get(profile)
-    if checks is None:
-        available = ", ".join(sorted(project.profiles))
-        raise ContractError(
-            f"unknown profile {profile}; available profiles: {available}"
-        )
+def run_profile(
+    root: Path,
+    project: Project,
+    profile: str,
+    *,
+    base_ref: str | None = None,
+) -> dict[str, Any]:
     started = _timestamp()
     source_before = _source_state(root)
+    plan = plan_profile(root, project, profile, base_ref=base_ref)
     path_entries = environment_path_entries(project, profile=profile)
     command_bindings = environment_command_bindings(project, profile=profile)
-    results = [
-        _run_check(
-            root,
-            check,
-            path_entries=path_entries,
-            command_bindings=command_bindings,
+    with tempfile.TemporaryDirectory(prefix="engineering-process-impact-") as directory:
+        impact_file = Path(directory) / "impact.json"
+        impact_file.write_text(
+            json.dumps(plan.evidence, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
         )
-        for check in checks
-    ]
+        results = [
+            _run_check(
+                root,
+                check,
+                path_entries=path_entries,
+                command_bindings=command_bindings,
+                impact_file=impact_file,
+            )
+            for check in plan.checks
+        ]
     source_after = _source_state(root)
     source_changed = (
         source_before["fingerprint"] is not None
@@ -184,6 +200,7 @@ def run_profile(root: Path, project: Project, profile: str) -> dict[str, Any]:
         "workspaceFingerprint": source_before["fingerprint"],
         "completedWorkspaceFingerprint": source_after["fingerprint"],
         "sourceChangedDuringVerification": source_changed,
+        "impact": plan.evidence,
         "startedAt": started,
         "completedAt": _timestamp(),
         "status": status,

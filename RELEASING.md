@@ -15,6 +15,41 @@ Before the first release, add a pending trusted publisher for the new PyPI proje
 
 The GitHub `pypi` environment and the workflow environment must keep the same name.
 
+## Version classification
+
+The package follows SemVer and PEP 440. Its public API is the documented CLI and exit
+codes, project and lifecycle schemas, lifecycle transitions, verification and review
+evidence, managed distribution assets, and portable execution semantics.
+
+- Patch releases contain only backward-compatible defect fixes.
+- Minor releases add backward-compatible public capability or mark a public surface
+  deprecated. During the `0.x` pilot, an intentionally incompatible change also uses
+  the next minor release, but it requires owner sign-off, migration guidance, and an
+  explicit compatibility statement.
+- Version `1.0.0` declares the first stable public API. After that point, incompatible
+  public changes require a major release.
+
+An integer `schemaVersion` is the compatibility major of one serialized contract,
+not the package version. Optional additive properties and validator corrections keep
+the current schema number. A schema number changes only when previously valid data
+cannot retain the same meaning. Published schema readers remain supported throughout
+the current package major; deprecation precedes removal and names a migration and
+target major release.
+
+The root `release.json` is the machine-readable release specification. It must name
+the exact previous public version, next SemVer increment, compatibility and schema
+impact, and migration guidance for every incompatible release. `processctl contract
+validate --kind release release.json` validates its shape and classification;
+`processctl publication validate-release` additionally binds it to
+`pyproject.toml`, the immutable release tag and checkpoint, the latest reachable
+prior release, and `main` ancestry.
+
+The version in `pyproject.toml`, `engineering_process.VERSION`, and `release.json`
+changes only in the reviewed release checkpoint. A development commit, schema
+clarification, lock regeneration, or failed publication does not advance it by
+itself. Consumer process locks change only after the public artifact and its hashes
+have been verified.
+
 ## One-time GitHub controls
 
 Complete these controls before publishing the first release:
@@ -37,13 +72,17 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 
 ## Release
 
-1. Merge a reviewed change to `main` and require the complete CI matrix to pass.
-2. Set the package version in `pyproject.toml`; released versions are immutable.
+1. Complete the repository's own process lifecycle on an immutable checkpoint and
+   require independent review plus the complete CI matrix to pass.
+2. Update `release.json` with the SemVer classification and any schema compatibility
+   or migration impact, then set the same package version in `pyproject.toml` and
+   `engineering_process.VERSION`; released versions are immutable.
 3. Create a GitHub release whose tag is exactly `v<package-version>` and whose target
    is the verified `main` commit.
-4. Observe the `Publish` workflow. It checks the tag/version and `main` ancestry,
-   rebuilds the wheel and source distribution, installs the wheel, reruns the portable
-   validation suite, and publishes both artifacts with PyPI attestations.
+4. Observe the `Publish` workflow. It validates the release contract, exact increment,
+   latest prior tag, tag/checkpoint identity, and `main` ancestry; rebuilds the wheel
+   and source distribution; installs the wheel; reruns the portable validation suite;
+   and publishes both artifacts with PyPI attestations.
 5. Confirm the version and artifact hashes on PyPI before updating consumer locks.
 
 Never upload a locally built distribution or enable `skip-existing`. A failed release

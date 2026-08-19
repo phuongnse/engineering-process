@@ -1,0 +1,4 @@
+prune .agents
+prune .process
+global-exclude __pycache__
+global-exclude *.py[cod]

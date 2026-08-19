@@ -18,7 +18,7 @@ class EvaluationFixtureTests(unittest.TestCase):
         skills = {
             directory.name
             for directory in skill_directories(
-                PROCESS_ROOT / ".agents" / "skills"
+                PROCESS_ROOT / "process_assets" / "skills"
             )
         }
         case_skills = []

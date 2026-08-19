@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import regex as bounded_regex
 
@@ -123,6 +123,7 @@ def execute_command(
     working_directory: str,
     path_entries: tuple[Path, ...] = (),
     command_bindings: dict[str, ManagedCommandBinding] | None = None,
+    environment_overrides: Mapping[str, str | None] | None = None,
     stream_output: bool = False,
 ) -> dict[str, Any]:
     working = _contained_working_directory(root, working_directory)
@@ -139,6 +140,11 @@ def execute_command(
                 command_environment.get("PATH", ""),
             ]
         )
+    for name, value in (environment_overrides or {}).items():
+        if value is None:
+            command_environment.pop(name, None)
+        else:
+            command_environment[name] = value
     try:
         supervisor = process_supervisor()
         effective_run = run

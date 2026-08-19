@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/release.schema.json",
+  "title": "Engineering process release classification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "previousVersion",
+    "version",
+    "classification",
+    "compatibility",
+    "schemaImpact",
+    "migration"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "previousVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "classification": {"enum": ["patch", "minor", "major"]},
+    "compatibility": {
+      "enum": ["backward-compatible", "incompatible"]
+    },
+    "schemaImpact": {"enum": ["unchanged", "additive", "breaking"]},
+    "migration": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 1000
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"classification": {"const": "patch"}}},
+      "then": {
+        "properties": {"compatibility": {"const": "backward-compatible"}}
+      }
+    },
+    {
+      "if": {"properties": {"schemaImpact": {"const": "breaking"}}},
+      "then": {"properties": {"compatibility": {"const": "incompatible"}}}
+    },
+    {
+      "if": {"properties": {"compatibility": {"const": "incompatible"}}},
+      "then": {"properties": {"migration": {"type": "string", "minLength": 1}}}
+    },
+    {
+      "if": {
+        "properties": {"compatibility": {"const": "backward-compatible"}}
+      },
+      "then": {"properties": {"migration": {"type": "null"}}}
+    }
+  ]
+}

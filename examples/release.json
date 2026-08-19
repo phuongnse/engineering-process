@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "previousVersion": "1.1.0",
+  "version": "1.2.0",
+  "classification": "minor",
+  "compatibility": "backward-compatible",
+  "schemaImpact": "additive",
+  "migration": null
+}

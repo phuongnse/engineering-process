@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "previousVersion": "0.1.0",
+  "version": "0.1.1",
+  "classification": "patch",
+  "compatibility": "backward-compatible",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

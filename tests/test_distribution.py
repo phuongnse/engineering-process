@@ -8,7 +8,7 @@ from engineering_process.distribution import distribution_digest
 
 class DistributionDigestTests(unittest.TestCase):
     def prepare_distribution(self, root: Path) -> tuple[str, ...]:
-        skill = root / ".agents" / "skills" / "sample-skill"
+        skill = root / "process_assets" / "skills" / "sample-skill"
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(
             "---\n"
@@ -32,6 +32,9 @@ class DistributionDigestTests(unittest.TestCase):
             )
             + "\n",
             encoding="utf-8",
+        )
+        (root / "release.json").write_text(
+            '{"schemaVersion":1,"version":"0.1.0"}\n', encoding="utf-8"
         )
         return ("sample-skill",)
 
@@ -66,7 +69,19 @@ class DistributionDigestTests(unittest.TestCase):
             self.assertNotEqual(baseline, schema_changed)
 
             schema.write_text("{}\n", encoding="utf-8")
-            skill = root / ".agents" / "skills" / "sample-skill" / "SKILL.md"
+            release = root / "release.json"
+            release.write_text(
+                '{"schemaVersion":1,"version":"0.1.1"}\n', encoding="utf-8"
+            )
+            release_changed = distribution_digest(
+                root, selected, package_root=package
+            )
+            self.assertNotEqual(baseline, release_changed)
+
+            release.write_text(
+                '{"schemaVersion":1,"version":"0.1.0"}\n', encoding="utf-8"
+            )
+            skill = root / "process_assets" / "skills" / "sample-skill" / "SKILL.md"
             skill.write_text(skill.read_text(encoding="utf-8") + "Verify it.\n")
             skill_changed = distribution_digest(root, selected, package_root=package)
             self.assertNotEqual(baseline, skill_changed)

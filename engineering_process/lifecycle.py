@@ -583,7 +583,12 @@ def _verify_change_unlocked(
     if profile not in contract["requiredProfiles"]:
         raise ContractError(f"profile {profile} is not required by change {change_id}")
     require_environment_profile(project_root, project, profile=profile)
-    report = run_profile(project_root, project, profile)
+    report = run_profile(
+        project_root,
+        project,
+        profile,
+        base_ref=contract["comparisonBase"],
+    )
     report_path = (
         _run_root(project_root, change_id)
         / "verification"

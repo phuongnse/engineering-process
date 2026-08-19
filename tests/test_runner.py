@@ -4,7 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from engineering_process.contracts import Check, ContractError, Project
+from engineering_process.contracts import (
+    Check,
+    ContractError,
+    ImpactComponent,
+    Project,
+    ProjectImpact,
+)
 from engineering_process.runner import run_profile
 
 
@@ -48,8 +54,46 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(report["checks"][0]["status"], "passed")
             self.assertEqual(report["checks"][0]["command"][0], sys.executable)
             self.assertEqual(len(report["checks"][0]["commandSha256"]), 64)
+            self.assertEqual(report["impact"]["mode"], "full-profile")
             self.assertIsNone(report["workspaceFingerprint"])
             self.assertFalse(report["sourceChangedDuringVerification"])
+
+    def test_empty_affected_selection_is_passing_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_repository(root)
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            identifier="source",
+                            run=(sys.executable, "-c", "raise SystemExit(99)"),
+                            timeout_seconds=10,
+                            working_directory=".",
+                            components=("source",),
+                        ),
+                    )
+                },
+                impact=ProjectImpact(
+                    base_refs=("HEAD",),
+                    unmatched_paths="all-scoped-checks",
+                    components={
+                        "source": ImpactComponent(
+                            identifier="source",
+                            paths=("src/**",),
+                            affects=(),
+                        )
+                    },
+                ),
+            )
+
+            report = run_profile(root, project, "development", base_ref="HEAD")
+
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["checks"], [])
+            self.assertEqual(report["impact"]["selectedCheckIds"], [])
+            self.assertEqual(report["impact"]["skippedCheckIds"], ["source"])
 
     def test_reports_nonzero_exit(self):
         with tempfile.TemporaryDirectory() as directory:

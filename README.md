@@ -27,6 +27,13 @@ The core ships only the agent-neutral reviewer-attestation contract. Host-specif
 launchers and model configuration are separate integrations and are never part of a
 required process bundle.
 
+This repository follows the same lifecycle it distributes. The exact public N-1
+release pinned in `.process/process.lock` governs development of N+1; the checkout
+under test never supplies its own lifecycle authority. Managed N-1 skills live in
+`.agents/skills`, while editable N+1 distribution sources live in
+`process_assets/skills`. The bootstrap trust chain and evidence boundary are defined
+in [`SELF_HOSTING.md`](./SELF_HOSTING.md).
+
 Python 3.11 or newer and Git are required. Windows command containment requires
 Windows 10 or Windows Server 2016 and newer so Job Object membership can be attached
 atomically during process creation. Lifecycle state is stored under ignored
@@ -199,6 +206,70 @@ attest foreground-only task execution and use managed script bindings. New integ
 receive the complete environment contract instead of creating a project-local doctor
 or setup lifecycle.
 
+## Affected-check selection
+
+Schema 3 optionally declares a portable impact graph. Components own canonical
+forward-slash glob patterns and list downstream components in `affects`; profile
+checks list the components that can invalidate them. The distribution discovers the
+committed diff from an exact Git merge base and combines staged, unstaged, and
+untracked paths, then computes the transitive component closure and runs only the
+selected checks.
+
+~~~json
+{
+  "impact": {
+    "baseRefs": ["origin/main", "main"],
+    "unmatchedPaths": "all-scoped-checks",
+    "components": [
+      {
+        "id": "api-contract",
+        "paths": ["openapi.json"],
+        "affects": ["frontend"]
+      },
+      {
+        "id": "frontend",
+        "paths": ["frontend/**"],
+        "affects": []
+      }
+    ]
+  },
+  "profiles": {
+    "development": [
+      {
+        "id": "frontend-unit",
+        "run": ["node", "node_modules/vitest/vitest.mjs", "run"],
+        "timeoutSeconds": 900,
+        "components": ["frontend"]
+      }
+    ]
+  }
+}
+~~~
+
+A check without `components` is deliberately always-run. A manifest without an
+`impact` object deliberately runs its complete profile through the same runner; this
+is suitable for small repositories and is not a legacy execution engine. Any changed
+path that matches no component selects every component-scoped check, so an incomplete
+graph fails toward broader verification instead of silently omitting evidence.
+
+Standalone verification tries `impact.baseRefs` in order or accepts an explicit
+`--base-ref`. Lifecycle verification ignores those defaults and binds selection to
+the registered change contract's immutable `comparisonBase`. Inspect a plan without
+probing tools or executing checks:
+
+~~~text
+processctl verify --project-root . --profile development --plan-only
+processctl verify --project-root . --profile development --plan-only \
+  --base-ref origin/main --json
+~~~
+
+Evidence records the resolved base and merge-base commits, changed and unmatched
+paths, direct and transitive components, and a reason for every selected or skipped
+check. A selected project command can read that exact immutable scope from the JSON
+file named by `ENGINEERING_PROCESS_IMPACT_FILE`. This is intended only for bounded
+domain analyzers, such as selecting affected MSBuild projects; changed-path discovery,
+component closure, check routing, and evidence remain distribution-owned.
+
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
 adds `delivery`, `product`, `api`, `frontend`, `docs`, and `publication`. Add
@@ -283,6 +354,9 @@ processctl publication validate-range --project-root . \
   --branch feat/short-description --range origin/main..HEAD
 processctl publication validate-pr --title "feat(scope): describe the change" \
   --branch feat/short-description --state draft --body-file pr.md
+processctl contract validate --kind release release.json
+processctl publication validate-release --project-root . \
+  --tag v0.2.0 --commit <checkpoint> --main-ref origin/main
 ~~~
 
 Manual branches use `{type}/{kebab-description}`. Automation uses the provider-neutral
@@ -321,8 +395,10 @@ authenticates who produced it.
   templates, bundle catalog, and
   complete selected skill resources. Startup fails when installed runtime dependency
   versions differ from that lock.
-- Versioned JSON schemas define change, plan, verification, review, lifecycle, and
-  completion-related artifacts.
+- Versioned JSON schemas define change, plan, verification, review, lifecycle,
+  completion-related artifacts, and the release classification contract. The release
+  gate binds that contract to the exact SemVer increment, package version, latest
+  reachable prior tag, immutable checkpoint, and main ancestry.
 - Project commands run without a shell and inherit the caller environment. Never put
   secrets in manifests, arguments, or reports.
 - Consumer skill roots are distribution-owned: unmanaged `SKILL.md` files or catalog
@@ -341,7 +417,7 @@ authenticates who produced it.
 python -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-.venv/bin/python processctl.py skills validate --root .agents/skills
+.venv/bin/python processctl.py skills validate --root process_assets/skills
 .venv/bin/python processctl.py digest
 ~~~
 

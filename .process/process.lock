@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "process": {
+    "version": "0.1.1",
+    "digest": "sha256:73a6d3714ced574a4e85b3317bd713ee3fe0c08055ee154514706ae7eeb71603"
+  },
+  "skills": [
+    "assess-design",
+    "build-frontend",
+    "build-frontend-foundation",
+    "change-api",
+    "cross-repo-change",
+    "define-change-contract",
+    "design-module",
+    "evolve-process",
+    "finish-change",
+    "govern-ui",
+    "implement-change",
+    "implement-module",
+    "implement-use-case",
+    "integrate-mcp",
+    "maintain-docs",
+    "plan-change",
+    "publish-change",
+    "review-change",
+    "run-change",
+    "run-project-command",
+    "specify-use-case",
+    "verify-change"
+  ]
+}

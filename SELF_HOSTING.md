@@ -1,0 +1,55 @@
+# Self-hosting engineering-process
+
+This repository is both the producer of the engineering-process distribution and a
+consumer of its lifecycle. It uses a staged trust chain so code under development
+cannot approve itself.
+
+## Trust chain
+
+Release N governs the specification, plan, implementation registration, verification,
+independent review, finding loop, and completion of release N+1. The lifecycle CLI is
+installed from the exact public wheel pinned by `requirements/process.txt` and
+`.process/process.lock`. Producer tests import the checkout under test, but lifecycle
+state transitions are executed by the installed N distribution.
+
+The two skill trees have distinct ownership:
+
+- `.agents/skills` is the managed N copy used by agents working in this repository.
+- `process_assets/skills` is the editable N+1 source packaged for future consumers.
+
+Changing the source tree cannot change the instructions or enforcement governing the
+current lifecycle cycle. After N+1 is published and its public hashes are verified, a
+separate change advances this repository's lock and managed tree to N+1.
+
+## Initial bootstrap root
+
+Self-hosting began from commit `5055d37dc4d421ac97e9bf2329b56c6a2a69d5eb`
+using public release `0.1.1`. The trusted wheel SHA-256 is
+`3211775274a05569e006daae7e026f34295df9da2b2244f464f08aee00352f4f`, and the
+selected full-distribution digest is
+`sha256:73a6d3714ced574a4e85b3317bd713ee3fe0c08055ee154514706ae7eeb71603`.
+The installed authority resolved outside the checkout and `processctl doctor` passed
+for the producer's development profile before change
+`self-hosted-impact-engine` was registered.
+
+This one-time bootstrap establishes the root of trust; it is not a recurring bypass.
+All later source changes require the normal `.process` lifecycle and a clean immutable
+checkpoint. Verification artifacts under `.process/runs` bind the local checkpoint
+and workspace fingerprint. GitHub checks, immutable release attestations, and PyPI
+artifact hashes provide durable publication evidence.
+
+The lifecycle state is the executable change specification and evidence ledger: it
+binds the accepted contract and plan digests, implementation identities, required
+profile reports, immutable checkpoint and workspace fingerprint, independent review
+assignment and report, carried finding resolutions, and completion artifact. A dirty
+or different checkpoint invalidates verification and approval instead of inheriting
+stale evidence.
+
+## Release boundary
+
+Lifecycle completion proves engineering readiness only. It does not authorize a
+version bump, tag, merge, publication, consumer lock update, or deployment. Those
+actions follow `RELEASING.md` and require their own explicit authority.
+At that boundary, `release.json` adds a machine-validated SemVer and compatibility
+specification; the publication gate binds it to the exact latest public predecessor,
+release tag, source checkpoint, and `main` ancestry.

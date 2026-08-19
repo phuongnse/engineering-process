@@ -45,6 +45,114 @@
     "sourceChangedDuringVerification": {
       "type": "boolean"
     },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "mode",
+        "profile",
+        "selectedCheckIds",
+        "skippedCheckIds",
+        "checkSelection"
+      ],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "mode": {"enum": ["full-profile", "affected-checks"]},
+        "profile": {"type": "string"},
+        "baseRef": {"type": "string"},
+        "baseCommit": {"type": "string"},
+        "headCommit": {"type": "string"},
+        "mergeBase": {"type": "string"},
+        "changedPaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "directlyChangedComponents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "affectedComponents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "unmatchedPaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "selectedCheckIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "skippedCheckIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "checkSelection": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "selected",
+              "reason",
+              "components",
+              "matchedComponents"
+            ],
+            "properties": {
+              "id": {"type": "string"},
+              "selected": {"type": "boolean"},
+              "reason": {
+                "enum": [
+                  "profile-has-no-impact-contract",
+                  "unscoped-always-run",
+                  "unmatched-path-fallback",
+                  "affected-component",
+                  "no-affected-component"
+                ]
+              },
+              "components": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string"}
+              },
+              "matchedComponents": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string"}
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"mode": {"const": "affected-checks"}},
+            "required": ["mode"]
+          },
+          "then": {
+            "required": [
+              "baseRef",
+              "baseCommit",
+              "headCommit",
+              "mergeBase",
+              "changedPaths",
+              "directlyChangedComponents",
+              "affectedComponents",
+              "unmatchedPaths"
+            ]
+          }
+        }
+      ]
+    },
     "startedAt": {
       "type": "string",
       "format": "date-time"
@@ -58,7 +166,6 @@
     },
     "checks": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "required": [
