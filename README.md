@@ -157,7 +157,9 @@ them. The managed template owns the ordered shared sections and immutable standa
 checklist meaning. An optional extension after its closing marker uses only
 `## Project-specific requirements` plus one-line
 `**Project-specific: Label**` checklist items; arbitrary headings, prose, HTML, and
-code fences are rejected so an extension cannot shadow common policy.
+code fences are rejected, and reserved core-policy phrases are rejected anywhere in
+an extension item. These checks prevent structural shadowing; independent review
+remains responsible for the semantic truth of project-specific evidence.
 
 ## Trust boundary
 

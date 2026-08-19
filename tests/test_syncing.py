@@ -168,6 +168,17 @@ class SyncTests(unittest.TestCase):
             )
 
             target.write_text(
+                "```markdown\n    ```\n" + repaired,
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                any(
+                    "managed block must be visible" in issue
+                    for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
+                )
+            )
+
+            target.write_text(
                 "<pre>\n" + repaired + "</pre>\n",
                 encoding="utf-8",
             )
@@ -177,6 +188,49 @@ class SyncTests(unittest.TestCase):
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
             )
+
+            for opening_tag in ('<pre title="/>">', '<pre title="</pre>">'):
+                with self.subTest(opening_tag=opening_tag):
+                    target.write_text(
+                        opening_tag + "\n" + repaired + "</pre>\n",
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        any(
+                            "managed block must be visible" in issue
+                            for issue in synchronized_state(
+                                project_root, PROCESS_ROOT, lock
+                            )
+                        )
+                    )
+
+            managed_only = repaired[
+                repaired.index("<!-- engineering-process:start -->") :
+            ]
+            raw_block_wrappers = (
+                ("<center>", "</center>"),
+                ("<h1>", "</h1>"),
+                ("<li>", "</li>"),
+                ("<summary>", "</summary>"),
+                ("<div/>", ""),
+            )
+            for opening_tag, closing_tag in raw_block_wrappers:
+                with self.subTest(opening_tag=opening_tag):
+                    target.write_text(
+                        opening_tag
+                        + "\n"
+                        + managed_only
+                        + (closing_tag + "\n" if closing_tag else ""),
+                        encoding="utf-8",
+                    )
+                    self.assertTrue(
+                        any(
+                            "managed block must be visible" in issue
+                            for issue in synchronized_state(
+                                project_root, PROCESS_ROOT, lock
+                            )
+                        )
+                    )
 
     def test_refuses_to_overwrite_unmanaged_skill(self):
         with tempfile.TemporaryDirectory() as directory:

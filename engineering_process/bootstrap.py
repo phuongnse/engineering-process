@@ -9,7 +9,12 @@ from . import VERSION
 from .bundles import load_bundles, select_bundles
 from .contracts import ContractError, read_json, validate_project, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
-from .managed import AGENTS_END, AGENTS_START, merge_managed_agents
+from .managed import (
+    AGENTS_END,
+    AGENTS_START,
+    managed_agents_visibility_issues,
+    merge_managed_agents,
+)
 from .publication import (
     PR_DESCRIPTION_END,
     PR_DESCRIPTION_START,
@@ -89,7 +94,11 @@ def _agents_update(project_root: Path, process_root: Path) -> tuple[Path, str]:
         raise ContractError(f"{template}: cannot read template: {error}") from error
     path = project_root / "AGENTS.md"
     current = _read_optional_text(path)
-    return path, merge_managed_agents(current, block)
+    updated = merge_managed_agents(current, block)
+    issues = managed_agents_visibility_issues(updated)
+    if issues:
+        raise ContractError(f"{path}: " + "; ".join(issues))
+    return path, updated
 
 
 def _pull_request_template_update(

@@ -5,7 +5,12 @@ import subprocess
 from pathlib import Path
 
 from .contracts import ContractError
-from .markdown import COMMENT_RE, mask_fenced_code, strip_html_comments
+from .markdown import (
+    COMMENT_RE,
+    mask_fenced_code,
+    mask_raw_html_containers,
+    strip_html_comments,
+)
 
 
 CONVENTIONAL_SUBJECT_MAX_LENGTH = 72
@@ -207,7 +212,7 @@ def _visible_managed_content(body: str) -> tuple[str | None, list[str]]:
     visible, malformed_comments = strip_html_comments(visible)
     if malformed_comments:
         return None, ["PR body contains an unterminated or malformed HTML comment"]
-    structural = mask_fenced_code(visible)
+    structural = mask_raw_html_containers(mask_fenced_code(visible))
     lines = structural.splitlines()
     starts = [index for index, line in enumerate(lines) if line.strip() == _START_TOKEN]
     ends = [index for index, line in enumerate(lines) if line.strip() == _END_TOKEN]
@@ -259,9 +264,14 @@ def validate_project_extensions(body: str, *, allow_pending: bool) -> list[str]:
         if folded in labels:
             issues.append(f"Duplicate project-specific requirement: {label}")
         labels.add(folded)
-        if any(required.casefold() in folded for required in REQUIRED_REQUIREMENTS):
+        normalized_line = line.casefold()
+        if any(
+            required.casefold() in normalized_line
+            for required in REQUIRED_REQUIREMENTS
+        ):
             issues.append(
-                f"Project-specific requirement label is reserved by core policy: {label}"
+                "Project-specific requirement must not restate reserved core policy: "
+                + label
             )
         line_status = CHECKLIST_STATUS_RE.search(line)
         if line_status is None:

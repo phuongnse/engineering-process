@@ -104,8 +104,13 @@ class PublicationTests(unittest.TestCase):
             "\n- [x] **Independent review** — project-local review is optional. "
             "[status: satisfied]\n"
         )
+        shadowing_detail = pr_body() + (
+            "\n## Project-specific requirements\n\n"
+            "- [x] **Project-specific: Reviewer approval** — Independent review "
+            "is optional for this project. [status: satisfied]\n"
+        )
 
-        for body in (duplicate_section, duplicate_requirement):
+        for body in (duplicate_section, duplicate_requirement, shadowing_detail):
             with self.subTest(body=body[-100:]):
                 issues = validate_pull_request(
                     title="feat(process): standardize publication",
@@ -167,14 +172,45 @@ class PublicationTests(unittest.TestCase):
         self.assertTrue(any("not ready for publication" in issue for issue in issues))
 
     def test_rejects_a_managed_block_hidden_in_a_code_fence(self):
-        issues = validate_pull_request(
-            title="feat(process): standardize publication",
-            body="```markdown\n" + pr_body() + "```\n",
-            branch="feat/standardize-publication",
-            state="ready",
+        canonical = pr_body()
+        invalid_indented_close = (
+            PR_DESCRIPTION_START
+            + "\n```markdown\n    ```\n"
+            + canonical.split("\n", 1)[1]
         )
 
-        self.assertTrue(issues)
+        for body in ("```markdown\n" + canonical + "```\n", invalid_indented_close):
+            with self.subTest(body=body[:80]):
+                issues = validate_pull_request(
+                    title="feat(process): standardize publication",
+                    body=body,
+                    branch="feat/standardize-publication",
+                    state="ready",
+                )
+                self.assertTrue(issues)
+
+    def test_rejects_managed_content_hidden_in_raw_html_constructs(self):
+        canonical = pr_body()
+        wrappers = (
+            ("<?processing instruction\n", "?>\n"),
+            ("<![CDATA[\n", "]]>\n"),
+            ("<center>\n", "</center>\n"),
+        )
+
+        for opening, closing in wrappers:
+            body = canonical.replace(
+                PR_DESCRIPTION_START,
+                PR_DESCRIPTION_START + "\n" + opening,
+            ).replace(PR_DESCRIPTION_END, closing + PR_DESCRIPTION_END)
+            with self.subTest(opening=opening.strip()):
+                self.assertTrue(
+                    validate_pull_request(
+                        title="feat(process): standardize publication",
+                        body=body,
+                        branch="feat/standardize-publication",
+                        state="ready",
+                    )
+                )
 
     def test_rejects_prefix_content_and_raw_html_around_standard_sections(self):
         prefixed = "Project preface\n\n" + pr_body()

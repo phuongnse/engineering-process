@@ -139,6 +139,36 @@ class BootstrapTests(unittest.TestCase):
                     replace=False,
                 )
 
+    def test_invalid_existing_agents_is_rejected_before_bootstrap_writes(self):
+        invalid_documents = (
+            "<pre>\nExisting project policy.\n",
+            "```markdown\nExisting project policy.\n",
+        )
+        for document in invalid_documents:
+            with self.subTest(document=document.splitlines()[0]):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    agents = root / "AGENTS.md"
+                    agents.write_text(document, encoding="utf-8")
+                    manifest = self.write_manifest(root)
+
+                    with self.assertRaisesRegex(
+                        ContractError, "managed block must be visible"
+                    ):
+                        initialize_project(
+                            root,
+                            PROCESS_ROOT,
+                            manifest_path=manifest,
+                            requested_bundles=[],
+                            replace=False,
+                        )
+
+                    self.assertEqual(document, agents.read_text(encoding="utf-8"))
+                    self.assertFalse((root / ".process").exists())
+                    self.assertFalse((root / ".agents").exists())
+                    self.assertFalse((root / ".github").exists())
+                    self.assertFalse((root / ".gitignore").exists())
+
     def test_parent_path_conflict_is_detected_before_bootstrap_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
