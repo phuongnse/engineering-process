@@ -84,6 +84,14 @@ claim points to durable evidence owned by that claim; internal aliases, local pa
 or unpublished identifiers never substitute for a reference another reviewer can
 follow. The publication contract owns the bounded reference representation.
 
+The human-facing projection names the independent role, attested separation, outcome,
+and exact immutable source. Internal actor aliases, context identifiers, cycle
+counters, local paths, and digests remain in a clearly labeled machine-verifiable
+record; they are audit fields, not public identities or headline evidence. Evidence
+already published inside a review object does not repeat that container's number, and
+states the full checkpoint once where source identity is explained rather than using
+short hashes as decoration.
+
 Remote-environment claims require bounded supplemental evidence tied to the exact
 source and verification identity. Integration contracts own provider and artifact
 mechanisms. Supplemental reports add portability evidence but never allow code under

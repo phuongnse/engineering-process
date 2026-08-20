@@ -241,6 +241,29 @@ class DocumentationArchitectureTests(unittest.TestCase):
         self.assertIn("service-computed artifact digest", adapter)
         self.assertIn("never replace the public N-1 lifecycle reports", adapter)
 
+    def test_public_evidence_separates_semantics_from_machine_identity(self):
+        standard = (PROCESS_ROOT / "PRODUCTION_STANDARD.md").read_text(
+            encoding="utf-8"
+        )
+        skill = (
+            PROCESS_ROOT
+            / "process_assets"
+            / "skills"
+            / "publish-change"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        for raw_owner in (standard, skill):
+            owner = " ".join(raw_owner.split())
+            self.assertIn("independent role", owner)
+            self.assertIn("cycle counters", owner)
+            self.assertIn("machine-verifiable record", owner)
+            self.assertIn("full checkpoint once", owner)
+        self.assertIn(
+            "audit fields, not public identities", " ".join(standard.split())
+        )
+        self.assertIn("omit its number from headings", " ".join(skill.split()))
+
 
 if __name__ == "__main__":
     unittest.main()

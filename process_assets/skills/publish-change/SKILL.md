@@ -24,13 +24,20 @@ without duplicating implementation, verification, or review.
    and no policy drift before integration or release. For each satisfied standard
    requirement, publish the referenceable evidence required by the current
    publication contract in the section that owns the claim.
-4. Perform only the authorized remote action. Preserve draft state unless ready state
+4. Render public evidence for a reader who does not know the local orchestrator.
+   Describe the independent role, attested isolation, verdict, finding outcome, and
+   exact immutable source. Do not present actor aliases, context ids, or cycle counters
+   as reviewer names or headings. Retain the unmodified lifecycle fields only inside a
+   clearly labeled machine-verifiable record. When evidence is already inside a review
+   object, omit its number from headings and state the full checkpoint once in the
+   identity summary instead of decorating headings with a short hash.
+5. Perform only the authorized remote action. Preserve draft state unless ready state
    was explicitly requested.
    For a release, export and validate the completion receipt, derive the only
    permitted next version and every public identity from the release contract, then
    require the selected publication adapter to prove every declared surface matches
    before publication.
-5. Record the remote identifier and status. Treat any later source change as a new
+6. Record the remote identifier and status. Treat any later source change as a new
    lifecycle cycle with invalidated publication readiness.
 
 ## Hard gates
@@ -54,6 +61,8 @@ without duplicating implementation, verification, or review.
 - Do not present an internal actor alias, context id, local path, or unpublished digest
   as externally referenceable evidence. Publish the artifact through an authorized
   project-owned boundary first, then publish its stable review-object reference.
+- Do not make machine lifecycle identity carry the public explanation. Public summaries
+  are semantic; exact machine records remain labeled audit detail.
 - Metadata-only work may skip code implementation only when project policy permits it.
 
 ## Output
