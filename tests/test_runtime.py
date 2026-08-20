@@ -33,12 +33,38 @@ class RuntimeDependencyTests(unittest.TestCase):
         }
         package = resources.files("engineering_process")
         self.assertEqual(
+            set(expected) | {"requirements-release.txt"},
+            {
+                item.name
+                for item in package.iterdir()
+                if item.name.startswith("requirements-") and item.name.endswith(".txt")
+            },
+        )
+        self.assertEqual(
             expected,
             {
                 name: package.joinpath(name).read_text(encoding="utf-8").splitlines()
                 for name in expected
             },
         )
+
+    def test_release_dependency_graph_is_hash_locked(self):
+        package = resources.files("engineering_process")
+        lines = package.joinpath("requirements-release.txt").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        self.assertEqual("--only-binary :all:", lines[0])
+        requirements = [
+            line for line in lines if line and not line.startswith(("#", " "))
+        ]
+        self.assertGreater(len(requirements), 1)
+        for index, requirement in enumerate(requirements[1:], start=1):
+            with self.subTest(requirement=requirement):
+                self.assertRegex(requirement, r"^[a-z0-9-]+==[^ ]+ \\$" )
+                line_index = lines.index(requirement)
+                self.assertRegex(
+                    lines[line_index + 1], r"^    --hash=sha256:[0-9a-f]{64}$"
+                )
 
     def test_runtime_dependency_lock_contains_exact_parser_graph(self):
         self.assertEqual(

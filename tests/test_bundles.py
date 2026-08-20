@@ -8,7 +8,7 @@ from engineering_process.contracts import ContractError
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_ROOT = PROCESS_ROOT / ".agents" / "skills"
+SKILLS_ROOT = PROCESS_ROOT / "process_assets" / "skills"
 
 
 class BundleTests(unittest.TestCase):

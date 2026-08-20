@@ -15,6 +15,37 @@ Before the first release, add a pending trusted publisher for the new PyPI proje
 
 The GitHub `pypi` environment and the workflow environment must keep the same name.
 
+## Version classification
+
+[`VERSIONING.md`](./VERSIONING.md) is the normative package, serialized-contract,
+release, and adoption version policy. Derive the exact candidate with `processctl
+publication plan-version`; never choose an increment from release chronology or
+development progress.
+
+The root `release.json` is the machine-readable release identity and classification
+owner. Its ordered change records derive patch/minor/major classification and
+compatibility instead of relying on a manually chosen number alone. It also owns the
+package/distribution names, exact tag, GitHub release title, runtime-version source,
+wheel/sdist names, lifecycle receipt asset, previous public version, schema impact,
+and migration guidance. Governed tag and release title are both exactly `v<SemVer>`.
+`processctl contract validate --kind release release.json` validates internal
+consistency; `processctl publication validate-release` cross-checks the contract
+against `pyproject.toml`, the static runtime constant, receipt, immutable tag and
+checkpoint, latest reachable prior release, and `main` ancestry.
+
+The version in `pyproject.toml`, `engineering_process.VERSION`, and `release.json`
+changes only in the reviewed release checkpoint. A development commit, schema
+clarification, lock regeneration, or failed publication does not advance it by
+itself. Consumer process locks change only after the public artifact and its hashes
+have been verified.
+
+After publication, Renovate updates `requirements/process.in`, regenerates the
+complete `requirements/process.txt` hash graph through pip-compile, and runs the
+managed adoption runner before creating its draft. That single PR must contain the
+new process lock, managed assets, and any consumer-owned target-version project
+migration, pass CI and fresh-context independent review, and then be merged
+explicitly. No synchronization is permitted after merge.
+
 ## One-time GitHub controls
 
 Complete these controls before publishing the first release:
@@ -37,14 +68,36 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 
 ## Release
 
-1. Merge a reviewed change to `main` and require the complete CI matrix to pass.
-2. Set the package version in `pyproject.toml`; released versions are immutable.
-3. Create a GitHub release whose tag is exactly `v<package-version>` and whose target
-   is the verified `main` commit.
-4. Observe the `Publish` workflow. It checks the tag/version and `main` ancestry,
-   rebuilds the wheel and source distribution, installs the wheel, reruns the portable
-   validation suite, and publishes both artifacts with PyPI attestations.
+1. Complete the repository's own process lifecycle on an immutable checkpoint and
+   require independent review plus the complete CI matrix to pass. Export the
+   completed receipt bound to the pinned public N-1 authority and artifact digests.
+2. Update the ordered `release.json.changes`; let their types determine the exact
+   SemVer classification. Set the same version in `release.json`, `pyproject.toml`,
+   and `engineering_process.VERSION`, and declare canonical artifact/receipt names.
+3. Create a draft GitHub release whose existing tag and title are both exactly
+   `v<package-version>` and whose target is the verified `main` commit. Attach the
+   receipt using the exact `release.json.identity.receiptAsset` name. Run the
+   `Prepare Release` workflow for that tag; it validates the draft and N-1 receipt,
+   builds from the verified HEAD object graph, attaches the inspected wheel, sdist,
+   and digest attestation to the still-editable draft, and fails if any asset exists
+   unexpectedly. Only after that workflow passes, publish the immutable release.
+4. Observe the `Publish` workflow. It never mutates the published release. Its no-OIDC
+   build job downloads the immutable assets, verifies GitHub's release attestation,
+   rejects an incomplete or extended immutable asset set, and verifies each local
+   asset against the attestation before checking release identity, N-1 receipt,
+   artifact digests, installed wheel, and the portable
+   validation suite. The separately gated PyPI job downloads and validates those same
+   immutable assets again immediately before publishing both distributions with PyPI
+   attestations.
 5. Confirm the version and artifact hashes on PyPI before updating consumer locks.
 
 Never upload a locally built distribution or enable `skip-existing`. A failed release
 is diagnosed and republished as a new version; PyPI artifacts are not replaced.
+
+Release `0.1.1` is explicitly recorded as `bootstrap-history`: its actual immutable
+title is retained and it makes no current-lifecycle claim. It predates
+`processctl evidence validate`, so it cannot authorize a governed publication that
+depends on a lifecycle receipt. There is no fallback to code from the release under
+review. Before the first governed release, a separately scoped bootstrap-authority
+release must make the receipt validator public and the producer lock must pin that
+artifact and its hashes. Until then, publication intentionally fails closed.

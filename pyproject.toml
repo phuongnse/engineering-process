@@ -43,93 +43,101 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 engineering_process = ["requirements-*.txt"]
 
 [tool.setuptools.data-files]
-"share/engineering-process" = ["bundles.json"]
+"share/engineering-process" = ["bundles.json", "release.json", "PRODUCTION_STANDARD.md", "VERSIONING.md"]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
+  "templates/adopt-process.py",
+  "templates/adopt-process-windows-job.py",
 ]
 "share/engineering-process/schemas" = [
+  "schemas/adoption-migration.schema.json",
   "schemas/change.schema.json",
+  "schemas/evidence-receipt.schema.json",
   "schemas/lifecycle.schema.json",
   "schemas/plan.schema.json",
   "schemas/process-lock.schema.json",
   "schemas/project.schema.json",
+  "schemas/release.schema.json",
   "schemas/review.schema.json",
   "schemas/reviewer-attestation.schema.json",
+  "schemas/supplemental-verification.schema.json",
   "schemas/verification.schema.json",
 ]
 "share/engineering-process/examples" = [
+  "examples/adoption-migration.json",
   "examples/change.json",
   "examples/plan.json",
   "examples/project.json",
+  "examples/release.json",
   "examples/review.json",
 ]
 "share/engineering-process/skills/cross-repo-change" = [
-  ".agents/skills/cross-repo-change/SKILL.md",
+  "process_assets/skills/cross-repo-change/SKILL.md",
 ]
 "share/engineering-process/skills/assess-design" = [
-  ".agents/skills/assess-design/SKILL.md",
+  "process_assets/skills/assess-design/SKILL.md",
 ]
 "share/engineering-process/skills/build-frontend" = [
-  ".agents/skills/build-frontend/SKILL.md",
+  "process_assets/skills/build-frontend/SKILL.md",
 ]
 "share/engineering-process/skills/build-frontend-foundation" = [
-  ".agents/skills/build-frontend-foundation/SKILL.md",
+  "process_assets/skills/build-frontend-foundation/SKILL.md",
 ]
 "share/engineering-process/skills/change-api" = [
-  ".agents/skills/change-api/SKILL.md",
+  "process_assets/skills/change-api/SKILL.md",
 ]
 "share/engineering-process/skills/define-change-contract" = [
-  ".agents/skills/define-change-contract/SKILL.md",
+  "process_assets/skills/define-change-contract/SKILL.md",
 ]
 "share/engineering-process/skills/design-module" = [
-  ".agents/skills/design-module/SKILL.md",
+  "process_assets/skills/design-module/SKILL.md",
 ]
 "share/engineering-process/skills/evolve-process" = [
-  ".agents/skills/evolve-process/SKILL.md",
+  "process_assets/skills/evolve-process/SKILL.md",
 ]
 "share/engineering-process/skills/finish-change" = [
-  ".agents/skills/finish-change/SKILL.md",
+  "process_assets/skills/finish-change/SKILL.md",
 ]
 "share/engineering-process/skills/implement-change" = [
-  ".agents/skills/implement-change/SKILL.md",
+  "process_assets/skills/implement-change/SKILL.md",
 ]
 "share/engineering-process/skills/implement-module" = [
-  ".agents/skills/implement-module/SKILL.md",
+  "process_assets/skills/implement-module/SKILL.md",
 ]
 "share/engineering-process/skills/implement-use-case" = [
-  ".agents/skills/implement-use-case/SKILL.md",
+  "process_assets/skills/implement-use-case/SKILL.md",
 ]
 "share/engineering-process/skills/integrate-mcp" = [
-  ".agents/skills/integrate-mcp/SKILL.md",
+  "process_assets/skills/integrate-mcp/SKILL.md",
 ]
 "share/engineering-process/skills/maintain-docs" = [
-  ".agents/skills/maintain-docs/SKILL.md",
+  "process_assets/skills/maintain-docs/SKILL.md",
 ]
 "share/engineering-process/skills/plan-change" = [
-  ".agents/skills/plan-change/SKILL.md",
+  "process_assets/skills/plan-change/SKILL.md",
 ]
 "share/engineering-process/skills/publish-change" = [
-  ".agents/skills/publish-change/SKILL.md",
+  "process_assets/skills/publish-change/SKILL.md",
 ]
 "share/engineering-process/skills/review-change" = [
-  ".agents/skills/review-change/SKILL.md",
+  "process_assets/skills/review-change/SKILL.md",
 ]
 "share/engineering-process/skills/run-change" = [
-  ".agents/skills/run-change/SKILL.md",
+  "process_assets/skills/run-change/SKILL.md",
 ]
 "share/engineering-process/skills/run-change/references" = [
-  ".agents/skills/run-change/references/execution.md",
+  "process_assets/skills/run-change/references/execution.md",
 ]
 "share/engineering-process/skills/run-project-command" = [
-  ".agents/skills/run-project-command/SKILL.md",
+  "process_assets/skills/run-project-command/SKILL.md",
 ]
 "share/engineering-process/skills/specify-use-case" = [
-  ".agents/skills/specify-use-case/SKILL.md",
+  "process_assets/skills/specify-use-case/SKILL.md",
 ]
 "share/engineering-process/skills/verify-change" = [
-  ".agents/skills/verify-change/SKILL.md",
+  "process_assets/skills/verify-change/SKILL.md",
 ]
 "share/engineering-process/skills/govern-ui" = [
-  ".agents/skills/govern-ui/SKILL.md",
+  "process_assets/skills/govern-ui/SKILL.md",
 ]

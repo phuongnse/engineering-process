@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import stat
 import sysconfig
 import tempfile
-from pathlib import Path
+import time
+from pathlib import Path, PurePosixPath
 
 from . import VERSION
 from .bundles import load_bundles
 from .contracts import ContractError, ProcessLock, read_json, validate_process_lock
 from .distribution import asset_root, distribution_digest, skills_root
+from .git_attributes import (
+    canonical_attributes_block,
+    has_managed_attributes_marker,
+    managed_attributes_issues,
+    read_managed_attributes,
+)
 from .managed import (
     managed_agents_block,
     managed_agents_visibility_issues,
@@ -23,6 +32,43 @@ from .publication import (
     validate_project_extensions,
 )
 from .skills import MARKER_NAME, validate_skills
+from .git import portable_git_path
+
+
+MAX_SKILL_ENTRIES = 500
+MAX_SKILL_FILE_BYTES = 1_000_000
+MAX_SKILL_TOTAL_BYTES = 8_000_000
+SKILL_COMPARISON_TIMEOUT_SECONDS = 10.0
+
+
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    """Compare stable ids when Windows path stat omits the volume serial."""
+    if os.name == "nt":
+        return (
+            left.st_ino != 0
+            and left.st_ino == right.st_ino
+            and (
+                left.st_dev == 0
+                or right.st_dev == 0
+                or left.st_dev == right.st_dev
+            )
+        )
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+MAX_ADOPTION_RUNNER_BYTES = 128_000
+ADOPTION_RUNNER_MARKER = "# Managed by engineering-process; do not edit."
+ADOPTION_SCRIPT_NAMES = (
+    "adopt-process.py",
+    "adopt-process-windows-job.py",
+)
+
+
+def _has_adoption_runner_marker(content: bytes) -> bool:
+    marker = ADOPTION_RUNNER_MARKER.encode("utf-8")
+    return content.startswith(marker + b"\n") or content.startswith(
+        marker + b"\r\n"
+    )
 
 
 def default_process_root() -> Path:
@@ -64,14 +110,134 @@ def _read_marker(path: Path) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
 
 
-def _files(path: Path, *, ignore_marker: bool) -> dict[str, bytes]:
-    result: dict[str, bytes] = {}
-    if not path.is_dir():
+def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
+    result: dict[str, tuple[int, str]] = {}
+    if not os.path.lexists(path):
         return result
-    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
-        if ignore_marker and item.name == MARKER_NAME:
-            continue
-        result[item.relative_to(path).as_posix()] = item.read_bytes()
+    try:
+        root_stat = path.lstat()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot inspect managed skill: {error}") from error
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise ContractError(f"{path}: managed skill comparison root must be a directory")
+    deadline = time.monotonic() + SKILL_COMPARISON_TIMEOUT_SECONDS
+    entries = 0
+    total_bytes = 0
+    stack: list[tuple[Path, PurePosixPath]] = [(path, PurePosixPath())]
+    while stack:
+        if time.monotonic() >= deadline:
+            raise ContractError(
+                f"{path}: managed skill comparison exceeded "
+                f"{SKILL_COMPARISON_TIMEOUT_SECONDS:g} seconds"
+            )
+        directory, relative_directory = stack.pop()
+        try:
+            with os.scandir(directory) as iterator:
+                children = []
+                for child in iterator:
+                    if time.monotonic() >= deadline:
+                        raise ContractError(
+                            f"{path}: managed skill comparison exceeded "
+                            f"{SKILL_COMPARISON_TIMEOUT_SECONDS:g} seconds"
+                        )
+                    entries += 1
+                    if entries > MAX_SKILL_ENTRIES:
+                        raise ContractError(
+                            f"{path}: managed skill entry count exceeds "
+                            f"{MAX_SKILL_ENTRIES}"
+                        )
+                    children.append(child)
+                children.sort(key=lambda item: item.name)
+        except OSError as error:
+            raise ContractError(
+                f"{directory}: cannot enumerate managed skill: {error}"
+            ) from error
+        directories: list[tuple[Path, PurePosixPath]] = []
+        for child in children:
+            relative = relative_directory / child.name
+            try:
+                encoded = relative.as_posix().encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ContractError(
+                    f"{path}: managed skill paths must use UTF-8"
+                ) from error
+            portable = portable_git_path(
+                encoded, label=f"{path}: managed skill comparison"
+            )
+            try:
+                # DirEntry.stat() may reuse incomplete directory-enumeration
+                # metadata on Windows.  A path lstat obtains the same stable
+                # file identity surface used by the opened handle below.
+                before = Path(child.path).lstat()
+            except OSError as error:
+                raise ContractError(
+                    f"{child.path}: cannot inspect managed skill entry: {error}"
+                ) from error
+            if stat.S_ISLNK(before.st_mode):
+                raise ContractError(
+                    f"{child.path}: managed skill comparison rejects symlinks"
+                )
+            if stat.S_ISDIR(before.st_mode):
+                directories.append((Path(child.path), relative))
+                continue
+            if not stat.S_ISREG(before.st_mode):
+                raise ContractError(
+                    f"{child.path}: managed skill comparison requires regular files"
+                )
+            if ignore_marker and child.name == MARKER_NAME:
+                continue
+            if before.st_size > MAX_SKILL_FILE_BYTES:
+                raise ContractError(
+                    f"{child.path}: managed skill file exceeds "
+                    f"{MAX_SKILL_FILE_BYTES} bytes"
+                )
+            total_bytes += before.st_size
+            if total_bytes > MAX_SKILL_TOTAL_BYTES:
+                raise ContractError(
+                    f"{path}: managed skill content exceeds "
+                    f"{MAX_SKILL_TOTAL_BYTES} bytes"
+                )
+            digest = hashlib.sha256()
+            read_bytes = 0
+            try:
+                with Path(child.path).open("rb") as stream:
+                    opened = os.fstat(stream.fileno())
+                    if (
+                        not stat.S_ISREG(opened.st_mode)
+                        or not _same_file_identity(opened, before)
+                    ):
+                        raise ContractError(
+                            f"{child.path}: managed skill file changed while opening"
+                        )
+                    while chunk := stream.read(64 * 1024):
+                        if time.monotonic() >= deadline:
+                            raise ContractError(
+                                f"{path}: managed skill comparison exceeded "
+                                f"{SKILL_COMPARISON_TIMEOUT_SECONDS:g} seconds"
+                            )
+                        read_bytes += len(chunk)
+                        if read_bytes > before.st_size:
+                            raise ContractError(
+                                f"{child.path}: managed skill file changed while reading"
+                            )
+                        digest.update(chunk)
+                after = Path(child.path).lstat()
+            except OSError as error:
+                raise ContractError(
+                    f"{child.path}: cannot read managed skill file: {error}"
+                ) from error
+            if (
+                read_bytes != before.st_size
+                or after.st_size != before.st_size
+                or after.st_mtime_ns != before.st_mtime_ns
+                or after.st_mode != before.st_mode
+                or not _same_file_identity(after, before)
+            ):
+                raise ContractError(
+                    f"{child.path}: managed skill file changed while reading"
+                )
+            result[portable] = (read_bytes, digest.hexdigest())
+        stack.extend(reversed(directories))
     return result
 
 
@@ -143,6 +309,21 @@ def selected_skill_target_issues(
     return issues
 
 
+def git_attributes_target_issues(project_root: Path) -> list[str]:
+    target = project_root / ".agents" / ".gitattributes"
+    try:
+        current = read_managed_attributes(target)
+    except ContractError as error:
+        return [f"{target}: {error}"]
+    if (
+        current is not None
+        and managed_attributes_issues(current)
+        and not has_managed_attributes_marker(current)
+    ):
+        return [f"{target}: refusing to overwrite unmanaged Git attributes"]
+    return []
+
+
 def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
     path = asset_root(process_root) / "templates" / "PULL_REQUEST_TEMPLATE.md"
     if not path.is_file():
@@ -151,6 +332,114 @@ def _pull_request_template_source(process_root: Path) -> tuple[Path, str]:
         return path, path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise ContractError(f"{path}: cannot read pull-request template: {error}") from error
+
+
+def _adoption_runner_source(
+    process_root: Path, name: str = "adopt-process.py"
+) -> tuple[Path, bytes]:
+    if name not in ADOPTION_SCRIPT_NAMES:
+        raise ContractError(f"unsupported adoption script: {name}")
+    path = asset_root(process_root) / "templates" / name
+    if not path.is_file() or path.is_symlink():
+        raise ContractError(f"{path}: missing regular adoption runner template")
+    try:
+        if path.stat().st_size > MAX_ADOPTION_RUNNER_BYTES:
+            raise ContractError(
+                f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+            )
+        content = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot read adoption runner: {error}") from error
+    if len(content) > MAX_ADOPTION_RUNNER_BYTES:
+        raise ContractError(
+            f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+        )
+    if not content.startswith((ADOPTION_RUNNER_MARKER + "\n").encode("utf-8")):
+        raise ContractError(f"{path}: adoption runner is missing its managed marker")
+    return path, content
+
+
+def _read_adoption_runner_target(path: Path) -> bytes | None:
+    if path.is_symlink():
+        raise ContractError(f"{path}: managed adoption runner must not be a symlink")
+    if not os.path.lexists(path):
+        return None
+    if not path.is_file():
+        raise ContractError(f"{path}: managed adoption runner must be a regular file")
+    try:
+        size = path.stat().st_size
+        if size > MAX_ADOPTION_RUNNER_BYTES:
+            raise ContractError(
+                f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+            )
+        content = path.read_bytes()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot read adoption runner: {error}") from error
+    if len(content) > MAX_ADOPTION_RUNNER_BYTES:
+        raise ContractError(
+            f"{path}: adoption runner exceeds {MAX_ADOPTION_RUNNER_BYTES} bytes"
+        )
+    return content
+
+
+def adoption_runner_target_issues(
+    project_root: Path, process_root: Path
+) -> list[str]:
+    issues: list[str] = []
+    for name in ADOPTION_SCRIPT_NAMES:
+        target = project_root / ".process" / name
+        try:
+            current = _read_adoption_runner_target(target)
+            _, source = _adoption_runner_source(process_root, name)
+        except ContractError as error:
+            issues.append(str(error))
+            continue
+        if (
+            current is not None
+            and current != source
+            and not _has_adoption_runner_marker(current)
+        ):
+            issues.append(
+                f"{target}: refusing to overwrite unmanaged adoption runner"
+            )
+    return issues
+
+
+def _adoption_runner_issues(project_root: Path, process_root: Path) -> list[str]:
+    issues: list[str] = []
+    for name in ADOPTION_SCRIPT_NAMES:
+        target = project_root / ".process" / name
+        try:
+            current = _read_adoption_runner_target(target)
+            _, source = _adoption_runner_source(process_root, name)
+        except ContractError as error:
+            issues.append(str(error))
+            continue
+        if current is None:
+            issues.append(f"{target}: missing managed adoption runner")
+        elif current != source:
+            issues.append(
+                f"{target}: managed adoption runner differs from the pinned distribution"
+            )
+    return issues
+
+
+def _sync_adoption_runner(project_root: Path, process_root: Path) -> None:
+    for name in ADOPTION_SCRIPT_NAMES:
+        target = project_root / ".process" / name
+        current = _read_adoption_runner_target(target)
+        _, source = _adoption_runner_source(process_root, name)
+        if (
+            current is not None
+            and current != source
+            and not _has_adoption_runner_marker(current)
+        ):
+            raise ContractError(
+                f"{target}: refusing to overwrite unmanaged adoption runner"
+            )
+        if current != source:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source)
 
 
 def _agents_source(process_root: Path) -> tuple[Path, str]:
@@ -246,6 +535,34 @@ def _sync_pull_request_template(project_root: Path, process_root: Path) -> None:
         target.write_text(updated, encoding="utf-8")
 
 
+def _git_attributes_issues(project_root: Path) -> list[str]:
+    target = project_root / ".agents" / ".gitattributes"
+    try:
+        current = read_managed_attributes(target)
+    except ContractError as error:
+        return [f"{target}: {error}"]
+    if current is None:
+        return [f"{target}: missing managed engineering-process Git attributes"]
+    return [f"{target}: {issue}" for issue in managed_attributes_issues(current)]
+
+
+def _sync_git_attributes(project_root: Path) -> None:
+    target = project_root / ".agents" / ".gitattributes"
+    try:
+        current = read_managed_attributes(target)
+    except ContractError as error:
+        raise ContractError(f"{target}: {error}") from error
+    if (
+        current is not None
+        and managed_attributes_issues(current)
+        and not has_managed_attributes_marker(current)
+    ):
+        raise ContractError(f"{target}: refusing to overwrite unmanaged Git attributes")
+    if current is None or managed_attributes_issues(current):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(canonical_attributes_block(), encoding="utf-8")
+
+
 def synchronized_state(
     project_root: Path,
     process_root: Path,
@@ -294,6 +611,8 @@ def synchronized_state(
                 issues.append(f"{target}: stale managed skill is not present in process.lock")
     issues.extend(_agents_issues(project_root, process_root))
     issues.extend(_pull_request_template_issues(project_root, process_root))
+    issues.extend(_git_attributes_issues(project_root))
+    issues.extend(_adoption_runner_issues(project_root, process_root))
     return issues
 
 
@@ -305,6 +624,8 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
         *managed_parent_issues(project_root),
         *skill_target_ownership_issues(project_root),
         *selected_skill_target_issues(project_root, lock.skills),
+        *git_attributes_target_issues(project_root),
+        *adoption_runner_target_issues(project_root, process_root),
     ]
     if ownership_issues and not check:
         raise ContractError("\n".join(ownership_issues))
@@ -348,6 +669,8 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
 
     _sync_agents(project_root, process_root)
     _sync_pull_request_template(project_root, process_root)
+    _sync_git_attributes(project_root)
+    _sync_adoption_runner(project_root, process_root)
 
     target_root.mkdir(parents=True, exist_ok=True)
 

@@ -40,6 +40,7 @@ class ProcessSupervisor(Protocol):
         *,
         working_directory: Path,
         environment: Mapping[str, str],
+        pipe_stdin: bool = False,
     ) -> subprocess.Popen[bytes]: ...
 
     def terminate(

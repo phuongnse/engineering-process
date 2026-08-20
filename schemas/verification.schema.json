@@ -20,7 +20,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "enum": [1, 2]
     },
     "project": {
       "type": "string"
@@ -45,6 +45,121 @@
     "sourceChangedDuringVerification": {
       "type": "boolean"
     },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "mode",
+        "profile",
+        "selectedCheckIds",
+        "skippedCheckIds",
+        "checkSelection"
+      ],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "mode": {"enum": ["full-profile", "affected-checks"]},
+        "profile": {"type": "string"},
+        "baseRef": {"type": "string"},
+        "baseCommit": {"type": "string"},
+        "headCommit": {"type": "string"},
+        "mergeBase": {"type": "string"},
+        "changedPaths": {
+          "type": "array",
+          "maxItems": 5000,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "directlyChangedComponents": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "affectedComponents": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "unmatchedPaths": {
+          "type": "array",
+          "maxItems": 5000,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "selectedCheckIds": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "skippedCheckIds": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "checkSelection": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "selected",
+              "reason",
+              "components",
+              "matchedComponents"
+            ],
+            "properties": {
+              "id": {"type": "string"},
+              "selected": {"type": "boolean"},
+              "reason": {
+                "enum": [
+                  "profile-has-no-impact-contract",
+                  "unscoped-always-run",
+                  "unmatched-path-fallback",
+                  "affected-component",
+                  "no-affected-component"
+                ]
+              },
+              "components": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string"}
+              },
+              "matchedComponents": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {"type": "string"}
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"mode": {"const": "affected-checks"}},
+            "required": ["mode"]
+          },
+          "then": {
+            "required": [
+              "baseRef",
+              "baseCommit",
+              "headCommit",
+              "mergeBase",
+              "changedPaths",
+              "directlyChangedComponents",
+              "affectedComponents",
+              "unmatchedPaths"
+            ]
+          }
+        }
+      ]
+    },
     "startedAt": {
       "type": "string",
       "format": "date-time"
@@ -58,7 +173,6 @@
     },
     "checks": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "required": [
@@ -89,6 +203,11 @@
             "type": "integer",
             "minimum": 0
           },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400
+          },
           "workingDirectory": {
             "type": "string"
           },
@@ -103,6 +222,35 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "impactSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "impactIntegrity": {
+            "enum": ["verified", "failed"]
+          },
+          "stdoutBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stderrBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stdoutSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "stderrSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "outputTruncated": {
+            "type": "boolean"
+          },
+          "streamOutputTruncated": {
+            "type": "boolean"
+          },
           "pathEntries": {
             "type": "array",
             "items": {
@@ -116,5 +264,47 @@
         "additionalProperties": false
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 1}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "checks": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["impact"],
+        "properties": {
+          "checks": {
+            "maxItems": 256,
+            "items": {
+              "properties": {
+                "command": {"maxItems": 256}
+              },
+              "required": [
+                "impactSha256",
+                "impactIntegrity",
+                "stdoutBytes",
+                "stderrBytes",
+                "stdoutSha256",
+                "stderrSha256",
+                "outputTruncated",
+                "streamOutputTruncated"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
 }

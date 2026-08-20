@@ -1,3 +1,5 @@
+import hashlib
+import io
 import os
 import signal
 import sys
@@ -126,6 +128,58 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual(["sample-tool", "one", "two"], report["command"])
             self.assertEqual(f"one|two{os.linesep}", report["stdout"])
 
+    def test_streamed_output_budget_fails_closed_and_stays_bounded(self):
+        class Sink:
+            def __init__(self):
+                self.buffer = io.BytesIO()
+
+            def write(self, value):
+                return self.buffer.write(value.encode("utf-8"))
+
+            def flush(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sink = Sink()
+            with patch("engineering_process.environment.sys.stderr", sink):
+                report = execute_command(
+                    root,
+                    identifier="bounded-log",
+                    run=(sys.executable, "-c", "print('x' * 1100000)"),
+                    timeout_seconds=30,
+                    working_directory=".",
+                    stream_output=True,
+                )
+
+            self.assertEqual("failed", report["status"])
+            self.assertGreater(report["stdoutBytes"], 1_000_000)
+            self.assertTrue(report["outputTruncated"])
+            self.assertLess(len(sink.buffer.getvalue()), 1_000_100)
+            self.assertIn("output exceeded", report["error"])
+
+    def test_combined_output_budget_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = execute_command(
+                Path(directory),
+                identifier="combined-output",
+                run=(
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.write('o'*800000); "
+                    "sys.stderr.write('e'*800000)",
+                ),
+                timeout_seconds=30,
+                working_directory=".",
+            )
+
+            self.assertEqual("failed", report["status"])
+            self.assertGreater(
+                report["stdoutBytes"] + report["stderrBytes"], 1_500_000
+            )
+            self.assertTrue(report["outputTruncated"])
+            self.assertIn("output exceeded", report["error"])
+
     def test_doctor_is_read_only_and_reports_missing_requirement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -247,6 +301,38 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual("passed", report["status"])
             self.assertTrue(requirement["outputTruncated"])
             self.assertLessEqual(len(requirement["stdout"].encode()), 16_384)
+
+    def test_probe_regex_canonicalizes_line_endings_without_changing_evidence(self):
+        for line_ending in (b"\n", b"\r\n", b"\r"):
+            with (
+                self.subTest(line_ending=line_ending),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                payload = b"v24.18.0" + line_ending
+                document = project_document()
+                probe = document["environment"]["requirements"][0]["probe"]
+                probe["run"] = [
+                    sys.executable,
+                    "-c",
+                    f"import os; os.write(1, {payload!r})",
+                ]
+                probe["outputRegex"] = r"^v24\.18\.0$"
+                probe["outputStream"] = "stdout"
+                project = validate_project(document)
+
+                report = doctor_environment(root, project)
+                requirement = report["requirements"][0]
+
+                self.assertEqual("passed", report["status"])
+                self.assertEqual("satisfied", requirement["status"])
+                self.assertTrue(requirement["outputMatched"])
+                self.assertEqual(payload.decode(), requirement["stdout"])
+                self.assertEqual(len(payload), requirement["stdoutBytes"])
+                self.assertEqual(
+                    hashlib.sha256(payload).hexdigest(),
+                    requirement["stdoutSha256"],
+                )
 
     def test_probe_output_regex_is_bounded_by_the_probe_timeout(self):
         with tempfile.TemporaryDirectory() as directory:

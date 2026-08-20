@@ -8,15 +8,20 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import VERSION
+from .adoption import apply_adoption, check_adoption
+from .artifact_attestation import validate_distribution_attestation
 from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
     ContractError,
+    derive_release_version,
     read_json,
+    validate_adoption_migration,
     validate_change,
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_release,
     validate_review,
 )
 from .distribution import distribution_digest
@@ -28,6 +33,8 @@ from .environment import (
     require_environment_profile,
     setup_environment,
 )
+from .evidence import export_receipt, prune_completed_run, validate_receipt
+from .impact import plan_profile
 from .lifecycle import (
     begin_implementation,
     finish_change,
@@ -46,6 +53,7 @@ from .publication import (
     validate_commit_subject,
     validate_pull_request,
 )
+from .release import validate_release_checkpoint
 from .skills import validate_skills
 from .syncing import (
     default_process_root,
@@ -97,6 +105,7 @@ def command_project_validate(args: argparse.Namespace) -> int:
             project=project.identifier,
             profiles=sorted(project.profiles),
             requiredProfiles=list(project.required_profiles),
+            qualityExtensions=list(project.quality_extensions),
             environmentProfiles=(
                 sorted(project.environment.profiles) if project.environment else []
             ),
@@ -197,11 +206,37 @@ def command_lock_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_adoption_apply(args: argparse.Namespace) -> int:
+    details = apply_adoption(
+        args.project_root,
+        args.process_root,
+        args.requirements_lock,
+        requirements_source=args.requirements_source,
+        expected_requirements_digest=args.expected_requirements_digest,
+    )
+    _emit(args, _result("adoption apply", **details))
+    return 0
+
+
+def command_adoption_check(args: argparse.Namespace) -> int:
+    details = check_adoption(
+        args.project_root,
+        args.process_root,
+        args.requirements_lock,
+    )
+    issues = details.pop("issues")
+    status = "failed" if issues else "passed"
+    _emit(args, _result("adoption check", status=status, issues=issues, **details))
+    return 1 if issues else 0
+
+
 def command_contract_validate(args: argparse.Namespace) -> int:
     document = read_json(args.path)
     validators: dict[str, Callable[[Any, str], None]] = {
+        "adoption-migration": validate_adoption_migration,
         "change": validate_change,
         "plan": validate_plan,
+        "release": validate_release,
         "review": validate_review,
     }
     validators[args.kind](document, str(args.path))
@@ -452,6 +487,29 @@ def command_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_evidence_export(args: argparse.Namespace) -> int:
+    details = export_receipt(args.project_root, args.change_id, args.output)
+    _emit(args, _result("evidence export", output=str(args.output.resolve()), **details))
+    return 0
+
+
+def command_evidence_validate(args: argparse.Namespace) -> int:
+    details = validate_receipt(args.receipt)
+    _emit(args, _result("evidence validate", receipt=str(args.receipt.resolve()), **details))
+    return 0
+
+
+def command_evidence_prune(args: argparse.Namespace) -> int:
+    details = prune_completed_run(
+        args.project_root,
+        args.change_id,
+        args.receipt,
+        apply=args.apply,
+    )
+    _emit(args, _result("evidence prune", **details))
+    return 0
+
+
 def command_sync(args: argparse.Namespace) -> int:
     issues = sync_skills(
         args.project_root,
@@ -574,8 +632,49 @@ def command_verify(args: argparse.Namespace) -> int:
         raise ContractError("\n".join(integration_issues))
     project_path = args.project_root / ".process" / "project.json"
     project = validate_project(read_json(project_path), str(project_path))
+    if args.plan_only:
+        plan = plan_profile(
+            args.project_root,
+            project,
+            args.profile,
+            base_ref=args.base_ref,
+        ).evidence
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if args.json:
+            _write_json(plan)
+        else:
+            print(f"verify plan {args.profile}: {plan['mode']}")
+            if plan["mode"] == "affected-checks":
+                print(f"  base: {plan['baseRef']} ({plan['mergeBase']})")
+                print(f"  changed paths: {len(plan['changedPaths'])}")
+                print(
+                    "  affected components: "
+                    + (", ".join(plan["affectedComponents"]) or "none")
+                )
+                print(f"  unmatched paths: {len(plan['unmatchedPaths'])}")
+            print(
+                "  selected checks: "
+                + (", ".join(plan["selectedCheckIds"]) or "none")
+            )
+            print(
+                "  skipped checks: "
+                + (", ".join(plan["skippedCheckIds"]) or "none")
+            )
+            if args.output:
+                print(f"  report: {args.output}")
+        return 0
     require_environment_profile(args.project_root, project, profile=args.profile)
-    report = run_profile(args.project_root, project, args.profile)
+    report = run_profile(
+        args.project_root,
+        project,
+        args.profile,
+        base_ref=args.base_ref,
+    )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
@@ -678,6 +777,47 @@ def command_publication_validate_pr(args: argparse.Namespace) -> int:
     )
 
 
+def command_publication_plan_version(args: argparse.Namespace) -> int:
+    plan = derive_release_version(args.previous_version, args.change_type)
+    _emit(
+        args,
+        _result(
+            "publication plan-version",
+            previousVersion=plan.previous_version,
+            version=plan.version,
+            classification=plan.classification,
+            compatibility=plan.compatibility,
+            changeTypes=list(plan.change_types),
+        ),
+    )
+    return 0
+
+
+def command_publication_validate_release(args: argparse.Namespace) -> int:
+    details = validate_release_checkpoint(
+        args.project_root,
+        tag=args.tag,
+        release_name=args.release_name,
+        commit=args.commit,
+        main_ref=args.main_ref,
+        receipt_path=args.receipt,
+    )
+    _emit(args, _result("publication validate-release", **details))
+    return 0
+
+
+def command_publication_validate_artifacts(args: argparse.Namespace) -> int:
+    details = validate_distribution_attestation(
+        args.project_root,
+        args.artifacts,
+        args.attestation,
+        receipt_path=args.receipt,
+        checkpoint=args.commit,
+    )
+    _emit(args, _result("publication validate-artifacts", attestation=details))
+    return 0
+
+
 def _add_json(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
@@ -778,11 +918,58 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(lock_create)
     lock_create.set_defaults(handler=command_lock_create)
 
+    adoption = commands.add_parser(
+        "adoption", help="Apply or validate a hash-locked process-authority adoption"
+    )
+    adoption_commands = adoption.add_subparsers(
+        dest="adoption_command", required=True
+    )
+    adoption_apply = adoption_commands.add_parser(
+        "apply", help="Materialize the proposed authority and all managed assets"
+    )
+    _add_project_root(adoption_apply)
+    _add_process_root(adoption_apply)
+    adoption_apply.add_argument(
+        "--requirements-lock",
+        type=Path,
+        required=True,
+        help="Hash-locked requirements file or private runner snapshot",
+    )
+    adoption_apply.add_argument(
+        "--requirements-source",
+        type=Path,
+        help=(
+            "Original requirements lock inside the consumer checkout; required "
+            "when --requirements-lock is an external private snapshot"
+        ),
+    )
+    adoption_apply.add_argument(
+        "--expected-requirements-digest",
+        help="Expected sha256 digest of the private requirements snapshot",
+    )
+    _add_json(adoption_apply)
+    adoption_apply.set_defaults(handler=command_adoption_apply)
+    adoption_check = adoption_commands.add_parser(
+        "check", help="Validate that authority, lock, and managed assets agree"
+    )
+    _add_project_root(adoption_check)
+    _add_process_root(adoption_check)
+    adoption_check.add_argument(
+        "--requirements-lock",
+        type=Path,
+        required=True,
+        help="Hash-locked requirements file inside the consumer checkout",
+    )
+    _add_json(adoption_check)
+    adoption_check.set_defaults(handler=command_adoption_check)
+
     contract = commands.add_parser("contract", help="Validate process artifacts")
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)
     contract_validate = contract_commands.add_parser("validate")
     contract_validate.add_argument(
-        "--kind", choices=("change", "plan", "review"), required=True
+        "--kind",
+        choices=("adoption-migration", "change", "plan", "release", "review"),
+        required=True,
     )
     contract_validate.add_argument("path", type=Path)
     _add_json(contract_validate)
@@ -809,6 +996,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_json(digest)
     digest.set_defaults(handler=command_digest)
+
+    evidence = commands.add_parser(
+        "evidence", help="Export, validate, and explicitly prune lifecycle evidence"
+    )
+    evidence_commands = evidence.add_subparsers(
+        dest="evidence_command", required=True
+    )
+    evidence_export = evidence_commands.add_parser(
+        "export", help="Export one completed lifecycle as a portable receipt"
+    )
+    _add_project_root(evidence_export)
+    evidence_export.add_argument("--change-id", required=True)
+    evidence_export.add_argument("--output", type=Path, required=True)
+    _add_json(evidence_export)
+    evidence_export.set_defaults(handler=command_evidence_export)
+    evidence_validate = evidence_commands.add_parser(
+        "validate", help="Validate an exported lifecycle receipt"
+    )
+    evidence_validate.add_argument("receipt", type=Path)
+    _add_json(evidence_validate)
+    evidence_validate.set_defaults(handler=command_evidence_validate)
+    evidence_prune = evidence_commands.add_parser(
+        "prune", help="Validate a receipt before pruning a completed local run"
+    )
+    _add_project_root(evidence_prune)
+    evidence_prune.add_argument("--change-id", required=True)
+    evidence_prune.add_argument("--receipt", type=Path, required=True)
+    evidence_prune.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the prune; without this flag only validate and preview",
+    )
+    _add_json(evidence_prune)
+    evidence_prune.set_defaults(handler=command_evidence_prune)
 
     sync = commands.add_parser("sync", help="Synchronize pinned skills into a project")
     _add_project_root(sync)
@@ -873,6 +1094,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_project_root(verify)
     _add_process_root(verify)
     verify.add_argument("--profile", required=True)
+    verify.add_argument(
+        "--base-ref",
+        help="Explicit Git comparison base; lifecycle verification uses its contract base",
+    )
+    verify.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Report affected-check selection without probing the environment or running checks",
+    )
     verify.add_argument("--output", type=Path)
     _add_json(verify)
     verify.set_defaults(handler=command_verify)
@@ -916,6 +1146,47 @@ def build_parser() -> argparse.ArgumentParser:
     publication_pr.add_argument("--body-file", type=Path)
     _add_json(publication_pr)
     publication_pr.set_defaults(handler=command_publication_validate_pr)
+
+    publication_version = publication_commands.add_parser(
+        "plan-version",
+        help="Derive the exact next SemVer from public change classifications",
+    )
+    publication_version.add_argument("--previous-version", required=True)
+    publication_version.add_argument(
+        "--change-type",
+        action="append",
+        choices=("fix", "capability", "breaking"),
+        required=True,
+    )
+    _add_json(publication_version)
+    publication_version.set_defaults(handler=command_publication_plan_version)
+
+    publication_release = publication_commands.add_parser(
+        "validate-release",
+        help="Validate a release contract, immutable tag, and main ancestry",
+    )
+    _add_project_root(publication_release)
+    publication_release.add_argument("--tag", required=True)
+    publication_release.add_argument("--release-name", required=True)
+    publication_release.add_argument("--commit", required=True)
+    publication_release.add_argument("--main-ref", default="origin/main")
+    publication_release.add_argument("--receipt", type=Path)
+    _add_json(publication_release)
+    publication_release.set_defaults(handler=command_publication_validate_release)
+
+    publication_artifacts = publication_commands.add_parser(
+        "validate-artifacts",
+        help="Validate distribution digests against release and lifecycle evidence",
+    )
+    _add_project_root(publication_artifacts)
+    publication_artifacts.add_argument("--artifacts", type=_root, required=True)
+    publication_artifacts.add_argument("--attestation", type=Path, required=True)
+    publication_artifacts.add_argument("--receipt", type=Path)
+    publication_artifacts.add_argument("--commit", required=True)
+    _add_json(publication_artifacts)
+    publication_artifacts.set_defaults(
+        handler=command_publication_validate_artifacts
+    )
 
     change = commands.add_parser("change", help="Run the canonical change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)

@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,19 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class CliTests(unittest.TestCase):
+    def initialize_repository(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "process-test@example.invalid"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Process Test"],
+            cwd=root,
+            check=True,
+        )
+
     def test_routes_portable_publication_validation(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
@@ -28,6 +42,50 @@ class CliTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_validates_project_adoption_migration_contract(self):
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            result = main(
+                [
+                    "contract",
+                    "validate",
+                    "--kind",
+                    "adoption-migration",
+                    str(PROCESS_ROOT / "examples" / "adoption-migration.json"),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            "adoption-migration", json.loads(stdout.getvalue())["kind"]
+        )
+
+    def test_publication_plans_exact_version_from_change_types(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = main(
+                [
+                    "publication",
+                    "plan-version",
+                    "--previous-version",
+                    "0.1.1",
+                    "--change-type",
+                    "fix",
+                    "--change-type",
+                    "capability",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual("0.2.0", report["version"])
+        self.assertEqual("minor", report["classification"])
+        self.assertEqual("backward-compatible", report["compatibility"])
+        self.assertEqual(["capability", "fix"], report["changeTypes"])
 
     def test_creates_core_lock_and_refuses_implicit_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -246,3 +304,105 @@ class CliTests(unittest.TestCase):
             report = json.loads(output.getvalue())
             self.assertEqual("passed", report["status"])
             self.assertIn("project command", report["execution"]["stdout"])
+
+    def test_verify_plan_only_reports_selection_without_environment_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            self.initialize_repository(project_root)
+            manifest = project_root / "candidate.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "project": "sample",
+                        "lifecycle": {"requiredProfiles": ["development"]},
+                        "impact": {
+                            "baseRefs": ["main"],
+                            "unmatchedPaths": "all-scoped-checks",
+                            "components": [
+                                {"id": "docs", "paths": ["**/*.md"], "affects": []},
+                                {"id": "source", "paths": ["src/**"], "affects": []},
+                            ],
+                        },
+                        "profiles": {
+                            "development": [
+                                {
+                                    "id": "docs",
+                                    "run": ["missing-doc-command"],
+                                    "timeoutSeconds": 30,
+                                    "components": ["docs"],
+                                },
+                                {
+                                    "id": "source",
+                                    "run": ["missing-source-command"],
+                                    "timeoutSeconds": 30,
+                                    "components": ["source"],
+                                },
+                            ]
+                        },
+                        "environment": {
+                            "defaultProfile": "development",
+                            "foregroundOnly": True,
+                            "managedTools": [],
+                            "profiles": {"development": ["unavailable"]},
+                            "requirements": [
+                                {
+                                    "id": "unavailable",
+                                    "description": "A probe plan-only must not execute",
+                                    "probe": {
+                                        "run": [sys.executable, "-c", "raise SystemExit(99)"],
+                                        "timeoutSeconds": 15,
+                                        "readOnly": True,
+                                    },
+                                    "remediation": "Not required for plan-only.",
+                                }
+                            ],
+                            "setupActions": [],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            common = [
+                "--project-root",
+                str(project_root),
+                "--process-root",
+                str(PROCESS_ROOT),
+                "--json",
+            ]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    main(["project", "init", *common, "--manifest", str(manifest)]),
+                    0,
+                )
+            manifest.unlink()
+            subprocess.run(["git", "add", "."], cwd=project_root, check=True)
+            subprocess.run(["git", "commit", "-qm", "bootstrap"], cwd=project_root, check=True)
+            base = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=project_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            (project_root / "src").mkdir()
+            (project_root / "src" / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = main(
+                    [
+                        "verify",
+                        *common,
+                        "--profile",
+                        "development",
+                        "--plan-only",
+                        "--base-ref",
+                        base,
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            plan = json.loads(output.getvalue())
+            self.assertEqual(plan["selectedCheckIds"], ["source"])
+            self.assertEqual(plan["skippedCheckIds"], ["docs"])

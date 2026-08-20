@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "changeId": "issue-123",
   "cycle": 1,
   "checkpoint": "0123456789abcdef",
@@ -14,6 +14,21 @@
     "method": "isolated-context",
     "attestedBy": "agent-host",
     "evidence": "The host created a read-only context that did not participate in implementation."
+  },
+  "quality": {
+    "standard": "production-v1",
+    "assessments": [
+      {"dimension": "compatibility", "status": "verified", "criteria": ["ac-compatibility"], "evidence": "Compatibility behavior and migration impact were independently checked."},
+      {"dimension": "correctness", "status": "failed", "criteria": ["ac-correctness"], "evidence": "The authorization finding prevents the correctness criterion from passing."},
+      {"dimension": "maintainability", "status": "verified", "criteria": ["ac-maintainability"], "evidence": "Ownership and regression coverage were independently checked."},
+      {"dimension": "observability", "status": "verified", "criteria": ["ac-observability"], "evidence": "Correlation, bounded evidence, and redaction behavior were independently checked."},
+      {"dimension": "operability", "status": "verified", "criteria": ["ac-operability"], "evidence": "Setup, recovery, rollback, and cleanup behavior were independently checked."},
+      {"dimension": "performance", "status": "verified", "criteria": ["ac-performance"], "evidence": "Declared resource bounds and performance regressions were independently checked."},
+      {"dimension": "privacy", "status": "not-applicable-confirmed", "criteria": [], "evidence": "The change does not collect, store, or transmit personal data."},
+      {"dimension": "reliability", "status": "verified", "criteria": ["ac-reliability"], "evidence": "Failure, timeout, interruption, and retry behavior were independently checked."},
+      {"dimension": "security", "status": "verified", "criteria": ["ac-security"], "evidence": "Authorization, trust boundaries, inputs, secrets, and dependencies were independently checked."},
+      {"dimension": "supply-chain", "status": "verified", "criteria": ["ac-supply-chain"], "evidence": "Source, evidence, artifacts, and release identity were independently checked."}
+    ]
   },
   "verdict": "changes-requested",
   "findings": [

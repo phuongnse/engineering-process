@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/evidence-receipt.schema.json",
+  "title": "Portable completed-lifecycle evidence receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "process", "project", "changeId", "cycle", "checkpoint", "comparisonBase", "state", "artifacts"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-lifecycle-receipt"},
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1, "maxLength": 64},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "project": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
+    "changeId": {"$ref": "#/$defs/id"},
+    "cycle": {"type": "integer", "minimum": 1},
+    "checkpoint": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "comparisonBase": {"type": "string", "minLength": 1, "maxLength": 64},
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalDigest", "document"],
+      "properties": {
+        "canonicalDigest": {"$ref": "#/$defs/digest"},
+        "document": {"type": "object"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "plan", "verification", "review", "completion"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/artifact"},
+        "plan": {"$ref": "#/$defs/artifact"},
+        "review": {"$ref": "#/$defs/artifact"},
+        "completion": {"$ref": "#/$defs/artifact"},
+        "verification": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/verificationArtifact"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceDigest", "canonicalDigest", "sourceText"],
+      "properties": {
+        "sourceDigest": {"$ref": "#/$defs/digest"},
+        "canonicalDigest": {"$ref": "#/$defs/digest"},
+        "sourceText": {"type": "string", "maxLength": 1000000}
+      }
+    },
+    "verificationArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "sourceDigest", "canonicalDigest", "sourceText"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/id"},
+        "sourceDigest": {"$ref": "#/$defs/digest"},
+        "canonicalDigest": {"$ref": "#/$defs/digest"},
+        "sourceText": {"type": "string", "maxLength": 1000000}
+      }
+    }
+  }
+}
