@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from engineering_process import syncing
@@ -41,6 +42,30 @@ CORE_SKILLS = (
 
 
 class SyncTests(unittest.TestCase):
+    def test_windows_file_identity_uses_nonzero_file_id_not_incomplete_device(self):
+        path_stat = SimpleNamespace(st_dev=0, st_ino=123)
+        handle_stat = SimpleNamespace(st_dev=456, st_ino=123)
+
+        with mock.patch.object(syncing.os, "name", "nt"):
+            self.assertTrue(syncing._same_file_identity(path_stat, handle_stat))
+            self.assertFalse(
+                syncing._same_file_identity(
+                    path_stat, SimpleNamespace(st_dev=456, st_ino=124)
+                )
+            )
+            self.assertFalse(
+                syncing._same_file_identity(
+                    SimpleNamespace(st_dev=123, st_ino=123),
+                    SimpleNamespace(st_dev=456, st_ino=123),
+                )
+            )
+            self.assertFalse(
+                syncing._same_file_identity(
+                    SimpleNamespace(st_dev=0, st_ino=0),
+                    SimpleNamespace(st_dev=456, st_ino=0),
+                )
+            )
+
     def test_managed_skill_comparison_rejects_symlinks_and_resource_overflow(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -76,6 +101,29 @@ class SyncTests(unittest.TestCase):
             with (
                 mock.patch.object(syncing, "SKILL_COMPARISON_TIMEOUT_SECONDS", 0),
                 self.assertRaisesRegex(ContractError, "comparison exceeded 0 seconds"),
+            ):
+                syncing._files(root, ignore_marker=False)
+
+    def test_managed_skill_stable_read_rejects_concurrent_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "file.txt"
+            replacement = root / "replacement.txt"
+            target.write_text("original\n", encoding="utf-8")
+            replacement.write_text("replaced\n", encoding="utf-8")
+            real_open = Path.open
+            replaced = False
+
+            def replace_then_open(path, *args, **kwargs):
+                nonlocal replaced
+                if Path(path) == target and not replaced:
+                    replaced = True
+                    os.replace(replacement, target)
+                return real_open(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(Path, "open", replace_then_open),
+                self.assertRaisesRegex(ContractError, "changed while opening"),
             ):
                 syncing._files(root, ignore_marker=False)
 

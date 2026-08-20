@@ -187,6 +187,21 @@ def _path_identity(value: os.stat_result) -> PathIdentity:
     )
 
 
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    """Compare stable ids when Windows path stat omits the volume serial."""
+    if os.name == "nt":
+        return (
+            left.st_ino != 0
+            and left.st_ino == right.st_ino
+            and (
+                left.st_dev == 0
+                or right.st_dev == 0
+                or left.st_dev == right.st_dev
+            )
+        )
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
 def _path_identity_chain(
     root: Path, path: Path
 ) -> tuple[PathIdentity, ...]:
@@ -226,30 +241,53 @@ def _path_identity_chain(
     return tuple(chain)
 
 
-def _requirements_source(project_root: Path, supplied: Path) -> Path:
+def _requirements_binding(
+    project_root: Path, supplied: Path
+) -> tuple[Path, Path]:
     requested = supplied if supplied.is_absolute() else project_root / supplied
     candidate = Path(os.path.abspath(os.fspath(requested)))
     try:
-        candidate.relative_to(project_root)
-    except ValueError as error:
-        raise RuntimeError(
-            "requirements lock must be a regular file inside the checkout"
-        ) from error
-    before_chain = _path_identity_chain(project_root, candidate)
-    try:
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(project_root)
+        canonical_root = project_root.resolve(strict=True)
+        canonical_candidate = candidate.resolve(strict=True)
+        relative = canonical_candidate.relative_to(canonical_root)
     except (OSError, ValueError) as error:
         raise RuntimeError(
             "requirements lock must be a regular file inside the checkout"
         ) from error
-    if resolved != candidate:
+    if not relative.parts:
+        raise RuntimeError("requirements lock must name a file inside the checkout")
+    if len(relative.parts) > len(candidate.parents):
         raise RuntimeError(
-            "requirements path must not traverse a link or reparse point"
+            "requirements lock path does not preserve its rooted component depth"
         )
-    if _path_identity_chain(project_root, candidate) != before_chain:
+    anchor = candidate.parents[len(relative.parts) - 1]
+    try:
+        if anchor.resolve(strict=True) != canonical_root:
+            raise RuntimeError(
+                "requirements lock path does not preserve its rooted component depth"
+            )
+    except OSError as error:
+        raise RuntimeError(
+            "requirements lock must be a regular file inside the checkout"
+        ) from error
+    before_chain = _path_identity_chain(anchor, candidate)
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(canonical_root)
+    except (OSError, ValueError) as error:
+        raise RuntimeError(
+            "requirements lock must be a regular file inside the checkout"
+        ) from error
+    if resolved != canonical_candidate:
         raise RuntimeError("requirements path changed while validating")
-    return resolved
+    if _path_identity_chain(anchor, candidate) != before_chain:
+        raise RuntimeError("requirements path changed while validating")
+    return candidate, anchor
+
+
+def _requirements_source(project_root: Path, supplied: Path) -> Path:
+    source, _anchor = _requirements_binding(project_root, supplied)
+    return source
 
 
 def _read_stable_requirements(
@@ -279,8 +317,7 @@ def _read_stable_requirements(
                 opened = os.fstat(stream.fileno())
                 if (
                     not stat.S_ISREG(opened.st_mode)
-                    or opened.st_dev != before.st_dev
-                    or opened.st_ino != before.st_ino
+                    or not _same_file_identity(opened, before)
                 ):
                     raise RuntimeError("requirements lock changed while opening")
                 content = stream.read(MAX_REQUIREMENTS_BYTES + 1)
@@ -299,8 +336,7 @@ def _read_stable_requirements(
         or after.st_size != before.st_size
         or after.st_mtime_ns != before.st_mtime_ns
         or after.st_mode != before.st_mode
-        or after.st_dev != before.st_dev
-        or after.st_ino != before.st_ino
+        or not _same_file_identity(after, before)
     ):
         raise RuntimeError("requirements lock changed while reading")
     if containment_root is not None:
@@ -416,12 +452,12 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("requirements/process.txt"),
     )
     args = parser.parse_args(argv)
-    project_root = args.project_root.resolve()
-    requirements_source = _requirements_source(
+    project_root = Path(os.path.abspath(os.fspath(args.project_root)))
+    requirements_source, requirements_root = _requirements_binding(
         project_root, args.requirements_lock
     )
     requirements_content = _read_stable_requirements(
-        requirements_source, containment_root=project_root
+        requirements_source, containment_root=requirements_root
     )
     requirements_digest = (
         "sha256:" + hashlib.sha256(requirements_content).hexdigest()
@@ -432,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as directory:
         temporary_root = Path(directory).resolve()
         try:
-            temporary_root.relative_to(project_root)
+            temporary_root.relative_to(project_root.resolve(strict=True))
         except ValueError:
             pass
         else:
@@ -475,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
             requirements_source,
             requirements_content,
             "checkout requirements lock",
-            containment_root=project_root,
+            containment_root=requirements_root,
         )
         output = _run(
             [
@@ -507,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
             requirements_source,
             requirements_content,
             "checkout requirements lock",
-            containment_root=project_root,
+            containment_root=requirements_root,
         )
         try:
             result = json.loads(output)

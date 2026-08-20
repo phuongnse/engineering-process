@@ -128,9 +128,16 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIn("verification/generate_ci_evidence.py", workflow)
         self.assertIn(
-            "python -m pip install -r engineering_process/requirements-build.txt",
+            "python -m pip install -r engineering_process/requirements-runtime.txt "
+            "-r engineering_process/requirements-dev.txt "
+            "-r engineering_process/requirements-build.txt",
             workflow,
         )
+        self.assertIn(
+            'python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"',
+            workflow,
+        )
+        self.assertNotIn('".[dev]"', workflow)
         self.assertIn('--expected-checkpoint "$CI_CHECKPOINT"', workflow)
         self.assertIn('--comparison-base "$CI_COMPARISON_BASE"', workflow)
         self.assertIn('--workflow-sha "$CI_WORKFLOW_SHA"', workflow)

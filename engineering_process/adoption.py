@@ -95,6 +95,21 @@ def _path_identity(value: os.stat_result) -> PathIdentity:
     )
 
 
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    """Compare stable ids when Windows path stat omits the volume serial."""
+    if os.name == "nt":
+        return (
+            left.st_ino != 0
+            and left.st_ino == right.st_ino
+            and (
+                left.st_dev == 0
+                or right.st_dev == 0
+                or left.st_dev == right.st_dev
+            )
+        )
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
 def _path_identity_chain(
     root: Path, path: Path, *, label: str = "requirements path"
 ) -> tuple[PathIdentity, ...]:
@@ -174,8 +189,7 @@ def _read_bounded_regular_file(
                 opened = os.fstat(stream.fileno())
                 if (
                     not stat.S_ISREG(opened.st_mode)
-                    or opened.st_dev != before.st_dev
-                    or opened.st_ino != before.st_ino
+                    or not _same_file_identity(opened, before)
                 ):
                     raise ContractError(
                         f"{path}: {label} changed while opening"
@@ -198,8 +212,7 @@ def _read_bounded_regular_file(
         or after.st_size != before.st_size
         or after.st_mtime_ns != before.st_mtime_ns
         or after.st_mode != before.st_mode
-        or after.st_dev != before.st_dev
-        or after.st_ino != before.st_ino
+        or not _same_file_identity(after, before)
     ):
         raise ContractError(f"{path}: {label} changed while reading")
     if containment_root is not None:
@@ -318,7 +331,7 @@ def _require_external_authority(project_root: Path, process_root: Path) -> None:
             "adoption authority must be the active installed process root"
         )
     try:
-        process_root.relative_to(project_root)
+        process_root.relative_to(project_root.resolve(strict=True))
     except ValueError:
         return
     raise ContractError(
@@ -326,32 +339,55 @@ def _require_external_authority(project_root: Path, process_root: Path) -> None:
     )
 
 
-def _checkout_requirements_path(project_root: Path, path: Path) -> Path:
+def _checkout_requirements_binding(
+    project_root: Path, path: Path
+) -> tuple[Path, Path]:
     supplied = path if path.is_absolute() else project_root / path
     candidate = Path(os.path.abspath(os.fspath(supplied)))
     try:
-        candidate.relative_to(project_root)
-    except ValueError as error:
-        raise ContractError(
-            "requirements source must be a regular file inside the consumer checkout"
-        ) from error
-    before_chain = _path_identity_chain(project_root, candidate)
-    try:
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(project_root)
+        canonical_root = project_root.resolve(strict=True)
+        canonical_candidate = candidate.resolve(strict=True)
+        relative = canonical_candidate.relative_to(canonical_root)
     except (OSError, ValueError) as error:
         raise ContractError(
             "requirements source must be a regular file inside the consumer checkout"
         ) from error
-    if resolved != candidate:
+    if not relative.parts:
+        raise ContractError("requirements source must name a file inside the checkout")
+    if len(relative.parts) > len(candidate.parents):
         raise ContractError(
-            f"{candidate}: requirements path must not traverse a link or reparse point"
+            "requirements source path does not preserve its rooted component depth"
         )
-    if _path_identity_chain(project_root, candidate) != before_chain:
+    anchor = candidate.parents[len(relative.parts) - 1]
+    try:
+        if anchor.resolve(strict=True) != canonical_root:
+            raise ContractError(
+                "requirements source path does not preserve its rooted component depth"
+            )
+    except OSError as error:
+        raise ContractError(
+            "requirements source must be a regular file inside the consumer checkout"
+        ) from error
+    before_chain = _path_identity_chain(anchor, candidate)
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(canonical_root)
+    except (OSError, ValueError) as error:
+        raise ContractError(
+            "requirements source must be a regular file inside the consumer checkout"
+        ) from error
+    if resolved != canonical_candidate:
+        raise ContractError(f"{candidate}: requirements path changed while validating")
+    if _path_identity_chain(anchor, candidate) != before_chain:
         raise ContractError(
             f"{candidate}: requirements path changed while validating"
         )
-    return resolved
+    return candidate, anchor
+
+
+def _checkout_requirements_path(project_root: Path, path: Path) -> Path:
+    candidate, _anchor = _checkout_requirements_binding(project_root, path)
+    return candidate
 
 
 def _require_matching_requirements_source(
@@ -645,8 +681,7 @@ def _snapshot_targets(
                 with target.open("rb") as stream:
                     opened = os.fstat(stream.fileno())
                     if (
-                        opened.st_dev != before.st_dev
-                        or opened.st_ino != before.st_ino
+                        not _same_file_identity(opened, before)
                         or not stat.S_ISREG(opened.st_mode)
                     ):
                         raise ContractError(
@@ -663,8 +698,7 @@ def _snapshot_targets(
                     len(content) != before.st_size
                     or after.st_size != before.st_size
                     or after.st_mtime_ns != before.st_mtime_ns
-                    or after.st_dev != before.st_dev
-                    or after.st_ino != before.st_ino
+                    or not _same_file_identity(after, before)
                 ):
                     raise ContractError(
                         f"{target}: managed adoption target changed while snapshotting"
@@ -706,14 +740,14 @@ def check_adoption(
     process_root: Path,
     requirements_lock: Path,
 ) -> dict[str, object]:
-    project_root = project_root.resolve()
+    project_root = Path(os.path.abspath(os.fspath(project_root)))
     process_root = process_root.resolve()
     _require_external_authority(project_root, process_root)
-    requirement_path = _checkout_requirements_path(
+    requirement_path, requirement_root = _checkout_requirements_binding(
         project_root, requirements_lock
     )
     requirement = validate_requirements_lock(
-        requirement_path, containment_root=project_root
+        requirement_path, containment_root=requirement_root
     )
     lock = load_lock(project_root)
     _, migration = _inspect_project_migration(project_root, lock.version)
@@ -742,16 +776,17 @@ def apply_adoption(
     requirements_source: Path | None = None,
     expected_requirements_digest: str | None = None,
 ) -> dict[str, object]:
-    project_root = project_root.resolve()
+    project_root = Path(os.path.abspath(os.fspath(project_root)))
     process_root = process_root.resolve()
     _require_external_authority(project_root, process_root)
     if requirements_source is None:
-        requirement_path = _checkout_requirements_path(
+        requirement_path, requirement_root = _checkout_requirements_binding(
             project_root, requirements_lock
         )
         source_path = requirement_path
+        source_root = requirement_root
     else:
-        source_path = _checkout_requirements_path(
+        source_path, source_root = _checkout_requirements_binding(
             project_root, requirements_source
         )
         requirement_path = Path(
@@ -768,18 +803,17 @@ def apply_adoption(
                 f"{requirement_path}: cannot inspect requirements snapshot: {error}"
             ) from error
         try:
-            resolved_snapshot.relative_to(project_root)
+            resolved_snapshot.relative_to(project_root.resolve(strict=True))
         except ValueError:
             pass
         else:
             raise ContractError(
                 "requirements snapshot must be outside the consumer checkout"
             )
+        requirement_root = None
     requirement = validate_requirements_lock(
         requirement_path,
-        containment_root=(
-            None if requirements_source is not None else project_root
-        ),
+        containment_root=requirement_root,
     )
     if (
         expected_requirements_digest is not None
@@ -791,7 +825,7 @@ def apply_adoption(
     _require_matching_requirements_source(
         source_path,
         requirement.digest,
-        containment_root=project_root,
+        containment_root=source_root,
     )
 
     lock_path = project_root / ".process" / "process.lock"
@@ -819,7 +853,7 @@ def apply_adoption(
     with tempfile.TemporaryDirectory(prefix="engineering-process-adoption-backup-") as directory:
         backup_root = Path(directory).resolve()
         try:
-            backup_root.relative_to(project_root)
+            backup_root.relative_to(project_root.resolve(strict=True))
         except ValueError:
             pass
         else:
@@ -865,7 +899,7 @@ def apply_adoption(
             _require_matching_requirements_source(
                 source_path,
                 requirement.digest,
-                containment_root=project_root,
+                containment_root=source_root,
             )
             if migration is not None:
                 _require_unchanged_file(

@@ -498,9 +498,3 @@ def verify_distribution(
         "checkoutGeneratedState": [],
         "output": str(resolved_output) if resolved_output is not None else None,
     }
-    return {
-        "artifacts": list(release.artifacts),
-        "attestation": attestation,
-        "checkoutGeneratedState": [],
-        "output": str(resolved_output) if resolved_output is not None else None,
-    }

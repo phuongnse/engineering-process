@@ -39,6 +39,23 @@ MAX_SKILL_ENTRIES = 500
 MAX_SKILL_FILE_BYTES = 1_000_000
 MAX_SKILL_TOTAL_BYTES = 8_000_000
 SKILL_COMPARISON_TIMEOUT_SECONDS = 10.0
+
+
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    """Compare stable ids when Windows path stat omits the volume serial."""
+    if os.name == "nt":
+        return (
+            left.st_ino != 0
+            and left.st_ino == right.st_ino
+            and (
+                left.st_dev == 0
+                or right.st_dev == 0
+                or left.st_dev == right.st_dev
+            )
+        )
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
 MAX_ADOPTION_RUNNER_BYTES = 128_000
 ADOPTION_RUNNER_MARKER = "# Managed by engineering-process; do not edit."
 ADOPTION_SCRIPT_NAMES = (
@@ -177,8 +194,7 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
                     opened = os.fstat(stream.fileno())
                     if (
                         not stat.S_ISREG(opened.st_mode)
-                        or opened.st_dev != before.st_dev
-                        or opened.st_ino != before.st_ino
+                        or not _same_file_identity(opened, before)
                     ):
                         raise ContractError(
                             f"{child.path}: managed skill file changed while opening"
@@ -205,8 +221,7 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
                 or after.st_size != before.st_size
                 or after.st_mtime_ns != before.st_mtime_ns
                 or after.st_mode != before.st_mode
-                or after.st_dev != before.st_dev
-                or after.st_ino != before.st_ino
+                or not _same_file_identity(after, before)
             ):
                 raise ContractError(
                     f"{child.path}: managed skill file changed while reading"

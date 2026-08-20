@@ -467,6 +467,34 @@ class AdoptionTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "link or reparse"):
                 _checkout_requirements_path(root, alias / "process.txt")
 
+    def test_checkout_path_accepts_an_equivalent_root_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            canonical_parent = base / "canonical"
+            project = canonical_parent / "project"
+            requirements = project / "requirements"
+            requirements.mkdir(parents=True)
+            source = requirements / "process.txt"
+            source.write_bytes(
+                (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
+            )
+            alias_parent = base / "alias"
+            try:
+                alias_parent.symlink_to(canonical_parent, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlink unavailable: {error}")
+            alias_root = alias_parent / "project"
+            alias_source = alias_root / "requirements" / "process.txt"
+
+            self.assertEqual(
+                alias_source,
+                _checkout_requirements_path(alias_root, alias_source),
+            )
+            self.assertEqual(
+                alias_source,
+                _checkout_requirements_path(project, alias_source),
+            )
+
     def test_checkout_path_rejects_a_parent_link_created_during_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -501,7 +529,9 @@ class AdoptionTests(unittest.TestCase):
                     "engineering_process.adoption._path_identity_chain",
                     side_effect=swap_after_chain,
                 ),
-                self.assertRaisesRegex(ContractError, "link or reparse"),
+                self.assertRaisesRegex(
+                    ContractError, "link or reparse|changed while validating"
+                ),
             ):
                 _checkout_requirements_path(
                     root, requirements / "process.txt"

@@ -110,7 +110,8 @@ class AdoptionRunnerTests(unittest.TestCase):
             )
 
         self.assertLess(len(output), 256)
-        self.assertIn("output truncated: 10001 bytes", output)
+        expected_bytes = 10_000 + len(os.linesep.encode("utf-8"))
+        self.assertIn(f"output truncated: {expected_bytes} bytes", output)
         self.assertRegex(output, r"sha256:[0-9a-f]{64}")
 
     def test_command_timeout_terminates_the_process_group(self):
@@ -318,6 +319,33 @@ class AdoptionRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "link or reparse"):
                 runner._requirements_source(root, alias / "process.txt")
 
+    def test_requirements_source_accepts_an_equivalent_root_alias(self):
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            canonical_parent = base / "canonical"
+            project = canonical_parent / "project"
+            requirements = project / "requirements"
+            requirements.mkdir(parents=True)
+            source = requirements / "process.txt"
+            source.write_bytes(b"authority A\n")
+            alias_parent = base / "alias"
+            try:
+                alias_parent.symlink_to(canonical_parent, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlink unavailable: {error}")
+            alias_root = alias_parent / "project"
+            alias_source = alias_root / "requirements" / "process.txt"
+
+            self.assertEqual(
+                alias_source,
+                runner._requirements_source(alias_root, alias_source),
+            )
+            self.assertEqual(
+                alias_source,
+                runner._requirements_source(project, alias_source),
+            )
+
     def test_requirements_source_rejects_a_link_created_during_validation(self):
         runner = load_runner()
         with tempfile.TemporaryDirectory() as directory:
@@ -354,7 +382,9 @@ class AdoptionRunnerTests(unittest.TestCase):
                     "_path_identity_chain",
                     side_effect=swap_after_chain,
                 ),
-                self.assertRaisesRegex(RuntimeError, "link or reparse"),
+                self.assertRaisesRegex(
+                    RuntimeError, "link or reparse|changed while validating"
+                ),
             ):
                 runner._requirements_source(
                     root, requirements / "process.txt"
@@ -419,6 +449,21 @@ class AdoptionRunnerTests(unittest.TestCase):
         )
 
         self.assertTrue(runner._is_link_or_reparse(value))
+
+    def test_windows_file_identity_uses_nonzero_file_id(self):
+        runner = load_runner()
+        path_stat = SimpleNamespace(st_dev=0, st_ino=123)
+        handle_stat = SimpleNamespace(st_dev=456, st_ino=123)
+
+        with mock.patch.object(runner.os, "name", "nt"):
+            self.assertTrue(
+                runner._same_file_identity(path_stat, handle_stat)
+            )
+            self.assertFalse(
+                runner._same_file_identity(
+                    path_stat, SimpleNamespace(st_dev=456, st_ino=124)
+                )
+            )
 
     def test_parent_swap_during_open_is_detected(self):
         runner = load_runner()

@@ -94,7 +94,9 @@ class SourceCheckoutTests(unittest.TestCase):
                     max_stdout_bytes=1_024,
                 )
             self.assertEqual(0, result.returncode)
-            self.assertEqual(str(root.resolve()), result.stdout.decode().strip())
+            self.assertEqual(
+                root.resolve(), Path(result.stdout.decode().strip()).resolve()
+            )
 
     def _initialize_repository(self, root: Path) -> None:
         subprocess.run(["git", "init", "--quiet"], cwd=root, check=True)

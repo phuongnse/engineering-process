@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from engineering_process.contracts import ContractError
+from engineering_process.git import portable_git_path
 from engineering_process.distribution_verify import (
     _tracked_paths,
     _validate_archive_members,
@@ -20,6 +21,19 @@ from engineering_process.distribution_verify import (
 
 
 class DistributionVerificationTests(unittest.TestCase):
+    def test_portable_path_validator_rejects_windows_hostile_names(self):
+        for name in ("AUX.txt", "trailing. ", "control\x01.txt"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                ContractError, "non-portable path"
+            ):
+                portable_git_path(
+                    name.encode("utf-8"), label="distribution test path"
+                )
+
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows cannot materialize the hostile worktree names for this integration",
+    )
     def test_tracked_distribution_paths_reject_windows_hostile_names(self):
         for name in ("AUX.txt", "trailing. ", "control\x01.txt"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:

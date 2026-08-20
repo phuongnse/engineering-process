@@ -146,7 +146,7 @@ class SupplementalVerificationTests(unittest.TestCase):
             written = supplemental.write_supplemental_bundle(
                 PROCESS_ROOT, output, manifest, reports
             )
-            self.assertEqual(output, written)
+            self.assertEqual(output.resolve(), written.resolve())
             self.assertEqual(
                 {"development.json", "manifest.json", "review.json"},
                 {path.name for path in output.iterdir()},
