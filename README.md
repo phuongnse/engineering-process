@@ -101,6 +101,16 @@ attribute files are rejected by existing managed-tree ownership and content chec
 External Git overrides that alter a checkout still fail byte-exact distribution
 attestation. A consumer never authors or maintains process skills locally.
 
+For an existing consumer, a published version is adopted through one Renovate draft.
+The managed runner installs the target authority from the complete hash lock outside
+the checkout and atomically updates the process lock and managed assets. If the
+consumer chooses or requires new project configuration, it adds
+`.process/adoption-migrations/<target-version>.json`; the installed target authority
+binds the source and target manifest digests, validates the complete target manifest,
+and updates `.process/project.json` in the same rollback transaction. Optional
+capabilities are never inferred. CI and a fresh isolated review context approve the
+fully materialized checkpoint; merge completes adoption and no post-merge sync runs.
+
 The engineering-process producer repository separately owns its root
 `.gitattributes` policy so tracked text sources and distribution inputs are LF and
 byte-stable on every supported checkout. That producer policy is not synchronized
@@ -428,11 +438,13 @@ pull-request descriptions; use visible CommonMark instead.
 ## Trust boundary
 
 The CLI proves structural separation: reviewer actor id and context id must both be
-unused by implementation, and the review must match the verified checkpoint. The
-agent host or human organization owns the truth of the identity attestation. A host
-adapter should create a read-only isolated context, pass stable identities to
-`change review start`, and preserve its evidence. Self-asserted separation without a
-host or human attestation does not satisfy the process.
+unused by implementation, every review assignment in the project must use a fresh
+context id, and the review must match the verified checkpoint. The agent host or
+human organization owns the truth of the identity attestation. A host adapter should
+create a read-only isolated context with no inherited implementation or prior-review
+conversation, pass stable identities to `change review start`, and preserve its
+evidence. A stable reviewer actor or role may be reused with a fresh context; merely
+renaming retained context does not satisfy the process.
 
 `change review submit` may be invoked by a coordinator transporting the assigned
 reviewer's exact report. The CLI validates that artifact against the assignment and
@@ -454,12 +466,19 @@ authenticates who produced it.
   checkout, binds every path component against concurrent retargeting, and uses that
   exact digest for installation and `processctl adoption apply`. POSIX process groups
   and a managed Windows kill-on-close Job Object contain every child. The resulting
-  draft contains the new lock, managed contracts, and skill snapshots; after CI and
+  draft contains the new lock, managed contracts, skill snapshots, and any
+  target-version consumer-owned project migration; after CI and fresh-context
   independent review, merge is the end of adoption.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest
   reachable prior tag, immutable checkpoint, and main ancestry.
+- Remote matrix jobs publish one bounded supplemental-verification schema-1 bundle
+  per platform/runtime. Its manifest binds the exact source and workflow checkpoints,
+  automation actor/context, run URL, platform/runtime identity, selected impact,
+  configured timeouts, output byte counts/digests, truncation state, and the hashes of
+  its schema-2 profile reports. GitHub's artifact id and digest complete the immutable
+  remote reference; this supplements rather than replaces N-1 lifecycle evidence.
 - New lifecycle work uses bounded plan schema 2. Selective-impact consumers may add
   the optional capability on project schema 3, while new integrations use bounded
   project schema 4. Plan schema 1 and the pre-existing fields of project schemas 1-3

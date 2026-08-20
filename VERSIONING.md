@@ -51,6 +51,11 @@ versions never advance merely because the other one changed.
 - A new schema version retains the released reader, documents migration, and adds
   compatibility regressions before it becomes the default example.
 
+A newly introduced artifact starts at `schemaVersion: 1`. The supplemental
+verification manifest and project-adoption migration each follow that rule. Adding
+optional `timeoutSeconds` evidence to verification schema 2 preserves existing
+schema-2 documents and therefore does not advance that artifact's schema version.
+
 Package `schemaImpact` is `unchanged`, `additive`, or `breaking` for the combined
 release. Additive schema capability requires at least a capability release; a
 breaking schema requires an incompatible release.
@@ -64,8 +69,10 @@ Release, self-adoption, and consumer adoption are separate changes:
 3. Renovate updates the direct input pin, regenerates the complete hash-locked
    dependency graph, and runs the managed adoption runner before it creates one
    draft PR containing the process lock and every selected managed asset.
-4. CI validates dependency integrity and the fully materialized adoption, then the
-   adoption owner obtains independent review and explicitly merges that same
+4. CI validates dependency integrity and the fully materialized adoption. Each
+   platform/runtime job publishes a bounded supplemental evidence bundle bound to the
+   source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
+   The adoption owner then obtains independent review and explicitly merges that same
    checkpoint. Merge completes adoption; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the adoption checkpoint.
 
@@ -87,6 +94,27 @@ helper bound descendant lifetimes. The command preserves selected optional skill
 adds newly mandatory core skills, regenerates `.process/process.lock`, and
 synchronizes all managed assets in the draft. Never run the checkout under
 development as the adoption authority.
+
+Consumer-owned project policy is never inferred. When a release needs project
+configuration activation, the consumer adds one bounded declarative migration at
+`.process/adoption-migrations/<target-version>.json`. It binds the exact previous and
+target process versions, source and target project-manifest digests, and the complete
+target manifest. Only the installed target distribution validates and applies its
+exact file. The active project manifest and all managed targets share one rollback
+transaction; a stale source digest, wrong target version, invalid target manifest,
+concurrent mutation, or partial write fails closed. The migration remains as durable
+review evidence and repeated adoption is idempotent. Renovate allowlists both the
+migration and `.process/project.json`, so activation is reviewed in the same draft
+and never deferred until after merge. Optional capabilities without a declared
+migration remain disabled; configuration required by the target distribution must
+validate or adoption is blocked.
+
+Validate a prepared migration before the Renovate runner consumes it:
+
+~~~text
+processctl contract validate --kind adoption-migration \
+  .process/adoption-migrations/<target-version>.json
+~~~
 
 The Renovate administrator must allow only the literal managed runner command. If
 post-upgrade commands are unavailable or the pip-compile artifact update fails,

@@ -60,6 +60,38 @@ class AdoptionTests(unittest.TestCase):
         )
         return requirements
 
+    def prepare_project_migration(
+        self, root: Path, *, from_version: str = "0.1.0"
+    ) -> tuple[Path, bytes, bytes]:
+        project_path = root / ".process" / "project.json"
+        source = project_path.read_bytes()
+        target = json.loads(source)
+        target["profiles"]["development"][0]["timeoutSeconds"] = 31
+        target_content = (
+            json.dumps(target, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+        migration = {
+            "schemaVersion": 1,
+            "fromProcessVersion": from_version,
+            "toProcessVersion": VERSION,
+            "sourceProjectDigest": (
+                "sha256:" + hashlib.sha256(source).hexdigest()
+            ),
+            "targetProjectDigest": (
+                "sha256:" + hashlib.sha256(target_content).hexdigest()
+            ),
+            "project": target,
+        }
+        migration_path = (
+            root / ".process" / "adoption-migrations" / f"{VERSION}.json"
+        )
+        migration_path.parent.mkdir()
+        migration_path.write_text(
+            json.dumps(migration, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return migration_path, source, target_content
+
     def test_requirements_lock_binds_exact_hashed_public_authority(self):
         lock = validate_requirements_lock(
             PROCESS_ROOT / "requirements" / "process.txt"
@@ -128,6 +160,125 @@ class AdoptionTests(unittest.TestCase):
             self.assertEqual(first_lock, (root / ".process" / "process.lock").read_bytes())
             self.assertEqual(first["digest"], second["digest"])
             self.assertIn("maintain-docs", second["skills"])
+
+    def test_apply_materializes_consumer_owned_project_migration_atomically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            lock_path = root / ".process" / "process.lock"
+            previous = read_json(lock_path)
+            previous["process"]["version"] = "0.1.0"
+            lock_path.write_text(
+                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
+            )
+            migration_path, _, target = self.prepare_project_migration(root)
+
+            pending = check_adoption(root, PROCESS_ROOT, requirements)
+            self.assertIn("migration is pending", "\n".join(pending["issues"]))
+
+            result = apply_adoption(root, PROCESS_ROOT, requirements)
+
+            self.assertEqual(target, (root / ".process" / "project.json").read_bytes())
+            self.assertEqual("applied", result["projectMigration"]["status"])
+            self.assertEqual(
+                migration_path.relative_to(root).as_posix(),
+                result["projectMigration"]["path"],
+            )
+            self.assertEqual(
+                [], check_adoption(root, PROCESS_ROOT, requirements)["issues"]
+            )
+            second = apply_adoption(root, PROCESS_ROOT, requirements)
+            self.assertEqual("applied", second["projectMigration"]["status"])
+
+    def test_apply_rejects_stale_project_migration_before_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            lock_path = root / ".process" / "process.lock"
+            before_lock = lock_path.read_bytes()
+            self.prepare_project_migration(root)
+            project_path = root / ".process" / "project.json"
+            project_path.write_bytes(project_path.read_bytes() + b"\n")
+
+            with self.assertRaisesRegex(ContractError, "matches neither"):
+                apply_adoption(root, PROCESS_ROOT, requirements)
+
+            self.assertEqual(before_lock, lock_path.read_bytes())
+
+    def test_apply_rolls_back_project_migration_with_managed_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            lock_path = root / ".process" / "process.lock"
+            previous = read_json(lock_path)
+            previous["process"]["version"] = "0.1.0"
+            lock_path.write_text(
+                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
+            )
+            _, source, _ = self.prepare_project_migration(root)
+            before_lock = lock_path.read_bytes()
+
+            with (
+                mock.patch(
+                    "engineering_process.adoption.sync_skills",
+                    side_effect=ContractError("injected migration failure"),
+                ),
+                self.assertRaisesRegex(ContractError, "injected migration failure"),
+            ):
+                apply_adoption(root, PROCESS_ROOT, requirements)
+
+            self.assertEqual(before_lock, lock_path.read_bytes())
+            self.assertEqual(
+                source, (root / ".process" / "project.json").read_bytes()
+            )
+
+    def test_apply_rejects_invalid_target_digest_before_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            migration_path, _, _ = self.prepare_project_migration(root)
+            migration = read_json(migration_path)
+            migration["targetProjectDigest"] = f"sha256:{'0' * 64}"
+            migration_path.write_text(
+                json.dumps(migration, indent=2) + "\n", encoding="utf-8"
+            )
+            lock_path = root / ".process" / "process.lock"
+            before = lock_path.read_bytes()
+
+            with self.assertRaisesRegex(ContractError, "does not match project"):
+                apply_adoption(root, PROCESS_ROOT, requirements)
+
+            self.assertEqual(before, lock_path.read_bytes())
+
+    def test_project_migration_is_size_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            migration_path, _, _ = self.prepare_project_migration(root)
+
+            with (
+                mock.patch(
+                    "engineering_process.adoption.MAX_MANAGED_ADOPTION_FILE_BYTES",
+                    migration_path.stat().st_size - 1,
+                ),
+                self.assertRaisesRegex(ContractError, "exceeds"),
+            ):
+                apply_adoption(root, PROCESS_ROOT, requirements)
+
+    def test_project_migration_rejects_a_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            migration_path, _, _ = self.prepare_project_migration(root)
+            target = migration_path.with_suffix(".target.json")
+            migration_path.rename(target)
+            try:
+                migration_path.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"symlink unavailable: {error}")
+
+            with self.assertRaisesRegex(ContractError, "link or reparse"):
+                apply_adoption(root, PROCESS_ROOT, requirements)
 
     def test_apply_binds_private_snapshot_to_checkout_requirements_source(self):
         with (

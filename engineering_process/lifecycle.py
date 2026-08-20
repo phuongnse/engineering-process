@@ -226,6 +226,65 @@ def _write_atomic(path: Path, document: dict[str, Any]) -> None:
             temporary.unlink()
 
 
+def _reserve_review_context(
+    project_root: Path,
+    state: dict[str, Any],
+    reviewer: dict[str, str],
+) -> None:
+    context_digest = hashlib.sha256(
+        reviewer["contextId"].encode("utf-8")
+    ).hexdigest()
+    registry = _runs_root(project_root) / ".review-contexts"
+    registry.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        registry.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{registry}: cannot inspect review context registry: {error}"
+        ) from error
+    if registry.is_symlink() or not registry.is_dir():
+        raise ContractError(
+            f"{registry}: review context registry must be a regular directory"
+        )
+    record = {
+        "schemaVersion": 1,
+        "contextDigest": f"sha256:{context_digest}",
+        "actorId": reviewer["actorId"],
+        "kind": reviewer["kind"],
+        "changeId": state["changeId"],
+        "cycle": state["cycle"],
+        "reservedAt": _timestamp(),
+    }
+    content = (
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    if len(content) > MAX_JSON_BYTES:
+        raise ContractError("review context reservation exceeds its byte limit")
+    path = registry / f"{context_digest}.json"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileExistsError as error:
+        raise ContractError(
+            "independent review requires a fresh context id unused by any "
+            "review assignment in this project"
+        ) from error
+    except OSError as error:
+        raise ContractError(
+            f"{path}: cannot reserve review context: {error}"
+        ) from error
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = -1
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _copy_document(
     project_root: Path,
     source: Path,
@@ -703,6 +762,18 @@ def _start_review_unlocked(
         raise ContractError(
             "independent review requires an actor id and context id unused by implementation"
         )
+    previous_review_contexts = {
+        event["actor"]["contextId"]
+        for event in state["history"]
+        if event.get("event") == "review-started"
+        and isinstance(event.get("actor"), dict)
+        and isinstance(event["actor"].get("contextId"), str)
+    }
+    if reviewer["contextId"] in previous_review_contexts:
+        raise ContractError(
+            "independent review requires a fresh context id unused by earlier "
+            "review assignments"
+        )
     source = source_state(project_root)
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
@@ -731,6 +802,7 @@ def _start_review_unlocked(
         "verification": state["verification"],
         "pendingFindings": state["pendingFindings"],
     }
+    _reserve_review_context(project_root, state, reviewer)
     assignment_path = _run_root(project_root, change_id) / f"review-request-{state['cycle']}.json"
     _write_atomic(assignment_path, assignment)
     assignment["path"] = _relative(project_root, assignment_path)

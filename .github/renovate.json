@@ -23,7 +23,7 @@
   },
   "semanticCommits": "enabled",
   "semanticCommitType": "chore",
-  "prBodyTemplate": "<!-- engineering-process:pr-description:start -->\n## Summary\nRenovate generates one complete engineering-process authority adoption candidate.\n\n## Contract and scope\nThe draft updates the direct pin, compiled hash lock, process lock, managed contract, and selected skill snapshots in one review object.\n\n## Impact and risk\nThe generated state is not trusted authority until required verification and independent review pass on the same immutable checkpoint.\n\n## Verification\nCI must prove dependency integrity and the project-owned profiles for the fully materialized adoption diff.\n\n## Independent review\nA separate reviewer must approve the final immutable adoption checkpoint before this draft becomes ready.\n\n## Requirements and rules followed\n\n- [ ] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: pending]\n- [ ] **Verification evidence** — required current profiles pass on the published checkpoint. [status: pending]\n- [ ] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: pending]\n<!-- engineering-process:pr-description:end -->",
+  "prBodyTemplate": "<!-- engineering-process:pr-description:start -->\n## Summary\nRenovate generates one complete engineering-process authority adoption candidate.\n\n## Contract and scope\nThe draft updates the direct pin, compiled hash lock, process lock, managed contract, selected skill snapshots, and any consumer-owned target-version project migration in one review object.\n\n## Impact and risk\nThe generated state is not trusted authority until required verification and independent review pass on the same immutable checkpoint.\n\n## Verification\nCI must prove dependency integrity and the project-owned profiles for the fully materialized adoption diff.\n\n## Independent review\nA fresh isolated reviewer context must approve the final immutable adoption checkpoint before this draft becomes ready.\n\n## Requirements and rules followed\n\n- [ ] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: pending]\n- [ ] **Verification evidence** — required current profiles pass on the published checkpoint. [status: pending]\n- [ ] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: pending]\n<!-- engineering-process:pr-description:end -->",
   "postUpgradeTasks": {
     "commands": [
       "python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt"
@@ -35,7 +35,9 @@
       ".github/PULL_REQUEST_TEMPLATE.md",
       ".process/adopt-process.py",
       ".process/adopt-process-windows-job.py",
+      ".process/adoption-migrations/**",
       ".process/process.lock",
+      ".process/project.json",
       "AGENTS.md",
       "requirements/process.in",
       "requirements/process.txt"

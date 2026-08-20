@@ -33,6 +33,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -40,7 +41,7 @@ jobs:
 
       - name: Build distributions
         run: |
-          python -m pip install ".[dev]"
+          python -m pip install -r engineering_process/requirements-build.txt ".[dev]"
           cd "$RUNNER_TEMP"
           python -m build --outdir "$RUNNER_TEMP/dist" "$GITHUB_WORKSPACE"
 
@@ -75,7 +76,41 @@ jobs:
           processctl digest
           processctl skills validate
 
-      - name: Run regression tests
-        run: |
-          cd "$RUNNER_TEMP"
-          python -m unittest discover -s "$GITHUB_WORKSPACE/tests" -p 'test_*.py'
+      - name: Produce bounded supplemental verification evidence
+        run: >-
+          python verification/generate_ci_evidence.py
+          --project-root "$GITHUB_WORKSPACE"
+          --output-root "$RUNNER_TEMP/engineering-process-ci-evidence"
+          --expected-checkpoint "$CI_CHECKPOINT"
+          --comparison-base "$CI_COMPARISON_BASE"
+          --producer-actor "github-actions"
+          --producer-context "$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_JOB:$RUNNER_OS:python-${{ matrix.python-version }}"
+          --provider "github-actions"
+          --repository "$GITHUB_REPOSITORY"
+          --event-name "$GITHUB_EVENT_NAME"
+          --workflow-name "$GITHUB_WORKFLOW"
+          --workflow-ref "$GITHUB_WORKFLOW_REF"
+          --workflow-sha "$CI_WORKFLOW_SHA"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --job "$GITHUB_JOB"
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          --runner-os "$RUNNER_OS"
+          --runner-arch "$RUNNER_ARCH"
+          --triggered-by "$GITHUB_ACTOR"
+        env:
+          CI_CHECKPOINT: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_COMPARISON_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+
+      - name: Upload supplemental verification evidence
+        id: upload-evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: engineering-process-ci-evidence-${{ matrix.os }}-python-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/engineering-process-ci-evidence
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9
+          include-hidden-files: false

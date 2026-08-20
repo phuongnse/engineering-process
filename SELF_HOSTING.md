@@ -20,6 +20,10 @@ The two skill trees have distinct ownership:
 Changing the source tree cannot change the instructions or enforcement governing the
 current lifecycle cycle. After N+1 is published and its public hashes are verified, a
 separate change advances this repository's lock and managed tree to N+1.
+If N+1 activates project-owned capability configuration, that same self-adoption
+change carries the target-version migration and updates `.process/project.json`
+inside the adoption transaction. N+1 governs only changes opened after the complete
+adoption checkpoint is reviewed and merged.
 
 ## Initial bootstrap root
 

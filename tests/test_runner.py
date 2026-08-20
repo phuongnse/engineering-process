@@ -57,6 +57,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(report["checks"][0]["status"], "passed")
             self.assertEqual(report["checks"][0]["command"][0], sys.executable)
             self.assertEqual(len(report["checks"][0]["commandSha256"]), 64)
+            self.assertEqual(report["checks"][0]["timeoutSeconds"], 10)
             self.assertEqual(report["impact"]["mode"], "full-profile")
             self.assertIsNone(report["workspaceFingerprint"])
             self.assertFalse(report["sourceChangedDuringVerification"])

@@ -64,7 +64,9 @@ class SelfHostingTests(unittest.TestCase):
                 ".agents/skills/**",
                 ".process/adopt-process.py",
                 ".process/adopt-process-windows-job.py",
+                ".process/adoption-migrations/**",
                 ".process/process.lock",
+                ".process/project.json",
                 "requirements/process.in",
                 "requirements/process.txt",
             }.issubset(task["fileFilters"])
@@ -114,6 +116,31 @@ class SelfHostingTests(unittest.TestCase):
             "engineering_process/requirements-build.txt",
             requirement["remediation"],
         )
+
+    def test_ci_binds_and_uploads_bounded_matrix_evidence(self):
+        workflow = (
+            PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+            workflow,
+        )
+        self.assertIn("verification/generate_ci_evidence.py", workflow)
+        self.assertIn(
+            "python -m pip install -r engineering_process/requirements-build.txt",
+            workflow,
+        )
+        self.assertIn('--expected-checkpoint "$CI_CHECKPOINT"', workflow)
+        self.assertIn('--comparison-base "$CI_COMPARISON_BASE"', workflow)
+        self.assertIn('--workflow-sha "$CI_WORKFLOW_SHA"', workflow)
+        self.assertIn("CI_WORKFLOW_SHA: ${{ github.workflow_sha }}", workflow)
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            workflow,
+        )
+        self.assertIn("if-no-files-found: error", workflow)
+        self.assertIn("retention-days: 90", workflow)
 
     def test_distribution_verifier_resolves_the_checkout_before_installed_authority(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -213,6 +240,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('"VERSIONING.md"', pyproject)
         self.assertIn('"templates/adopt-process.py"', pyproject)
         self.assertIn('"templates/adopt-process-windows-job.py"', pyproject)
+        self.assertIn(
+            '"schemas/adoption-migration.schema.json"', pyproject
+        )
+        self.assertIn(
+            '"schemas/supplemental-verification.schema.json"', pyproject
+        )
         self.assertTrue(
             (PROCESS_ROOT / "engineering_process" / "_windows_job.py")
             .read_text(encoding="utf-8")

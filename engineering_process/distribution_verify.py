@@ -34,9 +34,11 @@ REQUIRED_SUFFIXES = {
     "PRODUCTION_STANDARD.md",
     "engineering_process/requirements-release.txt",
     "release.json",
+    "schemas/adoption-migration.schema.json",
     "schemas/change.schema.json",
     "schemas/evidence-receipt.schema.json",
     "schemas/release.schema.json",
+    "schemas/supplemental-verification.schema.json",
 }
 
 

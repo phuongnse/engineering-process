@@ -17,6 +17,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_packaged_examples_match_their_schemas(self):
         mappings = {
+            "adoption-migration": "adoption-migration",
             "change": "change",
             "plan": "plan",
             "project": "project",

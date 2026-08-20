@@ -1249,6 +1249,51 @@ def validate_process_lock(document: Any, path: str = "process.lock") -> ProcessL
     return ProcessLock(version=version, digest=digest, skills=tuple(skills))
 
 
+def validate_adoption_migration(
+    document: Any, path: str = "adoption migration"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "fromProcessVersion",
+            "toProcessVersion",
+            "sourceProjectDigest",
+            "targetProjectDigest",
+            "project",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    _schema_version(value, path)
+    versions: list[str] = []
+    for name in ("fromProcessVersion", "toProcessVersion"):
+        version = _string(value[name], f"{path}.{name}", max_length=64)
+        if FINAL_SEMVER_PATTERN.fullmatch(version) is None:
+            raise ContractError(f"{path}.{name}: must be final SemVer X.Y.Z")
+        versions.append(version)
+    if versions[0] == versions[1]:
+        raise ContractError(
+            f"{path}: fromProcessVersion and toProcessVersion must differ"
+        )
+    for name in ("sourceProjectDigest", "targetProjectDigest"):
+        digest = _string(value[name], f"{path}.{name}", max_length=71)
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise ContractError(
+                f"{path}.{name}: must be a lowercase sha256 digest"
+            )
+    validate_project(value["project"], f"{path}.project")
+    target_content = (
+        json.dumps(value["project"], ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+    target_digest = f"sha256:{hashlib.sha256(target_content).hexdigest()}"
+    if value["targetProjectDigest"] != target_digest:
+        raise ContractError(
+            f"{path}.targetProjectDigest: does not match project content"
+        )
+
+
 def validate_release(document: Any, path: str = "release") -> Release:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -2320,7 +2365,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         _exact_keys(
             check,
             required=required_check | (evidence_fields if schema_version == 2 else set()),
-            optional={"error", "pathEntries"}
+            optional={"error", "pathEntries", "timeoutSeconds"}
             | (evidence_fields if schema_version == 1 else set()),
             path=check_path,
         )
@@ -2338,6 +2383,8 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         duration = check["durationMs"]
         if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
             raise ContractError(f"{check_path}.durationMs: must be a non-negative integer")
+        if "timeoutSeconds" in check:
+            _timeout(check["timeoutSeconds"], f"{check_path}.timeoutSeconds")
         _string(check["startedAt"], f"{check_path}.startedAt", max_length=64)
         _string(check["workingDirectory"], f"{check_path}.workingDirectory", max_length=512)
         command = check["command"]

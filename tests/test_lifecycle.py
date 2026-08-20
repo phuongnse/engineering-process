@@ -86,12 +86,12 @@ class LifecycleTests(unittest.TestCase):
             required_profiles=("development", "review"),
         )
 
-    def write_contract(self, path: Path) -> None:
+    def write_contract(self, path: Path, *, change_id: str = "change-1") -> None:
         path.write_text(
             json.dumps(
                 {
                     "schemaVersion": 3,
-                    "id": "change-1",
+                    "id": change_id,
                     "summary": "Change tracked behavior",
                     "source": "request-1",
                     "comparisonBase": "HEAD",
@@ -128,12 +128,14 @@ class LifecycleTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def write_plan(self, path: Path, digest: str) -> None:
+    def write_plan(
+        self, path: Path, digest: str, *, change_id: str = "change-1"
+    ) -> None:
         path.write_text(
             json.dumps(
                 {
                     "schemaVersion": 2,
-                    "changeId": "change-1",
+                    "changeId": change_id,
                     "contractDigest": digest,
                     "approach": "Use the existing owner",
                     "workItems": [
@@ -172,10 +174,12 @@ class LifecycleTests(unittest.TestCase):
             ],
         }
 
-    def prepare_verified_change(self, root: Path, inputs: Path):
+    def prepare_verified_change(
+        self, root: Path, inputs: Path, *, change_id: str = "change-1"
+    ):
         contract_path = inputs / "contract.json"
         plan_path = inputs / "plan.json"
-        self.write_contract(contract_path)
+        self.write_contract(contract_path, change_id=change_id)
         state = start_change(
             root,
             self.project(),
@@ -184,11 +188,13 @@ class LifecycleTests(unittest.TestCase):
             context_id="worker-context",
             kind="agent",
         )
-        self.write_plan(plan_path, state["contract"]["digest"])
+        self.write_plan(
+            plan_path, state["contract"]["digest"], change_id=change_id
+        )
         state = register_plan(
             root,
             self.project(),
-            "change-1",
+            change_id,
             plan_path,
             actor_id="worker",
             context_id="worker-context",
@@ -197,7 +203,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(state["phase"], "planned")
         begin_implementation(
             root,
-            "change-1",
+            change_id,
             actor_id="worker",
             context_id="worker-context",
             kind="agent",
@@ -205,7 +211,7 @@ class LifecycleTests(unittest.TestCase):
         state, _ = verify_change(
             root,
             self.project(),
-            "change-1",
+            change_id,
             "development",
             actor_id="worker",
             context_id="worker-context",
@@ -215,7 +221,7 @@ class LifecycleTests(unittest.TestCase):
         state, _ = verify_change(
             root,
             self.project(),
-            "change-1",
+            change_id,
             "review",
             actor_id="worker",
             context_id="worker-context",
@@ -557,6 +563,20 @@ class LifecycleTests(unittest.TestCase):
                     context_id="fix-context",
                     kind="agent",
                 )
+            with self.assertRaisesRegex(ContractError, "fresh context id"):
+                start_review(
+                    root,
+                    "change-1",
+                    actor_id="reviewer",
+                    context_id="review-context",
+                    kind="agent",
+                    method="isolated-context",
+                    attested_by="test-host",
+                    evidence=(
+                        "The context id was renamed without creating a fresh "
+                        "isolated context"
+                    ),
+                )
             _, next_assignment = start_review(
                 root,
                 "change-1",
@@ -670,6 +690,47 @@ class LifecycleTests(unittest.TestCase):
                     method="isolated-context",
                     attested_by="test-host",
                     evidence="The test host created an isolated context",
+                )
+
+    def test_review_context_cannot_be_reused_across_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            first_inputs = base / "first-inputs"
+            second_inputs = base / "second-inputs"
+            root.mkdir()
+            first_inputs.mkdir()
+            second_inputs.mkdir()
+            self.initialize_repository(root)
+            self.prepare_verified_change(
+                root, first_inputs, change_id="change-1"
+            )
+            start_review(
+                root,
+                "change-1",
+                actor_id="reviewer-role",
+                context_id="shared-review-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The test host created one isolated review context",
+            )
+            self.prepare_verified_change(
+                root, second_inputs, change_id="change-2"
+            )
+
+            with self.assertRaisesRegex(ContractError, "any review assignment"):
+                start_review(
+                    root,
+                    "change-2",
+                    actor_id="reviewer-role",
+                    context_id="shared-review-context",
+                    kind="agent",
+                    method="isolated-context",
+                    attested_by="test-host",
+                    evidence=(
+                        "The same retained context was presented as a new review"
+                    ),
                 )
 
     def test_schema_one_state_reconstructs_findings_after_review_was_cleared(self):

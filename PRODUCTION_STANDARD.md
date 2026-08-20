@@ -51,6 +51,14 @@ never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares
 that evidence one-for-one with the change contract before approval.
 
+Remote matrix claims require one bounded supplemental bundle per platform/runtime.
+The schema-1 manifest binds the exact source and workflow checkpoints, automation
+actor/context, run identity and URL, platform/runtime identity, selected impact,
+configured timeouts, output byte counts/digests, truncation state, and the hashes of
+its schema-2 profile reports. The remote artifact id and service-computed digest are
+preserved with review evidence. These reports supplement the public N-1 lifecycle
+authority; code under verification never promotes itself to lifecycle authority.
+
 ## Resource and generated-state policy
 
 Every operation over repository-controlled or remote input has explicit limits for
@@ -58,6 +66,13 @@ time, count, individual item size, aggregate size, output, and process descendan
 Limits fail closed and have regression coverage for success, failure, timeout, and
 interruption. Selective verification reduces work only through the distribution-owned
 impact algorithm; unmatched or ambiguous paths expand verification.
+
+Authority adoption treats project configuration as consumer-owned declarative data.
+A target-version migration binds exact source and target manifest digests, is size
+bounded, contains no executable command, validates under the installed target
+authority, and shares one rollback boundary with the process lock and managed assets.
+Optional capabilities are never inferred, while configuration required by the target
+authority blocks adoption when it is missing or invalid.
 
 Released serialized contracts are never tightened in place. A new resource bound or
 meaning-changing requirement uses a new integer schema major with explicit migration;

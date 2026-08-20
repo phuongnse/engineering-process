@@ -10,10 +10,17 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import VERSION
 from .bundles import load_bundles
-from .contracts import ContractError, ProcessLock, read_json
+from .contracts import (
+    ContractError,
+    ProcessLock,
+    read_json,
+    validate_adoption_migration,
+    validate_project,
+)
 from .distribution import distribution_digest
 from .syncing import (
     _files as _managed_files,
@@ -57,6 +64,17 @@ class RequirementsLock:
     pins: tuple[RequirementPin, ...]
 
 
+@dataclass(frozen=True)
+class ProjectMigration:
+    path: Path
+    content: bytes
+    digest: str
+    source_digest: str
+    target_content: bytes
+    target_digest: str
+    status: str
+
+
 def _canonical_package_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
@@ -78,23 +96,23 @@ def _path_identity(value: os.stat_result) -> PathIdentity:
 
 
 def _path_identity_chain(
-    root: Path, path: Path
+    root: Path, path: Path, *, label: str = "requirements path"
 ) -> tuple[PathIdentity, ...]:
     try:
         relative = path.relative_to(root)
     except ValueError as error:
-        raise ContractError(f"{path}: requirements lock escaped {root}") from error
+        raise ContractError(f"{path}: {label} escaped {root}") from error
     if not relative.parts:
-        raise ContractError(f"{path}: requirements lock must name a file")
+        raise ContractError(f"{path}: {label} must name a file")
     try:
         root_value = root.lstat()
     except OSError as error:
         raise ContractError(
-            f"{root}: cannot inspect requirements root: {error}"
+            f"{root}: cannot inspect {label} root: {error}"
         ) from error
     if _is_link_or_reparse(root_value) or not stat.S_ISDIR(root_value.st_mode):
         raise ContractError(
-            f"{root}: requirements root must be a regular directory"
+            f"{root}: {label} root must be a regular directory"
         )
     chain: list[PathIdentity] = [_path_identity(root_value)]
     current = root
@@ -104,25 +122,29 @@ def _path_identity_chain(
             value = current.lstat()
         except OSError as error:
             raise ContractError(
-                f"{current}: cannot inspect requirements path: {error}"
+                f"{current}: cannot inspect {label}: {error}"
             ) from error
         if _is_link_or_reparse(value):
             raise ContractError(
-                f"{current}: requirements path must not traverse a link or reparse point"
+                f"{current}: {label} must not traverse a link or reparse point"
             )
         if index < len(relative.parts) - 1 and not stat.S_ISDIR(value.st_mode):
             raise ContractError(
-                f"{current}: requirements path ancestor must be a directory"
+                f"{current}: {label} ancestor must be a directory"
             )
         chain.append(_path_identity(value))
     return tuple(chain)
 
 
 def _read_bounded_regular_file(
-    path: Path, *, containment_root: Path | None = None
+    path: Path,
+    *,
+    containment_root: Path | None = None,
+    label: str = "requirements lock",
+    max_bytes: int = MAX_REQUIREMENTS_BYTES,
 ) -> bytes:
     before_chain = (
-        _path_identity_chain(containment_root, path)
+        _path_identity_chain(containment_root, path, label=label)
         if containment_root is not None
         else None
     )
@@ -130,17 +152,17 @@ def _read_bounded_regular_file(
         before = path.lstat()
     except OSError as error:
         raise ContractError(
-            f"{path}: cannot inspect requirements lock: {error}"
+            f"{path}: cannot inspect {label}: {error}"
         ) from error
     if not stat.S_ISREG(before.st_mode):
-        raise ContractError(f"{path}: requirements lock must be a regular file")
+        raise ContractError(f"{path}: {label} must be a regular file")
     if before_chain is not None and _path_identity(before) != before_chain[-1]:
         raise ContractError(
-            f"{path}: requirements path changed before opening"
+            f"{path}: {label} changed before opening"
         )
-    if before.st_size > MAX_REQUIREMENTS_BYTES:
+    if before.st_size > max_bytes:
         raise ContractError(
-            f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
+            f"{path}: {label} exceeds {max_bytes} bytes"
         )
     try:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
@@ -156,20 +178,20 @@ def _read_bounded_regular_file(
                     or opened.st_ino != before.st_ino
                 ):
                     raise ContractError(
-                        f"{path}: requirements lock changed while opening"
+                        f"{path}: {label} changed while opening"
                     )
-                content = stream.read(MAX_REQUIREMENTS_BYTES + 1)
+                content = stream.read(max_bytes + 1)
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
         after = path.lstat()
     except OSError as error:
         raise ContractError(
-            f"{path}: cannot read requirements lock: {error}"
+            f"{path}: cannot read {label}: {error}"
         ) from error
-    if len(content) > MAX_REQUIREMENTS_BYTES:
+    if len(content) > max_bytes:
         raise ContractError(
-            f"{path}: requirements lock exceeds {MAX_REQUIREMENTS_BYTES} bytes"
+            f"{path}: {label} exceeds {max_bytes} bytes"
         )
     if (
         len(content) != before.st_size
@@ -179,15 +201,17 @@ def _read_bounded_regular_file(
         or after.st_dev != before.st_dev
         or after.st_ino != before.st_ino
     ):
-        raise ContractError(f"{path}: requirements lock changed while reading")
+        raise ContractError(f"{path}: {label} changed while reading")
     if containment_root is not None:
-        after_chain = _path_identity_chain(containment_root, path)
+        after_chain = _path_identity_chain(
+            containment_root, path, label=label
+        )
         if (
             after_chain != before_chain
             or _path_identity(after) != after_chain[-1]
         ):
             raise ContractError(
-                f"{path}: requirements path changed while reading"
+                f"{path}: {label} changed while reading"
             )
     return content
 
@@ -346,6 +370,155 @@ def _require_matching_requirements_source(
         )
 
 
+def _sha256(content: bytes) -> str:
+    return f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+def _json_from_bytes(content: bytes, path: Path, *, label: str) -> Any:
+    if content.startswith(b"\xef\xbb\xbf"):
+        raise ContractError(f"{path}: {label} must not use a UTF-8 BOM")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError(f"{path}: {label} must use UTF-8") from error
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ContractError(
+            f"{path}:{error.lineno}:{error.colno}: invalid {label} JSON: "
+            f"{error.msg}"
+        ) from error
+
+
+def _project_document_bytes(document: Any) -> bytes:
+    return (
+        json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+
+
+def _project_migration_path(project_root: Path) -> Path:
+    return project_root / ".process" / "adoption-migrations" / f"{VERSION}.json"
+
+
+def _inspect_project_migration(
+    project_root: Path, current_process_version: str
+) -> tuple[bytes, ProjectMigration | None]:
+    project_path = project_root / ".process" / "project.json"
+    project_content = _read_bounded_regular_file(
+        project_path,
+        containment_root=project_root,
+        label="project manifest",
+        max_bytes=MAX_MANAGED_ADOPTION_FILE_BYTES,
+    )
+    project_document = _json_from_bytes(
+        project_content, project_path, label="project manifest"
+    )
+    migration_path = _project_migration_path(project_root)
+    if not os.path.lexists(migration_path):
+        validate_project(project_document, str(project_path))
+        return project_content, None
+
+    migration_content = _read_bounded_regular_file(
+        migration_path,
+        containment_root=project_root,
+        label="project adoption migration",
+        max_bytes=MAX_MANAGED_ADOPTION_FILE_BYTES,
+    )
+    migration_document = _json_from_bytes(
+        migration_content,
+        migration_path,
+        label="project adoption migration",
+    )
+    validate_adoption_migration(migration_document, str(migration_path))
+    if migration_document["toProcessVersion"] != VERSION:
+        raise ContractError(
+            f"{migration_path}: targets process "
+            f"{migration_document['toProcessVersion']}, not {VERSION}"
+        )
+    if current_process_version not in {
+        migration_document["fromProcessVersion"],
+        migration_document["toProcessVersion"],
+    }:
+        raise ContractError(
+            f"{migration_path}: cannot migrate process {current_process_version} "
+            f"from {migration_document['fromProcessVersion']} to "
+            f"{migration_document['toProcessVersion']}"
+        )
+
+    target_project = validate_project(
+        migration_document["project"], f"{migration_path}.project"
+    )
+    if (
+        not isinstance(project_document, dict)
+        or project_document.get("project") != target_project.identifier
+    ):
+        raise ContractError(
+            f"{migration_path}: project identity does not match the active manifest"
+        )
+    target_content = _project_document_bytes(migration_document["project"])
+    target_digest = _sha256(target_content)
+    if target_digest != migration_document["targetProjectDigest"]:
+        raise ContractError(
+            f"{migration_path}: targetProjectDigest does not match project content"
+        )
+    project_digest = _sha256(project_content)
+    source_digest = migration_document["sourceProjectDigest"]
+    if project_digest == source_digest:
+        status = "pending"
+    elif project_digest == target_digest:
+        status = "applied"
+    else:
+        raise ContractError(
+            f"{migration_path}: active project digest {project_digest} matches "
+            "neither the migration source nor target"
+        )
+    return project_content, ProjectMigration(
+        path=migration_path,
+        content=migration_content,
+        digest=_sha256(migration_content),
+        source_digest=source_digest,
+        target_content=target_content,
+        target_digest=target_digest,
+        status=status,
+    )
+
+
+def _require_unchanged_file(
+    path: Path,
+    expected: bytes,
+    *,
+    containment_root: Path,
+    label: str,
+) -> None:
+    current = _read_bounded_regular_file(
+        path,
+        containment_root=containment_root,
+        label=label,
+        max_bytes=MAX_MANAGED_ADOPTION_FILE_BYTES,
+    )
+    if current != expected:
+        raise ContractError(
+            f"{path}: {label} changed from {_sha256(expected)} to {_sha256(current)}"
+        )
+
+
+def _project_migration_result(
+    project_root: Path,
+    migration: ProjectMigration | None,
+    *,
+    applied: bool = False,
+) -> dict[str, object] | None:
+    if migration is None:
+        return None
+    return {
+        "path": migration.path.relative_to(project_root).as_posix(),
+        "digest": migration.digest,
+        "sourceProjectDigest": migration.source_digest,
+        "targetProjectDigest": migration.target_digest,
+        "status": "applied" if applied else migration.status,
+    }
+
+
 def _lock_document(process_root: Path, previous: ProcessLock) -> dict[str, object]:
     bundles = load_bundles(process_root, process_skills_root(process_root))
     skills = tuple(sorted(set(previous.skills) | set(bundles["core"])))
@@ -411,6 +584,8 @@ def _snapshot_targets(
     project_root: Path,
     selected: tuple[str, ...],
     backup_root: Path,
+    *,
+    extra_targets: tuple[Path, ...] = (),
 ) -> list[tuple[Path, Path, bool]]:
     targets = [
         project_root / ".process" / "process.lock",
@@ -420,7 +595,15 @@ def _snapshot_targets(
         project_root / ".github" / "PULL_REQUEST_TEMPLATE.md",
         project_root / ".agents" / ".gitattributes",
         *_managed_skill_targets(project_root, selected),
+        *extra_targets,
     ]
+    if len(targets) > MAX_MANAGED_ADOPTION_TARGETS:
+        raise ContractError(
+            "managed adoption target count exceeds "
+            f"{MAX_MANAGED_ADOPTION_TARGETS}"
+        )
+    if len(set(targets)) != len(targets):
+        raise ContractError("managed adoption targets must be unique")
     snapshots: list[tuple[Path, Path, bool]] = []
     total_bytes = 0
     for index, target in enumerate(targets):
@@ -533,12 +716,20 @@ def check_adoption(
         requirement_path, containment_root=project_root
     )
     lock = load_lock(project_root)
+    _, migration = _inspect_project_migration(project_root, lock.version)
     issues = synchronized_state(project_root, process_root, lock)
+    if migration is not None and migration.status == "pending":
+        issues.append(
+            f"{migration.path}: project adoption migration is pending"
+        )
     return {
         "version": VERSION,
         "digest": lock.digest,
         "requirementsDigest": requirement.digest,
         "skills": list(lock.skills),
+        "projectMigration": _project_migration_result(
+            project_root, migration
+        ),
         "issues": issues,
     }
 
@@ -607,6 +798,9 @@ def apply_adoption(
     if lock_path.is_symlink():
         raise ContractError(f"{lock_path}: process lock must not be a symlink")
     previous = load_lock(project_root)
+    project_content, migration = _inspect_project_migration(
+        project_root, previous.version
+    )
     document = _lock_document(process_root, previous)
     selected = tuple(document["skills"])
     ownership_issues = [
@@ -636,9 +830,32 @@ def apply_adoption(
             project_root,
             selected,
             backup_root,
+            extra_targets=(
+                (project_root / ".process" / "project.json",)
+                if migration is not None and migration.status == "pending"
+                else ()
+            ),
         )
-        _atomic_write(lock_path, updated)
         try:
+            if migration is not None:
+                _require_unchanged_file(
+                    migration.path,
+                    migration.content,
+                    containment_root=project_root,
+                    label="project adoption migration",
+                )
+            _require_unchanged_file(
+                project_root / ".process" / "project.json",
+                project_content,
+                containment_root=project_root,
+                label="project manifest",
+            )
+            _atomic_write(lock_path, updated)
+            if migration is not None and migration.status == "pending":
+                _atomic_write(
+                    project_root / ".process" / "project.json",
+                    migration.target_content,
+                )
             issues = sync_skills(project_root, process_root, check=False)
             if issues:
                 raise ContractError("\n".join(issues))
@@ -650,6 +867,26 @@ def apply_adoption(
                 requirement.digest,
                 containment_root=project_root,
             )
+            if migration is not None:
+                _require_unchanged_file(
+                    migration.path,
+                    migration.content,
+                    containment_root=project_root,
+                    label="project adoption migration",
+                )
+                _require_unchanged_file(
+                    project_root / ".process" / "project.json",
+                    migration.target_content,
+                    containment_root=project_root,
+                    label="project manifest",
+                )
+            else:
+                _require_unchanged_file(
+                    project_root / ".process" / "project.json",
+                    project_content,
+                    containment_root=project_root,
+                    label="project manifest",
+                )
         except BaseException as error:
             rollback_issues = _restore_targets(snapshots)
             if rollback_issues:
@@ -662,4 +899,9 @@ def apply_adoption(
         "digest": document["process"]["digest"],
         "requirementsDigest": requirement.digest,
         "skills": document["skills"],
+        "projectMigration": _project_migration_result(
+            project_root,
+            migration,
+            applied=migration is not None and migration.status == "pending",
+        ),
     }

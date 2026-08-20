@@ -317,6 +317,7 @@ def _run_check(
         "stderrSha256",
     }
     result = {key: value for key, value in execution.items() if key in allowed}
+    result["timeoutSeconds"] = check.timeout_seconds
     result["impactSha256"] = expected_digest
     result["impactIntegrity"] = integrity
     return result

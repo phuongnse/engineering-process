@@ -51,6 +51,7 @@ engineering_process = ["requirements-*.txt"]
   "templates/adopt-process-windows-job.py",
 ]
 "share/engineering-process/schemas" = [
+  "schemas/adoption-migration.schema.json",
   "schemas/change.schema.json",
   "schemas/evidence-receipt.schema.json",
   "schemas/lifecycle.schema.json",
@@ -60,9 +61,11 @@ engineering_process = ["requirements-*.txt"]
   "schemas/release.schema.json",
   "schemas/review.schema.json",
   "schemas/reviewer-attestation.schema.json",
+  "schemas/supplemental-verification.schema.json",
   "schemas/verification.schema.json",
 ]
 "share/engineering-process/examples" = [
+  "examples/adoption-migration.json",
   "examples/change.json",
   "examples/plan.json",
   "examples/project.json",

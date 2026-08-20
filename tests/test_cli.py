@@ -43,6 +43,26 @@ class CliTests(unittest.TestCase):
                 0,
             )
 
+    def test_validates_project_adoption_migration_contract(self):
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            result = main(
+                [
+                    "contract",
+                    "validate",
+                    "--kind",
+                    "adoption-migration",
+                    str(PROCESS_ROOT / "examples" / "adoption-migration.json"),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            "adoption-migration", json.loads(stdout.getvalue())["kind"]
+        )
+
     def test_publication_plans_exact_version_from_change_types(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

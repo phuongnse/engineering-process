@@ -16,6 +16,7 @@ from .contracts import (
     ContractError,
     derive_release_version,
     read_json,
+    validate_adoption_migration,
     validate_change,
     validate_plan,
     validate_process_lock,
@@ -232,6 +233,7 @@ def command_adoption_check(args: argparse.Namespace) -> int:
 def command_contract_validate(args: argparse.Namespace) -> int:
     document = read_json(args.path)
     validators: dict[str, Callable[[Any, str], None]] = {
+        "adoption-migration": validate_adoption_migration,
         "change": validate_change,
         "plan": validate_plan,
         "release": validate_release,
@@ -965,7 +967,9 @@ def build_parser() -> argparse.ArgumentParser:
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)
     contract_validate = contract_commands.add_parser("validate")
     contract_validate.add_argument(
-        "--kind", choices=("change", "plan", "release", "review"), required=True
+        "--kind",
+        choices=("adoption-migration", "change", "plan", "release", "review"),
+        required=True,
     )
     contract_validate.add_argument("path", type=Path)
     _add_json(contract_validate)

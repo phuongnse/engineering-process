@@ -1,9 +1,12 @@
+import hashlib
+import json
 import unittest
 
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
     ContractError,
     derive_release_version,
+    validate_adoption_migration,
     validate_change,
     validate_plan,
     validate_process_lock,
@@ -54,6 +57,33 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_adoption_migration_binds_distinct_final_versions_and_project(self):
+        project = self.valid_project()
+        target_content = (
+            json.dumps(project, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+        document = {
+            "schemaVersion": 1,
+            "fromProcessVersion": "0.1.1",
+            "toProcessVersion": "0.2.0",
+            "sourceProjectDigest": f"sha256:{'0' * 64}",
+            "targetProjectDigest": (
+                "sha256:" + hashlib.sha256(target_content).hexdigest()
+            ),
+            "project": project,
+        }
+
+        validate_adoption_migration(document)
+
+        document["toProcessVersion"] = "0.1.1"
+        with self.assertRaisesRegex(ContractError, "must differ"):
+            validate_adoption_migration(document)
+
+        document["toProcessVersion"] = "0.2.0"
+        document["project"]["schemaVersion"] = 99
+        with self.assertRaisesRegex(ContractError, "schemaVersion"):
+            validate_adoption_migration(document)
 
     def test_accepts_schema_four_impact_graph(self):
         document = self.valid_project()
