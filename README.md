@@ -19,11 +19,12 @@ structured requirement statuses, and draft-versus-ready semantics are validated 
 impact, risk, evidence, and review details and may append stronger domain checks.
 
 Hosted repository integration is declared separately in
-`.process/repository-governance.json`. The portable baseline requires pull-request-only
-default-branch updates, blocked deletion and non-fast-forward changes, no bypass, and
-the stable `PR guard` plus `Merge gate` contexts. `processctl repository ...` validates
-the local policy and provides a bounded compare-before-write GitHub adapter; external
-settings changes always require separate repository-owner authorization. See
+`.process/repository-governance.json`. The portable baseline requires
+pull-request-only default-branch updates, blocked deletion and non-fast-forward
+changes, no bypass, and the stable `Change metadata policy` plus `Merge eligibility`
+contexts. `processctl repository ...` validates the local policy and provides a
+bounded compare-before-write GitHub adapter; external settings changes always require
+separate repository-owner authorization. See
 [`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md).
 
 Core semantics never name a model, agent product, orchestration API, or code-indexing

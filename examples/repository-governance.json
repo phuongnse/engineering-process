@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "defaultBranch": {
-    "pullRequestOnly": true,
+    "requireChangeRequest": true,
     "blockDeletion": true,
     "blockNonFastForward": true,
     "bypass": "forbidden",
     "requireUpToDate": false,
     "requiredChecks": [
-      "Merge gate",
-      "PR guard"
+      "Change metadata policy",
+      "Merge eligibility"
     ]
   }
 }

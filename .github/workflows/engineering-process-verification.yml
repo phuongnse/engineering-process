@@ -1,4 +1,7 @@
-name: CI
+name: Engineering process verification
+run-name: >-
+  Engineering process verification ·
+  ${{ github.event.pull_request.head.sha || github.sha }}
 
 on:
   pull_request:
@@ -10,7 +13,8 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  distribution-verification:
+    name: Distribution verification (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     defaults:
@@ -29,22 +33,27 @@ jobs:
           - os: windows-latest
             python-version: "3.14"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout verification checkpoint
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Build distributions
+      - name: Build and validate distributions
         run: |
-          python -m pip install -r engineering_process/requirements-runtime.txt -r engineering_process/requirements-dev.txt -r engineering_process/requirements-build.txt
+          python -m pip install \
+            -r engineering_process/requirements-runtime.txt \
+            -r engineering_process/requirements-dev.txt \
+            -r engineering_process/requirements-build.txt
           python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"
 
-      - name: Install built wheel
+      - name: Install candidate wheel
         run: python -m pip install --force-reinstall "$RUNNER_TEMP"/dist/*.whl
 
       - name: Validate complete self-adoption candidate
@@ -62,13 +71,13 @@ jobs:
           processctl digest
           processctl skills validate
 
-      - name: Produce bounded supplemental verification evidence
+      - name: Generate supplemental verification evidence
         run: >-
           python verification/generate_ci_evidence.py
           --project-root "$GITHUB_WORKSPACE"
-          --output-root "$RUNNER_TEMP/engineering-process-ci-evidence"
-          --expected-checkpoint "$CI_CHECKPOINT"
-          --comparison-base "$CI_COMPARISON_BASE"
+          --output-root "$RUNNER_TEMP/engineering-process-verification-evidence"
+          --expected-checkpoint "$VERIFICATION_CHECKPOINT"
+          --comparison-base "$VERIFICATION_COMPARISON_BASE"
           --producer-actor "github-actions"
           --producer-context "$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_JOB:$RUNNER_OS:python-${{ matrix.python-version }}"
           --provider "github-actions"
@@ -76,7 +85,7 @@ jobs:
           --event-name "$GITHUB_EVENT_NAME"
           --workflow-name "$GITHUB_WORKFLOW"
           --workflow-ref "$GITHUB_WORKFLOW_REF"
-          --workflow-sha "$CI_WORKFLOW_SHA"
+          --workflow-sha "$VERIFICATION_WORKFLOW_SHA"
           --run-id "$GITHUB_RUN_ID"
           --run-attempt "$GITHUB_RUN_ATTEMPT"
           --job "$GITHUB_JOB"
@@ -85,34 +94,36 @@ jobs:
           --runner-arch "$RUNNER_ARCH"
           --triggered-by "$GITHUB_ACTOR"
         env:
-          CI_CHECKPOINT: ${{ github.event.pull_request.head.sha || github.sha }}
-          CI_COMPARISON_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          VERIFICATION_CHECKPOINT: ${{ github.event.pull_request.head.sha || github.sha }}
+          VERIFICATION_COMPARISON_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VERIFICATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
 
       - name: Upload supplemental verification evidence
         id: upload-evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: engineering-process-ci-evidence-${{ matrix.os }}-python-${{ matrix.python-version }}
-          path: ${{ runner.temp }}/engineering-process-ci-evidence
+          name: >-
+            engineering-process-verification-evidence-${{ matrix.os }}-python-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/engineering-process-verification-evidence
           if-no-files-found: error
           retention-days: 90
           compression-level: 9
           include-hidden-files: false
 
-  merge-gate:
-    name: Merge gate
+  merge-eligibility:
+    name: Merge eligibility
     if: ${{ always() }}
-    needs: [verify]
+    needs: [distribution-verification]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require the complete verification matrix
+      - name: Evaluate merge eligibility
         env:
-          VERIFY_RESULT: ${{ needs.verify.result }}
+          DISTRIBUTION_VERIFICATION_RESULT: >-
+            ${{ needs['distribution-verification'].result }}
         run: |
-          if [ "$VERIFY_RESULT" != "success" ]; then
-            echo "verification matrix result: $VERIFY_RESULT" >&2
+          if [ "$DISTRIBUTION_VERIFICATION_RESULT" != "success" ]; then
+            echo "distribution verification result: $DISTRIBUTION_VERIFICATION_RESULT" >&2
             exit 1
           fi

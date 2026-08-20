@@ -96,7 +96,7 @@ class CliTests(unittest.TestCase):
                 )
             self.assertEqual(0, result)
             self.assertEqual(
-                ["Merge gate", "PR guard"],
+                ["Change metadata policy", "Merge eligibility"],
                 json.loads(stdout.getvalue())["requiredChecks"],
             )
 

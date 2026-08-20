@@ -57,8 +57,8 @@ Complete these controls before publishing the first release:
 3. Add a tag ruleset for `refs/tags/v*` that blocks deletion and non-fast-forward
    updates. The release workflow independently requires the tagged commit to be an
    ancestor of `main` and the tag to equal the package version.
-4. Add the stable `PR guard` and `Merge gate` workflows, observe both succeed on one
-   exact pull-request head, then activate the default-branch baseline in
+4. Add the stable `Change metadata policy` and `Merge eligibility` jobs, observe both
+   succeed on one exact pull-request head, then activate the default-branch baseline in
    [`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md): pull-request-only
    integration, blocked deletion and non-fast-forward updates, no bypass actors, and
    both stable contexts required. During the bootstrap window this exact reviewed
@@ -76,7 +76,8 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 ## Release
 
 1. Complete the repository's own process lifecycle on an immutable checkpoint and
-   require independent review plus the complete CI matrix, `PR guard`, `Merge gate`,
+   require independent review plus the complete verification matrix,
+   `Change metadata policy`, `Merge eligibility`,
    and live repository policy check to pass. Export the
    completed receipt bound to the pinned public N-1 authority and artifact digests.
 2. Update the ordered `release.json.changes`; let their types determine the exact
@@ -85,7 +86,7 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 3. Create a draft GitHub release whose existing tag and title are both exactly
    `v<package-version>` and whose target is the verified `main` commit. Attach the
    receipt using the exact `release.json.identity.receiptAsset` name. Run the
-   `Prepare Release` workflow for that tag; it validates the draft and N-1 receipt,
+   `Prepare release artifacts` workflow for that tag; it validates the draft and N-1 receipt,
    builds from the verified HEAD object graph, attaches the inspected wheel, sdist,
    and digest attestation to the still-editable draft, and fails if any asset exists
    unexpectedly. Only after that workflow passes, publish the immutable release.

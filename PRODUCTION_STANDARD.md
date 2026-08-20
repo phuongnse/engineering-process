@@ -114,8 +114,9 @@ preconditions. Consumers declare the bounded policy; provider adapters may add e
 enforcement but cannot weaken it or mutate external settings without separate owner
 authorization.
 
-Remote required-check names remain stable while project-owned jobs evolve. `PR guard`
-owns current review metadata, and `Merge gate` owns the complete project verification
+Remote required-check names remain stable while project-owned jobs evolve.
+`Change metadata policy` owns current review metadata, and `Merge eligibility` owns
+the complete project verification
 result for one immutable head. Missing contexts, stale evidence, ambiguous ruleset
 ownership, or live-policy drift fail closed. Branch protection cannot substitute for
 fixing a flaky check that happened to pass before merge.

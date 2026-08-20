@@ -393,28 +393,33 @@ class ArtifactContractTests(unittest.TestCase):
         document = {
             "schemaVersion": 1,
             "defaultBranch": {
-                "pullRequestOnly": True,
+                "requireChangeRequest": True,
                 "blockDeletion": True,
                 "blockNonFastForward": True,
                 "bypass": "forbidden",
                 "requireUpToDate": False,
-                "requiredChecks": ["Merge gate", "PR guard"],
+                "requiredChecks": ["Change metadata policy", "Merge eligibility"],
             },
         }
 
         policy = validate_repository_governance(document)
 
         self.assertFalse(policy.require_up_to_date)
-        self.assertEqual(("Merge gate", "PR guard"), policy.required_checks)
+        self.assertEqual(
+            ("Change metadata policy", "Merge eligibility"),
+            policy.required_checks,
+        )
 
         weakened = json.loads(json.dumps(document))
-        weakened["defaultBranch"]["pullRequestOnly"] = False
-        with self.assertRaisesRegex(ContractError, "pullRequestOnly: must be true"):
+        weakened["defaultBranch"]["requireChangeRequest"] = False
+        with self.assertRaisesRegex(
+            ContractError, "requireChangeRequest: must be true"
+        ):
             validate_repository_governance(weakened)
 
         missing_gate = json.loads(json.dumps(document))
         missing_gate["defaultBranch"]["requiredChecks"] = [
-            "PR guard",
+            "Change metadata policy",
             "Project tests",
         ]
         with self.assertRaisesRegex(ContractError, "missing standard checks"):
@@ -422,8 +427,8 @@ class ArtifactContractTests(unittest.TestCase):
 
         unsorted = json.loads(json.dumps(document))
         unsorted["defaultBranch"]["requiredChecks"] = [
-            "PR guard",
-            "Merge gate",
+            "Merge eligibility",
+            "Change metadata policy",
         ]
         with self.assertRaisesRegex(ContractError, "must be sorted"):
             validate_repository_governance(unsorted)

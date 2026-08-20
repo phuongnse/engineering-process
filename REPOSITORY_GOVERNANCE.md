@@ -13,21 +13,37 @@ requires the default branch to:
 - accept changes only through a pull request or provider-equivalent review object;
 - block deletion and non-fast-forward updates;
 - forbid bypass actors;
-- require the stable `PR guard` and `Merge gate` contexts;
+- require the stable `Change metadata policy` and `Merge eligibility` contexts;
 - declare whether required checks must be refreshed after the branch falls behind the
   default branch.
 
 Projects may add stronger checks or a separate stronger ruleset. They cannot remove
-or rename the two stable contexts. `PR guard` validates current review metadata and
-publication policy. `Merge gate` succeeds only when all project-owned verification
-for the immutable head checkpoint succeeds. Individual matrix and domain job names
-remain project-owned implementation details behind `Merge gate`; copying all of them
-into remote settings creates avoidable configuration drift.
+or rename the two stable contexts. `Change metadata policy` validates current review
+metadata and publication policy. `Merge eligibility` succeeds only when all
+project-owned verification for the immutable head checkpoint succeeds. Individual
+matrix and domain job names remain project-owned implementation details behind
+`Merge eligibility`; copying all of them into remote settings creates avoidable
+configuration drift.
 
 A protected branch prevents merging a checkpoint whose required checks are red or
 missing. It cannot make a flaky check reliable, and it cannot prove that a later
 post-merge rerun will have the same result. Reliability defects still require their
 own reproducer, fix, and regression evidence.
+
+## Workflow metadata contract
+
+Workflow metadata is an observability surface, not decoration. Provider integrations
+use kebab-case for filenames, job IDs, step IDs, output IDs, and artifact-name
+segments. Human-facing workflow, run, job, and step names use sentence case and state
+the owned boundary or outcome. Generic labels such as `CI`, `Build`, `Verify`,
+`Check`, `Guard`, or `Gate` are not sufficient by themselves.
+
+Every workflow declares a meaningful `name` and `run-name`; every job and step
+declares a meaningful `name`, including steps that invoke a reusable action. Matrix
+job names include the platform and runtime dimensions that distinguish their
+evidence. Environment variables use uppercase snake case and describe the value,
+not the implementation step that happens to consume it. Required-check context names
+are public policy identifiers and change only through a governed migration.
 
 ## GitHub adapter
 
@@ -90,16 +106,16 @@ settings during bootstrap, sync, adoption, verification, review, merge, or relea
 The consumer owns workflow commands and domain jobs. A GitHub consumer normally uses
 two workflows:
 
-1. A lightweight `PR guard` workflow listens for `opened`, `synchronize`, `reopened`,
+1. A lightweight `Change metadata policy` workflow listens for `opened`, `synchronize`, `reopened`,
    `edited`, `ready_for_review`, and `converted_to_draft`. It validates title, body,
    branch, commit range, and readiness using the installed public process authority.
-2. Checkpoint CI runs on source synchronization and exposes one final `Merge gate`
+2. Checkpoint verification runs on source synchronization and exposes one final `Merge eligibility`
    job. That job uses `if: always()` and fails unless every required upstream job or
    matrix completes successfully. A skipped heavy job is acceptable only when the
    project-owned impact contract explicitly makes that job inapplicable and the
    stable gate evaluates the resulting dependency state.
 
-Separating these workflows lets metadata edits refresh `PR guard` without rerunning
+Separating these workflows lets metadata edits refresh `Change metadata policy` without rerunning
 an expensive platform matrix. On a new source checkpoint, both workflows run and the
 remote ruleset requires both current contexts.
 
@@ -109,7 +125,8 @@ Repository protection is intentionally not self-activating:
 
 1. Add the policy and stable workflows through the repository's existing authorized
    integration path.
-2. Observe successful `PR guard` and `Merge gate` checks on one exact PR head.
+2. Observe successful `Change metadata policy` and `Merge eligibility` checks on one
+   exact review head.
 3. Run read-only policy validation and create a plan bound to that evidence.
 4. Obtain separate repository-owner authorization for the external settings write.
 5. Apply the current plan, read the ruleset back, and require the check command to
@@ -123,7 +140,7 @@ settings manually during the bootstrap window—owns activation.
 
 An existing consumer with per-job required contexts migrates only after adopting the
 immutable process release. It adds the two stable gates, maps every project-owned job
-to `Merge gate` under its own workflow contract, observes both contexts on one exact
+to `Merge eligibility` under its own workflow contract, observes both contexts on one exact
 consumer PR, and then plans an update of its unique existing default-branch ruleset.
 The consumer owns which dependency results may be `skipped`; each exception must be
 derived from its successful impact-selection job. Consumer source and settings never

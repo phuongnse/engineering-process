@@ -110,12 +110,12 @@ def policy_document():
     return {
         "schemaVersion": 1,
         "defaultBranch": {
-            "pullRequestOnly": True,
+            "requireChangeRequest": True,
             "blockDeletion": True,
             "blockNonFastForward": True,
             "bypass": "forbidden",
             "requireUpToDate": False,
-            "requiredChecks": ["Merge gate", "PR guard"],
+            "requiredChecks": ["Change metadata policy", "Merge eligibility"],
         },
     }
 
@@ -181,14 +181,14 @@ def successful_responses(ruleset=None):
             "check_runs": [
                 {
                     "id": 101,
-                    "name": "Merge gate",
+                    "name": "Change metadata policy",
                     "status": "completed",
                     "conclusion": "success",
                     "app": {"id": GITHUB_ACTIONS_INTEGRATION_ID},
                 },
                 {
                     "id": 102,
-                    "name": "PR guard",
+                    "name": "Merge eligibility",
                     "status": "completed",
                     "conclusion": "success",
                     "app": {"id": GITHUB_ACTIONS_INTEGRATION_ID},
@@ -235,7 +235,7 @@ class RepositoryGovernanceTests(unittest.TestCase):
             rule for rule in desired["rules"] if rule["type"] == "required_status_checks"
         )
         self.assertEqual(
-            ["Merge gate", "PR guard"],
+            ["Change metadata policy", "Merge eligibility"],
             [
                 item["context"]
                 for item in status_rule["parameters"]["required_status_checks"]
@@ -258,7 +258,7 @@ class RepositoryGovernanceTests(unittest.TestCase):
         self.assertEqual(42, plan["ruleset"]["id"])
         self.assertEqual(HEAD_SHA, plan["evidence"]["headSha"])
         self.assertEqual(
-            ["Merge gate", "PR guard"],
+            ["Change metadata policy", "Merge eligibility"],
             [item["name"] for item in plan["evidence"]["checks"]],
         )
         schema = json.loads(
@@ -274,7 +274,9 @@ class RepositoryGovernanceTests(unittest.TestCase):
         responses = successful_responses(per_job_ruleset())
         responses[CHECKS_PATH]["check_runs"].pop()
         responses[CHECKS_PATH]["total_count"] = 1
-        with self.assertRaisesRegex(ContractError, "were not observed.*PR guard"):
+        with self.assertRaisesRegex(
+            ContractError, "were not observed.*Merge eligibility"
+        ):
             plan_github_ruleset(
                 FakeApi(responses),
                 REPOSITORY,
@@ -285,7 +287,9 @@ class RepositoryGovernanceTests(unittest.TestCase):
 
         responses = successful_responses(per_job_ruleset())
         responses[CHECKS_PATH]["check_runs"][0]["conclusion"] = "failure"
-        with self.assertRaisesRegex(ContractError, "not successful.*Merge gate"):
+        with self.assertRaisesRegex(
+            ContractError, "not successful.*Change metadata policy"
+        ):
             plan_github_ruleset(
                 FakeApi(responses),
                 REPOSITORY,

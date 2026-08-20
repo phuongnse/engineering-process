@@ -1315,7 +1315,7 @@ def validate_repository_governance(
     _exact_keys(
         default_branch,
         required={
-            "pullRequestOnly",
+            "requireChangeRequest",
             "blockDeletion",
             "blockNonFastForward",
             "bypass",
@@ -1324,7 +1324,11 @@ def validate_repository_governance(
         },
         path=f"{path}.defaultBranch",
     )
-    for field in ("pullRequestOnly", "blockDeletion", "blockNonFastForward"):
+    for field in (
+        "requireChangeRequest",
+        "blockDeletion",
+        "blockNonFastForward",
+    ):
         if default_branch[field] is not True:
             raise ContractError(f"{path}.defaultBranch.{field}: must be true")
     if default_branch["bypass"] != "forbidden":
@@ -1352,7 +1356,7 @@ def validate_repository_governance(
         raise ContractError(
             f"{path}.defaultBranch.requiredChecks: must be sorted"
         )
-    missing = sorted({"Merge gate", "PR guard"} - set(checks))
+    missing = sorted({"Change metadata policy", "Merge eligibility"} - set(checks))
     if missing:
         raise ContractError(
             f"{path}.defaultBranch.requiredChecks: missing standard checks: "

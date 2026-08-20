@@ -19,7 +19,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "pullRequestOnly",
+        "requireChangeRequest",
         "blockDeletion",
         "blockNonFastForward",
         "bypass",
@@ -27,7 +27,7 @@
         "requiredChecks"
       ],
       "properties": {
-        "pullRequestOnly": {
+        "requireChangeRequest": {
           "const": true
         },
         "blockDeletion": {
@@ -56,14 +56,14 @@
           "allOf": [
             {
               "contains": {
-                "const": "Merge gate"
+                "const": "Change metadata policy"
               },
               "minContains": 1,
               "maxContains": 1
             },
             {
               "contains": {
-                "const": "PR guard"
+                "const": "Merge eligibility"
               },
               "minContains": 1,
               "maxContains": 1

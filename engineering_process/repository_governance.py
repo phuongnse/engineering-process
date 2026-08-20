@@ -42,12 +42,12 @@ BASELINE_RULES = {
 DEFAULT_POLICY = {
     "schemaVersion": 1,
     "defaultBranch": {
-        "pullRequestOnly": True,
+        "requireChangeRequest": True,
         "blockDeletion": True,
         "blockNonFastForward": True,
         "bypass": "forbidden",
         "requireUpToDate": False,
-        "requiredChecks": ["Merge gate", "PR guard"],
+        "requiredChecks": ["Change metadata policy", "Merge eligibility"],
     },
 }
 
