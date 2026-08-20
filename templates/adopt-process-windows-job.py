@@ -217,35 +217,35 @@ def _cleanup_process_and_job(
     process_info: PROCESS_INFORMATION,
 ) -> tuple[list[OSError], int | None]:
     errors: list[OSError] = []
-    if process_info.hProcess:
-        try:
-            active_processes = _active_processes(kernel32, job)
-        except OSError as error:
-            errors.append(error)
-            active_processes = None
-        active_processes_before_cleanup = active_processes
+    try:
+        active_processes = _active_processes(kernel32, job)
+    except OSError as error:
+        errors.append(error)
+        active_processes = None
+    active_processes_before_cleanup = active_processes
 
-        if active_processes is None or active_processes > 0:
-            if not kernel32.TerminateJobObject(job, 125):
-                errors.append(_last_error("TerminateJobObject"))
-            deadline = time.monotonic() + CLEANUP_GRACE_MILLISECONDS / 1000
-            while True:
-                try:
-                    active_processes = _active_processes(kernel32, job)
-                except OSError as error:
-                    errors.append(error)
-                    break
-                if active_processes == 0:
-                    break
-                if time.monotonic() >= deadline:
-                    errors.append(
-                        OSError(
-                            "Job Object retained active processes after bounded termination"
-                        )
+    if active_processes is None or active_processes > 0:
+        if not kernel32.TerminateJobObject(job, 125):
+            errors.append(_last_error("TerminateJobObject"))
+        deadline = time.monotonic() + CLEANUP_GRACE_MILLISECONDS / 1000
+        while True:
+            try:
+                active_processes = _active_processes(kernel32, job)
+            except OSError as error:
+                errors.append(error)
+                break
+            if active_processes == 0:
+                break
+            if time.monotonic() >= deadline:
+                errors.append(
+                    OSError(
+                        "Job Object retained active processes after bounded termination"
                     )
-                    break
-                time.sleep(0.01)
+                )
+                break
+            time.sleep(0.01)
 
+    if process_info.hProcess:
         wait_result = kernel32.WaitForSingleObject(
             process_info.hProcess, CLEANUP_GRACE_MILLISECONDS
         )
@@ -257,9 +257,7 @@ def _cleanup_process_and_job(
             errors.append(
                 OSError(f"unexpected target cleanup wait result: {wait_result}")
             )
-    return errors, (
-        active_processes_before_cleanup if process_info.hProcess else None
-    )
+    return errors, active_processes_before_cleanup
 
 
 def _close_handle(kernel32: Any, handle: int, label: str) -> OSError | None:
@@ -345,6 +343,12 @@ def _run(
             ctypes.byref(process_info),
         ):
             raise _last_error("CreateProcessW")
+        # Job accounting can retain an exited root while helper-owned handles remain.
+        # Release handles as soon as their information has been consumed so the later
+        # active-process query represents only live descendants.
+        if error := _close_handle(kernel32, process_info.hThread, "thread"):
+            raise error
+        process_info.hThread = 0
         wait_result = kernel32.WaitForSingleObject(process_info.hProcess, INFINITE)
         if wait_result == WAIT_FAILED:
             raise _last_error("WaitForSingleObject")
@@ -356,6 +360,9 @@ def _run(
         ):
             raise _last_error("GetExitCodeProcess")
         exit_code = int(native_exit_code.value)
+        if error := _close_handle(kernel32, process_info.hProcess, "process"):
+            raise error
+        process_info.hProcess = 0
     except BaseException as error:
         caught_error = error
     finally:

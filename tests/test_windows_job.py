@@ -33,6 +33,8 @@ class FakeKernel32:
         self.job_attribute = None
         self.application = None
         self.command_line = None
+        self.events = []
+        self.root_active_until_process_handle_closed = False
 
         self.CreateJobObjectW = NativeCall(lambda *_: 101)
         self.SetInformationJobObject = NativeCall(lambda *_: True)
@@ -115,24 +117,29 @@ class FakeKernel32:
         return True
 
     def _wait(self, handle, timeout):
+        self.events.append(f"wait:{handle}")
         del handle, timeout
         if self.wait_results:
             return self.wait_results.pop(0)
         return _windows_job.WAIT_OBJECT_0
 
     def _get_exit_code(self, process, exit_code_pointer):
+        self.events.append(f"exit-code:{process}")
         del process
         exit_code = ctypes.cast(exit_code_pointer, ctypes.POINTER(wintypes.DWORD))
         exit_code.contents.value = 7
         return True
 
     def _query_job(self, job, information_class, output, output_size, returned):
+        self.events.append("query-job")
         del job, information_class, output_size
         accounting = ctypes.cast(
             output,
             ctypes.POINTER(_windows_job.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION),
         )
-        if len(self.active_processes) > 1:
+        if self.root_active_until_process_handle_closed and 201 not in self.closed_handles:
+            active_processes = 1
+        elif len(self.active_processes) > 1:
             active_processes = self.active_processes.pop(0)
         else:
             active_processes = self.active_processes[0]
@@ -142,11 +149,13 @@ class FakeKernel32:
         return True
 
     def _terminate_job(self, job, exit_code):
+        self.events.append("terminate-job")
         del job, exit_code
         self.termination_calls += 1
         return self.terminate_result
 
     def _close_handle(self, handle):
+        self.events.append(f"close:{handle}")
         self.closed_handles.append(handle)
         return handle != self.close_failure
 
@@ -173,6 +182,25 @@ class WindowsJobTests(unittest.TestCase):
         self.assertEqual("python -V", kernel32.command_line)
         self.assertEqual(1, kernel32.deleted_attribute_lists)
         self.assertEqual([202, 201, 101], kernel32.closed_handles)
+
+    def test_root_handles_are_closed_before_descendant_accounting(self):
+        kernel32 = FakeKernel32()
+        kernel32.root_active_until_process_handle_closed = True
+
+        exit_code = _windows_job._run(
+            r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
+        )
+
+        self.assertEqual(7, exit_code)
+        self.assertEqual(0, kernel32.termination_calls)
+        self.assertLess(
+            kernel32.events.index("close:202"),
+            kernel32.events.index("wait:201"),
+        )
+        self.assertLess(
+            kernel32.events.index("close:201"),
+            kernel32.events.index("query-job"),
+        )
 
     def test_wait_failure_terminates_the_job_and_closes_every_handle(self):
         kernel32 = FakeKernel32()
@@ -225,6 +253,18 @@ class WindowsJobTests(unittest.TestCase):
             )
 
         self.assertEqual([202, 201, 101], kernel32.closed_handles)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
+    def test_real_job_repeats_root_only_commands_without_false_descendants(self):
+        for iteration in range(32):
+            with self.subTest(iteration=iteration):
+                self.assertEqual(
+                    0,
+                    _windows_job._run(
+                        sys.executable,
+                        [sys.executable, "-c", "raise SystemExit(0)"],
+                    ),
+                )
 
     @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
     def test_real_job_terminates_a_descendant_left_by_the_target(self):

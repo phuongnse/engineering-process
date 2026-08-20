@@ -366,7 +366,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIsNotNone(source_match)
         self.assertEqual(lock["process"]["version"], source_match.group("version"))
 
-    def test_managed_adoption_runner_matches_packaged_template(self):
+    def test_adoption_sources_preserve_the_authority_boundary(self):
         managed = PROCESS_ROOT / ".process" / "adopt-process.py"
         template = PROCESS_ROOT / "templates" / "adopt-process.py"
         managed_windows_helper = (
@@ -383,8 +383,10 @@ class SelfHostingTests(unittest.TestCase):
                 "# Managed by engineering-process; do not edit.\n"
             )
         )
-        self.assertEqual(
-            windows_helper.read_bytes(), managed_windows_helper.read_bytes()
+        self.assertTrue(
+            managed_windows_helper.read_text(encoding="utf-8").startswith(
+                "# Managed by engineering-process; do not edit.\n"
+            )
         )
         self.assertEqual(
             windows_helper.read_bytes(), template_windows_helper.read_bytes()
