@@ -64,6 +64,13 @@ ADOPTION_SCRIPT_NAMES = (
 )
 
 
+def _has_adoption_runner_marker(content: bytes) -> bool:
+    marker = ADOPTION_RUNNER_MARKER.encode("utf-8")
+    return content.startswith(marker + b"\n") or content.startswith(
+        marker + b"\r\n"
+    )
+
+
 def default_process_root() -> Path:
     source_root = Path(__file__).resolve().parent.parent
     candidates = (source_root, Path(sysconfig.get_path("data")).resolve())
@@ -390,9 +397,7 @@ def adoption_runner_target_issues(
         if (
             current is not None
             and current != source
-            and not current.startswith(
-                (ADOPTION_RUNNER_MARKER + "\n").encode("utf-8")
-            )
+            and not _has_adoption_runner_marker(current)
         ):
             issues.append(
                 f"{target}: refusing to overwrite unmanaged adoption runner"
@@ -427,9 +432,7 @@ def _sync_adoption_runner(project_root: Path, process_root: Path) -> None:
         if (
             current is not None
             and current != source
-            and not current.startswith(
-                (ADOPTION_RUNNER_MARKER + "\n").encode("utf-8")
-            )
+            and not _has_adoption_runner_marker(current)
         ):
             raise ContractError(
                 f"{target}: refusing to overwrite unmanaged adoption runner"

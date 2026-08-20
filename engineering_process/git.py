@@ -12,6 +12,7 @@ from .supervision import process_supervisor
 
 
 GIT_STDERR_LIMIT = 16_384
+GIT_STDIN_LIMIT = 1_000_000
 GIT_TERMINATION_GRACE_SECONDS = 2.0
 MAX_PORTABLE_PATH_LENGTH = 1_024
 WINDOWS_RESERVED_NAMES = {
@@ -55,6 +56,24 @@ def _drain(
             pass
 
 
+def _feed_input(stream, content: bytes, capture: dict[str, object]) -> None:
+    try:
+        remaining = memoryview(content)
+        while remaining:
+            written = stream.write(remaining[: 64 * 1024])
+            if written is None or written <= 0:
+                raise OSError("Git stdin accepted no bytes")
+            remaining = remaining[written:]
+        stream.flush()
+    except (BrokenPipeError, OSError, ValueError) as error:
+        capture["error"] = str(error)
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
 def run_git(
     root: Path,
     arguments: list[str],
@@ -62,9 +81,12 @@ def run_git(
     label: str,
     timeout_seconds: float,
     max_stdout_bytes: int,
+    input_bytes: bytes | None = None,
 ) -> GitResult:
     if timeout_seconds <= 0:
         raise ContractError(f"{label}: Git time budget is exhausted")
+    if input_bytes is not None and len(input_bytes) > GIT_STDIN_LIMIT:
+        raise ContractError(f"{label}: Git stdin exceeds {GIT_STDIN_LIMIT} bytes")
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -85,11 +107,14 @@ def run_git(
             ),
             working_directory=root,
             environment=environment,
+            pipe_stdin=input_bytes is not None,
         )
     except (OSError, ValueError) as error:
         raise ContractError(f"{label}: cannot start Git: {error}") from error
     assert process.stdout is not None
     assert process.stderr is not None
+    if input_bytes is not None:
+        assert process.stdin is not None
     stdout_capture: dict[str, object] = {
         "data": bytearray(),
         "overflow": False,
@@ -100,7 +125,7 @@ def run_git(
         "overflow": False,
         "streamError": False,
     }
-    threads = (
+    threads = [
         threading.Thread(
             target=_drain,
             args=(process.stdout, stdout_capture),
@@ -113,7 +138,16 @@ def run_git(
             kwargs={"limit": GIT_STDERR_LIMIT},
             daemon=True,
         ),
-    )
+    ]
+    input_capture: dict[str, object] = {"error": None}
+    if input_bytes is not None:
+        threads.append(
+            threading.Thread(
+                target=_feed_input,
+                args=(process.stdin, input_bytes, input_capture),
+                daemon=True,
+            )
+        )
     for thread in threads:
         thread.start()
     timed_out = False
@@ -137,7 +171,7 @@ def run_git(
         for thread in threads:
             thread.join(timeout=GIT_TERMINATION_GRACE_SECONDS)
     if any(thread.is_alive() for thread in threads):
-        raise ContractError(f"{label}: Git retained output streams after cleanup")
+        raise ContractError(f"{label}: Git retained I/O streams after cleanup")
     if cleanup_error is not None:
         raise ContractError(f"{label}: {cleanup_error}")
     if timed_out:
@@ -152,6 +186,8 @@ def run_git(
         raise ContractError(f"{label}: Git stderr exceeds {GIT_STDERR_LIMIT} bytes")
     if process.returncode is None:
         raise ContractError(f"{label}: Git did not report an exit code")
+    if input_capture["error"] is not None and process.returncode == 0:
+        raise ContractError(f"{label}: could not write bounded Git input")
     return GitResult(
         returncode=process.returncode,
         stdout=bytes(stdout_capture["data"]),

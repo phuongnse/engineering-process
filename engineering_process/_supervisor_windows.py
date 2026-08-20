@@ -83,6 +83,7 @@ class WindowsProcessSupervisor:
         *,
         working_directory: Path,
         environment: Mapping[str, str],
+        pipe_stdin: bool = False,
     ) -> subprocess.Popen[bytes]:
         application = self.resolve_application(
             command[0],
@@ -99,7 +100,7 @@ class WindowsProcessSupervisor:
         return subprocess.Popen(
             wrapper,
             cwd=working_directory,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=False,

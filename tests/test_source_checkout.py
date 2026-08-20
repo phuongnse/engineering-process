@@ -7,7 +7,7 @@ from unittest import mock
 
 from engineering_process.contracts import ContractError
 from engineering_process.distribution_verify import _copy_tracked_snapshot
-from engineering_process.git import remaining_seconds, run_git
+from engineering_process.git import GIT_STDIN_LIMIT, remaining_seconds, run_git
 from engineering_process.runner import source_state
 
 
@@ -74,6 +74,20 @@ def _path_chunks(paths: list[PurePosixPath]) -> list[list[PurePosixPath]]:
 
 
 class SourceCheckoutTests(unittest.TestCase):
+    def test_git_input_is_bounded_before_process_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._initialize_repository(root)
+            with self.assertRaisesRegex(ContractError, "stdin exceeds"):
+                run_git(
+                    root,
+                    ["cat-file", "--batch"],
+                    label="bounded Git input",
+                    timeout_seconds=5,
+                    max_stdout_bytes=1_024,
+                    input_bytes=b"x" * (GIT_STDIN_LIMIT + 1),
+                )
+
     def test_git_environment_cannot_redirect_checkpoint_inspection(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -169,18 +183,12 @@ class SourceCheckoutTests(unittest.TestCase):
                 _copy_tracked_snapshot(root, snapshot)
                 self.assertEqual(expected, (snapshot / "payload.bin").read_bytes())
 
-    def test_snapshot_rejects_archive_attribute_transform_or_omission(self):
+    def test_snapshot_ignores_archive_attributes_and_preserves_raw_blobs(self):
         cases = {
-            "export-subst": (
-                "tracked.txt export-subst\n",
-                "metadata differs from the tree|differs from its blob",
-            ),
-            "export-ignore": (
-                "tracked.txt export-ignore\n",
-                "missing tree member",
-            ),
+            "export-subst": "tracked.txt export-subst\n",
+            "export-ignore": "tracked.txt export-ignore\n",
         }
-        for name, (attributes, error) in cases.items():
+        for name, attributes in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self._initialize_repository(root)
@@ -200,10 +208,17 @@ class SourceCheckoutTests(unittest.TestCase):
                     cwd=root,
                     check=True,
                 )
+                expected = subprocess.check_output(
+                    ["git", "cat-file", "blob", "HEAD:tracked.txt"],
+                    cwd=root,
+                )
 
                 with tempfile.TemporaryDirectory() as snapshot_directory:
-                    with self.assertRaisesRegex(ContractError, error):
-                        _copy_tracked_snapshot(root, Path(snapshot_directory))
+                    snapshot = Path(snapshot_directory)
+                    _copy_tracked_snapshot(root, snapshot)
+                    self.assertEqual(
+                        expected, (snapshot / "tracked.txt").read_bytes()
+                    )
 
     def test_snapshot_can_pin_the_checkpoint_across_a_ref_move(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -99,16 +99,29 @@ class SyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "file.txt").write_text("stable\n", encoding="utf-8")
+            content = (root / "file.txt").read_bytes()
             with mock.patch.object(syncing.os, "scandir", side_effect=CachedScan):
                 self.assertEqual(
                     {
                         "file.txt": (
-                            len(b"stable\n"),
-                            hashlib.sha256(b"stable\n").hexdigest(),
+                            len(content),
+                            hashlib.sha256(content).hexdigest(),
                         )
                     },
                     syncing._files(root, ignore_marker=False),
                 )
+
+    def test_adoption_runner_crlf_marker_remains_managed(self):
+        self.assertTrue(
+            syncing._has_adoption_runner_marker(
+                b"# Managed by engineering-process; do not edit.\r\ncontent\r\n"
+            )
+        )
+        self.assertFalse(
+            syncing._has_adoption_runner_marker(
+                b"# Similar but unmanaged\r\ncontent\r\n"
+            )
+        )
 
     def test_managed_skill_comparison_rejects_symlinks_and_resource_overflow(self):
         with tempfile.TemporaryDirectory() as directory:
