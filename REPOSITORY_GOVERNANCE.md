@@ -10,144 +10,97 @@ authorization.
 Every governed repository declares `.process/repository-governance.json`. Schema 1
 requires the default branch to:
 
-- accept changes only through a pull request or provider-equivalent review object;
-- block deletion and non-fast-forward updates;
+- accept changes only through a governed review object;
+- block deletion and history rewrites;
 - forbid bypass actors;
 - require the stable `Change metadata policy` and `Merge eligibility` contexts;
 - declare whether required checks must be refreshed after the branch falls behind the
   default branch.
 
-Projects may add stronger checks or a separate stronger ruleset. They cannot remove
-or rename the two stable contexts. `Change metadata policy` validates current review
+Projects may add stronger checks or a separate stronger protection policy. They
+cannot remove or rename the two stable contexts. `Change metadata policy` validates current review
 metadata and publication policy. `Merge eligibility` succeeds only when all
 project-owned verification for the immutable head checkpoint succeeds. Individual
 matrix and domain job names remain project-owned implementation details behind
 `Merge eligibility`; copying all of them into remote settings creates avoidable
 configuration drift.
 
-`Change metadata policy` also binds each satisfied publication claim to one visible
-canonical HTTPS reference in its owning section. A structural status without its
-published contract, verification, or independent-review reference fails before
-merge. The validator does not fetch the target; projects retain access-control,
-retention, and immutability ownership for the linked evidence.
+`Change metadata policy` also binds each satisfied publication claim to the
+referenceable evidence required by the publication contract. A structural status
+without its published contract, verification, or independent-review evidence fails
+before integration. Projects retain access-control, retention, and immutability
+ownership for referenced artifacts.
 
-A protected branch prevents merging a checkpoint whose required checks are red or
-missing. It cannot make a flaky check reliable, and it cannot prove that a later
-post-merge rerun will have the same result. Reliability defects still require their
-own reproducer, fix, and regression evidence.
+A protected branch prevents integrating a checkpoint whose required outcomes fail or
+are missing. It cannot make flaky verification reliable, and it cannot prove that a
+later rerun will have the same result. Reliability defects still require their own
+reproducer, fix, and regression evidence.
 
-## Workflow metadata contract
+## Integration identity contract
 
-Workflow metadata is an observability surface, not decoration. Provider integrations
-use kebab-case for filenames, job IDs, step IDs, output IDs, and artifact-name
-segments. Human-facing workflow, run, job, and step names use sentence case and state
-the owned boundary or outcome. Generic labels such as `CI`, `Build`, `Verify`,
-`Check`, `Guard`, or `Gate` are not sufficient by themselves.
+Integration metadata is an observability surface, not decoration. Every adapter
+exposes stable machine identities for required contexts and meaningful human-facing
+names for the operations that produce them. Provider-native workflow, job, step,
+artifact, and environment naming belongs to the adapter contract. Required context
+identities are public policy and change only through a governed migration.
 
-Every workflow declares a meaningful `name` and `run-name`; every job and step
-declares a meaningful `name`, including steps that invoke a reusable action. Matrix
-job names include the platform and runtime dimensions that distinguish their
-evidence. Environment variables use uppercase snake case and describe the value,
-not the implementation step that happens to consume it. Required-check context names
-are public policy identifiers and change only through a governed migration.
+## Adapter boundary
 
-## GitHub adapter
+A provider adapter translates the portable policy into one hosted system without
+changing its meaning. It owns authentication, permission discovery, normalized live
+state, provider resource selection, compare-before-write planning, mutation requests,
+and read-back verification. Adding another provider creates a peer adapter; it does
+not add provider branches to this baseline.
 
-The optional GitHub adapter reads credentials only from `GH_TOKEN` or `GITHUB_TOKEN`.
-Tokens never belong in a policy, plan, command argument, output, or lifecycle
-artifact. Read-only inspection needs repository metadata, rules, pull-request, and
-checks access plus enough repository authority for the API to disclose bypass actors;
-an omitted bypass list is unverifiable and fails closed. Applying a plan additionally
-needs repository Administration write permission.
+Read-only checks fail when the provider cannot disclose enough state to prove the
+baseline. Mutations require a separately authorized plan bound to the current
+repository identity, policy, live state, review head, and required-check evidence.
+Immediately before mutation, the adapter re-reads every bound input; any drift fails
+closed. An adapter never deletes protection, creates bypass authority, or mutates live
+settings implicitly during another lifecycle phase.
 
-Create and validate a policy without contacting GitHub:
+Concrete provider commands, credential sources, permission mappings, resource shapes,
+and automation examples belong to that adapter's distributed guide.
 
-~~~text
-processctl repository init --project-root .
-processctl repository validate --project-root .
-~~~
+## Verification ownership
 
-Inspect live state without mutation:
+The consumer owns domain verification and its execution topology. The integration
+exposes two stable public outcomes:
 
-~~~text
-processctl repository github check \
-  --project-root . \
-  --repository OWNER/REPOSITORY
-~~~
+1. `Change metadata policy` evaluates the current review object's publication
+   metadata whenever that metadata or source identity changes.
+2. `Merge eligibility` evaluates the complete required verification result for the
+   same immutable source. It always reports a final result even when upstream work
+   fails or is intentionally omitted. An omission is acceptable only when the
+   project-owned impact contract proves the work is inapplicable.
 
-Before activation, both required contexts must have completed successfully on the
-same exact pull-request head. Planning reads that evidence, selects at most one
-repository-owned ruleset targeting `~DEFAULT_BRANCH`, preserves stronger unrelated
-rules, and writes a new exclusive plan file:
-
-~~~text
-processctl repository github plan \
-  --project-root . \
-  --repository OWNER/REPOSITORY \
-  --evidence-pr NUMBER \
-  --output repository-governance-plan.json
-~~~
-
-If multiple default-branch rulesets exist and no unique managed owner can be selected,
-planning fails rather than guessing. A plan records the repository identity, policy
-digest, current normalized ruleset digest, desired payload digest, pull-request head,
-and successful GitHub Actions check-run identities.
-
-Application is a separate repository-owner action:
-
-~~~text
-processctl repository github apply \
-  --project-root . \
-  --plan repository-governance-plan.json \
-  --confirm-repository OWNER/REPOSITORY
-~~~
-
-Immediately before POST or PUT, apply re-reads repository identity, ruleset state,
-policy, pull-request head, and latest check runs. Any mismatch fails closed. The
-adapter never deletes a ruleset, never creates a bypass actor, and never mutates live
-settings during bootstrap, sync, adoption, verification, review, merge, or release.
-
-## Workflow ownership
-
-The consumer owns workflow commands and domain jobs. A GitHub consumer normally uses
-two workflows:
-
-1. A lightweight `Change metadata policy` workflow listens for `opened`, `synchronize`, `reopened`,
-   `edited`, `ready_for_review`, and `converted_to_draft`. It validates title, body,
-   branch, commit range, and readiness using the installed public process authority.
-2. Checkpoint verification runs on source synchronization and exposes one final `Merge eligibility`
-   job. That job uses `if: always()` and fails unless every required upstream job or
-   matrix completes successfully. A skipped heavy job is acceptable only when the
-   project-owned impact contract explicitly makes that job inapplicable and the
-   stable gate evaluates the resulting dependency state.
-
-Separating these workflows lets metadata edits refresh `Change metadata policy` without rerunning
-an expensive platform matrix. On a new source checkpoint, both workflows run and the
-remote ruleset requires both current contexts.
+Keeping these outcomes separate allows metadata changes to refresh their own evidence
+without repeating unrelated domain verification. A source change invalidates both
+outcomes and requires current evidence for the new identity.
 
 ## Rollout order
 
 Repository protection is intentionally not self-activating:
 
-1. Add the policy and stable workflows through the repository's existing authorized
-   integration path.
+1. Add the policy and stable outcome producers through the repository's existing
+   authorized integration path.
 2. Observe successful `Change metadata policy` and `Merge eligibility` checks on one
    exact review head.
 3. Run read-only policy validation and create a plan bound to that evidence.
 4. Obtain separate repository-owner authorization for the external settings write.
-5. Apply the current plan, read the ruleset back, and require the check command to
+5. Apply the current plan, read provider protection back, and require the check to
    pass.
-6. Only then rely on the ruleset as a merge or release prerequisite.
+6. Only then rely on the provider protection as an integration or release prerequisite.
 
 The producer follows the same order. Source under development can add and verify the
-contract and workflows, but it does not use itself as authority to mutate GitHub.
-The current immutable public authority—or an owner executing the reviewed exact
-settings manually during the bootstrap window—owns activation.
+contract and adapter, but it does not use itself as authority to mutate the hosted
+system. The current immutable public authority—or an owner applying the reviewed
+exact settings during a bootstrap window—owns activation.
 
-An existing consumer with per-job required contexts migrates only after adopting the
-immutable process release. It adds the two stable gates, maps every project-owned job
-to `Merge eligibility` under its own workflow contract, observes both contexts on one exact
-consumer PR, and then plans an update of its unique existing default-branch ruleset.
-The consumer owns which dependency results may be `skipped`; each exception must be
-derived from its successful impact-selection job. Consumer source and settings never
+An existing consumer with provider-native required contexts migrates only after
+adopting the immutable process release. It adds the two stable outcomes, maps every
+project-owned verification result to `Merge eligibility`, observes both outcomes on
+one exact review head, and then plans an update of its uniquely owned protection
+resource. The consumer owns which dependency results may be omitted; each exception
+must derive from successful impact selection. Consumer source and settings never
 depend on an uncommitted producer checkout.

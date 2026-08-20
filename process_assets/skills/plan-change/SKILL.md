@@ -30,7 +30,7 @@ plan without changing implementation source.
 - Do not edit implementation files during planning.
 - Do not omit required security, compatibility, data, accessibility, rollout, or
   rollback work merely to reduce scope.
-- Do not invent project commands; select profiles from .process/project.json.
+- Do not invent project commands; select profiles from the project manifest.
 
 ## Output
 

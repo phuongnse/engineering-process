@@ -36,6 +36,9 @@ class DistributionDigestTests(unittest.TestCase):
         (root / "release.json").write_text(
             '{"schemaVersion":1,"version":"0.1.0"}\n', encoding="utf-8"
         )
+        (root / "GITHUB_REPOSITORY_ADAPTER.md").write_text(
+            "# Provider adapter\n", encoding="utf-8"
+        )
         (root / "PRODUCTION_STANDARD.md").write_text(
             "# Production standard\n", encoding="utf-8"
         )
@@ -136,6 +139,18 @@ class DistributionDigestTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            self.assertNotEqual(
+                baseline,
+                distribution_digest(root, selected, package_root=package),
+            )
+
+            governance.write_text(
+                "# Repository governance\n", encoding="utf-8"
+            )
+            adapter = root / "GITHUB_REPOSITORY_ADAPTER.md"
+            adapter.write_text(
+                "# Provider adapter\n\nChanged binding.\n", encoding="utf-8"
+            )
             self.assertNotEqual(
                 baseline,
                 distribution_digest(root, selected, package_root=package),

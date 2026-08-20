@@ -46,6 +46,7 @@ engineering_process = ["requirements-*.txt"]
 "share/engineering-process" = [
   "bundles.json",
   "release.json",
+  "GITHUB_REPOSITORY_ADAPTER.md",
   "PRODUCTION_STANDARD.md",
   "REPOSITORY_GOVERNANCE.md",
   "VERSIONING.md",

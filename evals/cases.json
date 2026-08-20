@@ -259,7 +259,7 @@
     {
       "id": "change-generated-api-contract",
       "skill": "change-api",
-      "prompt": "Replace one request field in an API consumed by a generated client after a clean-cutover decision.",
+      "prompt": "Replace one request field in an API consumed by a generated client after the product contract explicitly selects immediate replacement with no compatibility window.",
       "mustInclude": [
         "authoritative wire contract",
         "generated client regeneration",

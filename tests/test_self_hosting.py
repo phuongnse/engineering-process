@@ -398,6 +398,7 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertIn('"process_assets/skills/', pyproject)
         self.assertNotIn('".agents/skills/', pyproject)
+        self.assertIn('"GITHUB_REPOSITORY_ADAPTER.md"', pyproject)
         self.assertIn('"VERSIONING.md"', pyproject)
         self.assertIn('"templates/adopt-process.py"', pyproject)
         self.assertIn('"templates/adopt-process-windows-job.py"', pyproject)

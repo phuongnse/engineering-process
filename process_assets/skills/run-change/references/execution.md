@@ -27,9 +27,9 @@ it. Do not infer broad completion from a focused check.
 ## Engineering method
 
 1. Trace the governing contract and real flow before choosing an owner or design.
-2. Prefer no change, existing code, the standard library, native platform behavior,
-   and installed dependencies before custom mechanisms, while preserving required
-   safety and acceptance behavior.
+2. Prefer no change, existing code, documented runtime primitives, and installed
+   dependencies before custom mechanisms, while preserving required safety and
+   acceptance behavior.
 3. For a defect, prove the smallest reliable failure first, state one hypothesis, test
    one variable, implement the root-cause fix, and prove the behavior afterward.
 4. Treat a proposed path as a workaround when it changes the required owner, runtime,
@@ -68,8 +68,8 @@ genuinely fresh context.
 
 A running or pending reviewer means review pending, not failure or approval. The
 reviewer reads the assignment, diff, contracts, plan, and existing evidence; it runs
-only a focused reproducer for a concrete finding or evidence gap. It never edits
-tracked source or Git state. Any source mutation invalidates the assignment.
+only a focused reproducer for a concrete finding or evidence gap. It never mutates
+source or repository state. Any source mutation invalidates the assignment.
 
 An open required finding produces changes-requested. Preserve its checkpoint and
 evidence, classify the finding against the owning contract, implement the smallest

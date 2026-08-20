@@ -21,23 +21,20 @@ An incompatible release requires migration guidance and owner sign-off. A releas
 with no distributable public change does not advance the package version. Multiple
 changes in one release do not create multiple increments.
 
-Derive the candidate before editing any version surface:
+The process authority derives the candidate from the ordered public changes and
+rejects a mismatched classification, compatibility statement, increment, or schema
+impact. Publication additionally requires the declared predecessor to be the latest
+reachable final release under the selected version contract.
 
-~~~text
-processctl publication plan-version --previous-version 0.1.1 \
-  --change-type capability --change-type fix --json
-~~~
+Development checkpoints do not change package versions. Only a separately reviewed
+release checkpoint updates every declared identity surface together. A published
+immutable version is never reused; a failed public release is corrected under a newly
+derived version. Producer-specific surface mappings belong to the producer release
+guide, not this compatibility policy.
 
-`processctl contract validate --kind release release.json` independently derives the
-same result from `release.json.changes` and rejects a mismatched classification,
-compatibility statement, increment, or schema impact. Publication additionally
-requires the declared previous version to be the latest reachable final SemVer tag.
-
-Development commits do not change package versions. Only a separately reviewed
-release checkpoint updates all identity surfaces together: `release.json`,
-`pyproject.toml`, `engineering_process.VERSION`, tag, release title, wheel, sdist,
-receipt, and attestation names. A published immutable or PyPI version is never
-reused; a failed published release is corrected under a newly derived version.
+Earlier releases whose evidence predates the governed boundary retain explicit
+historical provenance and make no retroactive governance claim. Historical provenance
+cannot classify a new release as governed.
 
 ## Serialized-contract versions
 
@@ -51,10 +48,9 @@ versions never advance merely because the other one changed.
 - A new schema version retains the released reader, documents migration, and adds
   compatibility regressions before it becomes the default example.
 
-A newly introduced artifact starts at `schemaVersion: 1`. The supplemental
-verification manifest and project-adoption migration each follow that rule. Adding
-optional `timeoutSeconds` evidence to verification schema 2 preserves existing
-schema-2 documents and therefore does not advance that artifact's schema version.
+A newly introduced serialized artifact starts at `schemaVersion: 1`. An additive
+optional field preserves the current schema version only when every previously valid
+document retains the same meaning and every historical reader remains supported.
 
 Package `schemaImpact` is `unchanged`, `additive`, or `breaking` for the combined
 release. Additive schema capability requires at least a capability release; a
@@ -62,84 +58,64 @@ breaking schema requires an incompatible release.
 
 ## Release and adoption boundary
 
-Release, self-adoption, and consumer adoption are separate changes:
+Release, self-adoption, and consumer adoption are separate changes regardless of the
+selected package registry, source host, automation service, or execution platform:
 
 1. Release N governs and verifies the source of N+1.
 2. N+1 is published as an immutable release and its public hashes are verified.
-3. Renovate updates the direct input pin, regenerates the complete hash-locked
-   dependency graph, and runs the managed adoption runner before it creates one
-   draft PR containing the process lock and every selected managed asset.
-4. CI validates dependency integrity and the fully materialized adoption. Each
-   platform/runtime job publishes a bounded supplemental evidence bundle bound to the
-   source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
-   The adoption owner then obtains independent review and explicitly merges that same
-   checkpoint. Merge completes adoption; there is no post-merge synchronization.
+3. The configured adoption adapter updates the authority input, materializes complete
+   dependency integrity, and invokes the managed adoption transaction before creating
+   one review candidate containing the authority lock and every selected managed
+   asset.
+4. Project verification validates dependency integrity and the fully materialized
+   adoption. Required environment evidence remains bound to the source and verification
+   identities. The adoption owner obtains independent review and explicitly integrates
+   that same checkpoint. Integration completes adoption; there is no post-integration
+   synchronization.
 5. N+1 governs only changes that begin after the adoption checkpoint.
 
-Renovate PRs are generated adoption candidates, not trusted adoption evidence.
-Automerge is forbidden for process-authority updates. A PR that changes only a
-requirement pin, omits generated hashes or managed assets, or requires a post-merge
-step must fail closed.
+Automation-generated review objects are adoption candidates, not trusted adoption
+evidence. Automatic integration is forbidden for process-authority updates. A
+candidate that changes only an authority input, omits dependency integrity or managed
+assets, or requires a later synchronization step fails closed.
 
-`requirements/process.in` owns the direct public pin and `requirements/process.txt`
-is its pip-compile hash lock. Renovate's exact allowlisted post-upgrade command runs
-`.process/adopt-process.py`; that managed runner creates a bounded temporary
-environment outside the checkout, rejects symlink, junction, or reparse input in
-every supplied lock-path component, and makes one stable private snapshot. Component
-identities reject concurrent parent retargeting. Both the binary-only
-installation and the installed distribution's `processctl adoption apply` are bound
-to that snapshot digest; a live-lock change fails and rolls back materialization.
-POSIX process groups and the side-by-side managed Windows kill-on-close Job Object
-helper bound descendant lifetimes. The command preserves selected optional skills,
-adds newly mandatory core skills, regenerates `.process/process.lock`, and
-synchronizes all managed assets in the draft. Never run the checkout under
-development as the adoption authority.
+The adoption adapter binds installation and application to one stable private input,
+contains child execution through the portable task boundary, and atomically
+synchronizes the authority lock and managed assets. Concurrent input changes or
+partial materialization fail and roll back. Code under development never acts as its
+own adoption authority; concrete acquisition, locking, and containment mechanisms
+belong to adapter owners.
 
 Consumer-owned project policy is never inferred. When a release needs project
-configuration activation, the consumer adds one bounded declarative migration at
-`.process/adoption-migrations/<target-version>.json`. It binds the exact previous and
-target process versions, source and target project-manifest digests, and the complete
-target manifest. Only the installed target distribution validates and applies its
-exact file. The active project manifest and all managed targets share one rollback
-transaction; a stale source digest, wrong target version, invalid target manifest,
-concurrent mutation, or partial write fails closed. The migration remains as durable
-review evidence and repeated adoption is idempotent. Renovate allowlists both the
-migration and `.process/project.json`, so activation is reviewed in the same draft
-and never deferred until after merge. Optional capabilities without a declared
-migration remain disabled; configuration required by the target distribution must
-validate or adoption is blocked.
+configuration activation, the consumer supplies one bounded declarative migration
+that binds the exact source and target authorities plus the complete target project
+contract. Only the installed target authority validates and applies it. Project
+configuration and all managed targets share one rollback transaction; stale identity,
+wrong target version, invalid configuration, concurrent mutation, or partial write
+fails closed. The migration remains durable review evidence and repeated adoption is
+idempotent. Activation is reviewed in the same candidate and never deferred until
+after integration. Optional capabilities without a declared migration remain
+disabled; missing required configuration blocks adoption.
 
-Repository-governance schemas, stable gate semantics, provider plan/apply contracts,
-and CLI commands are public capabilities. Introducing them requires at least a minor
-release and records additive schema impact. Development adds the surfaces without
-changing package identity; the later release checkpoint records the capability once
-in `release.json`. Consumer process adoption and live repository-ruleset activation
-remain separate changes with separate authorization. A process lock update never
-implicitly grants Administration permission or mutates a hosted repository.
+New public contracts, stable gate semantics, adapter interfaces, and authority
+commands are capabilities and require a compatible release classification. A change
+to an existing meaning is breaking even when its serialized shape is unchanged.
+Development introduces these surfaces without changing package identity; the later
+release contract records each public change exactly once.
 
-Requiring canonical HTTPS evidence references for satisfied publication requirements
-tightens the existing unversioned PR-body contract. Before 1.0 it is classified as a
-breaking public change in the later minor release. Existing drafts remain valid while
-requirements are pending; before becoming ready, each completed section migrates by
-publishing and linking its contract, verification, or independent-review artifact.
-
-Validate a prepared migration before the Renovate runner consumes it:
-
-~~~text
-processctl contract validate --kind adoption-migration \
-  .process/adoption-migrations/<target-version>.json
-~~~
-
-The Renovate administrator must allow only the literal managed runner command. If
-post-upgrade commands are unavailable or the pip-compile artifact update fails,
-Renovate cannot produce an adoptable PR and the update remains blocked rather than
-falling back to a partial proposal.
+Consumer adoption and activation of external integration policy remain separate
+changes with separate authorization. Updating a process authority never grants an
+external permission or mutates a hosted system implicitly. If the selected adoption
+adapter cannot materialize the complete candidate, adoption remains blocked rather
+than falling back to a partial proposal.
 
 ## Responsibility
 
 - Change owners classify public behavior; they do not choose a version number.
 - The release owner freezes scope and records the exact ordered change set.
-- `processctl` derives and validates classification, compatibility, and identity.
-- Renovate generates complete draft adoption candidates without merge authority.
+- The process authority derives and validates classification, compatibility, and
+  identity.
+- An adoption adapter may generate a complete review candidate but has no integration
+  authority.
 - Independent review verifies the classification and migration evidence.
-- The repository owner alone authorizes release and adoption merges.
+- The repository owner alone authorizes release and adoption integration.

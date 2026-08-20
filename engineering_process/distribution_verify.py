@@ -32,6 +32,7 @@ MAX_ARCHIVE_COMPRESSION_RATIO = 200
 SNAPSHOT_TIMEOUT_SECONDS = 30.0
 FORBIDDEN_PARTS = {".agents", ".process", "__pycache__", "build", "dist"}
 REQUIRED_SUFFIXES = {
+    "GITHUB_REPOSITORY_ADAPTER.md",
     "PRODUCTION_STANDARD.md",
     "REPOSITORY_GOVERNANCE.md",
     "engineering_process/requirements-release.txt",

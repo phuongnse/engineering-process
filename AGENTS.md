@@ -15,6 +15,18 @@ CLI, schemas, and tests.
 - Preserve ownership: this repository owns the complete lifecycle and generic gates;
   consumer repositories own domain policy, commands, durable product specifications,
   acceptance content, and release decisions.
+- Preserve documentation abstraction: `PRODUCTION_STANDARD.md` owns only portable
+  outcomes, invariants, ownership, and failure semantics. Provider names, platform
+  primitives, source-control commands, workflow syntax, serialized layouts, and
+  consumer rollout choices belong to their contract, adapter, implementation, or test
+  owners. Link downward instead of copying mechanisms upward, and register every new
+  high-level normative document in the abstraction regression test.
+- Enforce abstraction through registered layers, permitted dependency direction,
+  document shape, and independent semantic review. Do not maintain a blacklist of
+  current providers, platforms, tools, or strategies as a substitute for ownership.
+- Treat product compatibility, deployment, migration, and retirement strategies as
+  consumer decisions. Process guidance may require declared criteria and evidence but
+  must not infer a strategy from an example or implementation.
 - Govern this repository through the public N-1 distribution pinned in
   `.process/process.lock`; source under development is a verification target, never
   its own lifecycle authority. Keep managed N-1 skills in `.agents/skills` and edit

@@ -5,6 +5,23 @@ policy and commands; this repository supplies the same specification, planning,
 implementation, verification, independent-review, finding-loop, and completion
 gates to every project.
 
+## Documentation ownership
+
+The documents are intentionally layered. [`PRODUCTION_STANDARD.md`](./PRODUCTION_STANDARD.md)
+owns portable outcomes and invariants only. [`VERSIONING.md`](./VERSIONING.md) owns
+public compatibility and adoption classification, while
+[`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md) owns hosted-repository
+integration semantics; concrete provider bindings have peer adapter owners such as
+[`GITHUB_REPOSITORY_ADAPTER.md`](./GITHUB_REPOSITORY_ADAPTER.md).
+[`SELF_HOSTING.md`](./SELF_HOSTING.md) and
+[`RELEASING.md`](./RELEASING.md) are producer-specific operational guides. Schemas,
+CLI modules, platform backends, and tests own executable details. This README routes
+and demonstrates those interfaces; when wording overlaps, the named owner controls.
+
+Consumer product decisions—including compatibility, deployment, migration, and
+retirement strategy—remain in the consumer's durable specification. Process examples
+and evaluation fixtures exercise a supplied decision; they do not create one.
+
 The enforcement boundary has three parts:
 
 1. Portable Agent Skills tell any compatible agent how to perform each phase.
@@ -24,11 +41,11 @@ boundary.
 
 Hosted repository integration is declared separately in
 `.process/repository-governance.json`. The portable baseline requires
-pull-request-only default-branch updates, blocked deletion and non-fast-forward
-changes, no bypass, and the stable `Change metadata policy` plus `Merge eligibility`
-contexts. `processctl repository ...` validates the local policy and provides a
-bounded compare-before-write GitHub adapter; external settings changes always require
-separate repository-owner authorization. See
+review-object-only default-branch updates, blocked deletion and history rewrites, no
+bypass, and the stable `Change metadata policy` plus `Merge eligibility`
+contexts. `processctl repository ...` validates the local policy; a selected provider
+adapter supplies bounded compare-before-write enforcement. External settings changes
+always require separate repository-owner authorization. See
 [`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md).
 
 Core semantics never name a model, agent product, orchestration API, or code-indexing
@@ -48,7 +65,10 @@ under test never supplies its own lifecycle authority. Managed N-1 skills live i
 in [`SELF_HOSTING.md`](./SELF_HOSTING.md); package, schema, release, and adoption
 versions are governed by [`VERSIONING.md`](./VERSIONING.md).
 
-Python 3.11 or newer and Git are required. Windows command containment requires
+## Current implementation support
+
+The portable contracts above do not change when implementation support expands.
+The current distribution requires Python 3.11 or newer and Git. Windows command containment requires
 Windows 10 or Windows Server 2016 and newer so Job Object membership can be attached
 atomically during process creation. Lifecycle state is stored under ignored
 `.process/runs/`; completion, review, and verification are bound to a clean Git
@@ -73,6 +93,11 @@ specified. They must not be placed in verification profiles or wrapped by
 `processctl exec`.
 
 ## Consumer bootstrap
+
+The current distribution materializes its shipped GitHub review adapter during
+bootstrap. Portable lifecycle, project, publication, and repository-governance
+contracts remain independent of that placement; another provider is added as a peer
+adapter rather than as a branch in those contracts.
 
 Add only project-owned configuration:
 
@@ -421,6 +446,10 @@ the retained validated receipt; it is never presented again as a complete local 
 
 ## Publication contract
 
+The commands below show the current source-host adapter. Portable publication policy
+owns review metadata and evidence outcomes; adapter commands own provider naming and
+placement.
+
 Validate common metadata before creating or updating a review object:
 
 ~~~text
@@ -474,35 +503,28 @@ authenticates who produced it.
   templates, bundle catalog, and
   complete selected skill resources. Startup fails when installed runtime dependency
   versions differ from that lock.
-- `requirements/process.in` owns the direct authority pin. Renovate uses the
-  pip-compile manager to update its complete binary-only hash lock, then the managed
-  `.process/adopt-process.py` runner rejects symlink, junction, or reparse input in
-  every supplied path component, snapshots one bounded stable copy outside the
-  checkout, binds every path component against concurrent retargeting, and uses that
-  exact digest for installation and `processctl adoption apply`. POSIX process groups
-  and a managed Windows kill-on-close Job Object contain every child. The resulting
-  draft contains the new lock, managed contracts, skill snapshots, and any
-  target-version consumer-owned project migration; after CI and fresh-context
-  independent review, merge is the end of adoption.
+- The adoption contract owns one complete authority input, dependency-integrity
+  evidence, managed-asset transaction, optional consumer migration, isolated review,
+  and explicit integration boundary. [`VERSIONING.md`](./VERSIONING.md) owns the
+  portable sequence; producer automation and containment details remain in
+  [`SELF_HOSTING.md`](./SELF_HOSTING.md) and its implementation owners.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest
   reachable prior tag, immutable checkpoint, and main ancestry.
-- Remote matrix jobs publish one bounded supplemental-verification schema-1 bundle
-  per platform/runtime. Its manifest binds the exact source and workflow checkpoints,
-  automation actor/context, run URL, platform/runtime identity, selected impact,
-  configured timeouts, output byte counts/digests, truncation state, and the hashes of
-  its schema-2 profile reports. GitHub's artifact id and digest complete the immutable
-  remote reference; this supplements rather than replaces N-1 lifecycle evidence.
+- Remote verification publishes bounded supplemental evidence for every required
+  environment. Provider adapters own run and artifact representations; all evidence
+  remains bound to the exact source, verification identity, selected impact, resource
+  limits, and profile reports, and supplements rather than replaces N-1 authority.
 - New lifecycle work uses bounded plan schema 2. Selective-impact consumers may add
   the optional capability on project schema 3, while new integrations use bounded
   project schema 4. Plan schema 1 and the pre-existing fields of project schemas 1-3
   retain their published validation behavior instead of being tightened in place.
-- `release.json` is the single release-identity owner. Governed GitHub tag and title
-  are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
-  lifecycle receipt, and later consumer locks must match it. Earlier immutable
-  releases are recorded explicitly as bootstrap history rather than retroactively
-  claimed as governed.
+- `release.json` is the single release-identity owner. Every declared package,
+  publication, artifact, receipt, and later consumer identity must match it. Concrete
+  producer mappings belong to [`RELEASING.md`](./RELEASING.md); earlier immutable
+  releases remain explicit bootstrap history rather than retroactive governance
+  claims.
 - `VERSIONING.md` owns package-versus-schema classification and the explicit
   Renovate-assisted adoption boundary. `processctl publication plan-version` derives
   the only permitted next package version from the release change types.
@@ -531,5 +553,5 @@ python -m venv .venv
 Version 0.x remains a compatibility pilot. A 1.0 release requires publishing the CLI,
 running consumer CI through the published artifact, and completing forward tests on
 representative agent hosts. Portable evaluation fixtures live in `evals/cases.json`.
-Maintainer release steps and the secretless PyPI publisher identity are defined in
-[`RELEASING.md`](https://github.com/phuongnse/engineering-process/blob/main/RELEASING.md).
+Maintainer release steps and producer publication identity are defined in
+[`RELEASING.md`](./RELEASING.md).
