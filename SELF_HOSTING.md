@@ -27,14 +27,23 @@ adoption checkpoint is reviewed and merged.
 
 ## Initial bootstrap root
 
-Self-hosting began from commit `5055d37dc4d421ac97e9bf2329b56c6a2a69d5eb`
-using public release `0.1.1`. The trusted wheel SHA-256 is
+The clean prospective self-hosting lineage begins from immutable public release
+`v0.1.1` at commit `df6e682d1bba1dc1aa82a2f4bbc21afc460c4bd5`.
+The trusted wheel SHA-256 is
 `3211775274a05569e006daae7e026f34295df9da2b2244f464f08aee00352f4f`, and the
 selected full-distribution digest is
 `sha256:73a6d3714ced574a4e85b3317bd713ee3fe0c08055ee154514706ae7eeb71603`.
 The installed authority resolved outside the checkout and `processctl doctor` passed
 for the producer's development profile before change
-`self-hosted-impact-engine` was registered.
+`bootstrap-authority-foundation` was specified, planned, and registered for
+implementation.
+
+An earlier development candidate started from commit
+`5055d37dc4d421ac97e9bf2329b56c6a2a69d5eb` and used lifecycle
+`self-hosted-impact-engine`. That candidate and `v0.1.1` have related commit history
+and an equal source tree at their branch point, but commit and lifecycle identities
+are provenance data, not interchangeable aliases. This clean lineage does not reuse
+the earlier candidate's lifecycle evidence as its trust root.
 
 This one-time bootstrap establishes the root of trust; it is not a recurring bypass.
 All later source changes require the normal `.process` lifecycle and a clean immutable
