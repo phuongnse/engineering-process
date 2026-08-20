@@ -41,8 +41,9 @@ repeatable execution deterministic.
 - Treat `readOnly` and command mutation scopes as project-owner attestations, not a
   sandbox. Reject an incomplete scope declaration instead of assuming confinement.
 - Run only foreground commands. A declared command must not daemonize, create a
-  detached session, or leave background work behind; portable POSIX execution cannot
-  contain a process that deliberately escapes its owned process group.
+  detached execution context, or leave background work behind. Do not rely on an
+  execution adapter to recover a command that deliberately escapes its declared
+  containment boundary.
 - Keep detached services, interactive shells, log followers, watchers, and stdio
   servers in their project-owned lifecycle. Do not force them through the finite-task
   executor or use them as verification checks.

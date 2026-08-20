@@ -1,0 +1,60 @@
+name: Change metadata policy
+run-name: Change metadata policy · PR #${{ github.event.pull_request.number }}
+
+on:
+  pull_request:
+    branches: [main]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - ready_for_review
+      - converted_to_draft
+
+permissions:
+  contents: read
+
+jobs:
+  change-metadata-policy:
+    name: Change metadata policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout change-request checkpoint
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install the public N-1 process authority
+        run: python -m pip install --require-hashes -r requirements/process.txt
+
+      - name: Read change metadata from the triggering event
+        run: >-
+          jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH"
+          > "$RUNNER_TEMP/change-description.md"
+
+      - name: Validate current change metadata
+        run: |
+          processctl publication validate-pr \
+            --title "$CHANGE_TITLE" \
+            --branch "$CHANGE_BRANCH" \
+            --state "$CHANGE_STATE" \
+            --body-file "$RUNNER_TEMP/change-description.md"
+          processctl publication validate-range \
+            --project-root . \
+            --branch "$CHANGE_BRANCH" \
+            --range "$CHANGE_BASE_SHA..$CHANGE_HEAD_SHA"
+        env:
+          CHANGE_TITLE: ${{ github.event.pull_request.title }}
+          CHANGE_BRANCH: ${{ github.head_ref }}
+          CHANGE_STATE: ${{ github.event.pull_request.draft && 'draft' || 'ready' }}
+          CHANGE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CHANGE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}

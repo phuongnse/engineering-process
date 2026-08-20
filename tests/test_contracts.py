@@ -12,6 +12,7 @@ from engineering_process.contracts import (
     validate_process_lock,
     validate_project,
     validate_release,
+    validate_repository_governance,
     validate_review,
 )
 
@@ -388,6 +389,72 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_repository_governance_requires_non_weakenable_sorted_baseline(self):
+        document = {
+            "schemaVersion": 2,
+            "defaultBranch": {
+                "requireChangeRequest": True,
+                "blockDeletion": True,
+                "blockHistoryRewrite": True,
+                "bypass": "forbidden",
+                "requireUpToDate": False,
+                "requiredChecks": ["Change metadata policy", "Merge eligibility"],
+            },
+        }
+
+        policy = validate_repository_governance(document)
+
+        self.assertFalse(policy.require_up_to_date)
+        self.assertEqual(
+            ("Change metadata policy", "Merge eligibility"),
+            policy.required_checks,
+        )
+
+        legacy = json.loads(json.dumps(document))
+        legacy["schemaVersion"] = 1
+        legacy["defaultBranch"]["blockNonFastForward"] = legacy[
+            "defaultBranch"
+        ].pop("blockHistoryRewrite")
+        legacy_policy = validate_repository_governance(legacy)
+        self.assertEqual(policy, legacy_policy)
+
+        wrong_v2_field = json.loads(json.dumps(document))
+        wrong_v2_field["defaultBranch"]["blockNonFastForward"] = wrong_v2_field[
+            "defaultBranch"
+        ].pop("blockHistoryRewrite")
+        with self.assertRaisesRegex(ContractError, "blockHistoryRewrite"):
+            validate_repository_governance(wrong_v2_field)
+
+        wrong_v1_field = json.loads(json.dumps(legacy))
+        wrong_v1_field["defaultBranch"]["blockHistoryRewrite"] = wrong_v1_field[
+            "defaultBranch"
+        ].pop("blockNonFastForward")
+        with self.assertRaisesRegex(ContractError, "blockNonFastForward"):
+            validate_repository_governance(wrong_v1_field)
+
+        weakened = json.loads(json.dumps(document))
+        weakened["defaultBranch"]["requireChangeRequest"] = False
+        with self.assertRaisesRegex(
+            ContractError, "requireChangeRequest: must be true"
+        ):
+            validate_repository_governance(weakened)
+
+        missing_gate = json.loads(json.dumps(document))
+        missing_gate["defaultBranch"]["requiredChecks"] = [
+            "Change metadata policy",
+            "Project tests",
+        ]
+        with self.assertRaisesRegex(ContractError, "missing standard checks"):
+            validate_repository_governance(missing_gate)
+
+        unsorted = json.loads(json.dumps(document))
+        unsorted["defaultBranch"]["requiredChecks"] = [
+            "Merge eligibility",
+            "Change metadata policy",
+        ]
+        with self.assertRaisesRegex(ContractError, "must be sorted"):
+            validate_repository_governance(unsorted)
+
     def test_release_version_is_derived_from_highest_public_change(self):
         cases = (
             ("0.1.1", ["fix"], "0.1.2", "patch", "backward-compatible"),

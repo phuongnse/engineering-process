@@ -36,8 +36,16 @@ from engineering_process.lifecycle import (
 
 
 class LifecycleTests(unittest.TestCase):
+    repository_autocrlf: str | None = None
+
     def initialize_repository(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        if self.repository_autocrlf is not None:
+            subprocess.run(
+                ["git", "config", "core.autocrlf", self.repository_autocrlf],
+                cwd=root,
+                check=True,
+            )
         subprocess.run(
             ["git", "config", "user.email", "process-test@example.invalid"],
             cwd=root,
@@ -606,13 +614,61 @@ class LifecycleTests(unittest.TestCase):
                     ),
                 )
 
+    def test_source_state_rejection_summary_is_attributable_and_bounded(self):
+        digest_one = f"sha256:{'1' * 64}"
+        digest_two = f"sha256:{'2' * 64}"
+        diagnostics = {
+            "issues": [
+                {
+                    "operation": "status",
+                    "failureKind": "execution-error",
+                    "exitCode": None,
+                    "stderr": "",
+                    "stderrSha256": hashlib.sha256(b"").hexdigest(),
+                    "error": "x" * 700,
+                    "errorSha256": hashlib.sha256(b"x" * 700).hexdigest(),
+                }
+            ],
+            "ignoredBytecodeSha256": digest_one,
+            "trackedIndexSha256": digest_one,
+            "statusSha256": digest_one,
+            "diffSha256": digest_one,
+            "untrackedSha256": digest_one,
+            "untrackedPathCount": 0,
+            "untrackedBytes": 0,
+        }
+        completed = {**diagnostics, "issues": [], "statusSha256": digest_two}
+
+        summary = lifecycle_module._source_state_diagnostic_summary(
+            {
+                "sourceStateDiagnostics": diagnostics,
+                "completedSourceStateDiagnostics": completed,
+            }
+        )
+
+        self.assertIsNotNone(summary)
+        parsed = json.loads(summary or "{}")
+        issue = parsed["start"]["issues"][0]
+        self.assertEqual("status", issue["operation"])
+        self.assertEqual("execution-error", issue["failureKind"])
+        self.assertEqual(512, len(issue["detail"]))
+        self.assertEqual(
+            digest_two,
+            parsed["changedComponents"]["statusSha256"]["completion"],
+        )
+
     @unittest.skipUnless(
         sys.platform == "win32", "Windows lifecycle repetition evidence"
     )
     def test_requested_changes_transition_repeats_on_fresh_windows_repositories(self):
-        for iteration in range(8):
-            with self.subTest(iteration=iteration):
-                self.test_requested_changes_start_a_new_cycle_and_invalidate_evidence()
+        try:
+            for autocrlf in ("false", "input", "true"):
+                self.repository_autocrlf = autocrlf
+                for iteration in range(4):
+                    with self.subTest(autocrlf=autocrlf, iteration=iteration):
+                        self.test_requested_changes_start_a_new_cycle_and_invalidate_evidence()
+        finally:
+            self.repository_autocrlf = None
 
     def test_requested_changes_start_a_new_cycle_and_invalidate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

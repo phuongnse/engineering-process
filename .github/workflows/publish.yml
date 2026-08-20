@@ -1,4 +1,5 @@
-name: Publish
+name: Publish release
+run-name: Publish release · ${{ github.event.release.tag_name }}
 
 on:
   release:
@@ -8,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  release-validation:
     name: Revalidate immutable release assets
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -16,12 +17,14 @@ jobs:
       attestations: read
       contents: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout immutable release checkpoint
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
 
@@ -54,9 +57,9 @@ jobs:
             gh release download "$GITHUB_REF_NAME" \
               --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
-          printf 'RECEIPT_PATH=%s\n' \
+          printf 'LIFECYCLE_RECEIPT_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$receipt_asset" >> "$GITHUB_ENV"
-          printf 'ATTESTATION_PATH=%s\n' \
+          printf 'DISTRIBUTION_ATTESTATION_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$attestation_asset" >> "$GITHUB_ENV"
 
       - name: Validate immutable release identity and artifact bytes
@@ -69,29 +72,29 @@ jobs:
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
           cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
             "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
-          gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
-          gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$LIFECYCLE_RECEIPT_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$DISTRIBUTION_ATTESTATION_PATH"
           while IFS= read -r artifact; do
             gh release verify-asset "$GITHUB_REF_NAME" \
               "$RUNNER_TEMP/release-assets/distributions/$artifact"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
-            "$RECEIPT_PATH" --json
+            "$LIFECYCLE_RECEIPT_PATH" --json
           python processctl.py publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
             --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
             --main-ref origin/main \
-            --receipt "$RECEIPT_PATH"
+            --receipt "$LIFECYCLE_RECEIPT_PATH"
           python processctl.py publication validate-artifacts \
             --project-root . \
             --artifacts "$RUNNER_TEMP/release-assets/distributions" \
-            --attestation "$ATTESTATION_PATH" \
+            --attestation "$DISTRIBUTION_ATTESTATION_PATH" \
             --commit "$GITHUB_SHA" \
-            --receipt "$RECEIPT_PATH"
+            --receipt "$LIFECYCLE_RECEIPT_PATH"
 
-      - name: Verify prepared wheel
+      - name: Verify immutable release wheel
         run: |
           python -m pip install --force-reinstall \
             --no-deps \
@@ -101,9 +104,9 @@ jobs:
           processctl skills validate
           python -m unittest discover -s "$GITHUB_WORKSPACE/tests" -p 'test_*.py'
 
-  pypi:
-    name: Publish to PyPI
-    needs: build
+  pypi-publication:
+    name: Publish distributions to PyPI
+    needs: release-validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -114,12 +117,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout immutable release checkpoint
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
 
@@ -152,9 +157,9 @@ jobs:
             gh release download "$GITHUB_REF_NAME" \
               --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
-          printf 'RECEIPT_PATH=%s\n' \
+          printf 'LIFECYCLE_RECEIPT_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$receipt_asset" >> "$GITHUB_ENV"
-          printf 'ATTESTATION_PATH=%s\n' \
+          printf 'DISTRIBUTION_ATTESTATION_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$attestation_asset" >> "$GITHUB_ENV"
 
       - name: Revalidate immutable release immediately before publication
@@ -167,27 +172,27 @@ jobs:
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
           cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
             "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
-          gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
-          gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$LIFECYCLE_RECEIPT_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$DISTRIBUTION_ATTESTATION_PATH"
           while IFS= read -r artifact; do
             gh release verify-asset "$GITHUB_REF_NAME" \
               "$RUNNER_TEMP/release-assets/distributions/$artifact"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
-            "$RECEIPT_PATH" --json
+            "$LIFECYCLE_RECEIPT_PATH" --json
           python processctl.py publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
             --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
             --main-ref origin/main \
-            --receipt "$RECEIPT_PATH"
+            --receipt "$LIFECYCLE_RECEIPT_PATH"
           python processctl.py publication validate-artifacts \
             --project-root . \
             --artifacts "$RUNNER_TEMP/release-assets/distributions" \
-            --attestation "$ATTESTATION_PATH" \
+            --attestation "$DISTRIBUTION_ATTESTATION_PATH" \
             --commit "$GITHUB_SHA" \
-            --receipt "$RECEIPT_PATH"
+            --receipt "$LIFECYCLE_RECEIPT_PATH"
 
       - name: Publish distributions with attestations
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1

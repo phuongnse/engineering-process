@@ -245,6 +245,12 @@ class Release:
     provenance_mode: str = "legacy"
 
 
+@dataclass(frozen=True)
+class RepositoryGovernance:
+    require_up_to_date: bool
+    required_checks: tuple[str, ...]
+
+
 def read_json(path: Path) -> Any:
     try:
         data = path.read_bytes()
@@ -1294,6 +1300,79 @@ def validate_adoption_migration(
         )
 
 
+def validate_repository_governance(
+    document: Any, path: str = "repository governance"
+) -> RepositoryGovernance:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={"schemaVersion", "defaultBranch"},
+        optional={"$schema"},
+        path=path,
+    )
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    default_branch = _object(value["defaultBranch"], f"{path}.defaultBranch")
+    history_field = (
+        "blockNonFastForward" if schema_version == 1 else "blockHistoryRewrite"
+    )
+    _exact_keys(
+        default_branch,
+        required={
+            "requireChangeRequest",
+            "blockDeletion",
+            history_field,
+            "bypass",
+            "requireUpToDate",
+            "requiredChecks",
+        },
+        path=f"{path}.defaultBranch",
+    )
+    for field in (
+        "requireChangeRequest",
+        "blockDeletion",
+        history_field,
+    ):
+        if default_branch[field] is not True:
+            raise ContractError(f"{path}.defaultBranch.{field}: must be true")
+    if default_branch["bypass"] != "forbidden":
+        raise ContractError(f"{path}.defaultBranch.bypass: must be forbidden")
+    require_up_to_date = default_branch["requireUpToDate"]
+    if not isinstance(require_up_to_date, bool):
+        raise ContractError(
+            f"{path}.defaultBranch.requireUpToDate: must be a boolean"
+        )
+    checks = _string_list(
+        default_branch["requiredChecks"],
+        f"{path}.defaultBranch.requiredChecks",
+        minimum=2,
+        maximum=64,
+    )
+    for index, check in enumerate(checks):
+        if len(check) > 100 or any(
+            ord(character) < 32 or ord(character) == 127 for character in check
+        ):
+            raise ContractError(
+                f"{path}.defaultBranch.requiredChecks[{index}]: "
+                "must be a printable check context of at most 100 characters"
+            )
+    if checks != sorted(checks):
+        raise ContractError(
+            f"{path}.defaultBranch.requiredChecks: must be sorted"
+        )
+    missing = sorted({"Change metadata policy", "Merge eligibility"} - set(checks))
+    if missing:
+        raise ContractError(
+            f"{path}.defaultBranch.requiredChecks: missing standard checks: "
+            + ", ".join(missing)
+        )
+    return RepositoryGovernance(
+        require_up_to_date=require_up_to_date,
+        required_checks=tuple(checks),
+    )
+
+
 def validate_release(document: Any, path: str = "release") -> Release:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -2280,6 +2359,171 @@ def _verification_reference(value: Any, path: str) -> None:
         raise ContractError(f"{path}.checkpoint: invalid commit digest")
 
 
+def _validate_source_state_diagnostics(value: Any, path: str) -> None:
+    diagnostics = _object(value, path)
+    _exact_keys(
+        diagnostics,
+        required={
+            "issues",
+            "ignoredBytecodeSha256",
+            "trackedIndexSha256",
+            "statusSha256",
+            "diffSha256",
+            "untrackedSha256",
+            "untrackedPathCount",
+            "untrackedBytes",
+        },
+        path=path,
+    )
+    issues = diagnostics["issues"]
+    if not isinstance(issues, list) or len(issues) > 16:
+        raise ContractError(f"{path}.issues: must contain at most 16 items")
+    operations = {
+        "ignored-sourceless-bytecode",
+        "tracked-index",
+        "status",
+        "head",
+        "tracked-diff",
+        "untracked-paths",
+    }
+    for index, raw_issue in enumerate(issues):
+        issue_path = f"{path}.issues[{index}]"
+        issue = _object(raw_issue, issue_path)
+        _exact_keys(
+            issue,
+            required={
+                "operation",
+                "command",
+                "failureKind",
+                "exitCode",
+                "stderr",
+                "stderrBytes",
+                "stderrSha256",
+                "stderrTruncated",
+                "error",
+                "errorBytes",
+                "errorSha256",
+                "errorTruncated",
+            },
+            path=issue_path,
+        )
+        if issue["operation"] not in operations:
+            raise ContractError(f"{issue_path}.operation: invalid operation")
+        if issue["failureKind"] not in {"nonzero-exit", "execution-error"}:
+            raise ContractError(f"{issue_path}.failureKind: invalid failure kind")
+        command = _string_list(
+            issue["command"], f"{issue_path}.command", maximum=32
+        )
+        if command[0] != "git" or any(len(argument) > 512 for argument in command):
+            raise ContractError(f"{issue_path}.command: invalid Git command")
+        exit_code = issue["exitCode"]
+        if exit_code is not None and (
+            isinstance(exit_code, bool) or not isinstance(exit_code, int)
+        ):
+            raise ContractError(f"{issue_path}.exitCode: invalid exit code")
+        stderr = issue["stderr"]
+        if (
+            not isinstance(stderr, str)
+            or len(stderr) > 4096
+            or "\x00" in stderr
+        ):
+            raise ContractError(f"{issue_path}.stderr: invalid bounded text")
+        stderr_bytes = issue["stderrBytes"]
+        if (
+            isinstance(stderr_bytes, bool)
+            or not isinstance(stderr_bytes, int)
+            or stderr_bytes < 0
+            or stderr_bytes > 16_384
+        ):
+            raise ContractError(f"{issue_path}.stderrBytes: invalid byte count")
+        if (
+            not isinstance(issue["stderrSha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", issue["stderrSha256"]) is None
+        ):
+            raise ContractError(f"{issue_path}.stderrSha256: invalid digest")
+        if not isinstance(issue["stderrTruncated"], bool):
+            raise ContractError(f"{issue_path}.stderrTruncated: must be boolean")
+        error = issue["error"]
+        if (
+            not isinstance(error, str)
+            or len(error) > 4096
+            or "\x00" in error
+        ):
+            raise ContractError(f"{issue_path}.error: invalid bounded text")
+        error_bytes = issue["errorBytes"]
+        if (
+            isinstance(error_bytes, bool)
+            or not isinstance(error_bytes, int)
+            or error_bytes < 0
+            or error_bytes > 16_384
+        ):
+            raise ContractError(f"{issue_path}.errorBytes: invalid byte count")
+        if (
+            not isinstance(issue["errorSha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", issue["errorSha256"]) is None
+        ):
+            raise ContractError(f"{issue_path}.errorSha256: invalid digest")
+        if not isinstance(issue["errorTruncated"], bool):
+            raise ContractError(f"{issue_path}.errorTruncated: must be boolean")
+        empty_digest = hashlib.sha256(b"").hexdigest()
+        if issue["failureKind"] == "nonzero-exit":
+            if exit_code is None:
+                raise ContractError(
+                    f"{issue_path}.exitCode: required for nonzero exit"
+                )
+            if (
+                error
+                or error_bytes != 0
+                or issue["errorSha256"] != empty_digest
+                or issue["errorTruncated"]
+            ):
+                raise ContractError(
+                    f"{issue_path}.error: unexpected for nonzero exit"
+                )
+        else:
+            if exit_code is not None:
+                raise ContractError(
+                    f"{issue_path}.exitCode: unavailable for execution error"
+                )
+            if (
+                stderr
+                or stderr_bytes != 0
+                or issue["stderrSha256"] != empty_digest
+                or issue["stderrTruncated"]
+            ):
+                raise ContractError(
+                    f"{issue_path}.stderr: unexpected for execution error"
+                )
+            if not error or error_bytes == 0:
+                raise ContractError(
+                    f"{issue_path}.error: required for execution error"
+                )
+    for name in (
+        "ignoredBytecodeSha256",
+        "trackedIndexSha256",
+        "statusSha256",
+        "diffSha256",
+        "untrackedSha256",
+    ):
+        digest = diagnostics[name]
+        if digest is not None and (
+            not isinstance(digest, str) or DIGEST_PATTERN.fullmatch(digest) is None
+        ):
+            raise ContractError(f"{path}.{name}: must be null or a sha256 digest")
+    for name, maximum in (
+        ("untrackedPathCount", 5000),
+        ("untrackedBytes", 32_000_000),
+    ):
+        count = diagnostics[name]
+        if count is not None and (
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 0
+            or count > maximum
+        ):
+            raise ContractError(f"{path}.{name}: invalid bounded count")
+
+
 def validate_verification(document: Any, path: str = "verification") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -2302,7 +2546,11 @@ def validate_verification(document: Any, path: str = "verification") -> None:
     _exact_keys(
         value,
         required=required | ({"impact"} if schema_version == 2 else set()),
-        optional={"impact"} if schema_version == 1 else set(),
+        optional=(
+            {"impact"}
+            if schema_version == 1
+            else {"sourceStateDiagnostics", "completedSourceStateDiagnostics"}
+        ),
         path=path,
     )
     project = _string(value["project"], f"{path}.project", max_length=128)
@@ -2326,6 +2574,9 @@ def validate_verification(document: Any, path: str = "verification") -> None:
             raise ContractError(f"{path}.{name}: must be null or a sha256 digest")
     if not isinstance(value["sourceChangedDuringVerification"], bool):
         raise ContractError(f"{path}.sourceChangedDuringVerification: must be boolean")
+    for name in ("sourceStateDiagnostics", "completedSourceStateDiagnostics"):
+        if name in value:
+            _validate_source_state_diagnostics(value[name], f"{path}.{name}")
     _string(value["startedAt"], f"{path}.startedAt", max_length=64)
     _string(value["completedAt"], f"{path}.completedAt", max_length=64)
     if value["status"] not in {"passed", "failed"}:

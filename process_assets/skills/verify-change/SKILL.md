@@ -12,8 +12,8 @@ change while avoiding unrelated broad verification.
 
 ## Workflow
 
-1. Read the lifecycle state, change contract, nearest AGENTS.md, and
-   .process/project.json.
+1. Read the lifecycle state, change contract, nearest project instructions, and
+   project manifest.
 2. Map each affected acceptance outcome to the smallest project-owned profile that
    proves it. Reuse still-current evidence and expand scope only when invalidation or
    project policy requires it.

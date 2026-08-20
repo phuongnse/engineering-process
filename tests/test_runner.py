@@ -1,23 +1,41 @@
-import sys
-import subprocess
-import tempfile
-import unittest
+import json
 import os
 import py_compile
+import subprocess
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import jsonschema
+
+import engineering_process.runner as runner_module
 from engineering_process.contracts import (
     Check,
     ContractError,
     ImpactComponent,
     Project,
     ProjectImpact,
+    validate_verification,
 )
+from engineering_process.git import GitResult
 from engineering_process.runner import run_profile
 
 
+PROCESS_ROOT = Path(__file__).resolve().parent.parent
+
+
 class RunnerTests(unittest.TestCase):
+    def assert_report_contracts(self, report) -> None:
+        validate_verification(report)
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "verification.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        jsonschema.Draft202012Validator(schema).validate(report)
+
     def initialize_repository(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         subprocess.run(
@@ -61,6 +79,105 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(report["impact"]["mode"], "full-profile")
             self.assertIsNone(report["workspaceFingerprint"])
             self.assertFalse(report["sourceChangedDuringVerification"])
+            self.assertEqual(
+                "ignored-sourceless-bytecode",
+                report["sourceStateDiagnostics"]["issues"][0]["operation"],
+            )
+            self.assert_report_contracts(report)
+
+    def test_source_state_git_failures_are_attributable(self):
+        cases = {
+            "ignored sourceless Python bytecode": "ignored-sourceless-bytecode",
+            "workspace fingerprint tracked index": "tracked-index",
+            "status": "status",
+            "HEAD": "head",
+            "tracked diff": "tracked-diff",
+            "untracked paths": "untracked-paths",
+        }
+        for failed_label, expected_operation in cases.items():
+            with (
+                self.subTest(operation=expected_operation),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                self.initialize_repository(root)
+                real_git = runner_module._git
+
+                def selective_git(*args, **kwargs):
+                    if kwargs["label"] == failed_label:
+                        return GitResult(
+                            returncode=125,
+                            stdout=b"",
+                            stderr=b"bounded helper failure",
+                        )
+                    return real_git(*args, **kwargs)
+
+                with patch.object(
+                    runner_module, "_git", side_effect=selective_git
+                ):
+                    state = runner_module.source_state(root)
+
+                issue = state["diagnostics"]["issues"][0]
+                self.assertEqual(expected_operation, issue["operation"])
+                self.assertEqual("nonzero-exit", issue["failureKind"])
+                self.assertEqual(125, issue["exitCode"])
+                self.assertEqual("git", issue["command"][0])
+                self.assertEqual("bounded helper failure", issue["stderr"])
+                self.assertEqual(22, issue["stderrBytes"])
+                self.assertEqual(64, len(issue["stderrSha256"]))
+                self.assertFalse(issue["stderrTruncated"])
+                self.assertEqual("", issue["error"])
+                self.assertEqual(0, issue["errorBytes"])
+
+    def test_source_state_git_execution_errors_are_attributable(self):
+        cases = {
+            "ignored sourceless Python bytecode": "ignored-sourceless-bytecode",
+            "workspace fingerprint tracked index": "tracked-index",
+            "status": "status",
+            "HEAD": "head",
+            "tracked diff": "tracked-diff",
+            "untracked paths": "untracked-paths",
+        }
+        for failed_label, expected_operation in cases.items():
+            with (
+                self.subTest(operation=expected_operation),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                self.initialize_repository(root)
+                real_git = runner_module._git
+
+                def selective_git(*args, **kwargs):
+                    if kwargs["label"] == failed_label:
+                        raise ContractError("bounded supervision failure")
+                    return real_git(*args, **kwargs)
+
+                with patch.object(
+                    runner_module, "_git", side_effect=selective_git
+                ):
+                    state = runner_module.source_state(root)
+
+                issue = state["diagnostics"]["issues"][0]
+                self.assertEqual(expected_operation, issue["operation"])
+                self.assertEqual("execution-error", issue["failureKind"])
+                self.assertIsNone(issue["exitCode"])
+                self.assertEqual("", issue["stderr"])
+                self.assertEqual(0, issue["stderrBytes"])
+                self.assertIn("bounded supervision failure", issue["error"])
+                self.assertGreater(issue["errorBytes"], 0)
+                self.assertEqual(64, len(issue["errorSha256"]))
+                self.assertFalse(issue["errorTruncated"])
+
+    def test_source_state_failure_diagnostics_are_bounded(self):
+        issue = runner_module._git_failure_issue(
+            "status",
+            ["status"],
+            GitResult(returncode=1, stdout=b"", stderr=b"x" * 5000),
+        )
+
+        self.assertEqual(5000, issue["stderrBytes"])
+        self.assertEqual(4096, len(issue["stderr"]))
+        self.assertTrue(issue["stderrTruncated"])
 
     def test_empty_affected_selection_is_passing_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -200,6 +317,59 @@ class RunnerTests(unittest.TestCase):
                 report["workspaceFingerprint"],
                 report["completedWorkspaceFingerprint"],
             )
+            self.assertNotEqual(
+                report["sourceStateDiagnostics"]["diffSha256"],
+                report["completedSourceStateDiagnostics"]["diffSha256"],
+            )
+            self.assertEqual(
+                report["sourceStateDiagnostics"]["untrackedSha256"],
+                report["completedSourceStateDiagnostics"]["untrackedSha256"],
+            )
+            self.assertEqual(
+                report["sourceStateDiagnostics"]["ignoredBytecodeSha256"],
+                report["completedSourceStateDiagnostics"]["ignoredBytecodeSha256"],
+            )
+            self.assertEqual(
+                report["sourceStateDiagnostics"]["trackedIndexSha256"],
+                report["completedSourceStateDiagnostics"]["trackedIndexSha256"],
+            )
+            self.assert_report_contracts(report)
+
+    def test_untracked_source_change_has_an_attributable_component(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_repository(root)
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            identifier="mutate-untracked",
+                            run=(
+                                sys.executable,
+                                "-c",
+                                "from pathlib import Path; "
+                                "Path('generated.txt').write_text('new\\n')",
+                            ),
+                            timeout_seconds=10,
+                            working_directory=".",
+                        ),
+                    )
+                },
+            )
+
+            report = run_profile(root, project, "development")
+
+            self.assertEqual("failed", report["status"])
+            self.assertNotEqual(
+                report["sourceStateDiagnostics"]["untrackedSha256"],
+                report["completedSourceStateDiagnostics"]["untrackedSha256"],
+            )
+            self.assertEqual(
+                report["sourceStateDiagnostics"]["trackedIndexSha256"],
+                report["completedSourceStateDiagnostics"]["trackedIndexSha256"],
+            )
+            self.assert_report_contracts(report)
 
     def test_ignored_python_bytecode_cannot_override_the_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -36,8 +36,20 @@ class DistributionDigestTests(unittest.TestCase):
         (root / "release.json").write_text(
             '{"schemaVersion":1,"version":"0.1.0"}\n', encoding="utf-8"
         )
+        (root / "GITHUB_REPOSITORY_ADAPTER.md").write_text(
+            "# Provider adapter\n", encoding="utf-8"
+        )
+        (root / "ADOPTION_ADAPTER.md").write_text(
+            "# Adoption adapter\n", encoding="utf-8"
+        )
+        (root / "ENVIRONMENT_CONTRACT.md").write_text(
+            "# Environment contract\n", encoding="utf-8"
+        )
         (root / "PRODUCTION_STANDARD.md").write_text(
             "# Production standard\n", encoding="utf-8"
+        )
+        (root / "REPOSITORY_GOVERNANCE.md").write_text(
+            "# Repository governance\n", encoding="utf-8"
         )
         (root / "VERSIONING.md").write_text(
             "# Version governance\n", encoding="utf-8"
@@ -115,6 +127,66 @@ class DistributionDigestTests(unittest.TestCase):
                 distribution_digest(root, selected, package_root=package),
             )
 
+    def test_digest_covers_distributed_repository_governance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = self.prepare_distribution(root)
+            package = root / "runtime"
+            package.mkdir()
+            (package / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (package / "requirements-runtime.txt").write_text(
+                "parser==1.0\n", encoding="utf-8"
+            )
+            baseline = distribution_digest(root, selected, package_root=package)
+
+            governance = root / "REPOSITORY_GOVERNANCE.md"
+            governance.write_text(
+                "# Repository governance\n\nProtect the default branch.\n",
+                encoding="utf-8",
+            )
+
+            self.assertNotEqual(
+                baseline,
+                distribution_digest(root, selected, package_root=package),
+            )
+
+            governance.write_text(
+                "# Repository governance\n", encoding="utf-8"
+            )
+            adapter = root / "GITHUB_REPOSITORY_ADAPTER.md"
+            adapter.write_text(
+                "# Provider adapter\n\nChanged binding.\n", encoding="utf-8"
+            )
+            self.assertNotEqual(
+                baseline,
+                distribution_digest(root, selected, package_root=package),
+            )
+
+    def test_digest_covers_distributed_abstraction_owners(self):
+        for name in ("ADOPTION_ADAPTER.md", "ENVIRONMENT_CONTRACT.md"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                selected = self.prepare_distribution(root)
+                package = root / "runtime"
+                package.mkdir()
+                (package / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+                (package / "requirements-runtime.txt").write_text(
+                    "parser==1.0\n", encoding="utf-8"
+                )
+                baseline = distribution_digest(
+                    root, selected, package_root=package
+                )
+
+                owner = root / name
+                owner.write_text(
+                    owner.read_text(encoding="utf-8") + "Changed.\n",
+                    encoding="utf-8",
+                )
+
+                self.assertNotEqual(
+                    baseline,
+                    distribution_digest(root, selected, package_root=package),
+                )
 
 if __name__ == "__main__":
     unittest.main()

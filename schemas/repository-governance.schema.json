@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/repository-governance.schema.json",
+  "title": "Repository governance policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "defaultBranch"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "enum": [1, 2]
+    },
+    "defaultBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requireChangeRequest",
+        "blockDeletion",
+        "bypass",
+        "requireUpToDate",
+        "requiredChecks"
+      ],
+      "properties": {
+        "requireChangeRequest": {
+          "const": true
+        },
+        "blockDeletion": {
+          "const": true
+        },
+        "blockNonFastForward": {
+          "const": true
+        },
+        "blockHistoryRewrite": {
+          "const": true
+        },
+        "bypass": {
+          "const": "forbidden"
+        },
+        "requireUpToDate": {
+          "type": "boolean"
+        },
+        "requiredChecks": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "const": "Change metadata policy"
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "const": "Merge eligibility"
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 1}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "defaultBranch": {
+            "required": ["blockNonFastForward"],
+            "not": {"required": ["blockHistoryRewrite"]}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "defaultBranch": {
+            "required": ["blockHistoryRewrite"],
+            "not": {"required": ["blockNonFastForward"]}
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
-name: Prepare Release
+name: Prepare release artifacts
+run-name: Prepare release artifacts · ${{ inputs.tag }}
 
 on:
   workflow_dispatch:
@@ -12,20 +13,22 @@ permissions:
   contents: read
 
 jobs:
-  prepare:
-    name: Build and attach draft release assets
+  release-artifacts:
+    name: Build and attach draft release artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout governed release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ inputs.tag }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
 
@@ -54,11 +57,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release-receipt"
           gh release download "$RELEASE_TAG" \
             --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-receipt"
-          printf 'RECEIPT_PATH=%s\n' \
+          printf 'LIFECYCLE_RECEIPT_PATH=%s\n' \
             "$RUNNER_TEMP/release-receipt/$receipt_asset" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
             "$RUNNER_TEMP/release-receipt/$receipt_asset" --json
-          printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify HEAD^{commit})" \
+          printf 'RELEASE_CHECKPOINT=%s\n' "$(git rev-parse --verify HEAD^{commit})" \
             >> "$GITHUB_ENV"
 
       - name: Install hash-locked release dependencies
@@ -75,9 +78,9 @@ jobs:
             --project-root . \
             --tag "$RELEASE_TAG" \
             --release-name "$RELEASE_TAG" \
-            --commit "$CHECKPOINT" \
+            --commit "$RELEASE_CHECKPOINT" \
             --main-ref origin/main \
-            --receipt "$RECEIPT_PATH"
+            --receipt "$LIFECYCLE_RECEIPT_PATH"
 
       - name: Build and attest distributions from the verified HEAD tree
         run: |
@@ -85,9 +88,9 @@ jobs:
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
           python verification/verify_distribution.py \
             --output "$RUNNER_TEMP/draft-assets/distributions" \
-            --receipt "$RECEIPT_PATH" \
+            --receipt "$LIFECYCLE_RECEIPT_PATH" \
             --attestation "$RUNNER_TEMP/draft-assets/$attestation_asset"
-          printf 'ATTESTATION_PATH=%s\n' \
+          printf 'DISTRIBUTION_ATTESTATION_PATH=%s\n' \
             "$RUNNER_TEMP/draft-assets/$attestation_asset" >> "$GITHUB_ENV"
 
       - name: Verify the prepared wheel
@@ -108,10 +111,10 @@ jobs:
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           gh release upload "$RELEASE_TAG" \
             "$RUNNER_TEMP"/draft-assets/distributions/* \
-            "$ATTESTATION_PATH"
+            "$DISTRIBUTION_ATTESTATION_PATH"
           {
-            basename "$RECEIPT_PATH"
-            basename "$ATTESTATION_PATH"
+            basename "$LIFECYCLE_RECEIPT_PATH"
+            basename "$DISTRIBUTION_ATTESTATION_PATH"
             python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))'
           } | LC_ALL=C sort > "$RUNNER_TEMP/expected-release-assets.txt"
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \

@@ -4,8 +4,12 @@ import unittest
 from pathlib import Path
 
 from engineering_process.publication import (
+    MAX_EVIDENCE_URL_CHARACTERS,
+    MAX_MANAGED_LINKS,
+    MAX_MANAGED_URL_BYTES,
     PR_DESCRIPTION_END,
     PR_DESCRIPTION_START,
+    managed_pull_request_visibility_issues,
     validate_branch,
     validate_commit_range,
     validate_commit_subject,
@@ -16,6 +20,21 @@ from engineering_process.publication import (
 
 def pr_body(status: str = "satisfied") -> str:
     checked = "x" if status != "pending" else " "
+    contract_reference = (
+        "\n[Evidence: contract](https://evidence.example/contract)\n"
+        if status == "satisfied"
+        else ""
+    )
+    verification_reference = (
+        "\n[Evidence: verification](https://evidence.example/verification)\n"
+        if status == "satisfied"
+        else ""
+    )
+    review_reference = (
+        "\n[Evidence: independent review](https://evidence.example/review)\n"
+        if status == "satisfied"
+        else ""
+    )
     return f"""{PR_DESCRIPTION_START}
 ## Summary
 
@@ -24,6 +43,7 @@ Adopt the shared publication contract.
 ## Contract and scope
 
 change-contract: publication-standard
+{contract_reference}
 
 ## Impact and risk
 
@@ -32,10 +52,12 @@ No runtime behavior changes; publication metadata becomes portable.
 ## Verification
 
 `python -m unittest`
+{verification_reference}
 
 ## Independent review
 
 Separate reviewer approved checkpoint abc123.
+{review_reference}
 
 ## Requirements and rules followed
 
@@ -47,6 +69,14 @@ Separate reviewer approved checkpoint abc123.
 
 
 class PublicationTests(unittest.TestCase):
+    def publication_issues(self, body: str, *, state: str = "ready") -> list[str]:
+        return validate_pull_request(
+            title="feat(process): standardize publication",
+            body=body,
+            branch="feat/standardize-publication",
+            state=state,
+        )
+
     def test_accepts_manual_and_generic_automation_branches(self):
         self.assertEqual([], validate_branch("feat/add-workspace"))
         self.assertEqual([], validate_branch("automation/renovate/runtime-packages"))
@@ -95,6 +125,168 @@ class PublicationTests(unittest.TestCase):
                 state="ready",
             ),
         )
+
+    def test_satisfied_claims_require_referenceable_evidence(self):
+        body = pr_body()
+        for reference in (
+            "[Evidence: contract](https://evidence.example/contract)",
+            "[Evidence: verification](https://evidence.example/verification)",
+            "[Evidence: independent review](https://evidence.example/review)",
+        ):
+            body = body.replace(reference, "")
+        body = body.replace(
+            "Separate reviewer approved checkpoint abc123.",
+            "Kepler used context portability-review-pr-6-cycle-2. "
+            "Review digest: sha256:" + "a" * 64,
+        )
+
+        issues = self.publication_issues(body)
+
+        self.assertEqual(
+            3,
+            sum("requires one [evidence:" in issue for issue in issues),
+        )
+
+    def test_evidence_references_are_visible_unique_safe_and_section_owned(self):
+        cases = {
+            "relative": (
+                pr_body().replace(
+                    "https://evidence.example/review",
+                    ".process/runs/change/review.json",
+                ),
+                "must use HTTPS",
+            ),
+            "credentials": (
+                pr_body().replace(
+                    "https://evidence.example/review",
+                    "https://user:secret@evidence.example/review",
+                ),
+                "no credentials",
+            ),
+            "duplicate": (
+                pr_body().replace(
+                    "[Evidence: verification](https://evidence.example/verification)",
+                    "[Evidence: verification](https://evidence.example/verification)\n"
+                    "[Evidence: verification](https://evidence.example/second)",
+                ),
+                "must appear exactly once",
+            ),
+            "unsupported-label": (
+                pr_body().replace(
+                    "Evidence: verification", "Evidence: checks"
+                ),
+                "Unsupported evidence reference label",
+            ),
+            "hidden": (
+                pr_body().replace(
+                    "[Evidence: verification](https://evidence.example/verification)",
+                    "```text\n"
+                    "[Evidence: verification](https://evidence.example/verification)\n"
+                    "```",
+                ),
+                "requires one [evidence: verification]",
+            ),
+            "misplaced": (
+                pr_body()
+                .replace(
+                    "[Evidence: verification](https://evidence.example/verification)",
+                    "",
+                )
+                .replace(
+                    "No runtime behavior changes; publication metadata becomes portable.",
+                    "No runtime behavior changes; publication metadata becomes portable.\n\n"
+                    "[Evidence: verification](https://evidence.example/verification)",
+                ),
+                "must be in ## Verification",
+            ),
+        }
+        for name, (body, expected) in cases.items():
+            with self.subTest(name=name):
+                self.assertTrue(
+                    any(expected in issue for issue in self.publication_issues(body))
+                )
+
+    def test_pending_claim_does_not_publish_completed_reference(self):
+        body = pr_body("pending").replace(
+            "Separate reviewer approved checkpoint abc123.",
+            "Separate reviewer is pending.\n\n"
+            "[Evidence: independent review](https://evidence.example/review)",
+        )
+
+        issues = self.publication_issues(body, state="draft")
+
+        self.assertTrue(
+            any("status pending must not publish" in issue for issue in issues)
+        )
+
+    def test_requirements_section_cannot_bypass_evidence_validation(self):
+        pending = pr_body("pending").replace(
+            PR_DESCRIPTION_END,
+            "[Evidence: verification](https://evidence.example/orphan)\n"
+            + PR_DESCRIPTION_END,
+        )
+        pending_issues = self.publication_issues(pending, state="draft")
+        self.assertTrue(
+            any("status pending must not publish" in issue for issue in pending_issues)
+        )
+        self.assertTrue(
+            any("must be in ## Verification" in issue for issue in pending_issues)
+        )
+
+        duplicate = pr_body().replace(
+            PR_DESCRIPTION_END,
+            "[Evidence: verification](https://evidence.example/orphan)\n"
+            + PR_DESCRIPTION_END,
+        )
+        duplicate_issues = self.publication_issues(duplicate)
+        self.assertTrue(
+            any("must appear exactly once" in issue for issue in duplicate_issues)
+        )
+
+        unsafe = pr_body("pending").replace(
+            PR_DESCRIPTION_END,
+            "[Evidence: verification](http://evidence.example/orphan)\n"
+            + PR_DESCRIPTION_END,
+        )
+        unsafe_issues = self.publication_issues(unsafe, state="draft")
+        self.assertTrue(any("must use HTTPS" in issue for issue in unsafe_issues))
+
+    def test_evidence_reference_resources_are_bounded(self):
+        oversized_url = (
+            "https://evidence.example/" + "x" * MAX_EVIDENCE_URL_CHARACTERS
+        )
+        issues = self.publication_issues(
+            pr_body().replace(
+                "https://evidence.example/verification", oversized_url
+            )
+        )
+        self.assertTrue(any("invalid bounded URL" in issue for issue in issues))
+
+        excessive_links = "\n".join(
+            f"[Reference {index}](https://evidence.example/{index})"
+            for index in range(MAX_MANAGED_LINKS + 1)
+        )
+        issues = self.publication_issues(
+            pr_body().replace(
+                "Adopt the shared publication contract.",
+                "Adopt the shared publication contract.\n\n" + excessive_links,
+            )
+        )
+        self.assertTrue(any("visible links" in issue for issue in issues))
+
+        link_count = 20
+        path_length = MAX_MANAGED_URL_BYTES // link_count
+        aggregate_links = "\n".join(
+            f"[Aggregate {index}](https://evidence.example/{'x' * path_length}{index})"
+            for index in range(link_count)
+        )
+        issues = self.publication_issues(
+            pr_body().replace(
+                "Adopt the shared publication contract.",
+                "Adopt the shared publication contract.\n\n" + aggregate_links,
+            )
+        )
+        self.assertTrue(any("URL" in issue and "bytes" in issue for issue in issues))
 
     def test_project_extensions_cannot_redefine_common_policy(self):
         duplicate_section = pr_body() + (
@@ -287,16 +479,19 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(1, len(records))
             self.assertTrue(any(records[0][0][:12] in issue for issue in issues))
 
-    def test_repository_template_is_the_packaged_standard(self):
+    def test_candidate_template_exposes_canonical_evidence_slots(self):
         root = Path(__file__).resolve().parent.parent
-        self.assertEqual(
-            (root / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(
-                encoding="utf-8"
-            ),
-            (root / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(
-                encoding="utf-8"
-            ),
+        template = (root / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(
+            encoding="utf-8"
         )
+
+        for label in (
+            "Evidence: contract",
+            "Evidence: verification",
+            "Evidence: independent review",
+        ):
+            self.assertEqual(1, template.count(f"[{label}](https://...)"))
+        self.assertEqual([], managed_pull_request_visibility_issues(template))
 
 
 if __name__ == "__main__":

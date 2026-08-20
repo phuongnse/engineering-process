@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "defaultBranch": {
+    "requireChangeRequest": true,
+    "blockDeletion": true,
+    "blockHistoryRewrite": true,
+    "bypass": "forbidden",
+    "requireUpToDate": false,
+    "requiredChecks": [
+      "Change metadata policy",
+      "Merge eligibility"
+    ]
+  }
+}

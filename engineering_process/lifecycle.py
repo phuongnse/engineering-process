@@ -659,6 +659,64 @@ def _verification_eligibility_issues(report: dict[str, Any]) -> list[str]:
     return issues
 
 
+def _source_state_diagnostic_summary(report: dict[str, Any]) -> str | None:
+    component_names = (
+        "ignoredBytecodeSha256",
+        "trackedIndexSha256",
+        "statusSha256",
+        "diffSha256",
+        "untrackedSha256",
+        "untrackedPathCount",
+        "untrackedBytes",
+    )
+    phases = {
+        "start": report.get("sourceStateDiagnostics"),
+        "completion": report.get("completedSourceStateDiagnostics"),
+    }
+    summary: dict[str, Any] = {}
+    for phase, diagnostics in phases.items():
+        if not isinstance(diagnostics, dict):
+            continue
+        phase_summary: dict[str, Any] = {}
+        raw_issues = diagnostics.get("issues")
+        if isinstance(raw_issues, list) and raw_issues:
+            phase_summary["issues"] = [
+                {
+                    "operation": issue.get("operation"),
+                    "failureKind": issue.get("failureKind"),
+                    "exitCode": issue.get("exitCode"),
+                    "detail": (issue.get("stderr") or issue.get("error") or "")[:512],
+                    "detailSha256": (
+                        issue.get("stderrSha256")
+                        if issue.get("stderr")
+                        else issue.get("errorSha256")
+                    ),
+                }
+                for issue in raw_issues[:4]
+                if isinstance(issue, dict)
+            ]
+        phase_summary["components"] = {
+            name: diagnostics.get(name) for name in component_names
+        }
+        summary[phase] = phase_summary
+    start = phases["start"]
+    completion = phases["completion"]
+    if isinstance(start, dict) and isinstance(completion, dict):
+        changed = {
+            name: {
+                "start": start.get(name),
+                "completion": completion.get(name),
+            }
+            for name in component_names
+            if start.get(name) != completion.get(name)
+        }
+        if changed:
+            summary["changedComponents"] = changed
+    if not summary:
+        return None
+    return json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def _verify_change_unlocked(
     project_root: Path,
     project: Project,
@@ -705,10 +763,14 @@ def _verify_change_unlocked(
             eligibilityIssues=eligibility_issues,
         )
         _save_state(project_root, state)
-        raise ContractError(
+        message = (
             "lifecycle verification requires passing checks on a clean immutable "
             "checkpoint: " + ", ".join(eligibility_issues)
         )
+        diagnostic_summary = _source_state_diagnostic_summary(report)
+        if diagnostic_summary is not None:
+            message += "; source-state diagnostics: " + diagnostic_summary
+        raise ContractError(message)
     evidence = {
         "profile": profile,
         "path": _relative(project_root, report_path),

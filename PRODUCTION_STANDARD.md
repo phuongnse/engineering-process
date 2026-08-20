@@ -4,6 +4,31 @@
 by engineering-process, including engineering-process itself. It is a change gate,
 not a claim that every dimension needs the same implementation in every product.
 
+## Abstraction and ownership
+
+This standard owns portable outcomes, trust and ownership boundaries, evidence
+qualities, and failure semantics. It does not own provider names, operating-system
+primitives, source-control commands, workflow syntax, serialized field layouts, or
+consumer-specific rollout decisions. Those mechanisms belong to their public
+contracts, integration guides, implementation modules, and tests; high-level policy
+links to those owners instead of duplicating their details.
+
+The process may require a project to declare and verify its compatibility, migration,
+deployment, and retirement outcomes. The project remains the authority for selecting
+those domain strategies. A process rule must not infer a strategy merely because one
+implementation or example uses it.
+
+Deterministic documentation checks register abstraction layers, validate dependency
+direction, and reject implementation-shaped structure in high-level policy. They do
+not claim to understand arbitrary prose. Independent review verifies that every
+concrete mechanism remains with its declared owner; enforcement never depends on a
+list of currently known providers, platforms, or tools.
+
+Each project owns the representation of its document registry and binds the
+structural check to a project verification profile. The portable process owns the
+required layering outcome and semantic review boundary, not consumer filenames or
+documentation tooling.
+
 ## Required dimensions
 
 Every new change contract assesses these dimensions in canonical sorted order:
@@ -27,37 +52,49 @@ Every new change contract assesses these dimensions in canonical sorted order:
 
 `correctness` is always applicable. Any other dimension may be `not-applicable` only
 with a concrete rationale and no mapped criterion. An applicable dimension maps to at
-least one measurable acceptance criterion. A project may declare sorted
-`project-*` extensions in `.process/project.json`; extensions add to the core and can
+least one measurable acceptance criterion. Projects may declare namespaced quality
+extensions through the public project contract; extensions add to the core and can
 never replace or weaken it.
 
 ## Evidence and observability
 
-Evidence must identify the change, cycle, immutable checkpoint, workspace
-fingerprint, actor/context, profile, selected impact, command digest, timestamps,
-exit status, timeout state, output byte counts and output digests. Raw command output
-is streamed for diagnosis but is not copied into lifecycle JSON, so reports stay
-bounded and avoid becoming a secret store. Projects define redaction and retention
-for their own application logs. Distributed tracing is required only when the
-affected architecture needs it; every project still needs enough correlation to
-explain a failed operation.
+Evidence identifies the change, cycle, immutable source checkpoint, source identity,
+actor and context, verification scope, operation identity, timestamps, outcome,
+resource bounds, and integrity information. Diagnostic evidence is attributable,
+bounded, and safe to retain; it does not silently collapse a failed identity probe
+into an unexplained value. Start and completion evidence distinguish source mutation
+from collection failure without weakening exact identity comparison.
 
-Environment probe regular expressions evaluate a bounded view whose CRLF and CR line
-boundaries are canonicalized to LF. Captured output, byte counts, truncation state,
-and digests retain the original bytes so portability does not weaken evidence.
+Projects own redaction and retention for their application data. The process retains
+only the bounded evidence needed to explain its own decisions and never treats an
+evidence report as a secret store. Architecture-specific telemetry is required only
+when the affected system needs it, while every failed operation still needs an
+actionable and correlatable explanation.
+
+[`ENVIRONMENT_CONTRACT.md`](ENVIRONMENT_CONTRACT.md) owns portable probe matching,
+original-output evidence, and finite-command semantics.
 
 Missing, stale, truncated beyond a declared policy, blocked, or unverifiable evidence
 never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares
 that evidence one-for-one with the change contract before approval.
 
-Remote matrix claims require one bounded supplemental bundle per platform/runtime.
-The schema-1 manifest binds the exact source and workflow checkpoints, automation
-actor/context, run identity and URL, platform/runtime identity, selected impact,
-configured timeouts, output byte counts/digests, truncation state, and the hashes of
-its schema-2 profile reports. The remote artifact id and service-computed digest are
-preserved with review evidence. These reports supplement the public N-1 lifecycle
-authority; code under verification never promotes itself to lifecycle authority.
+Publication evidence is referenceable from the review object. A satisfied public
+claim points to durable evidence owned by that claim; internal aliases, local paths,
+or unpublished identifiers never substitute for a reference another reviewer can
+follow. The publication contract owns the bounded reference representation.
+
+Public evidence names the independent role, attested separation, review outcome,
+required-finding disposition, and exact immutable source. Machine actor aliases,
+context identifiers, cycle counters, local paths, and digests remain in a clearly
+labeled machine-verifiable record; they are audit fields, not public identities.
+Inside a review object, evidence omits the container number from headings, states the
+full checkpoint once, and does not use short hashes as decoration.
+
+Remote-environment claims require bounded supplemental evidence tied to the exact
+source and verification identity. Integration contracts own provider and artifact
+mechanisms. Supplemental reports add portability evidence but never allow code under
+verification to promote itself to lifecycle authority.
 
 ## Resource and generated-state policy
 
@@ -68,53 +105,40 @@ interruption. Selective verification reduces work only through the distribution-
 impact algorithm; unmatched or ambiguous paths expand verification.
 
 Authority adoption treats project configuration as consumer-owned declarative data.
-A target-version migration binds exact source and target manifest digests, is size
-bounded, contains no executable command, validates under the installed target
-authority, and shares one rollback boundary with the process lock and managed assets.
-Optional capabilities are never inferred, while configuration required by the target
-authority blocks adoption when it is missing or invalid.
+A target-version migration binds its source and target identities, contains no hidden
+execution, validates under the target authority, and shares one rollback boundary
+with all process-owned assets. Optional capabilities are never inferred; missing
+required consumer configuration blocks adoption.
 
-Released serialized contracts are never tightened in place. A new resource bound or
-meaning-changing requirement uses a new integer schema major with explicit migration;
-historical readers retain their published behavior. A new optional capability may
-expand an existing schema major without invalidating its prior documents: portable
-impact and quality declarations therefore remain additive on project schema 3. New
-integrations use the bounded plan and project schema majors while older artifacts
-remain readable as history.
+Released serialized contracts are never tightened in place. Meaning-changing
+requirements use an explicit compatibility boundary and migration, while additive
+capabilities preserve historical readers. [`VERSIONING.md`](VERSIONING.md) owns the
+exact package, schema, release, and adoption classification rules.
 
-Ephemeral files use private temporary directories and are removed on success,
-failure, timeout, and interruption. Build outputs are created in an isolated tracked
-snapshot and never persist in the source checkout. `.process/runs/` is durable local
-lifecycle evidence, not temporary state: completed evidence is exported and
-validated against `schemas/evidence-receipt.schema.json` and its semantic cross-links
-before an explicit prune; active or unexported evidence is not deleted.
-Verification isolates interpreter bytecode caches from the checkout and rejects
-ignored sourceless bytecode that could shadow checkpoint-owned source.
-Managed skill text is checked out with canonical LF through a bounded process-owned
-`.agents/.gitattributes` file whose directory precedence is above project-root
-rules. The closer rule also disables inherited working-tree encoding, filter, and
-ident transforms that could otherwise rewrite managed bytes, and a self-rule gives
-the attributes file the same byte-stable checkout policy. Deeper repository attribute
-files remain subject to managed-tree ownership and content checks. Integrity comparison
-remains byte-exact; newline variants are not accepted as alternate distribution bytes.
+Ephemeral state is isolated and removed on success, failure, timeout, and interruption.
+Durable lifecycle evidence is retained until an explicit, validated export and prune
+boundary. Build and generated outputs cannot alter the source or authority being
+verified. Managed assets remain byte-stable and integrity protected across supported
+environments; portability mechanisms belong to their implementation owner.
 
-The producer repository applies the same LF and byte-transform isolation to its
-own automatically detected text sources through a tracked root `.gitattributes`
-policy. This keeps distribution input bytes platform-independent. The producer
-root policy is not a consumer-managed asset and is never written by bootstrap or
-sync.
+## Repository integration policy
+
+Every hosted project protects its default integration boundary through the portable
+baseline in [`REPOSITORY_GOVERNANCE.md`](REPOSITORY_GOVERNANCE.md). Only the current
+reviewed and successfully verified source may integrate; bypass and destructive
+history changes are forbidden by default. Consumers declare policy, while adapters
+provide exact enforcement without weakening the baseline or mutating external state
+without separate owner authorization.
+
+Public gate identities remain stable while project-owned verification evolves.
+Missing, stale, ambiguous, or drifting integration evidence fails closed. Repository
+protection cannot substitute for resolving a flaky verification operation.
 
 ## Release identity
 
-The release contract is the source of truth for package name, distribution name,
-SemVer, tag, GitHub release title, runtime version location, artifact names, and
-lifecycle receipt name. Governed releases use the exact tag and title `v<SemVer>`.
-Publication cross-checks every declared surface against one immutable checkpoint;
-consumer locks change only after public artifacts and hashes are verified.
-The exact public N-1 binary validates governed lifecycle receipts with no fallback to
-code under release. Release/build dependencies are artifact-hash locked and the build
-runs without dependency isolation or network resolution.
-
-Immutable releases created before this contract use `bootstrap-history` provenance.
-That mode records their actual identity and explicitly makes no lifecycle-governance
-claim. It cannot be used for new governed releases.
+The release contract is the single owner of release and artifact identity.
+Publication cross-checks every declared surface against one immutable source; consumer
+authority changes only after public artifacts and their integrity are verified. The
+current public authority validates the next release evidence with no fallback to code
+under release. [`VERSIONING.md`](VERSIONING.md) and the release integration guide own
+concrete version and publication mappings.

@@ -21,6 +21,7 @@ from .contracts import (
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_repository_governance,
     validate_release,
     validate_review,
 )
@@ -52,6 +53,16 @@ from .publication import (
     validate_commit_range,
     validate_commit_subject,
     validate_pull_request,
+)
+from .repository_governance import (
+    GitHubApi,
+    apply_github_ruleset_plan,
+    check_github_repository,
+    initialize_policy,
+    load_policy,
+    plan_github_ruleset,
+    validate_repository_governance_plan,
+    write_plan,
 )
 from .release import validate_release_checkpoint
 from .skills import validate_skills
@@ -237,6 +248,8 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "change": validate_change,
         "plan": validate_plan,
         "release": validate_release,
+        "repository-governance": validate_repository_governance,
+        "repository-governance-plan": validate_repository_governance_plan,
         "review": validate_review,
     }
     validators[args.kind](document, str(args.path))
@@ -248,6 +261,85 @@ def command_contract_validate(args: argparse.Namespace) -> int:
             path=str(args.path),
         ),
     )
+    return 0
+
+
+def command_repository_init(args: argparse.Namespace) -> int:
+    details = initialize_policy(args.project_root)
+    _emit(args, _result("repository init", **details))
+    return 0
+
+
+def command_repository_validate(args: argparse.Namespace) -> int:
+    path = args.project_root / ".process" / "repository-governance.json"
+    document = read_json(path)
+    policy = validate_repository_governance(document, str(path))
+    _emit(
+        args,
+        _result(
+            "repository validate",
+            path=path.relative_to(args.project_root).as_posix(),
+            requireUpToDate=policy.require_up_to_date,
+            requiredChecks=list(policy.required_checks),
+        ),
+    )
+    return 0
+
+
+def command_repository_github_check(args: argparse.Namespace) -> int:
+    _, policy = load_policy(args.project_root)
+    details = check_github_repository(
+        GitHubApi.from_environment(), args.repository, policy
+    )
+    issues = details.pop("issues")
+    status = "failed" if issues else "passed"
+    _emit(
+        args,
+        _result(
+            "repository github check",
+            status=status,
+            issues=issues,
+            **details,
+        ),
+    )
+    return 1 if issues else 0
+
+
+def command_repository_github_plan(args: argparse.Namespace) -> int:
+    policy_document, policy = load_policy(args.project_root)
+    plan = plan_github_ruleset(
+        GitHubApi.from_environment(),
+        args.repository,
+        policy_document,
+        policy,
+        evidence_pull_request=args.evidence_pr,
+    )
+    write_plan(args.output, plan)
+    _emit(
+        args,
+        _result(
+            "repository github plan",
+            repository=plan["repository"],
+            action=plan["ruleset"]["action"],
+            output=str(args.output),
+            currentDigest=plan["ruleset"]["currentDigest"],
+            desiredDigest=plan["ruleset"]["desiredDigest"],
+            evidenceCheckpoint=plan["evidence"]["headSha"],
+        ),
+    )
+    return 0
+
+
+def command_repository_github_apply(args: argparse.Namespace) -> int:
+    policy_document, policy = load_policy(args.project_root)
+    details = apply_github_ruleset_plan(
+        GitHubApi.from_environment(),
+        read_json(args.plan),
+        policy_document,
+        policy,
+        confirm_repository=args.confirm_repository,
+    )
+    _emit(args, _result("repository github apply", **details))
     return 0
 
 
@@ -968,7 +1060,15 @@ def build_parser() -> argparse.ArgumentParser:
     contract_validate = contract_commands.add_parser("validate")
     contract_validate.add_argument(
         "--kind",
-        choices=("adoption-migration", "change", "plan", "release", "review"),
+        choices=(
+            "adoption-migration",
+            "change",
+            "plan",
+            "release",
+            "repository-governance",
+            "repository-governance-plan",
+            "review",
+        ),
         required=True,
     )
     contract_validate.add_argument("path", type=Path)
@@ -1187,6 +1287,64 @@ def build_parser() -> argparse.ArgumentParser:
     publication_artifacts.set_defaults(
         handler=command_publication_validate_artifacts
     )
+
+    repository = commands.add_parser(
+        "repository", help="Declare and enforce repository integration governance"
+    )
+    repository_commands = repository.add_subparsers(
+        dest="repository_command", required=True
+    )
+    repository_init = repository_commands.add_parser(
+        "init", help="Create the standard consumer-owned repository policy"
+    )
+    _add_project_root(repository_init)
+    _add_json(repository_init)
+    repository_init.set_defaults(handler=command_repository_init)
+    repository_validate = repository_commands.add_parser(
+        "validate", help="Validate the consumer-owned repository policy"
+    )
+    _add_project_root(repository_validate)
+    _add_json(repository_validate)
+    repository_validate.set_defaults(handler=command_repository_validate)
+    repository_github = repository_commands.add_parser(
+        "github", help="Check, plan, or explicitly apply a GitHub ruleset"
+    )
+    repository_github_commands = repository_github.add_subparsers(
+        dest="repository_github_command", required=True
+    )
+    repository_github_check = repository_github_commands.add_parser(
+        "check", help="Compare live GitHub rules with the declared policy"
+    )
+    _add_project_root(repository_github_check)
+    repository_github_check.add_argument("--repository", required=True)
+    _add_json(repository_github_check)
+    repository_github_check.set_defaults(handler=command_repository_github_check)
+    repository_github_plan = repository_github_commands.add_parser(
+        "plan", help="Create a compare-before-write GitHub ruleset plan"
+    )
+    _add_project_root(repository_github_plan)
+    repository_github_plan.add_argument("--repository", required=True)
+    repository_github_plan.add_argument(
+        "--evidence-pr",
+        type=int,
+        required=True,
+        help="PR whose exact head has successful required check contexts",
+    )
+    repository_github_plan.add_argument("--output", type=Path, required=True)
+    _add_json(repository_github_plan)
+    repository_github_plan.set_defaults(handler=command_repository_github_plan)
+    repository_github_apply = repository_github_commands.add_parser(
+        "apply", help="Apply one current authorized GitHub ruleset plan"
+    )
+    _add_project_root(repository_github_apply)
+    repository_github_apply.add_argument("--plan", type=Path, required=True)
+    repository_github_apply.add_argument(
+        "--confirm-repository",
+        required=True,
+        help="Exact OWNER/REPOSITORY confirmation for the external write",
+    )
+    _add_json(repository_github_apply)
+    repository_github_apply.set_defaults(handler=command_repository_github_apply)
 
     change = commands.add_parser("change", help="Run the canonical change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/repository-governance-plan.schema.json",
+  "title": "Repository governance apply plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "provider",
+    "repository",
+    "policyDigest",
+    "ruleset",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "provider": {
+      "const": "github"
+    },
+    "repository": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?/[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9])?$"
+    },
+    "policyDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "ruleset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "id",
+        "currentDigest",
+        "desiredDigest",
+        "payload"
+      ],
+      "properties": {
+        "action": {
+          "enum": ["create", "update", "none"]
+        },
+        "id": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "currentDigest": {
+          "oneOf": [
+            {"$ref": "#/$defs/digest"},
+            {"type": "null"}
+          ]
+        },
+        "desiredDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "payload": {
+          "type": "object",
+          "maxProperties": 6
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pullRequest", "headSha", "checks"],
+      "properties": {
+        "pullRequest": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "headSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "status", "conclusion"],
+            "properties": {
+              "id": {"type": "integer", "minimum": 1},
+              "name": {"type": "string", "minLength": 1, "maxLength": 100},
+              "status": {"const": "completed"},
+              "conclusion": {"const": "success"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ruleset": {
+            "properties": {"action": {"const": "create"}},
+            "required": ["action"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ruleset": {
+            "properties": {
+              "id": {"type": "null"},
+              "currentDigest": {"type": "null"}
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "ruleset": {
+            "properties": {
+              "id": {"type": "integer", "minimum": 1},
+              "currentDigest": {"$ref": "#/$defs/digest"}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

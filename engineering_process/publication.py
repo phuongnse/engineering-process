@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .contracts import ContractError
 from .git import run_git
@@ -11,6 +12,7 @@ from .markdown import (
     mask_nonvisible_markdown_blocks,
     normalized_rendered_inline_text,
     strip_html_comments,
+    visible_markdown_links,
 )
 
 
@@ -76,6 +78,17 @@ STANDARD_REQUIREMENT_DETAILS = {
         "required finding."
     ),
 }
+STANDARD_EVIDENCE_REFERENCES = {
+    "Scope and contract": ("Contract and scope", "evidence: contract"),
+    "Verification evidence": ("Verification", "evidence: verification"),
+    "Independent review": (
+        "Independent review",
+        "evidence: independent review",
+    ),
+}
+MAX_MANAGED_LINKS = 64
+MAX_EVIDENCE_URL_CHARACTERS = 2048
+MAX_MANAGED_URL_BYTES = 32_768
 
 
 def _normalized_markdown(text: str) -> str:
@@ -152,6 +165,102 @@ def _sections(body: str) -> tuple[dict[str, str], list[str]]:
 
 def _visible(text: str) -> str:
     return COMMENT_RE.sub("", text).strip()
+
+
+def _evidence_url_issues(label: str, destination: str) -> list[str]:
+    issues: list[str] = []
+    if (
+        not destination
+        or destination != destination.strip()
+        or len(destination) > MAX_EVIDENCE_URL_CHARACTERS
+        or any(character.isspace() or ord(character) < 32 for character in destination)
+    ):
+        return [f"Evidence reference `{label}` has an invalid bounded URL"]
+    try:
+        target = urlsplit(destination)
+        port = target.port
+    except ValueError:
+        return [f"Evidence reference `{label}` has an invalid URL"]
+    if (
+        target.scheme.lower() != "https"
+        or target.hostname is None
+        or target.username is not None
+        or target.password is not None
+        or port == 0
+    ):
+        issues.append(
+            f"Evidence reference `{label}` must use HTTPS with a host and no credentials"
+        )
+    return issues
+
+
+def _evidence_reference_issues(
+    sections: dict[str, str], requirement_statuses: dict[str, str]
+) -> list[str]:
+    issues: list[str] = []
+    links: list[tuple[str, str, str]] = []
+    for section_name, section in sections.items():
+        links.extend(
+            (section_name, label, destination)
+            for label, destination in visible_markdown_links(section)
+        )
+    if len(links) > MAX_MANAGED_LINKS:
+        issues.append(
+            f"Managed PR evidence exceeds {MAX_MANAGED_LINKS} visible links"
+        )
+    aggregate_url_bytes = sum(
+        len(destination.encode("utf-8")) for _, _, destination in links
+    )
+    if aggregate_url_bytes > MAX_MANAGED_URL_BYTES:
+        issues.append(
+            f"Managed PR evidence URLs exceed {MAX_MANAGED_URL_BYTES} bytes"
+        )
+
+    expected_labels = {
+        label for _, label in STANDARD_EVIDENCE_REFERENCES.values()
+    }
+    references: dict[str, list[tuple[str, str]]] = {
+        label: [] for label in expected_labels
+    }
+    for section_name, label, destination in links:
+        normalized_label = normalized_rendered_inline_text(label)
+        if normalized_label.startswith("evidence:") and normalized_label not in expected_labels:
+            issues.append(f"Unsupported evidence reference label: {label}")
+            continue
+        if normalized_label not in expected_labels:
+            continue
+        references[normalized_label].append((section_name, destination))
+        issues.extend(_evidence_url_issues(normalized_label, destination))
+
+    for requirement, (owner_section, reference_label) in (
+        STANDARD_EVIDENCE_REFERENCES.items()
+    ):
+        matches = references[reference_label]
+        if len(matches) > 1:
+            issues.append(
+                f"Evidence reference `{reference_label}` must appear exactly once"
+            )
+        owner_matches = [
+            destination
+            for section_name, destination in matches
+            if section_name == owner_section
+        ]
+        if any(section_name != owner_section for section_name, _ in matches):
+            issues.append(
+                f"Evidence reference `{reference_label}` must be in ## {owner_section}"
+            )
+        status = requirement_statuses.get(requirement)
+        if status == "satisfied" and len(owner_matches) != 1:
+            issues.append(
+                f"Satisfied requirement {requirement} requires one "
+                f"[{reference_label}](https://...) link in ## {owner_section}"
+            )
+        elif status in {"pending", "not-applicable"} and matches:
+            issues.append(
+                f"Requirement {requirement} with status {status} must not publish "
+                f"the completed `{reference_label}` reference"
+            )
+    return issues
 
 
 def _managed_span(text: str) -> tuple[int, int]:
@@ -364,6 +473,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
         elif count > 1:
             issues.append(f"Duplicate standard requirement: {required}")
 
+    requirement_statuses: dict[str, str] = {}
     for match in checkboxes:
         line = match.group(0).strip()
         label = match.group("label").strip()
@@ -376,6 +486,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
         if status not in CHECKLIST_STATUSES:
             issues.append(f"Requirement has invalid status `{status}`: {line}")
             continue
+        requirement_statuses[label] = status
         detail = match.group("detail").strip()
         detail_without_status = CHECKLIST_STATUS_RE.sub("", detail).strip()
         reason_match = CHECKLIST_REASON_RE.search(detail_without_status)
@@ -401,6 +512,7 @@ def validate_pr_body(body: str, *, allow_pending: bool) -> list[str]:
             issues.append(
                 f"Not-applicable requirement must include `[reason: ...]`: {line}"
             )
+    issues.extend(_evidence_reference_issues(sections, requirement_statuses))
     issues.extend(validate_project_extensions(body, allow_pending=allow_pending))
     return issues
 

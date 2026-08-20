@@ -117,9 +117,12 @@ class SelfHostingTests(unittest.TestCase):
             requirement["remediation"],
         )
 
-    def test_ci_binds_and_uploads_bounded_matrix_evidence(self):
+    def test_verification_workflow_binds_and_uploads_bounded_matrix_evidence(self):
         workflow = (
-            PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "engineering-process-verification.yml"
         ).read_text(encoding="utf-8")
 
         self.assertIn(
@@ -127,27 +130,176 @@ class SelfHostingTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("verification/generate_ci_evidence.py", workflow)
-        self.assertIn(
-            "python -m pip install -r engineering_process/requirements-runtime.txt "
-            "-r engineering_process/requirements-dev.txt "
-            "-r engineering_process/requirements-build.txt",
-            workflow,
-        )
+        self.assertIn("python -m pip install", workflow)
+        for requirement in (
+            "engineering_process/requirements-runtime.txt",
+            "engineering_process/requirements-dev.txt",
+            "engineering_process/requirements-build.txt",
+        ):
+            self.assertIn(requirement, workflow)
         self.assertIn(
             'python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"',
             workflow,
         )
         self.assertNotIn('".[dev]"', workflow)
-        self.assertIn('--expected-checkpoint "$CI_CHECKPOINT"', workflow)
-        self.assertIn('--comparison-base "$CI_COMPARISON_BASE"', workflow)
-        self.assertIn('--workflow-sha "$CI_WORKFLOW_SHA"', workflow)
-        self.assertIn("CI_WORKFLOW_SHA: ${{ github.workflow_sha }}", workflow)
+        self.assertIn(
+            '--expected-checkpoint "$VERIFICATION_CHECKPOINT"', workflow
+        )
+        self.assertIn(
+            '--comparison-base "$VERIFICATION_COMPARISON_BASE"', workflow
+        )
+        self.assertIn('--workflow-sha "$VERIFICATION_WORKFLOW_SHA"', workflow)
+        self.assertIn(
+            "VERIFICATION_WORKFLOW_SHA: ${{ github.workflow_sha }}", workflow
+        )
         self.assertIn(
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
             workflow,
         )
         self.assertIn("if-no-files-found: error", workflow)
         self.assertIn("retention-days: 90", workflow)
+        self.assertIn("engineering-process-verification-evidence-", workflow)
+
+    def test_repository_policy_uses_stable_meaningful_check_contexts(self):
+        policy = json.loads(
+            (
+                PROCESS_ROOT / ".process" / "repository-governance.json"
+            ).read_text(encoding="utf-8")
+        )
+        verification = (
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "engineering-process-verification.yml"
+        ).read_text(encoding="utf-8")
+        metadata_policy = (
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "change-metadata-policy.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(
+            ["Change metadata policy", "Merge eligibility"],
+            policy["defaultBranch"]["requiredChecks"],
+        )
+        self.assertIn("name: Engineering process verification", verification)
+        self.assertIn(
+            "name: Distribution verification "
+            "(${{ matrix.os }}, Python ${{ matrix.python-version }})",
+            verification,
+        )
+        self.assertIn("name: Merge eligibility", verification)
+        self.assertIn("needs: [distribution-verification]", verification)
+        self.assertIn(
+            'if [ "$DISTRIBUTION_VERIFICATION_RESULT" != "success" ]',
+            verification,
+        )
+        self.assertNotIn("publication validate-pr", verification)
+        self.assertIn("name: Change metadata policy", metadata_policy)
+        for event in (
+            "opened",
+            "synchronize",
+            "reopened",
+            "edited",
+            "ready_for_review",
+            "converted_to_draft",
+        ):
+            self.assertIn(f"- {event}", metadata_policy)
+        self.assertIn(
+            "pip install --require-hashes -r requirements/process.txt",
+            metadata_policy,
+        )
+        self.assertIn(
+            '--body-file "$RUNNER_TEMP/change-description.md"', metadata_policy
+        )
+        self.assertNotIn(
+            "engineering_process/requirements-dev.txt", metadata_policy
+        )
+
+    def test_workflow_metadata_is_explicit_and_meaningful(self):
+        generic_display_names = {
+            "Build",
+            "Check",
+            "CI",
+            "Deploy",
+            "Gate",
+            "Prepare",
+            "Publish",
+            "Release",
+            "Test",
+            "Verify",
+        }
+        workflow_root = PROCESS_ROOT / ".github" / "workflows"
+        for path in sorted(workflow_root.glob("*.yml")):
+            with self.subTest(workflow=path.name):
+                self.assertRegex(path.stem, r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+                text = path.read_text(encoding="utf-8")
+                workflow_name = re.search(r"(?m)^name: (?P<name>\S.*)$", text)
+                self.assertIsNotNone(workflow_name)
+                assert workflow_name is not None
+                self.assertNotIn(
+                    workflow_name.group("name"), generic_display_names
+                )
+                self.assertRegex(text, r"(?m)^run-name: \S.*$")
+
+                jobs_start = text.find("\njobs:\n")
+                self.assertNotEqual(-1, jobs_start)
+                jobs_text = text[jobs_start + 1 :]
+                jobs = list(
+                    re.finditer(
+                        r"(?m)^  (?P<id>[a-z][a-z0-9]*(?:-[a-z0-9]+)*):\s*$",
+                        jobs_text,
+                    )
+                )
+                self.assertTrue(jobs)
+                for index, match in enumerate(jobs):
+                    job_id = match.group("id")
+                    end = (
+                        jobs[index + 1].start()
+                        if index + 1 < len(jobs)
+                        else len(jobs_text)
+                    )
+                    job = jobs_text[match.start() : end]
+                    with self.subTest(workflow=path.name, job=job_id):
+                        job_name = re.search(r"(?m)^    name: (?P<name>\S.*)$", job)
+                        self.assertIsNotNone(job_name)
+                        assert job_name is not None
+                        self.assertNotIn(
+                            job_name.group("name"), generic_display_names
+                        )
+                        self.assertNotRegex(job, r"(?m)^      - (?:uses|run):")
+                        step_names = re.findall(
+                            r"(?m)^      - name: (?P<name>\S.*)$", job
+                        )
+                        self.assertTrue(step_names)
+                        for step_name in step_names:
+                            self.assertNotIn(step_name, generic_display_names)
+                        for step_id in re.findall(
+                            r"(?m)^        id: (?P<id>\S+)$", job
+                        ):
+                            self.assertRegex(
+                                step_id,
+                                r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                            )
+                lines = text.splitlines()
+                for line_index, line in enumerate(lines):
+                    env_match = re.match(r"^(?P<indent> +)env:\s*$", line)
+                    if env_match is None:
+                        continue
+                    env_indent = len(env_match.group("indent"))
+                    for candidate in lines[line_index + 1 :]:
+                        if not candidate.strip():
+                            continue
+                        candidate_indent = len(candidate) - len(
+                            candidate.lstrip(" ")
+                        )
+                        if candidate_indent <= env_indent:
+                            break
+                        if candidate_indent != env_indent + 2:
+                            continue
+                        env_name = candidate.strip().partition(":")[0]
+                        self.assertRegex(env_name, r"^[A-Z][A-Z0-9_]*$")
 
     def test_distribution_verifier_resolves_the_checkout_before_installed_authority(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,7 +366,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIsNotNone(source_match)
         self.assertEqual(lock["process"]["version"], source_match.group("version"))
 
-    def test_managed_adoption_runner_matches_packaged_template(self):
+    def test_adoption_sources_preserve_the_authority_boundary(self):
         managed = PROCESS_ROOT / ".process" / "adopt-process.py"
         template = PROCESS_ROOT / "templates" / "adopt-process.py"
         managed_windows_helper = (
@@ -231,8 +383,10 @@ class SelfHostingTests(unittest.TestCase):
                 "# Managed by engineering-process; do not edit.\n"
             )
         )
-        self.assertEqual(
-            windows_helper.read_bytes(), managed_windows_helper.read_bytes()
+        self.assertTrue(
+            managed_windows_helper.read_text(encoding="utf-8").startswith(
+                "# Managed by engineering-process; do not edit.\n"
+            )
         )
         self.assertEqual(
             windows_helper.read_bytes(), template_windows_helper.read_bytes()
@@ -244,6 +398,9 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertIn('"process_assets/skills/', pyproject)
         self.assertNotIn('".agents/skills/', pyproject)
+        self.assertIn('"ADOPTION_ADAPTER.md"', pyproject)
+        self.assertIn('"ENVIRONMENT_CONTRACT.md"', pyproject)
+        self.assertIn('"GITHUB_REPOSITORY_ADAPTER.md"', pyproject)
         self.assertIn('"VERSIONING.md"', pyproject)
         self.assertIn('"templates/adopt-process.py"', pyproject)
         self.assertIn('"templates/adopt-process-windows-job.py"', pyproject)
@@ -285,6 +442,17 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("pip install --require-hashes", workflow)
         self.assertIn("engineering_process/requirements-release.txt", workflow)
         self.assertIn("--no-deps", workflow)
+
+    def test_release_guide_preserves_the_non_resolving_build_boundary(self):
+        guide = (PROCESS_ROOT / "RELEASING.md").read_text(encoding="utf-8")
+        verifier = (
+            PROCESS_ROOT / "engineering_process" / "distribution_verify.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--require-hashes", guide)
+        self.assertIn("--no-isolation", guide)
+        self.assertIn("no network\n   resolution", guide)
+        self.assertIn('"--no-isolation"', verifier)
 
 
 if __name__ == "__main__":

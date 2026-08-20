@@ -101,22 +101,28 @@ class SupplementalVerificationTests(unittest.TestCase):
                 expected_checkpoint=CHECKPOINT,
                 comparison_base=COMPARISON_BASE,
                 producer_actor="github-actions",
-                producer_context="run:1:verify:Linux:python-3.14",
+                producer_context=(
+                    "run:1:distribution-verification:Linux:python-3.14"
+                ),
                 provider="github-actions",
-                repository="phuongnse/engineering-process",
+                repository="owner/repository",
                 event_name="pull_request",
-                workflow_name="CI",
+                workflow_name="Engineering process verification",
                 workflow_ref=(
-                    "phuongnse/engineering-process/.github/workflows/ci.yml@refs/pull/3/merge"
+                    "owner/repository/.github/workflows/"
+                    "engineering-process-verification.yml@refs/pull/3/merge"
                 ),
                 workflow_sha=WORKFLOW_SHA,
                 run_id="12345",
                 run_attempt=1,
-                job="verify",
-                run_url="https://github.com/phuongnse/engineering-process/actions/runs/12345/attempts/1",
+                job="distribution-verification",
+                run_url=(
+                    "https://github.com/owner/repository/"
+                    "actions/runs/12345/attempts/1"
+                ),
                 runner_os="Linux",
                 runner_arch="X64",
-                triggered_by="phuongnse",
+                triggered_by="automation-actor",
             )
 
     def test_manifest_and_reports_are_schema_valid_and_byte_bound(self):
@@ -194,15 +200,18 @@ class SupplementalVerificationTests(unittest.TestCase):
                 producer_actor="github-actions",
                 producer_context="context",
                 provider="github-actions",
-                repository="phuongnse/engineering-process",
+                repository="owner/repository",
                 event_name="pull_request",
-                workflow_name="CI",
-                workflow_ref="owner/repo/.github/workflows/ci.yml@refs/heads/main",
+                workflow_name="Engineering process verification",
+                workflow_ref=(
+                    "owner/repository/.github/workflows/"
+                    "engineering-process-verification.yml@refs/heads/main"
+                ),
                 workflow_sha=WORKFLOW_SHA,
                 run_id="1",
                 run_attempt=1,
-                job="verify",
-                run_url="https://github.com/owner/repo/actions/runs/1",
+                job="distribution-verification",
+                run_url="https://github.com/owner/repository/actions/runs/1",
                 runner_os="Linux",
                 runner_arch="X64",
                 triggered_by="owner",

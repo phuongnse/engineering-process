@@ -45,6 +45,12 @@
     "sourceChangedDuringVerification": {
       "type": "boolean"
     },
+    "sourceStateDiagnostics": {
+      "$ref": "#/$defs/sourceStateDiagnostics"
+    },
+    "completedSourceStateDiagnostics": {
+      "$ref": "#/$defs/sourceStateDiagnostics"
+    },
     "impact": {
       "type": "object",
       "additionalProperties": false,
@@ -265,6 +271,146 @@
       }
     }
   },
+  "$defs": {
+    "sourceStateDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issues",
+        "ignoredBytecodeSha256",
+        "trackedIndexSha256",
+        "statusSha256",
+        "diffSha256",
+        "untrackedSha256",
+        "untrackedPathCount",
+        "untrackedBytes"
+      ],
+      "properties": {
+        "issues": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/sourceStateIssue"}
+        },
+        "ignoredBytecodeSha256": {"$ref": "#/$defs/nullableDigest"},
+        "trackedIndexSha256": {"$ref": "#/$defs/nullableDigest"},
+        "statusSha256": {"$ref": "#/$defs/nullableDigest"},
+        "diffSha256": {"$ref": "#/$defs/nullableDigest"},
+        "untrackedSha256": {"$ref": "#/$defs/nullableDigest"},
+        "untrackedPathCount": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "untrackedBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 32000000
+        }
+      }
+    },
+    "sourceStateIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "command",
+        "failureKind",
+        "exitCode",
+        "stderr",
+        "stderrBytes",
+        "stderrSha256",
+        "stderrTruncated",
+        "error",
+        "errorBytes",
+        "errorSha256",
+        "errorTruncated"
+      ],
+      "properties": {
+        "operation": {
+          "enum": [
+            "ignored-sourceless-bytecode",
+            "tracked-index",
+            "status",
+            "head",
+            "tracked-diff",
+            "untracked-paths"
+          ]
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {"type": "string", "maxLength": 512}
+        },
+        "failureKind": {"enum": ["nonzero-exit", "execution-error"]},
+        "exitCode": {"type": ["integer", "null"]},
+        "stderr": {"type": "string", "maxLength": 4096},
+        "stderrBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "stderrSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "stderrTruncated": {"type": "boolean"},
+        "error": {"type": "string", "maxLength": 4096},
+        "errorBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16384
+        },
+        "errorSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "errorTruncated": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"failureKind": {"const": "nonzero-exit"}},
+            "required": ["failureKind"]
+          },
+          "then": {
+            "properties": {
+              "exitCode": {"type": "integer"},
+              "error": {"const": ""},
+              "errorBytes": {"const": 0},
+              "errorSha256": {
+                "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "errorTruncated": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"failureKind": {"const": "execution-error"}},
+            "required": ["failureKind"]
+          },
+          "then": {
+            "properties": {
+              "exitCode": {"type": "null"},
+              "stderr": {"const": ""},
+              "stderrBytes": {"const": 0},
+              "stderrSha256": {
+                "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "stderrTruncated": {"const": false},
+              "error": {"minLength": 1},
+              "errorBytes": {"minimum": 1}
+            }
+          }
+        }
+      ]
+    },
+    "nullableDigest": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
   "allOf": [
     {
       "if": {
@@ -274,6 +420,12 @@
       "then": {
         "properties": {
           "checks": {"minItems": 1}
+        },
+        "not": {
+          "anyOf": [
+            {"required": ["sourceStateDiagnostics"]},
+            {"required": ["completedSourceStateDiagnostics"]}
+          ]
         }
       }
     },

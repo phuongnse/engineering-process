@@ -19,7 +19,12 @@ from .environment import (
     execute_command,
 )
 from .impact import IMPACT_FILE_ENV, plan_profile
-from .git import remaining_seconds, run_git, tracked_index_paths
+from .git import (
+    GitResult,
+    remaining_seconds,
+    run_git,
+    validate_tracked_index_result,
+)
 from .tooling import ManagedCommandBinding
 
 
@@ -29,6 +34,8 @@ MAX_SOURCE_DIFF_BYTES = 8_000_000
 MAX_SOURCE_PATHS = 5_000
 MAX_UNTRACKED_FILE_BYTES = 8_000_000
 MAX_UNTRACKED_TOTAL_BYTES = 32_000_000
+MAX_SOURCE_ISSUE_STDERR_BYTES = 4096
+MAX_SOURCE_ISSUE_ERROR_BYTES = 4096
 
 
 def _timestamp() -> str:
@@ -54,35 +61,155 @@ def _git(
     )
 
 
+def _git_failure_issue(
+    operation: str, arguments: list[str], result: GitResult
+) -> dict[str, Any]:
+    preview = result.stderr[:MAX_SOURCE_ISSUE_STDERR_BYTES]
+    return {
+        "operation": operation,
+        "command": ["git", *arguments],
+        "failureKind": "nonzero-exit",
+        "exitCode": result.returncode,
+        "stderr": preview.decode("utf-8", errors="replace"),
+        "stderrBytes": len(result.stderr),
+        "stderrSha256": hashlib.sha256(result.stderr).hexdigest(),
+        "stderrTruncated": len(result.stderr) > len(preview),
+        "error": "",
+        "errorBytes": 0,
+        "errorSha256": hashlib.sha256(b"").hexdigest(),
+        "errorTruncated": False,
+    }
+
+
+def _git_execution_issue(
+    operation: str, arguments: list[str], error: ContractError
+) -> dict[str, Any]:
+    encoded = str(error).encode("utf-8")
+    preview = encoded[:MAX_SOURCE_ISSUE_ERROR_BYTES]
+    return {
+        "operation": operation,
+        "command": ["git", *arguments],
+        "failureKind": "execution-error",
+        "exitCode": None,
+        "stderr": "",
+        "stderrBytes": 0,
+        "stderrSha256": hashlib.sha256(b"").hexdigest(),
+        "stderrTruncated": False,
+        "error": preview.decode("utf-8", errors="replace"),
+        "errorBytes": len(encoded),
+        "errorSha256": hashlib.sha256(encoded).hexdigest(),
+        "errorTruncated": len(encoded) > len(preview),
+    }
+
+
 def _source_state(root: Path) -> dict[str, Any]:
     deadline = time.monotonic() + SOURCE_STATE_TIMEOUT_SECONDS
-    sourceless_bytecode = _git(
-        root,
-        [
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "-z",
-            "--",
-            "*.pyc",
-            "*.pyo",
-            ":(glob,exclude)**/__pycache__/**",
-        ],
+    issues: list[dict[str, Any]] = []
+    ignored_bytecode_sha256: str | None = None
+    tracked_index_sha256: str | None = None
+    status_sha256: str | None = None
+    diff_sha256: str | None = None
+    untracked_sha256: str | None = None
+    untracked_path_count: int | None = None
+    untracked_bytes: int | None = None
+
+    def result(
+        *,
+        checkpoint: str | None,
+        dirty: bool | None,
+        fingerprint: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "checkpoint": checkpoint,
+            "dirty": dirty,
+            "fingerprint": fingerprint,
+            "diagnostics": {
+                "issues": issues,
+                "ignoredBytecodeSha256": ignored_bytecode_sha256,
+                "trackedIndexSha256": tracked_index_sha256,
+                "statusSha256": status_sha256,
+                "diffSha256": diff_sha256,
+                "untrackedSha256": untracked_sha256,
+                "untrackedPathCount": untracked_path_count,
+                "untrackedBytes": untracked_bytes,
+            },
+        }
+
+    def probe(
+        operation: str,
+        arguments: list[str],
+        *,
+        label: str,
+        max_stdout_bytes: int,
+    ) -> GitResult | None:
+        try:
+            return _git(
+                root,
+                arguments,
+                label=label,
+                deadline=deadline,
+                max_stdout_bytes=max_stdout_bytes,
+            )
+        except ContractError as error:
+            issues.append(_git_execution_issue(operation, arguments, error))
+            return None
+
+    sourceless_arguments = [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "-z",
+        "--",
+        "*.pyc",
+        "*.pyo",
+        ":(glob,exclude)**/__pycache__/**",
+    ]
+    sourceless_bytecode = probe(
+        "ignored-sourceless-bytecode",
+        sourceless_arguments,
         label="ignored sourceless Python bytecode",
-        deadline=deadline,
         max_stdout_bytes=MAX_SOURCE_STATUS_BYTES,
     )
+    if sourceless_bytecode is None:
+        return result(checkpoint=None, dirty=None, fingerprint=None)
     if sourceless_bytecode.returncode != 0:
-        return {"checkpoint": None, "dirty": None, "fingerprint": None}
-    tracked_index_paths(
-        root,
+        issues.append(
+            _git_failure_issue(
+                "ignored-sourceless-bytecode",
+                sourceless_arguments,
+                sourceless_bytecode,
+            )
+        )
+        return result(checkpoint=None, dirty=None, fingerprint=None)
+    ignored_bytecode_sha256 = (
+        f"sha256:{hashlib.sha256(sourceless_bytecode.stdout).hexdigest()}"
+    )
+    tracked_index_arguments = ["ls-files", "-v", "-z", "--cached", "--"]
+    tracked_index = probe(
+        "tracked-index",
+        tracked_index_arguments,
         label="workspace fingerprint tracked index",
-        timeout_seconds=remaining_seconds(
-            deadline, label="workspace fingerprint tracked index"
-        ),
         max_stdout_bytes=MAX_SOURCE_STATUS_BYTES,
+    )
+    if tracked_index is None:
+        return result(checkpoint=None, dirty=None, fingerprint=None)
+    if tracked_index.returncode != 0:
+        issues.append(
+            _git_failure_issue(
+                "tracked-index",
+                tracked_index_arguments,
+                tracked_index,
+            )
+        )
+        return result(checkpoint=None, dirty=None, fingerprint=None)
+    validate_tracked_index_result(
+        tracked_index,
+        label="workspace fingerprint tracked index",
         max_paths=MAX_SOURCE_PATHS,
+    )
+    tracked_index_sha256 = (
+        f"sha256:{hashlib.sha256(tracked_index.stdout).hexdigest()}"
     )
     ignored_bytecode_paths = sorted(
         path for path in sourceless_bytecode.stdout.split(b"\0") if path
@@ -98,54 +225,96 @@ def _source_state(root: Path) -> dict[str, Any]:
             "ignored sourceless Python bytecode can shadow checkpoint source; "
             f"remove it before verification: {first}"
         )
-    status_result = _git(
-        root,
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    status_arguments = [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+    ]
+    status_result = probe(
+        "status",
+        status_arguments,
         label="status",
-        deadline=deadline,
         max_stdout_bytes=MAX_SOURCE_STATUS_BYTES,
     )
+    if status_result is None:
+        return result(checkpoint=None, dirty=None, fingerprint=None)
     if status_result.returncode != 0:
-        return {"checkpoint": None, "dirty": None, "fingerprint": None}
+        issues.append(_git_failure_issue("status", status_arguments, status_result))
+        return result(checkpoint=None, dirty=None, fingerprint=None)
+    status_sha256 = f"sha256:{hashlib.sha256(status_result.stdout).hexdigest()}"
 
-    head_result = _git(
-        root,
-        ["rev-parse", "--verify", "HEAD^{commit}"],
+    head_arguments = ["rev-parse", "--verify", "HEAD^{commit}"]
+    head_result = probe(
+        "head",
+        head_arguments,
         label="HEAD",
-        deadline=deadline,
         max_stdout_bytes=128,
     )
+    if head_result is None:
+        return result(checkpoint=None, dirty=bool(status_result.stdout), fingerprint=None)
     checkpoint = (
         head_result.stdout.decode("ascii").strip()
         if head_result.returncode == 0
         else None
     )
+    if head_result.returncode != 0:
+        issues.append(_git_failure_issue("head", head_arguments, head_result))
     diff = b""
     if checkpoint is not None:
-        diff_result = _git(
-            root,
-            ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"],
+        diff_arguments = [
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD",
+            "--",
+        ]
+        diff_result = probe(
+            "tracked-diff",
+            diff_arguments,
             label="tracked diff",
-            deadline=deadline,
             max_stdout_bytes=MAX_SOURCE_DIFF_BYTES,
         )
+        if diff_result is None:
+            return result(checkpoint=checkpoint, dirty=True, fingerprint=None)
         if diff_result.returncode != 0:
-            return {"checkpoint": checkpoint, "dirty": True, "fingerprint": None}
+            issues.append(
+                _git_failure_issue("tracked-diff", diff_arguments, diff_result)
+            )
+            return result(checkpoint=checkpoint, dirty=True, fingerprint=None)
         diff = diff_result.stdout
+        diff_sha256 = f"sha256:{hashlib.sha256(diff).hexdigest()}"
 
-    untracked_result = _git(
-        root,
-        ["ls-files", "--others", "--exclude-standard", "-z"],
+    untracked_arguments = [
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+    ]
+    untracked_result = probe(
+        "untracked-paths",
+        untracked_arguments,
         label="untracked paths",
-        deadline=deadline,
         max_stdout_bytes=MAX_SOURCE_STATUS_BYTES,
     )
+    if untracked_result is None:
+        return result(
+            checkpoint=checkpoint,
+            dirty=bool(status_result.stdout),
+            fingerprint=None,
+        )
     if untracked_result.returncode != 0:
-        return {
-            "checkpoint": checkpoint,
-            "dirty": bool(status_result.stdout),
-            "fingerprint": None,
-        }
+        issues.append(
+            _git_failure_issue(
+                "untracked-paths", untracked_arguments, untracked_result
+            )
+        )
+        return result(
+            checkpoint=checkpoint,
+            dirty=bool(status_result.stdout),
+            fingerprint=None,
+        )
 
     encoded_paths = sorted(
         path for path in untracked_result.stdout.split(b"\0") if path
@@ -163,23 +332,29 @@ def _source_state(root: Path) -> dict[str, Any]:
     digest.update(status_result.stdout)
     digest.update(b"\0diff\0")
     digest.update(diff)
+    untracked_digest = hashlib.sha256()
     total_untracked_bytes = 0
+
+    def update_untracked(value: bytes) -> None:
+        digest.update(value)
+        untracked_digest.update(value)
+
     for encoded_path in encoded_paths:
         remaining_seconds(deadline, label="workspace fingerprint untracked files")
         relative = os.fsdecode(encoded_path)
         path = root / relative
-        digest.update(b"\0untracked\0")
-        digest.update(encoded_path)
+        update_untracked(b"\0untracked\0")
+        update_untracked(encoded_path)
         try:
             mode = path.lstat().st_mode
             if stat.S_ISLNK(mode):
-                digest.update(b"\0symlink\0")
+                update_untracked(b"\0symlink\0")
                 target = os.fsencode(os.readlink(path))
                 if len(target) > 4096:
                     raise ContractError(
                         f"workspace fingerprint symlink target is too long: {relative}"
                     )
-                digest.update(target)
+                update_untracked(target)
             elif stat.S_ISREG(mode):
                 before = path.lstat()
                 if before.st_size > MAX_UNTRACKED_FILE_BYTES:
@@ -193,7 +368,7 @@ def _source_state(root: Path) -> dict[str, Any]:
                         "workspace fingerprint untracked content exceeds "
                         f"{MAX_UNTRACKED_TOTAL_BYTES} bytes"
                     )
-                digest.update(b"\0file\0")
+                update_untracked(b"\0file\0")
                 file_bytes = 0
                 with path.open("rb") as source:
                     while chunk := source.read(1024 * 1024):
@@ -206,7 +381,7 @@ def _source_state(root: Path) -> dict[str, Any]:
                             raise ContractError(
                                 f"workspace fingerprint file changed while reading: {relative}"
                             )
-                        digest.update(chunk)
+                        update_untracked(chunk)
                 after = path.lstat()
                 if (
                     file_bytes != before.st_size
@@ -225,11 +400,14 @@ def _source_state(root: Path) -> dict[str, Any]:
             raise ContractError(
                 f"workspace fingerprint cannot read {relative}: {error}"
             ) from error
-    return {
-        "checkpoint": checkpoint,
-        "dirty": bool(status_result.stdout),
-        "fingerprint": f"sha256:{digest.hexdigest()}",
-    }
+    untracked_sha256 = f"sha256:{untracked_digest.hexdigest()}"
+    untracked_path_count = len(encoded_paths)
+    untracked_bytes = total_untracked_bytes
+    return result(
+        checkpoint=checkpoint,
+        dirty=bool(status_result.stdout),
+        fingerprint=f"sha256:{digest.hexdigest()}",
+    )
 
 
 def source_state(root: Path) -> dict[str, Any]:
@@ -370,6 +548,8 @@ def run_profile(
         "workingTreeDirty": source_before["dirty"],
         "workspaceFingerprint": source_before["fingerprint"],
         "completedWorkspaceFingerprint": source_after["fingerprint"],
+        "sourceStateDiagnostics": source_before["diagnostics"],
+        "completedSourceStateDiagnostics": source_after["diagnostics"],
         "sourceChangedDuringVerification": source_changed,
         "impact": plan.evidence,
         "startedAt": started,

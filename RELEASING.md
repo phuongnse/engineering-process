@@ -57,7 +57,14 @@ Complete these controls before publishing the first release:
 3. Add a tag ruleset for `refs/tags/v*` that blocks deletion and non-fast-forward
    updates. The release workflow independently requires the tagged commit to be an
    ancestor of `main` and the tag to equal the package version.
-4. When the repository has a second trusted maintainer, require that maintainer to
+4. Add the stable `Change metadata policy` and `Merge eligibility` jobs, observe both
+   succeed on one exact pull-request head, then activate the default-branch baseline in
+   [`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md): pull-request-only
+   integration, blocked deletion and non-fast-forward updates, no bypass actors, and
+   both stable contexts required. During the bootstrap window this exact reviewed
+   setting is applied manually by the repository owner; after an immutable release
+   contains the adapter, every change uses its compare-before-write plan.
+5. When the repository has a second trusted maintainer, require that maintainer to
    review `pypi` deployments and enable **Prevent self-review**.
 
 This repository currently has one maintainer, so required deployment review plus
@@ -69,7 +76,10 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 ## Release
 
 1. Complete the repository's own process lifecycle on an immutable checkpoint and
-   require independent review plus the complete CI matrix to pass. Export the
+   require independent review plus the complete verification matrix,
+   `Change metadata policy`, `Merge eligibility`,
+   and live repository policy check to pass. Publish canonical contract,
+   verification, and independent-review references in the ready change request. Export the
    completed receipt bound to the pinned public N-1 authority and artifact digests.
 2. Update the ordered `release.json.changes`; let their types determine the exact
    SemVer classification. Set the same version in `release.json`, `pyproject.toml`,
@@ -77,10 +87,14 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 3. Create a draft GitHub release whose existing tag and title are both exactly
    `v<package-version>` and whose target is the verified `main` commit. Attach the
    receipt using the exact `release.json.identity.receiptAsset` name. Run the
-   `Prepare Release` workflow for that tag; it validates the draft and N-1 receipt,
-   builds from the verified HEAD object graph, attaches the inspected wheel, sdist,
-   and digest attestation to the still-editable draft, and fails if any asset exists
-   unexpectedly. Only after that workflow passes, publish the immutable release.
+   `Prepare release artifacts` workflow for that tag; it validates the draft and N-1
+   receipt, installs the complete release dependency lock with `--require-hashes`, and
+   builds the isolated tracked snapshot with `--no-isolation`. Build dependencies are
+   resolved only by the prior hash-locked installation; the build performs no network
+   resolution or isolated dependency installation. The workflow attaches the inspected
+   wheel, sdist, and digest attestation to the still-editable draft, and fails if any
+   asset exists unexpectedly. Only after that workflow passes, publish the immutable
+   release.
 4. Observe the `Publish` workflow. It never mutates the published release. Its no-OIDC
    build job downloads the immutable assets, verifies GitHub's release attestation,
    rejects an incomplete or extended immutable asset set, and verifies each local
