@@ -71,6 +71,9 @@ evidence report as a secret store. Architecture-specific telemetry is required o
 when the affected system needs it, while every failed operation still needs an
 actionable and correlatable explanation.
 
+[`ENVIRONMENT_CONTRACT.md`](ENVIRONMENT_CONTRACT.md) owns portable probe matching,
+original-output evidence, and finite-command semantics.
+
 Missing, stale, truncated beyond a declared policy, blocked, or unverifiable evidence
 never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares

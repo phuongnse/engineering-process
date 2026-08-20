@@ -25,6 +25,11 @@ change carries the target-version migration and updates `.process/project.json`
 inside the adoption transaction. N+1 governs only changes opened after the complete
 adoption checkpoint is reviewed and merged.
 
+The concrete stable-snapshot, path-identity, package-installation, process-containment,
+and rollback guarantees used by that transaction are owned by
+[`ADOPTION_ADAPTER.md`](ADOPTION_ADAPTER.md); this document owns only the producer's
+N-to-N+1 trust sequence.
+
 ## Initial bootstrap root
 
 The clean prospective self-hosting lineage begins from immutable public release

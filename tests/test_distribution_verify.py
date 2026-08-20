@@ -47,6 +47,8 @@ class DistributionVerificationTests(unittest.TestCase):
     def test_archive_contract_requires_release_and_production_assets(self):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
         members = [
+            "engineering_process-0.1.1.data/data/share/engineering-process/ADOPTION_ADAPTER.md",
+            "engineering_process-0.1.1.data/data/share/engineering-process/ENVIRONMENT_CONTRACT.md",
             "engineering_process-0.1.1.data/data/share/engineering-process/GITHUB_REPOSITORY_ADAPTER.md",
             "engineering_process-0.1.1.data/data/share/engineering-process/PRODUCTION_STANDARD.md",
             "engineering_process-0.1.1.data/data/share/engineering-process/REPOSITORY_GOVERNANCE.md",
@@ -73,6 +75,8 @@ class DistributionVerificationTests(unittest.TestCase):
 
     def test_archive_contract_rejects_windows_hostile_member_names(self):
         required = [
+            "ADOPTION_ADAPTER.md",
+            "ENVIRONMENT_CONTRACT.md",
             "GITHUB_REPOSITORY_ADAPTER.md",
             "PRODUCTION_STANDARD.md",
             "REPOSITORY_GOVERNANCE.md",
@@ -118,6 +122,8 @@ class DistributionVerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "engineering_process-0.1.1-py3-none-any.whl"
             required = [
+                "ADOPTION_ADAPTER.md",
+                "ENVIRONMENT_CONTRACT.md",
                 "GITHUB_REPOSITORY_ADAPTER.md",
                 "PRODUCTION_STANDARD.md",
                 "REPOSITORY_GOVERNANCE.md",

@@ -219,6 +219,38 @@ class PublicationTests(unittest.TestCase):
             any("status pending must not publish" in issue for issue in issues)
         )
 
+    def test_requirements_section_cannot_bypass_evidence_validation(self):
+        pending = pr_body("pending").replace(
+            PR_DESCRIPTION_END,
+            "[Evidence: verification](https://evidence.example/orphan)\n"
+            + PR_DESCRIPTION_END,
+        )
+        pending_issues = self.publication_issues(pending, state="draft")
+        self.assertTrue(
+            any("status pending must not publish" in issue for issue in pending_issues)
+        )
+        self.assertTrue(
+            any("must be in ## Verification" in issue for issue in pending_issues)
+        )
+
+        duplicate = pr_body().replace(
+            PR_DESCRIPTION_END,
+            "[Evidence: verification](https://evidence.example/orphan)\n"
+            + PR_DESCRIPTION_END,
+        )
+        duplicate_issues = self.publication_issues(duplicate)
+        self.assertTrue(
+            any("must appear exactly once" in issue for issue in duplicate_issues)
+        )
+
+        unsafe = pr_body("pending").replace(
+            PR_DESCRIPTION_END,
+            "[Evidence: verification](http://evidence.example/orphan)\n"
+            + PR_DESCRIPTION_END,
+        )
+        unsafe_issues = self.publication_issues(unsafe, state="draft")
+        self.assertTrue(any("must use HTTPS" in issue for issue in unsafe_issues))
+
     def test_evidence_reference_resources_are_bounded(self):
         oversized_url = (
             "https://evidence.example/" + "x" * MAX_EVIDENCE_URL_CHARACTERS

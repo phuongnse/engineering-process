@@ -9,9 +9,10 @@ from engineering_process.markdown import visible_markdown_links
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
-HIGH_LEVEL_PROCESS_DOCUMENTS = ("PRODUCTION_STANDARD.md",)
 DOCUMENT_LAYERS = {
+    "ADOPTION_ADAPTER.md": "adapter",
     "AGENTS.md": "producer",
+    "ENVIRONMENT_CONTRACT.md": "public-contract",
     "GITHUB_REPOSITORY_ADAPTER.md": "adapter",
     "PRODUCTION_STANDARD.md": "policy",
     "README.md": "navigation",
@@ -20,12 +21,20 @@ DOCUMENT_LAYERS = {
     "SELF_HOSTING.md": "producer",
     "VERSIONING.md": "public-contract",
 }
+HIGH_LEVEL_PROCESS_DOCUMENTS = tuple(
+    sorted(name for name, layer in DOCUMENT_LAYERS.items() if layer == "policy")
+)
 ADAPTER_CONTRACTS = {
+    "ADOPTION_ADAPTER.md": "VERSIONING.md",
     "GITHUB_REPOSITORY_ADAPTER.md": "REPOSITORY_GOVERNANCE.md",
 }
 TEMPLATE_LAYERS = {
     "templates/AGENTS.process.md": "public-contract",
     "templates/PULL_REQUEST_TEMPLATE.md": "adapter",
+}
+ADDITIONAL_DOCUMENT_LAYERS = {
+    ".github/PULL_REQUEST_TEMPLATE.md": "producer",
+    "evals/README.md": "example",
 }
 ALLOWED_LAYER_REFERENCES = {
     "policy": {"policy", "public-contract"},
@@ -33,6 +42,7 @@ ALLOWED_LAYER_REFERENCES = {
     "adapter": {"policy", "public-contract", "adapter"},
     "navigation": set(DOCUMENT_LAYERS.values()),
     "producer": set(DOCUMENT_LAYERS.values()),
+    "example": {"policy", "public-contract"},
 }
 ABSTRACT_CONCEPT = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 MARKDOWN = MarkdownIt("commonmark", {"html": True})
@@ -70,6 +80,8 @@ def _distributed_document_layer(path: Path) -> str | None:
         return DOCUMENT_LAYERS.get(path.name)
     if relative in TEMPLATE_LAYERS:
         return TEMPLATE_LAYERS[relative]
+    if relative in ADDITIONAL_DOCUMENT_LAYERS:
+        return ADDITIONAL_DOCUMENT_LAYERS[relative]
     if relative.startswith("process_assets/skills/"):
         return "public-contract"
     return None
@@ -83,8 +95,10 @@ class DocumentationArchitectureTests(unittest.TestCase):
     def test_every_distributed_markdown_surface_has_one_layer(self):
         surfaces = [
             *PROCESS_ROOT.glob("*.md"),
-            *(PROCESS_ROOT / "templates").glob("*.md"),
+            *(PROCESS_ROOT / "templates").rglob("*.md"),
             *(PROCESS_ROOT / "process_assets" / "skills").rglob("*.md"),
+            *(PROCESS_ROOT / ".github").rglob("*.md"),
+            *(PROCESS_ROOT / "evals").rglob("*.md"),
         ]
         for surface in surfaces:
             with self.subTest(surface=str(surface)):
@@ -120,7 +134,7 @@ class DocumentationArchitectureTests(unittest.TestCase):
     def test_distributed_guidance_does_not_depend_on_adapter_or_producer_docs(self):
         skills_root = PROCESS_ROOT / "process_assets" / "skills"
         sources = [
-            *(PROCESS_ROOT / "templates").glob("*.md"),
+            *(PROCESS_ROOT / "templates").rglob("*.md"),
             *skills_root.rglob("*.md"),
         ]
         for source in sorted(sources):
@@ -155,6 +169,22 @@ class DocumentationArchitectureTests(unittest.TestCase):
         self.assertIn("project owns its document registry", consumer.lower())
         self.assertIn("independent semantic review", skill)
         self.assertIn("Do not use a blacklist", skill)
+        self.assertIn(
+            "Treat product compatibility, deployment, migration, and retirement "
+            "strategies as\n  consumer decisions",
+            producer,
+        )
+        self.assertIn("must not infer a strategy", producer)
+        self.assertIn(
+            "Product compatibility, deployment, migration, and\n"
+            "retirement strategies remain project decisions and are never inferred",
+            consumer,
+        )
+        self.assertIn(
+            "Do not infer a consumer compatibility, deployment, migration, or "
+            "retirement\n  strategy",
+            skill,
+        )
 
     def test_provider_implementations_are_peer_adapter_documents(self):
         adapters = {

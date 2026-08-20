@@ -10,6 +10,9 @@ gates to every project.
 The documents are intentionally layered. [`PRODUCTION_STANDARD.md`](./PRODUCTION_STANDARD.md)
 owns portable outcomes and invariants only. [`VERSIONING.md`](./VERSIONING.md) owns
 public compatibility and adoption classification, while
+[`ENVIRONMENT_CONTRACT.md`](./ENVIRONMENT_CONTRACT.md) owns readiness probes and
+finite-command evidence. Concrete adoption mechanics live in
+[`ADOPTION_ADAPTER.md`](./ADOPTION_ADAPTER.md), and
 [`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md) owns hosted-repository
 integration semantics; concrete provider bindings have peer adapter owners such as
 [`GITHUB_REPOSITORY_ADAPTER.md`](./GITHUB_REPOSITORY_ADAPTER.md).
@@ -507,7 +510,8 @@ authenticates who produced it.
   evidence, managed-asset transaction, optional consumer migration, isolated review,
   and explicit integration boundary. [`VERSIONING.md`](./VERSIONING.md) owns the
   portable sequence; producer automation and containment details remain in
-  [`SELF_HOSTING.md`](./SELF_HOSTING.md) and its implementation owners.
+  [`ADOPTION_ADAPTER.md`](./ADOPTION_ADAPTER.md) and producer-specific coordination
+  remains in [`SELF_HOSTING.md`](./SELF_HOSTING.md).
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, and the release classification contract. The release
   gate binds that contract to the exact SemVer increment, package version, latest

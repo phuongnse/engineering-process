@@ -74,6 +74,8 @@ def distribution_digest(
     if release_contract.is_file():
         entries.append(("assets/release.json", release_contract))
     for policy_name in (
+        "ADOPTION_ADAPTER.md",
+        "ENVIRONMENT_CONTRACT.md",
         "GITHUB_REPOSITORY_ADAPTER.md",
         "PRODUCTION_STANDARD.md",
         "REPOSITORY_GOVERNANCE.md",

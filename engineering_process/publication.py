@@ -200,8 +200,6 @@ def _evidence_reference_issues(
     issues: list[str] = []
     links: list[tuple[str, str, str]] = []
     for section_name, section in sections.items():
-        if section_name == "Requirements and rules followed":
-            continue
         links.extend(
             (section_name, label, destination)
             for label, destination in visible_markdown_links(section)
@@ -257,7 +255,7 @@ def _evidence_reference_issues(
                 f"Satisfied requirement {requirement} requires one "
                 f"[{reference_label}](https://...) link in ## {owner_section}"
             )
-        elif status in {"pending", "not-applicable"} and owner_matches:
+        elif status in {"pending", "not-applicable"} and matches:
             issues.append(
                 f"Requirement {requirement} with status {status} must not publish "
                 f"the completed `{reference_label}` reference"

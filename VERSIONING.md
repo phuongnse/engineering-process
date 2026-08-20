@@ -84,7 +84,7 @@ contains child execution through the portable task boundary, and atomically
 synchronizes the authority lock and managed assets. Concurrent input changes or
 partial materialization fail and roll back. Code under development never acts as its
 own adoption authority; concrete acquisition, locking, and containment mechanisms
-belong to adapter owners.
+belong to the registered adoption adapter owner.
 
 Consumer-owned project policy is never inferred. When a release needs project
 configuration activation, the consumer supplies one bounded declarative migration
