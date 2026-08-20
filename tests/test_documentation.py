@@ -40,8 +40,8 @@ ALLOWED_LAYER_REFERENCES = {
     "policy": {"policy", "public-contract"},
     "public-contract": {"policy", "public-contract"},
     "adapter": {"policy", "public-contract", "adapter"},
-    "navigation": set(DOCUMENT_LAYERS.values()),
-    "producer": set(DOCUMENT_LAYERS.values()),
+    "navigation": {*DOCUMENT_LAYERS.values(), "example"},
+    "producer": {*DOCUMENT_LAYERS.values(), "example"},
     "example": {"policy", "public-contract"},
 }
 ABSTRACT_CONCEPT = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -87,37 +87,68 @@ def _distributed_document_layer(path: Path) -> str | None:
     return None
 
 
+def _documentation_surfaces() -> list[Path]:
+    return sorted(
+        {
+            *PROCESS_ROOT.glob("*.md"),
+            *(PROCESS_ROOT / "templates").rglob("*.md"),
+            *(PROCESS_ROOT / "process_assets" / "skills").rglob("*.md"),
+            *(PROCESS_ROOT / ".github").rglob("*.md"),
+            *(PROCESS_ROOT / "evals").rglob("*.md"),
+        }
+    )
+
+
+def _registered_document_target(
+    source: Path,
+    destination: str,
+    registry: dict[Path, str],
+) -> Path | None:
+    parsed = urlsplit(destination)
+    if parsed.scheme or parsed.netloc or not parsed.path:
+        return None
+    target = (source.parent / parsed.path).resolve()
+    try:
+        target.relative_to(PROCESS_ROOT)
+    except ValueError:
+        return None
+    if target.suffix != ".md":
+        return None
+    if target not in registry:
+        raise AssertionError(f"unregistered Markdown reference target: {target}")
+    return target
+
+
 class DocumentationArchitectureTests(unittest.TestCase):
     def test_every_root_document_has_one_registered_layer(self):
         discovered = {path.name for path in PROCESS_ROOT.glob("*.md")}
         self.assertEqual(discovered, set(DOCUMENT_LAYERS))
 
     def test_every_distributed_markdown_surface_has_one_layer(self):
-        surfaces = [
-            *PROCESS_ROOT.glob("*.md"),
-            *(PROCESS_ROOT / "templates").rglob("*.md"),
-            *(PROCESS_ROOT / "process_assets" / "skills").rglob("*.md"),
-            *(PROCESS_ROOT / ".github").rglob("*.md"),
-            *(PROCESS_ROOT / "evals").rglob("*.md"),
-        ]
-        for surface in surfaces:
+        for surface in _documentation_surfaces():
             with self.subTest(surface=str(surface)):
                 self.assertIsNotNone(_distributed_document_layer(surface))
 
-    def test_root_document_references_follow_layer_direction(self):
-        for relative, source_layer in DOCUMENT_LAYERS.items():
-            source = PROCESS_ROOT / relative
+    def test_registered_document_references_follow_layer_direction(self):
+        registry = {
+            source.resolve(): _distributed_document_layer(source)
+            for source in _documentation_surfaces()
+        }
+        self.assertTrue(all(layer is not None for layer in registry.values()))
+        for source, raw_source_layer in registry.items():
+            assert raw_source_layer is not None
             for _, destination in visible_markdown_links(
                 source.read_text(encoding="utf-8")
             ):
-                target = _root_document_target(source, destination)
+                target = _registered_document_target(source, destination, registry)
                 if target is None:
                     continue
-                with self.subTest(source=relative, target=target):
-                    self.assertIn(target, DOCUMENT_LAYERS)
+                target_layer = registry[target]
+                assert target_layer is not None
+                with self.subTest(source=str(source), target=str(target)):
                     self.assertIn(
-                        DOCUMENT_LAYERS[target],
-                        ALLOWED_LAYER_REFERENCES[source_layer],
+                        target_layer,
+                        ALLOWED_LAYER_REFERENCES[raw_source_layer],
                     )
 
     def test_high_level_policy_has_abstract_document_shape(self):
@@ -201,6 +232,14 @@ class DocumentationArchitectureTests(unittest.TestCase):
                 )
             }
             self.assertIn(contract, links)
+
+    def test_github_adapter_owns_remote_artifact_binding(self):
+        adapter = (PROCESS_ROOT / "GITHUB_REPOSITORY_ADAPTER.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("immutable artifact ID", adapter)
+        self.assertIn("service-computed artifact digest", adapter)
+        self.assertIn("never replace the public N-1 lifecycle reports", adapter)
 
 
 if __name__ == "__main__":

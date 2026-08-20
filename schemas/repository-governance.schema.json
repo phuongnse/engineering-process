@@ -13,7 +13,7 @@
       "type": "string"
     },
     "schemaVersion": {
-      "const": 1
+      "enum": [1, 2]
     },
     "defaultBranch": {
       "type": "object",
@@ -21,7 +21,6 @@
       "required": [
         "requireChangeRequest",
         "blockDeletion",
-        "blockHistoryRewrite",
         "bypass",
         "requireUpToDate",
         "requiredChecks"
@@ -31,6 +30,9 @@
           "const": true
         },
         "blockDeletion": {
+          "const": true
+        },
+        "blockNonFastForward": {
           "const": true
         },
         "blockHistoryRewrite": {
@@ -72,5 +74,35 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 1}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "defaultBranch": {
+            "required": ["blockNonFastForward"],
+            "not": {"required": ["blockHistoryRewrite"]}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "defaultBranch": {
+            "required": ["blockHistoryRewrite"],
+            "not": {"required": ["blockNonFastForward"]}
+          }
+        }
+      }
+    }
+  ]
 }

@@ -7,8 +7,8 @@ authorization.
 
 ## Portable baseline
 
-Every governed repository declares `.process/repository-governance.json`. Schema 1
-requires the default branch to:
+Every governed repository declares `.process/repository-governance.json`. New policies
+use schema 2, which requires the default branch to:
 
 - accept changes only through a governed review object;
 - block deletion and history rewrites;
@@ -17,10 +17,14 @@ requires the default branch to:
 - declare whether required checks must be refreshed after the branch falls behind the
   default branch.
 
+Released schema 1 remains readable with its `blockNonFastForward` field and the same
+history-protection meaning. Migration to schema 2 changes only that representation to
+the provider-neutral `blockHistoryRewrite`; it does not weaken or reapply live policy.
+
 Projects may add stronger checks or a separate stronger protection policy. They
-cannot remove or rename the two stable contexts. `Change metadata policy` validates current review
-metadata and publication policy. `Merge eligibility` succeeds only when all
-project-owned verification for the immutable head checkpoint succeeds. Individual
+cannot remove or rename the two stable contexts. `Change metadata policy` validates
+current review metadata and publication policy. `Merge eligibility` succeeds only
+when all project-owned verification for the immutable head checkpoint succeeds. Individual
 matrix and domain job names remain project-owned implementation details behind
 `Merge eligibility`; copying all of them into remote settings creates avoidable
 configuration drift.

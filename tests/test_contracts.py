@@ -391,7 +391,7 @@ class ProjectContractTests(unittest.TestCase):
 class ArtifactContractTests(unittest.TestCase):
     def test_repository_governance_requires_non_weakenable_sorted_baseline(self):
         document = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "defaultBranch": {
                 "requireChangeRequest": True,
                 "blockDeletion": True,
@@ -409,6 +409,28 @@ class ArtifactContractTests(unittest.TestCase):
             ("Change metadata policy", "Merge eligibility"),
             policy.required_checks,
         )
+
+        legacy = json.loads(json.dumps(document))
+        legacy["schemaVersion"] = 1
+        legacy["defaultBranch"]["blockNonFastForward"] = legacy[
+            "defaultBranch"
+        ].pop("blockHistoryRewrite")
+        legacy_policy = validate_repository_governance(legacy)
+        self.assertEqual(policy, legacy_policy)
+
+        wrong_v2_field = json.loads(json.dumps(document))
+        wrong_v2_field["defaultBranch"]["blockNonFastForward"] = wrong_v2_field[
+            "defaultBranch"
+        ].pop("blockHistoryRewrite")
+        with self.assertRaisesRegex(ContractError, "blockHistoryRewrite"):
+            validate_repository_governance(wrong_v2_field)
+
+        wrong_v1_field = json.loads(json.dumps(legacy))
+        wrong_v1_field["defaultBranch"]["blockHistoryRewrite"] = wrong_v1_field[
+            "defaultBranch"
+        ].pop("blockNonFastForward")
+        with self.assertRaisesRegex(ContractError, "blockNonFastForward"):
+            validate_repository_governance(wrong_v1_field)
 
         weakened = json.loads(json.dumps(document))
         weakened["defaultBranch"]["requireChangeRequest"] = False

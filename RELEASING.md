@@ -87,10 +87,14 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 3. Create a draft GitHub release whose existing tag and title are both exactly
    `v<package-version>` and whose target is the verified `main` commit. Attach the
    receipt using the exact `release.json.identity.receiptAsset` name. Run the
-   `Prepare release artifacts` workflow for that tag; it validates the draft and N-1 receipt,
-   builds from the verified HEAD object graph, attaches the inspected wheel, sdist,
-   and digest attestation to the still-editable draft, and fails if any asset exists
-   unexpectedly. Only after that workflow passes, publish the immutable release.
+   `Prepare release artifacts` workflow for that tag; it validates the draft and N-1
+   receipt, installs the complete release dependency lock with `--require-hashes`, and
+   builds the isolated tracked snapshot with `--no-isolation`. Build dependencies are
+   resolved only by the prior hash-locked installation; the build performs no network
+   resolution or isolated dependency installation. The workflow attaches the inspected
+   wheel, sdist, and digest attestation to the still-editable draft, and fails if any
+   asset exists unexpectedly. Only after that workflow passes, publish the immutable
+   release.
 4. Observe the `Publish` workflow. It never mutates the published release. Its no-OIDC
    build job downloads the immutable assets, verifies GitHub's release attestation,
    rejects an incomplete or extended immutable asset set, and verifies each local

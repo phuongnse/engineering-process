@@ -94,6 +94,19 @@ A GitHub consumer normally uses two workflows:
 Metadata edits refresh only `Change metadata policy`; a new source checkpoint runs
 both workflows. The ruleset requires both contexts for the current head.
 
+## Supplemental verification artifacts
+
+Each required platform/runtime job publishes one bounded supplemental-verification
+bundle for the exact source and workflow checkpoint. The portable manifest owns
+profile, runtime, platform, impact, output, timeout, and report-digest fields. GitHub
+Actions owns the run URL, immutable artifact ID, retention state, and
+service-computed artifact digest.
+
+Independent review preserves the artifact ID and service-computed digest with the
+reviewed run and checkpoint. A locally computed archive hash or mutable workflow log
+does not substitute for that provider binding. Supplemental artifacts add remote
+environment evidence but never replace the public N-1 lifecycle reports.
+
 ## Producer bootstrap
 
 The producer adds and verifies this adapter through the public N-1 lifecycle but does

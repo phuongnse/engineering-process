@@ -108,7 +108,7 @@ class FakeOpener:
 
 def policy_document():
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "defaultBranch": {
             "requireChangeRequest": True,
             "blockDeletion": True,
@@ -212,6 +212,32 @@ class RepositoryGovernanceTests(unittest.TestCase):
     def setUp(self):
         self.document = policy_document()
         self.policy = validate_repository_governance(self.document)
+
+    def test_schema_preserves_v1_and_requires_v2_history_field(self):
+        schema = json.loads(
+            (
+                PROCESS_ROOT / "schemas" / "repository-governance.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        validator = jsonschema.Draft202012Validator(schema)
+        validator.validate(self.document)
+
+        legacy = copy.deepcopy(self.document)
+        legacy["schemaVersion"] = 1
+        legacy["defaultBranch"]["blockNonFastForward"] = legacy[
+            "defaultBranch"
+        ].pop("blockHistoryRewrite")
+        validator.validate(legacy)
+
+        invalid_v1 = copy.deepcopy(self.document)
+        invalid_v1["schemaVersion"] = 1
+        with self.assertRaises(jsonschema.ValidationError):
+            validator.validate(invalid_v1)
+
+        invalid_v2 = copy.deepcopy(legacy)
+        invalid_v2["schemaVersion"] = 2
+        with self.assertRaises(jsonschema.ValidationError):
+            validator.validate(invalid_v2)
 
     def test_per_job_required_check_list_is_reported_as_drift(self):
         current = per_job_ruleset()

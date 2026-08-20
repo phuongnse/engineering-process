@@ -40,7 +40,7 @@ BASELINE_RULES = {
     "required_status_checks",
 }
 DEFAULT_POLICY = {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "defaultBranch": {
         "requireChangeRequest": True,
         "blockDeletion": True,

@@ -443,6 +443,17 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("engineering_process/requirements-release.txt", workflow)
         self.assertIn("--no-deps", workflow)
 
+    def test_release_guide_preserves_the_non_resolving_build_boundary(self):
+        guide = (PROCESS_ROOT / "RELEASING.md").read_text(encoding="utf-8")
+        verifier = (
+            PROCESS_ROOT / "engineering_process" / "distribution_verify.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--require-hashes", guide)
+        self.assertIn("--no-isolation", guide)
+        self.assertIn("no network\n   resolution", guide)
+        self.assertIn('"--no-isolation"', verifier)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1310,14 +1310,19 @@ def validate_repository_governance(
         optional={"$schema"},
         path=path,
     )
-    _schema_version(value, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     default_branch = _object(value["defaultBranch"], f"{path}.defaultBranch")
+    history_field = (
+        "blockNonFastForward" if schema_version == 1 else "blockHistoryRewrite"
+    )
     _exact_keys(
         default_branch,
         required={
             "requireChangeRequest",
             "blockDeletion",
-            "blockHistoryRewrite",
+            history_field,
             "bypass",
             "requireUpToDate",
             "requiredChecks",
@@ -1327,7 +1332,7 @@ def validate_repository_governance(
     for field in (
         "requireChangeRequest",
         "blockDeletion",
-        "blockHistoryRewrite",
+        history_field,
     ):
         if default_branch[field] is not True:
             raise ContractError(f"{path}.defaultBranch.{field}: must be true")
