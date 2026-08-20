@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import engineering_process.lifecycle as lifecycle_module
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
     Check,
@@ -486,6 +487,77 @@ class LifecycleTests(unittest.TestCase):
                     context_id="worker-context",
                     kind="agent",
                 )
+
+    def test_rejected_verification_records_specific_eligibility_reasons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            state = start_change(
+                root,
+                self.project(),
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                self.project(),
+                "change-1",
+                plan_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            begin_implementation(
+                root,
+                "change-1",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            real_run_profile = lifecycle_module.run_profile
+
+            def dirty_report(*args, **kwargs):
+                report = real_run_profile(*args, **kwargs)
+                report["workingTreeDirty"] = True
+                return report
+
+            with (
+                mock.patch.object(
+                    lifecycle_module,
+                    "run_profile",
+                    side_effect=dirty_report,
+                ),
+                self.assertRaisesRegex(ContractError, "working-tree-dirty"),
+            ):
+                verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    "development",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+            state = load_state(root, "change-1")
+            rejected = [
+                event
+                for event in state["history"]
+                if event["event"] == "verification-rejected"
+            ]
+            self.assertEqual(
+                ["working-tree-dirty"], rejected[-1]["eligibilityIssues"]
+            )
 
     def test_requested_changes_start_a_new_cycle_and_invalidate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

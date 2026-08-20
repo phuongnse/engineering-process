@@ -642,6 +642,23 @@ def _begin_implementation_unlocked(
     return state
 
 
+def _verification_eligibility_issues(report: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    if report["status"] != "passed":
+        issues.append("profile-status-not-passed")
+    if report["checkpoint"] is None:
+        issues.append("checkpoint-missing")
+    if report["workingTreeDirty"] is not False:
+        issues.append("working-tree-dirty")
+    if report["workspaceFingerprint"] is None:
+        issues.append("workspace-fingerprint-missing")
+    if report["sourceChangedDuringVerification"]:
+        issues.append("source-changed-during-verification")
+    if report["workspaceFingerprint"] != report["completedWorkspaceFingerprint"]:
+        issues.append("workspace-fingerprint-changed-during-verification")
+    return issues
+
+
 def _verify_change_unlocked(
     project_root: Path,
     project: Project,
@@ -675,15 +692,8 @@ def _verify_change_unlocked(
         / f"cycle-{state['cycle']}-{profile}.json"
     )
     _write_atomic(report_path, report)
-    eligible = (
-        report["status"] == "passed"
-        and report["checkpoint"] is not None
-        and report["workingTreeDirty"] is False
-        and report["workspaceFingerprint"] is not None
-        and not report["sourceChangedDuringVerification"]
-        and report["workspaceFingerprint"] == report["completedWorkspaceFingerprint"]
-    )
-    if not eligible:
+    eligibility_issues = _verification_eligibility_issues(report)
+    if eligibility_issues:
         _event(
             state,
             "verification-rejected",
@@ -692,10 +702,12 @@ def _verify_change_unlocked(
             profile=profile,
             report=_relative(project_root, report_path),
             reportDigest=_digest_file(report_path),
+            eligibilityIssues=eligibility_issues,
         )
         _save_state(project_root, state)
         raise ContractError(
-            "lifecycle verification requires passing checks on a clean immutable checkpoint"
+            "lifecycle verification requires passing checks on a clean immutable "
+            "checkpoint: " + ", ".join(eligibility_issues)
         )
     evidence = {
         "profile": profile,
