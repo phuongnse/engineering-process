@@ -559,6 +559,61 @@ class LifecycleTests(unittest.TestCase):
                 ["working-tree-dirty"], rejected[-1]["eligibilityIssues"]
             )
 
+    def test_verification_eligibility_reason_mapping_is_complete(self):
+        passing = {
+            "status": "passed",
+            "checkpoint": "a" * 40,
+            "workingTreeDirty": False,
+            "workspaceFingerprint": f"sha256:{'1' * 64}",
+            "sourceChangedDuringVerification": False,
+            "completedWorkspaceFingerprint": f"sha256:{'1' * 64}",
+        }
+        cases = {
+            "profile": (
+                {"status": "failed"},
+                ["profile-status-not-passed"],
+            ),
+            "checkpoint": (
+                {"checkpoint": None},
+                ["checkpoint-missing"],
+            ),
+            "dirty": (
+                {"workingTreeDirty": True},
+                ["working-tree-dirty"],
+            ),
+            "missing-fingerprint": (
+                {
+                    "workspaceFingerprint": None,
+                    "completedWorkspaceFingerprint": None,
+                },
+                ["workspace-fingerprint-missing"],
+            ),
+            "source-changed": (
+                {"sourceChangedDuringVerification": True},
+                ["source-changed-during-verification"],
+            ),
+            "fingerprint-changed": (
+                {"completedWorkspaceFingerprint": f"sha256:{'2' * 64}"},
+                ["workspace-fingerprint-changed-during-verification"],
+            ),
+        }
+        for name, (updates, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(
+                    expected,
+                    lifecycle_module._verification_eligibility_issues(
+                        {**passing, **updates}
+                    ),
+                )
+
+    @unittest.skipUnless(
+        sys.platform == "win32", "Windows lifecycle repetition evidence"
+    )
+    def test_requested_changes_transition_repeats_on_fresh_windows_repositories(self):
+        for iteration in range(8):
+            with self.subTest(iteration=iteration):
+                self.test_requested_changes_start_a_new_cycle_and_invalidate_evidence()
+
     def test_requested_changes_start_a_new_cycle_and_invalidate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
