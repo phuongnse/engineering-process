@@ -22,7 +22,7 @@ from typing import Any
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 INFINITE = 0xFFFFFFFF
-JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS = 1
+JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS = 3
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D
@@ -34,6 +34,7 @@ WAIT_FAILED = 0xFFFFFFFF
 WAIT_OBJECT_0 = 0x00000000
 WAIT_TIMEOUT = 0x00000102
 CLEANUP_GRACE_MILLISECONDS = 5_000
+MAX_JOB_PROCESS_IDS = 256
 
 
 class IO_COUNTERS(ctypes.Structure):
@@ -72,16 +73,11 @@ class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
     ]
 
 
-class JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+class JOBOBJECT_BASIC_PROCESS_ID_LIST(ctypes.Structure):
     _fields_ = [
-        ("TotalUserTime", ctypes.c_longlong),
-        ("TotalKernelTime", ctypes.c_longlong),
-        ("ThisPeriodTotalUserTime", ctypes.c_longlong),
-        ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
-        ("TotalPageFaultCount", wintypes.DWORD),
-        ("TotalProcesses", wintypes.DWORD),
-        ("ActiveProcesses", wintypes.DWORD),
-        ("TotalTerminatedProcesses", wintypes.DWORD),
+        ("NumberOfAssignedProcesses", wintypes.DWORD),
+        ("NumberOfProcessIdsInList", wintypes.DWORD),
+        ("ProcessIdList", ctypes.c_size_t * MAX_JOB_PROCESS_IDS),
     ]
 
 
@@ -197,53 +193,87 @@ def _configure_kernel32(kernel32: Any) -> None:
     kernel32.CloseHandle.restype = wintypes.BOOL
 
 
-def _active_processes(kernel32: Any, job: int) -> int:
-    accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+def _process_ids(kernel32: Any, job: int) -> tuple[int, ...]:
+    process_list = JOBOBJECT_BASIC_PROCESS_ID_LIST()
     returned_length = wintypes.DWORD()
     if not kernel32.QueryInformationJobObject(
         job,
-        JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS,
-        ctypes.byref(accounting),
-        ctypes.sizeof(accounting),
+        JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS,
+        ctypes.byref(process_list),
+        ctypes.sizeof(process_list),
         ctypes.byref(returned_length),
     ):
         raise _last_error("QueryInformationJobObject")
-    return int(accounting.ActiveProcesses)
+    assigned = int(process_list.NumberOfAssignedProcesses)
+    returned = int(process_list.NumberOfProcessIdsInList)
+    if returned > MAX_JOB_PROCESS_IDS or returned < assigned:
+        raise OSError(
+            "Job Object process list exceeds the bounded cleanup capacity"
+        )
+    return tuple(int(process_list.ProcessIdList[index]) for index in range(returned))
+
+
+def _wait_for_job_to_drain(kernel32: Any, job: int, *, label: str) -> list[OSError]:
+    errors: list[OSError] = []
+    deadline = time.monotonic() + CLEANUP_GRACE_MILLISECONDS / 1000
+    while True:
+        try:
+            process_ids = _process_ids(kernel32, job)
+        except OSError as error:
+            errors.append(error)
+            break
+        if not process_ids:
+            break
+        if time.monotonic() >= deadline:
+            errors.append(OSError(label))
+            break
+        time.sleep(0.01)
+    return errors
 
 
 def _cleanup_process_and_job(
     kernel32: Any,
     job: int,
     process_info: PROCESS_INFORMATION,
-) -> tuple[list[OSError], int | None]:
+    *,
+    target_pid: int,
+    target_completed: bool,
+) -> tuple[list[OSError], tuple[int, ...] | None]:
     errors: list[OSError] = []
     try:
-        active_processes = _active_processes(kernel32, job)
+        process_ids = _process_ids(kernel32, job)
     except OSError as error:
         errors.append(error)
-        active_processes = None
-    active_processes_before_cleanup = active_processes
-
-    if active_processes is None or active_processes > 0:
+        process_ids = None
+    descendant_process_ids = (
+        None
+        if process_ids is None
+        else tuple(process_id for process_id in process_ids if process_id != target_pid)
+    )
+    root_accounting_only = (
+        target_completed
+        and process_ids is not None
+        and bool(process_ids)
+        and not descendant_process_ids
+    )
+    if root_accounting_only:
+        errors.extend(
+            _wait_for_job_to_drain(
+                kernel32,
+                job,
+                label="Job Object retained the exited target process identity",
+            )
+        )
+    elif process_ids is None or bool(process_ids):
         if not kernel32.TerminateJobObject(job, 125):
             errors.append(_last_error("TerminateJobObject"))
-        deadline = time.monotonic() + CLEANUP_GRACE_MILLISECONDS / 1000
-        while True:
-            try:
-                active_processes = _active_processes(kernel32, job)
-            except OSError as error:
-                errors.append(error)
-                break
-            if active_processes == 0:
-                break
-            if time.monotonic() >= deadline:
-                errors.append(
-                    OSError(
-                        "Job Object retained active processes after bounded termination"
-                    )
-                )
-                break
-            time.sleep(0.01)
+        errors.extend(
+            _wait_for_job_to_drain(
+                kernel32,
+                job,
+                label="Job Object retained active processes after bounded termination",
+            )
+        )
 
     if process_info.hProcess:
         wait_result = kernel32.WaitForSingleObject(
@@ -257,7 +287,7 @@ def _cleanup_process_and_job(
             errors.append(
                 OSError(f"unexpected target cleanup wait result: {wait_result}")
             )
-    return errors, active_processes_before_cleanup
+    return errors, descendant_process_ids
 
 
 def _close_handle(kernel32: Any, handle: int, label: str) -> OSError | None:
@@ -286,6 +316,7 @@ def _run(
     attribute_list_initialized = False
     caught_error: BaseException | None = None
     exit_code: int | None = None
+    target_pid = 0
     try:
         limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -343,9 +374,10 @@ def _run(
             ctypes.byref(process_info),
         ):
             raise _last_error("CreateProcessW")
-        # Job accounting can retain an exited root while helper-owned handles remain.
-        # Release handles as soon as their information has been consumed so the later
-        # active-process query represents only live descendants.
+        target_pid = int(process_info.dwProcessId)
+        # Job state can retain an exited root identity while helper-owned handles
+        # remain. Release them as soon as their information has been consumed; the
+        # later process-id query distinguishes that identity from live descendants.
         if error := _close_handle(kernel32, process_info.hThread, "thread"):
             raise error
         process_info.hThread = 0
@@ -366,8 +398,12 @@ def _run(
     except BaseException as error:
         caught_error = error
     finally:
-        cleanup_errors, active_processes_before_cleanup = _cleanup_process_and_job(
-            kernel32, job, process_info
+        cleanup_errors, descendant_process_ids = _cleanup_process_and_job(
+            kernel32,
+            job,
+            process_info,
+            target_pid=target_pid,
+            target_completed=exit_code is not None and not process_info.hProcess,
         )
         if attribute_list_initialized and attribute_list is not None:
             kernel32.DeleteProcThreadAttributeList(attribute_list)
@@ -394,7 +430,7 @@ def _run(
             "Windows Job Object cleanup failed: "
             + "; ".join(str(error) for error in cleanup_errors)
         )
-    if active_processes_before_cleanup:
+    if descendant_process_ids:
         raise OSError("target command left descendant processes; they were terminated")
     assert exit_code is not None
     return exit_code

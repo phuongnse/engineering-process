@@ -2,6 +2,7 @@ import ctypes
 from ctypes import wintypes
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -22,7 +23,8 @@ class NativeCall:
 
 class FakeKernel32:
     def __init__(self):
-        self.active_processes = [0]
+        self.process_ids = [()]
+        self.assigned_process_count = None
         self.wait_results = [_windows_job.WAIT_OBJECT_0]
         self.terminate_result = True
         self.close_failure = None
@@ -132,20 +134,31 @@ class FakeKernel32:
 
     def _query_job(self, job, information_class, output, output_size, returned):
         self.events.append("query-job")
-        del job, information_class, output_size
-        accounting = ctypes.cast(
+        del job, output_size
+        if information_class != _windows_job.JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS:
+            raise AssertionError(
+                f"unexpected job information class: {information_class}"
+            )
+        process_list = ctypes.cast(
             output,
-            ctypes.POINTER(_windows_job.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION),
+            ctypes.POINTER(_windows_job.JOBOBJECT_BASIC_PROCESS_ID_LIST),
         )
         if self.root_active_until_process_handle_closed and 201 not in self.closed_handles:
-            active_processes = 1
-        elif len(self.active_processes) > 1:
-            active_processes = self.active_processes.pop(0)
+            process_ids = (301,)
+        elif len(self.process_ids) > 1:
+            process_ids = self.process_ids.pop(0)
         else:
-            active_processes = self.active_processes[0]
-        accounting.contents.ActiveProcesses = active_processes
+            process_ids = self.process_ids[0]
+        process_list.contents.NumberOfAssignedProcesses = (
+            len(process_ids)
+            if self.assigned_process_count is None
+            else self.assigned_process_count
+        )
+        process_list.contents.NumberOfProcessIdsInList = len(process_ids)
+        for index, process_id in enumerate(process_ids):
+            process_list.contents.ProcessIdList[index] = process_id
         returned_length = ctypes.cast(returned, ctypes.POINTER(wintypes.DWORD))
-        returned_length.contents.value = ctypes.sizeof(accounting.contents)
+        returned_length.contents.value = ctypes.sizeof(process_list.contents)
         return True
 
     def _terminate_job(self, job, exit_code):
@@ -202,13 +215,25 @@ class WindowsJobTests(unittest.TestCase):
             kernel32.events.index("query-job"),
         )
 
+    def test_exited_root_identity_drains_without_descendant_termination(self):
+        kernel32 = FakeKernel32()
+        kernel32.process_ids = [(301,), ()]
+
+        exit_code = _windows_job._run(
+            r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
+        )
+
+        self.assertEqual(7, exit_code)
+        self.assertEqual(0, kernel32.termination_calls)
+        self.assertGreaterEqual(kernel32.events.count("query-job"), 2)
+
     def test_wait_failure_terminates_the_job_and_closes_every_handle(self):
         kernel32 = FakeKernel32()
         kernel32.wait_results = [
             _windows_job.WAIT_FAILED,
             _windows_job.WAIT_OBJECT_0,
         ]
-        kernel32.active_processes = [1, 0]
+        kernel32.process_ids = [(301,), ()]
 
         with self.assertRaisesRegex(OSError, "WaitForSingleObject"):
             _windows_job._run(
@@ -221,7 +246,7 @@ class WindowsJobTests(unittest.TestCase):
 
     def test_cleanup_api_failure_is_completion_blocking(self):
         kernel32 = FakeKernel32()
-        kernel32.active_processes = [1, 0]
+        kernel32.process_ids = [(401,), ()]
         kernel32.terminate_result = False
 
         with self.assertRaisesRegex(OSError, "TerminateJobObject"):
@@ -231,9 +256,22 @@ class WindowsJobTests(unittest.TestCase):
 
         self.assertEqual([202, 201, 101], kernel32.closed_handles)
 
+    def test_process_list_overflow_fails_closed(self):
+        kernel32 = FakeKernel32()
+        kernel32.process_ids = [(401,)]
+        kernel32.assigned_process_count = _windows_job.MAX_JOB_PROCESS_IDS + 1
+
+        with self.assertRaisesRegex(OSError, "bounded cleanup capacity"):
+            _windows_job._run(
+                r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
+            )
+
+        self.assertEqual(1, kernel32.termination_calls)
+        self.assertEqual([202, 201, 101], kernel32.closed_handles)
+
     def test_descendant_cleanup_is_reported_as_a_command_failure(self):
         kernel32 = FakeKernel32()
-        kernel32.active_processes = [1, 0]
+        kernel32.process_ids = [(401,), ()]
 
         with self.assertRaisesRegex(OSError, "left descendant processes"):
             _windows_job._run(
@@ -265,6 +303,26 @@ class WindowsJobTests(unittest.TestCase):
                         [sys.executable, "-c", "raise SystemExit(0)"],
                     ),
                 )
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
+    def test_real_job_repeats_git_commands_without_false_descendants(self):
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        assert git is not None
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                0,
+                _windows_job._run(git, [git, "-C", directory, "init", "-q"]),
+            )
+            for iteration in range(64):
+                with self.subTest(iteration=iteration):
+                    self.assertEqual(
+                        0,
+                        _windows_job._run(
+                            git,
+                            [git, "-C", directory, "status", "--porcelain=v1"],
+                        ),
+                    )
 
     @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
     def test_real_job_terminates_a_descendant_left_by_the_target(self):

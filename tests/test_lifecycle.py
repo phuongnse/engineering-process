@@ -664,7 +664,7 @@ class LifecycleTests(unittest.TestCase):
         try:
             for autocrlf in ("false", "input", "true"):
                 self.repository_autocrlf = autocrlf
-                for iteration in range(2):
+                for iteration in range(4):
                     with self.subTest(autocrlf=autocrlf, iteration=iteration):
                         self.test_requested_changes_start_a_new_cycle_and_invalidate_evidence()
         finally:
