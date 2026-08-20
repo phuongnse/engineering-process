@@ -149,6 +149,43 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", workflow)
         self.assertIn("retention-days: 90", workflow)
 
+    def test_repository_policy_uses_fresh_pr_guard_and_stable_merge_gate(self):
+        policy = json.loads(
+            (
+                PROCESS_ROOT / ".process" / "repository-governance.json"
+            ).read_text(encoding="utf-8")
+        )
+        ci = (
+            PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+        guard = (
+            PROCESS_ROOT / ".github" / "workflows" / "pr-guard.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(
+            ["Merge gate", "PR guard"],
+            policy["defaultBranch"]["requiredChecks"],
+        )
+        self.assertIn("name: Merge gate", ci)
+        self.assertIn("needs: [verify]", ci)
+        self.assertIn('if [ "$VERIFY_RESULT" != "success" ]', ci)
+        self.assertNotIn("publication validate-pr", ci)
+        self.assertIn("name: PR guard", guard)
+        for event in (
+            "opened",
+            "synchronize",
+            "reopened",
+            "edited",
+            "ready_for_review",
+            "converted_to_draft",
+        ):
+            self.assertIn(f"- {event}", guard)
+        self.assertIn(
+            "pip install --require-hashes -r requirements/process.txt", guard
+        )
+        self.assertIn('--body-file "$RUNNER_TEMP/pr-body.md"', guard)
+        self.assertNotIn("engineering_process/requirements-dev.txt", guard)
+
     def test_distribution_verifier_resolves_the_checkout_before_installed_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             shadow_package = Path(directory) / "engineering_process"

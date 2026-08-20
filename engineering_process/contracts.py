@@ -245,6 +245,12 @@ class Release:
     provenance_mode: str = "legacy"
 
 
+@dataclass(frozen=True)
+class RepositoryGovernance:
+    require_up_to_date: bool
+    required_checks: tuple[str, ...]
+
+
 def read_json(path: Path) -> Any:
     try:
         data = path.read_bytes()
@@ -1292,6 +1298,70 @@ def validate_adoption_migration(
         raise ContractError(
             f"{path}.targetProjectDigest: does not match project content"
         )
+
+
+def validate_repository_governance(
+    document: Any, path: str = "repository governance"
+) -> RepositoryGovernance:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={"schemaVersion", "defaultBranch"},
+        optional={"$schema"},
+        path=path,
+    )
+    _schema_version(value, path)
+    default_branch = _object(value["defaultBranch"], f"{path}.defaultBranch")
+    _exact_keys(
+        default_branch,
+        required={
+            "pullRequestOnly",
+            "blockDeletion",
+            "blockNonFastForward",
+            "bypass",
+            "requireUpToDate",
+            "requiredChecks",
+        },
+        path=f"{path}.defaultBranch",
+    )
+    for field in ("pullRequestOnly", "blockDeletion", "blockNonFastForward"):
+        if default_branch[field] is not True:
+            raise ContractError(f"{path}.defaultBranch.{field}: must be true")
+    if default_branch["bypass"] != "forbidden":
+        raise ContractError(f"{path}.defaultBranch.bypass: must be forbidden")
+    require_up_to_date = default_branch["requireUpToDate"]
+    if not isinstance(require_up_to_date, bool):
+        raise ContractError(
+            f"{path}.defaultBranch.requireUpToDate: must be a boolean"
+        )
+    checks = _string_list(
+        default_branch["requiredChecks"],
+        f"{path}.defaultBranch.requiredChecks",
+        minimum=2,
+        maximum=64,
+    )
+    for index, check in enumerate(checks):
+        if len(check) > 100 or any(
+            ord(character) < 32 or ord(character) == 127 for character in check
+        ):
+            raise ContractError(
+                f"{path}.defaultBranch.requiredChecks[{index}]: "
+                "must be a printable check context of at most 100 characters"
+            )
+    if checks != sorted(checks):
+        raise ContractError(
+            f"{path}.defaultBranch.requiredChecks: must be sorted"
+        )
+    missing = sorted({"Merge gate", "PR guard"} - set(checks))
+    if missing:
+        raise ContractError(
+            f"{path}.defaultBranch.requiredChecks: missing standard checks: "
+            + ", ".join(missing)
+        )
+    return RepositoryGovernance(
+        require_up_to_date=require_up_to_date,
+        required_checks=tuple(checks),
+    )
 
 
 def validate_release(document: Any, path: str = "release") -> Release:

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/repository-governance.schema.json",
+  "title": "Repository governance policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "defaultBranch"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "defaultBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pullRequestOnly",
+        "blockDeletion",
+        "blockNonFastForward",
+        "bypass",
+        "requireUpToDate",
+        "requiredChecks"
+      ],
+      "properties": {
+        "pullRequestOnly": {
+          "const": true
+        },
+        "blockDeletion": {
+          "const": true
+        },
+        "blockNonFastForward": {
+          "const": true
+        },
+        "bypass": {
+          "const": "forbidden"
+        },
+        "requireUpToDate": {
+          "type": "boolean"
+        },
+        "requiredChecks": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "const": "Merge gate"
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "const": "PR guard"
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
+        }
+      }
+    }
+  }
+}

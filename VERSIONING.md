@@ -109,6 +109,14 @@ and never deferred until after merge. Optional capabilities without a declared
 migration remain disabled; configuration required by the target distribution must
 validate or adoption is blocked.
 
+Repository-governance schemas, stable gate semantics, provider plan/apply contracts,
+and CLI commands are public capabilities. Introducing them requires at least a minor
+release and records additive schema impact. Development adds the surfaces without
+changing package identity; the later release checkpoint records the capability once
+in `release.json`. Consumer process adoption and live repository-ruleset activation
+remain separate changes with separate authorization. A process lock update never
+implicitly grants Administration permission or mutates a hosted repository.
+
 Validate a prepared migration before the Renovate runner consumes it:
 
 ~~~text

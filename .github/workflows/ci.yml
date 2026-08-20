@@ -56,19 +56,6 @@ jobs:
           --project-root .
           --requirements-lock requirements/process.txt
 
-      - name: Validate publication metadata
-        if: github.event_name == 'pull_request'
-        run: |
-          processctl publication validate-pr --title "$PR_TITLE" --branch "$PR_BRANCH" --state "$PR_STATE"
-          processctl publication validate-range --project-root . --branch "$PR_BRANCH" --range "$PR_BASE_SHA..$PR_HEAD_SHA"
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_BRANCH: ${{ github.head_ref }}
-          PR_STATE: ${{ github.event.pull_request.draft && 'draft' || 'ready' }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-
       - name: Validate portable skills
         run: |
           cd "$RUNNER_TEMP"
@@ -113,3 +100,19 @@ jobs:
           retention-days: 90
           compression-level: 9
           include-hidden-files: false
+
+  merge-gate:
+    name: Merge gate
+    if: ${{ always() }}
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require the complete verification matrix
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          if [ "$VERIFY_RESULT" != "success" ]; then
+            echo "verification matrix result: $VERIFY_RESULT" >&2
+            exit 1
+          fi

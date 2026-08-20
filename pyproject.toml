@@ -43,7 +43,13 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 engineering_process = ["requirements-*.txt"]
 
 [tool.setuptools.data-files]
-"share/engineering-process" = ["bundles.json", "release.json", "PRODUCTION_STANDARD.md", "VERSIONING.md"]
+"share/engineering-process" = [
+  "bundles.json",
+  "release.json",
+  "PRODUCTION_STANDARD.md",
+  "REPOSITORY_GOVERNANCE.md",
+  "VERSIONING.md",
+]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
@@ -59,6 +65,8 @@ engineering_process = ["requirements-*.txt"]
   "schemas/process-lock.schema.json",
   "schemas/project.schema.json",
   "schemas/release.schema.json",
+  "schemas/repository-governance-plan.schema.json",
+  "schemas/repository-governance.schema.json",
   "schemas/review.schema.json",
   "schemas/reviewer-attestation.schema.json",
   "schemas/supplemental-verification.schema.json",
@@ -70,6 +78,7 @@ engineering_process = ["requirements-*.txt"]
   "examples/plan.json",
   "examples/project.json",
   "examples/release.json",
+  "examples/repository-governance.json",
   "examples/review.json",
 ]
 "share/engineering-process/skills/cross-repo-change" = [

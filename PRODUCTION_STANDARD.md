@@ -104,6 +104,22 @@ policy. This keeps distribution input bytes platform-independent. The producer
 root policy is not a consumer-managed asset and is never written by bootstrap or
 sync.
 
+## Repository integration policy
+
+Every hosted project protects its default integration branch through the portable
+baseline in [`REPOSITORY_GOVERNANCE.md`](REPOSITORY_GOVERNANCE.md). Pull-request-only
+integration, blocked deletion and non-fast-forward updates, forbidden bypass, current
+review metadata, and successful checkpoint verification are release and merge
+preconditions. Consumers declare the bounded policy; provider adapters may add exact
+enforcement but cannot weaken it or mutate external settings without separate owner
+authorization.
+
+Remote required-check names remain stable while project-owned jobs evolve. `PR guard`
+owns current review metadata, and `Merge gate` owns the complete project verification
+result for one immutable head. Missing contexts, stale evidence, ambiguous ruleset
+ownership, or live-policy drift fail closed. Branch protection cannot substitute for
+fixing a flaky check that happened to pass before merge.
+
 ## Release identity
 
 The release contract is the source of truth for package name, distribution name,

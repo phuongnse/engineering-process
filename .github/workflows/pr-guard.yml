@@ -1,0 +1,48 @@
+name: PR metadata
+
+on:
+  pull_request:
+    branches: [main]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - ready_for_review
+      - converted_to_draft
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: PR guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install the public N-1 process authority
+        run: python -m pip install --require-hashes -r requirements/process.txt
+
+      - name: Read the PR body from the triggering event
+        run: jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/pr-body.md"
+
+      - name: Validate current PR metadata
+        run: |
+          processctl publication validate-pr --title "$PR_TITLE" --branch "$PR_BRANCH" --state "$PR_STATE" --body-file "$RUNNER_TEMP/pr-body.md"
+          processctl publication validate-range --project-root . --branch "$PR_BRANCH" --range "$PR_BASE_SHA..$PR_HEAD_SHA"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_STATE: ${{ github.event.pull_request.draft && 'draft' || 'ready' }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}

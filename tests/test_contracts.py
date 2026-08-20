@@ -12,6 +12,7 @@ from engineering_process.contracts import (
     validate_process_lock,
     validate_project,
     validate_release,
+    validate_repository_governance,
     validate_review,
 )
 
@@ -388,6 +389,45 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_repository_governance_requires_non_weakenable_sorted_baseline(self):
+        document = {
+            "schemaVersion": 1,
+            "defaultBranch": {
+                "pullRequestOnly": True,
+                "blockDeletion": True,
+                "blockNonFastForward": True,
+                "bypass": "forbidden",
+                "requireUpToDate": False,
+                "requiredChecks": ["Merge gate", "PR guard"],
+            },
+        }
+
+        policy = validate_repository_governance(document)
+
+        self.assertFalse(policy.require_up_to_date)
+        self.assertEqual(("Merge gate", "PR guard"), policy.required_checks)
+
+        weakened = json.loads(json.dumps(document))
+        weakened["defaultBranch"]["pullRequestOnly"] = False
+        with self.assertRaisesRegex(ContractError, "pullRequestOnly: must be true"):
+            validate_repository_governance(weakened)
+
+        missing_gate = json.loads(json.dumps(document))
+        missing_gate["defaultBranch"]["requiredChecks"] = [
+            "PR guard",
+            "Project tests",
+        ]
+        with self.assertRaisesRegex(ContractError, "missing standard checks"):
+            validate_repository_governance(missing_gate)
+
+        unsorted = json.loads(json.dumps(document))
+        unsorted["defaultBranch"]["requiredChecks"] = [
+            "PR guard",
+            "Merge gate",
+        ]
+        with self.assertRaisesRegex(ContractError, "must be sorted"):
+            validate_repository_governance(unsorted)
+
     def test_release_version_is_derived_from_highest_public_change(self):
         cases = (
             ("0.1.1", ["fix"], "0.1.2", "patch", "backward-compatible"),

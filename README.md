@@ -18,6 +18,14 @@ structured requirement statuses, and draft-versus-ready semantics are validated 
 `processctl publication ...`. Projects populate those sections with their own contract,
 impact, risk, evidence, and review details and may append stronger domain checks.
 
+Hosted repository integration is declared separately in
+`.process/repository-governance.json`. The portable baseline requires pull-request-only
+default-branch updates, blocked deletion and non-fast-forward changes, no bypass, and
+the stable `PR guard` plus `Merge gate` contexts. `processctl repository ...` validates
+the local policy and provides a bounded compare-before-write GitHub adapter; external
+settings changes always require separate repository-owner authorization. See
+[`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md).
+
 Core semantics never name a model, agent product, orchestration API, or code-indexing
 provider. An agent host or human workflow supplies an independent reviewer identity;
 `processctl` rejects any reviewer actor or context used by the current implementation
@@ -72,6 +80,7 @@ project/
 └── .process/
     ├── adopt-process.py             # hash-locked adoption runner
     ├── adopt-process-windows-job.py # Windows process containment
+    ├── repository-governance.json   # consumer-owned integration policy
     └── project.json                 # profiles and lifecycle baseline
 ~~~
 
@@ -83,6 +92,7 @@ standard in one command:
 python -m pip install "engineering-process==0.1.1"
 processctl project init --project-root . --manifest project.json \
   --bundle core --bundle delivery --bundle product
+processctl repository init --project-root .
 processctl doctor --project-root .
 ~~~
 

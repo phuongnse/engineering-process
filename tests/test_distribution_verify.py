@@ -48,12 +48,15 @@ class DistributionVerificationTests(unittest.TestCase):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
         members = [
             "engineering_process-0.1.1.data/data/share/engineering-process/PRODUCTION_STANDARD.md",
+            "engineering_process-0.1.1.data/data/share/engineering-process/REPOSITORY_GOVERNANCE.md",
             "engineering_process/requirements-release.txt",
             "engineering_process-0.1.1.data/data/share/engineering-process/release.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/adoption-migration.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/change.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/evidence-receipt.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release.schema.json",
+            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/repository-governance-plan.schema.json",
+            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/repository-governance.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/supplemental-verification.schema.json",
         ]
 
@@ -70,12 +73,15 @@ class DistributionVerificationTests(unittest.TestCase):
     def test_archive_contract_rejects_windows_hostile_member_names(self):
         required = [
             "PRODUCTION_STANDARD.md",
+            "REPOSITORY_GOVERNANCE.md",
             "engineering_process/requirements-release.txt",
             "release.json",
             "schemas/adoption-migration.schema.json",
             "schemas/change.schema.json",
             "schemas/evidence-receipt.schema.json",
             "schemas/release.schema.json",
+            "schemas/repository-governance-plan.schema.json",
+            "schemas/repository-governance.schema.json",
             "schemas/supplemental-verification.schema.json",
         ]
         cases = (
@@ -111,12 +117,15 @@ class DistributionVerificationTests(unittest.TestCase):
             wheel = Path(directory) / "engineering_process-0.1.1-py3-none-any.whl"
             required = [
                 "PRODUCTION_STANDARD.md",
+                "REPOSITORY_GOVERNANCE.md",
                 "engineering_process/requirements-release.txt",
                 "release.json",
                 "schemas/adoption-migration.schema.json",
                 "schemas/change.schema.json",
                 "schemas/evidence-receipt.schema.json",
                 "schemas/release.schema.json",
+                "schemas/repository-governance-plan.schema.json",
+                "schemas/repository-governance.schema.json",
                 "schemas/supplemental-verification.schema.json",
             ]
             with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:

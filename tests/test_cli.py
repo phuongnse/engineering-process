@@ -63,6 +63,76 @@ class CliTests(unittest.TestCase):
             "adoption-migration", json.loads(stdout.getvalue())["kind"]
         )
 
+    def test_initializes_and_validates_repository_governance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "repository",
+                        "init",
+                        "--project-root",
+                        str(project_root),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(0, result)
+            self.assertEqual(
+                ".process/repository-governance.json",
+                json.loads(stdout.getvalue())["path"],
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "repository",
+                        "validate",
+                        "--project-root",
+                        str(project_root),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(0, result)
+            self.assertEqual(
+                ["Merge gate", "PR guard"],
+                json.loads(stdout.getvalue())["requiredChecks"],
+            )
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    2,
+                    main(
+                        [
+                            "repository",
+                            "init",
+                            "--project-root",
+                            str(project_root),
+                            "--json",
+                        ]
+                    ),
+                )
+
+    def test_validates_repository_governance_contract_kind(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = main(
+                [
+                    "contract",
+                    "validate",
+                    "--kind",
+                    "repository-governance",
+                    str(PROCESS_ROOT / "examples" / "repository-governance.json"),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            "repository-governance", json.loads(stdout.getvalue())["kind"]
+        )
+
     def test_publication_plans_exact_version_from_change_types(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

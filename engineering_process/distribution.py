@@ -73,7 +73,11 @@ def distribution_digest(
     release_contract = root / "release.json"
     if release_contract.is_file():
         entries.append(("assets/release.json", release_contract))
-    for policy_name in ("PRODUCTION_STANDARD.md", "VERSIONING.md"):
+    for policy_name in (
+        "PRODUCTION_STANDARD.md",
+        "REPOSITORY_GOVERNANCE.md",
+        "VERSIONING.md",
+    ):
         policy = root / policy_name
         if policy.is_file():
             entries.append((f"assets/{policy_name}", policy))

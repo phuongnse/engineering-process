@@ -57,7 +57,14 @@ Complete these controls before publishing the first release:
 3. Add a tag ruleset for `refs/tags/v*` that blocks deletion and non-fast-forward
    updates. The release workflow independently requires the tagged commit to be an
    ancestor of `main` and the tag to equal the package version.
-4. When the repository has a second trusted maintainer, require that maintainer to
+4. Add the stable `PR guard` and `Merge gate` workflows, observe both succeed on one
+   exact pull-request head, then activate the default-branch baseline in
+   [`REPOSITORY_GOVERNANCE.md`](./REPOSITORY_GOVERNANCE.md): pull-request-only
+   integration, blocked deletion and non-fast-forward updates, no bypass actors, and
+   both stable contexts required. During the bootstrap window this exact reviewed
+   setting is applied manually by the repository owner; after an immutable release
+   contains the adapter, every change uses its compare-before-write plan.
+5. When the repository has a second trusted maintainer, require that maintainer to
    review `pypi` deployments and enable **Prevent self-review**.
 
 This repository currently has one maintainer, so required deployment review plus
@@ -69,7 +76,8 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 ## Release
 
 1. Complete the repository's own process lifecycle on an immutable checkpoint and
-   require independent review plus the complete CI matrix to pass. Export the
+   require independent review plus the complete CI matrix, `PR guard`, `Merge gate`,
+   and live repository policy check to pass. Export the
    completed receipt bound to the pinned public N-1 authority and artifact digests.
 2. Update the ordered `release.json.changes`; let their types determine the exact
    SemVer classification. Set the same version in `release.json`, `pyproject.toml`,

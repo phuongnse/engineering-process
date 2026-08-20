@@ -18,7 +18,10 @@ without duplicating implementation, verification, or review.
    workspace fingerprint match the source being published.
 3. Populate the managed PR-description sections with project-specific facts. Run
    processctl publication validation for branch, commit range, PR title, body, and
-   draft/ready state; then run any stronger project-declared publication checks.
+   draft/ready state; then run any stronger project-declared publication checks. If
+   the project declares repository governance, require its read-only provider check
+   to confirm pull-request-only integration, current stable checks, and no policy
+   drift before merge or release.
 4. Perform only the authorized remote action. Preserve draft state unless ready state
    was explicitly requested.
    For a release, export and validate the completion receipt, derive the only
@@ -41,6 +44,9 @@ without duplicating implementation, verification, or review.
   never defer synchronization to a post-merge step.
 - Do not replace, omit, or weaken the managed publication sections or standard
   requirements; projects may append stricter metadata and checklists.
+- Do not infer permission to create or update remote repository rules. A missing or
+  drifted integration policy blocks publication until the repository owner separately
+  authorizes a current compare-before-write plan.
 - Metadata-only work may skip code implementation only when project policy permits it.
 
 ## Output
