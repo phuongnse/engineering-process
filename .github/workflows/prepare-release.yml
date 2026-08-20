@@ -1,0 +1,120 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing governed release tag attached to a draft release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Build and attach draft release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Require the exact draft release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          test "$(gh release view "$RELEASE_TAG" --json name --jq .name)" = "$RELEASE_TAG"
+
+      - name: Install exact public lifecycle authority
+        run: |
+          python -m venv "$RUNNER_TEMP/process-authority"
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            --require-hashes -r requirements/process.txt
+
+      - name: Obtain and validate the draft lifecycle receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')" = governed
+          receipt_asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
+          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')" = "$receipt_asset"
+          mkdir -p "$RUNNER_TEMP/release-receipt"
+          gh release download "$RELEASE_TAG" \
+            --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-receipt"
+          printf 'RECEIPT_PATH=%s\n' \
+            "$RUNNER_TEMP/release-receipt/$receipt_asset" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "$RUNNER_TEMP/release-receipt/$receipt_asset" --json
+          printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify HEAD^{commit})" \
+            >> "$GITHUB_ENV"
+
+      - name: Install hash-locked release dependencies
+        run: |
+          python -m pip install --require-hashes \
+            -r engineering_process/requirements-release.txt
+
+      - name: Validate draft release contract and checkpoint
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python processctl.py contract validate --kind release release.json
+          python processctl.py publication validate-release \
+            --project-root . \
+            --tag "$RELEASE_TAG" \
+            --release-name "$RELEASE_TAG" \
+            --commit "$CHECKPOINT" \
+            --main-ref origin/main \
+            --receipt "$RECEIPT_PATH"
+
+      - name: Build and attest distributions from the verified HEAD tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/draft-assets/distributions"
+          attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
+          python verification/verify_distribution.py \
+            --output "$RUNNER_TEMP/draft-assets/distributions" \
+            --receipt "$RECEIPT_PATH" \
+            --attestation "$RUNNER_TEMP/draft-assets/$attestation_asset"
+          printf 'ATTESTATION_PATH=%s\n' \
+            "$RUNNER_TEMP/draft-assets/$attestation_asset" >> "$GITHUB_ENV"
+
+      - name: Verify the prepared wheel
+        run: |
+          python -m pip install --force-reinstall \
+            --no-deps \
+            "$RUNNER_TEMP"/draft-assets/distributions/*.whl
+          cd "$RUNNER_TEMP"
+          processctl digest
+          processctl skills validate
+          python -m unittest discover -s "$GITHUB_WORKSPACE/tests" -p 'test_*.py'
+
+      - name: Attach verified artifacts and attestation to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release upload "$RELEASE_TAG" \
+            "$RUNNER_TEMP"/draft-assets/distributions/* \
+            "$ATTESTATION_PATH"
+          {
+            basename "$RECEIPT_PATH"
+            basename "$ATTESTATION_PATH"
+            python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))'
+          } | LC_ALL=C sort > "$RUNNER_TEMP/expected-release-assets.txt"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/actual-release-assets.txt"
+          cmp "$RUNNER_TEMP/expected-release-assets.txt" \
+            "$RUNNER_TEMP/actual-release-assets.txt"

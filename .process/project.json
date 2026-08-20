@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 3,
+  "project": "engineering-process",
+  "lifecycle": {
+    "requiredProfiles": [
+      "development",
+      "review"
+    ]
+  },
+  "profiles": {
+    "development": [
+      {
+        "id": "unit-and-contract-tests",
+        "run": [
+          "python",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-p",
+          "test_*.py"
+        ],
+        "timeoutSeconds": 1800
+      }
+    ],
+    "review": [
+      {
+        "id": "portable-skills",
+        "run": [
+          "python",
+          "processctl.py",
+          "skills",
+          "validate",
+          "--root",
+          "process_assets/skills"
+        ],
+        "timeoutSeconds": 300
+      },
+      {
+        "id": "distribution-build",
+        "run": [
+          "python",
+          "verification/verify_distribution.py"
+        ],
+        "timeoutSeconds": 900
+      }
+    ]
+  },
+  "environment": {
+    "defaultProfile": "development",
+    "foregroundOnly": true,
+    "managedTools": [],
+    "profiles": {
+      "development": [
+        "development-runtime",
+        "git-runtime",
+        "python-runtime"
+      ],
+      "review": [
+        "development-runtime",
+        "git-runtime",
+        "python-runtime"
+      ]
+    },
+    "requirements": [
+      {
+        "id": "development-runtime",
+        "description": "Exact Python dependencies required by the producer test and build contracts",
+        "probe": {
+          "run": [
+            "python",
+            "-c",
+            "from importlib.metadata import version; import build, jsonschema, regex; assert version('setuptools') == '84.0.0'; print('producer dependencies ready')"
+          ],
+          "timeoutSeconds": 15,
+          "readOnly": true,
+          "outputStream": "stdout",
+          "outputRegex": "^producer dependencies ready$"
+        },
+        "remediation": "Install engineering_process/requirements-runtime.txt, engineering_process/requirements-dev.txt, and engineering_process/requirements-build.txt into the isolated process environment."
+      },
+      {
+        "id": "git-runtime",
+        "description": "Git command-line client required for immutable lifecycle checkpoints",
+        "probe": {
+          "run": [
+            "git",
+            "--version"
+          ],
+          "timeoutSeconds": 15,
+          "readOnly": true,
+          "outputStream": "stdout",
+          "outputRegex": "^git version 2\\.[0-9]+\\.[0-9]+"
+        },
+        "remediation": "Install a supported Git 2.x command-line client."
+      },
+      {
+        "id": "python-runtime",
+        "description": "Supported CPython runtime for the producer and lifecycle seed",
+        "probe": {
+          "run": [
+            "python",
+            "--version"
+          ],
+          "timeoutSeconds": 15,
+          "readOnly": true,
+          "outputStream": "combined",
+          "outputRegex": "^Python 3\\.(?:11|12|13|14)\\."
+        },
+        "remediation": "Install a supported Python 3.11-3.14 runtime."
+      }
+    ],
+    "setupActions": []
+  }
+}

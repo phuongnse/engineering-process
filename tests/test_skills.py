@@ -11,7 +11,9 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 class SkillTests(unittest.TestCase):
     def test_repository_skills_are_portable(self):
-        self.assertEqual(validate_skills(PROCESS_ROOT / ".agents" / "skills"), [])
+        self.assertEqual(
+            validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []
+        )
 
     def test_digest_changes_with_instruction_content(self):
         with tempfile.TemporaryDirectory() as directory:

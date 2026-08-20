@@ -12,6 +12,7 @@ from engineering_process.bootstrap import (
     initialize_project,
 )
 from engineering_process.contracts import ContractError, read_json
+from engineering_process.git_attributes import ATTRIBUTES_END, ATTRIBUTES_START
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -79,6 +80,8 @@ class BootstrapTests(unittest.TestCase):
             root = Path(directory)
             (root / "AGENTS.md").write_text("# Product rules\n", encoding="utf-8")
             (root / ".gitignore").write_text("dist/\n.process/runs/\n", encoding="utf-8")
+            project_attributes = b"  # project attributes\r\n*.png binary  \r\n\r\n"
+            (root / ".gitattributes").write_bytes(project_attributes)
             manifest = self.write_manifest(root)
             first = initialize_project(
                 root,
@@ -104,6 +107,20 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("/.process/runs/", ignore)
             self.assertNotIn("\n.process/runs/", ignore)
             self.assertEqual(ignore.count("/.process/runs/"), 1)
+            self.assertEqual(
+                project_attributes,
+                (root / ".gitattributes").read_bytes(),
+            )
+            attributes = (root / ".agents" / ".gitattributes").read_text(
+                encoding="utf-8"
+            )
+            self.assertEqual(attributes.count(ATTRIBUTES_START), 1)
+            self.assertEqual(attributes.count(ATTRIBUTES_END), 1)
+            self.assertTrue(attributes.rstrip().endswith(ATTRIBUTES_END))
+            self.assertIn(
+                "skills/** text=auto eol=lf",
+                attributes,
+            )
             lock = read_json(root / ".process" / "process.lock")
             self.assertIn("assess-design", lock["skills"])
             self.assertIn("run-change", lock["skills"])

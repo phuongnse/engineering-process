@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -12,15 +11,19 @@ from typing import Any
 
 from .contracts import (
     ContractError,
+    MAX_JSON_BYTES,
     PROFILE_PATTERN,
     Project,
     _validate_legacy_review,
     read_json,
     validate_change,
+    validate_completion,
     validate_plan,
     validate_review,
+    validate_verification,
 )
 from .environment import require_environment_profile
+from .git import run_git
 from .runner import run_profile, source_state
 
 
@@ -62,18 +65,13 @@ def _digest_file(path: Path) -> str:
 
 
 def _resolve_commit(project_root: Path, reference: str) -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", f"{reference}^{{commit}}"],
-            cwd=project_root,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ContractError(f"cannot resolve comparison base {reference}: {error}") from error
+    result = run_git(
+        project_root,
+        ["rev-parse", "--verify", "--end-of-options", f"{reference}^{{commit}}"],
+        label=f"resolve comparison base {reference}",
+        timeout_seconds=10,
+        max_stdout_bytes=128,
+    )
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ContractError(
@@ -102,16 +100,14 @@ def _runs_root(project_root: Path) -> Path:
 def lifecycle_environment_issues(project_root: Path) -> list[str]:
     issues: list[str] = []
     try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=project_root,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
+        top = run_git(
+            project_root,
+            ["rev-parse", "--show-toplevel"],
+            label="inspect Git lifecycle boundary",
+            timeout_seconds=10,
+            max_stdout_bytes=4096,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except ContractError as error:
         return [f"cannot inspect Git lifecycle boundary: {error}"]
     if top.returncode != 0:
         return ["canonical lifecycle requires a Git repository"]
@@ -123,15 +119,17 @@ def lifecycle_environment_issues(project_root: Path) -> list[str]:
         issues.append(
             f"project root {project_root.resolve()} must equal Git root {repository_root}"
         )
-    ignore = subprocess.run(
-        ["git", "check-ignore", "-q", ".process/runs/__process_probe__"],
-        cwd=project_root,
-        check=False,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=10,
-    )
+    try:
+        ignore = run_git(
+            project_root,
+            ["check-ignore", "-q", ".process/runs/__process_probe__"],
+            label="inspect lifecycle evidence ignore rule",
+            timeout_seconds=10,
+            max_stdout_bytes=128,
+        )
+    except ContractError as error:
+        issues.append(f"cannot inspect lifecycle evidence ignore rule: {error}")
+        return issues
     if ignore.returncode != 0:
         issues.append(
             ".process/runs/ must be ignored so lifecycle evidence cannot dirty source"
@@ -209,6 +207,10 @@ def _write_atomic(path: Path, document: dict[str, Any]) -> None:
     content = (
         json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+    if len(content) > MAX_JSON_BYTES:
+        raise ContractError(
+            f"{path}: lifecycle artifact exceeds the {MAX_JSON_BYTES} byte limit"
+        )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -222,6 +224,65 @@ def _write_atomic(path: Path, document: dict[str, Any]) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def _reserve_review_context(
+    project_root: Path,
+    state: dict[str, Any],
+    reviewer: dict[str, str],
+) -> None:
+    context_digest = hashlib.sha256(
+        reviewer["contextId"].encode("utf-8")
+    ).hexdigest()
+    registry = _runs_root(project_root) / ".review-contexts"
+    registry.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        registry.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{registry}: cannot inspect review context registry: {error}"
+        ) from error
+    if registry.is_symlink() or not registry.is_dir():
+        raise ContractError(
+            f"{registry}: review context registry must be a regular directory"
+        )
+    record = {
+        "schemaVersion": 1,
+        "contextDigest": f"sha256:{context_digest}",
+        "actorId": reviewer["actorId"],
+        "kind": reviewer["kind"],
+        "changeId": state["changeId"],
+        "cycle": state["cycle"],
+        "reservedAt": _timestamp(),
+    }
+    content = (
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    if len(content) > MAX_JSON_BYTES:
+        raise ContractError("review context reservation exceeds its byte limit")
+    path = registry / f"{context_digest}.json"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileExistsError as error:
+        raise ContractError(
+            "independent review requires a fresh context id unused by any "
+            "review assignment in this project"
+        ) from error
+    except OSError as error:
+        raise ContractError(
+            f"{path}: cannot reserve review context: {error}"
+        ) from error
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = -1
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _copy_document(
@@ -417,6 +478,11 @@ def _start_change_unlocked(
 ) -> dict[str, Any]:
     document = read_json(contract_path)
     validate_change(document, str(contract_path))
+    if document["schemaVersion"] != 3:
+        raise ContractError(
+            f"{contract_path}: new lifecycle runs require change schemaVersion 3; "
+            "schemaVersion 2 remains readable only for historical runs"
+        )
     change_id = document["id"]
     if project.identifier not in document["affectedProjects"]:
         raise ContractError(
@@ -434,6 +500,17 @@ def _start_change_unlocked(
         raise ContractError(
             f"change {change_id} omits project lifecycle profiles: "
             f"{', '.join(missing_baseline)}"
+        )
+    assessed_dimensions = {
+        assessment["dimension"] for assessment in document["quality"]["assessments"]
+    }
+    missing_quality_extensions = sorted(
+        set(project.quality_extensions) - assessed_dimensions
+    )
+    if missing_quality_extensions:
+        raise ContractError(
+            f"change {change_id} omits project quality dimensions: "
+            f"{', '.join(missing_quality_extensions)}"
         )
     run_root = _run_root(project_root, change_id)
     if run_root.exists():
@@ -490,6 +567,8 @@ def _register_plan_unlocked(
         raise ContractError(f"change {change_id} requires sign-off before planning")
     document = read_json(plan_path)
     validate_plan(document, str(plan_path))
+    if contract["schemaVersion"] == 3 and document["schemaVersion"] != 2:
+        raise ContractError("new schema-3 changes require a bounded schema-2 plan")
     if document["changeId"] != change_id:
         raise ContractError(f"plan changeId does not match {change_id}")
     if document["contractDigest"] != state["contract"]["digest"]:
@@ -583,7 +662,13 @@ def _verify_change_unlocked(
     if profile not in contract["requiredProfiles"]:
         raise ContractError(f"profile {profile} is not required by change {change_id}")
     require_environment_profile(project_root, project, profile=profile)
-    report = run_profile(project_root, project, profile)
+    report = run_profile(
+        project_root,
+        project,
+        profile,
+        base_ref=contract["comparisonBase"],
+    )
+    validate_verification(report, f"verification profile {profile}")
     report_path = (
         _run_root(project_root, change_id)
         / "verification"
@@ -677,6 +762,18 @@ def _start_review_unlocked(
         raise ContractError(
             "independent review requires an actor id and context id unused by implementation"
         )
+    previous_review_contexts = {
+        event["actor"]["contextId"]
+        for event in state["history"]
+        if event.get("event") == "review-started"
+        and isinstance(event.get("actor"), dict)
+        and isinstance(event["actor"].get("contextId"), str)
+    }
+    if reviewer["contextId"] in previous_review_contexts:
+        raise ContractError(
+            "independent review requires a fresh context id unused by earlier "
+            "review assignments"
+        )
     source = source_state(project_root)
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
@@ -705,6 +802,7 @@ def _start_review_unlocked(
         "verification": state["verification"],
         "pendingFindings": state["pendingFindings"],
     }
+    _reserve_review_context(project_root, state, reviewer)
     assignment_path = _run_root(project_root, change_id) / f"review-request-{state['cycle']}.json"
     _write_atomic(assignment_path, assignment)
     assignment["path"] = _relative(project_root, assignment_path)
@@ -733,6 +831,39 @@ def _submit_review_unlocked(
         raise ContractError("review assignment is missing")
     document = read_json(report_path)
     validate_review(document, str(report_path))
+    contract = _contract(project_root, state)
+    required_review_schema = 3 if contract["schemaVersion"] == 3 else 2
+    if document["schemaVersion"] != required_review_schema:
+        raise ContractError(
+            f"review schemaVersion {required_review_schema} is required for this change"
+        )
+    if required_review_schema == 3:
+        contract_quality = {
+            item["dimension"]: item for item in contract["quality"]["assessments"]
+        }
+        review_quality = {
+            item["dimension"]: item for item in document["quality"]["assessments"]
+        }
+        if set(contract_quality) != set(review_quality):
+            raise ContractError("review quality dimensions do not match the change contract")
+        for dimension, accepted in contract_quality.items():
+            reviewed = review_quality[dimension]
+            expected_status = (
+                "verified"
+                if accepted["status"] == "applicable"
+                else "not-applicable-confirmed"
+            )
+            if (
+                (
+                    reviewed["status"] not in {"verified", "failed"}
+                    if expected_status == "verified"
+                    else reviewed["status"] != expected_status
+                )
+                or reviewed["criteria"] != accepted["criteria"]
+            ):
+                raise ContractError(
+                    f"review quality assessment for {dimension} does not match the contract"
+                )
     for field in (
         "changeId",
         "cycle",
@@ -823,6 +954,7 @@ def _finish_change_unlocked(
         raise ContractError("completion requires the exact required verification profiles")
     for item in state["verification"]:
         report = read_json(_artifact_path(project_root, item))
+        validate_verification(report, f"verification profile {item['profile']}")
         if report.get("status") != "passed":
             raise ContractError(f"verification profile {item['profile']} is not passing")
         if (
@@ -845,6 +977,7 @@ def _finish_change_unlocked(
         "verification": state["verification"],
         "review": state["review"],
     }
+    validate_completion(completion, "completion")
     completion_path = _run_root(project_root, change_id) / "completion.json"
     _write_atomic(completion_path, completion)
     state["completion"] = {

@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import regex as bounded_regex
 
@@ -34,12 +34,19 @@ from .supervision import process_supervisor
 
 
 OUTPUT_LIMIT = 16_384
+MIRRORED_OUTPUT_LIMIT = 1_000_000
+COMMAND_OUTPUT_STREAM_LIMIT = 1_000_000
+COMMAND_OUTPUT_TOTAL_LIMIT = 1_500_000
 OUTPUT_REGEX_TIMEOUT_SECONDS = 0.1
 TERMINATION_GRACE_SECONDS = 1.0
 
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_regex_output(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _contained_working_directory(root: Path, relative: str) -> Path:
@@ -91,9 +98,33 @@ def _command_preflight(
 _OUTPUT_MIRROR_LOCK = threading.Lock()
 
 
-def _drain_output(stream, capture: dict[str, Any], *, mirror: bool) -> None:
+def _drain_output(
+    stream,
+    capture: dict[str, Any],
+    *,
+    mirror: bool,
+    budget: dict[str, Any],
+    abort: threading.Event,
+) -> None:
     try:
         while chunk := stream.read(8192):
+            capture["sha256"].update(chunk)
+            with budget["lock"]:
+                capture["bytes"] += len(chunk)
+                budget["bytes"] += len(chunk)
+                if (
+                    capture["bytes"] > COMMAND_OUTPUT_STREAM_LIMIT
+                    or budget["bytes"] > COMMAND_OUTPUT_TOTAL_LIMIT
+                ):
+                    capture["truncated"] = True
+                    capture["limitExceeded"] = True
+                    budget["error"] = (
+                        "command output exceeded the fail-closed byte budget "
+                        f"({COMMAND_OUTPUT_STREAM_LIMIT} per stream, "
+                        f"{COMMAND_OUTPUT_TOTAL_LIMIT} aggregate)"
+                    )
+                    abort.set()
+                    break
             remaining = OUTPUT_LIMIT - len(capture["data"])
             if remaining > 0:
                 capture["data"].extend(chunk[:remaining])
@@ -101,15 +132,33 @@ def _drain_output(stream, capture: dict[str, Any], *, mirror: bool) -> None:
                 capture["truncated"] = True
             if mirror:
                 with _OUTPUT_MIRROR_LOCK:
+                    mirrored = capture["mirroredBytes"]
+                    mirror_remaining = MIRRORED_OUTPUT_LIMIT - mirrored
+                    visible = chunk[:max(0, mirror_remaining)]
                     binary = getattr(sys.stderr, "buffer", None)
-                    if binary is not None:
-                        binary.write(chunk)
+                    if binary is not None and visible:
+                        binary.write(visible)
                         binary.flush()
-                    else:
-                        sys.stderr.write(chunk.decode("utf-8", errors="replace"))
+                    elif visible:
+                        sys.stderr.write(visible.decode("utf-8", errors="replace"))
                         sys.stderr.flush()
-    except (OSError, ValueError):
+                    capture["mirroredBytes"] += len(visible)
+                    if len(visible) < len(chunk) and not capture["mirrorTruncated"]:
+                        marker = b"\n[engineering-process: streamed output truncated]\n"
+                        if binary is not None:
+                            binary.write(marker)
+                            binary.flush()
+                        else:
+                            sys.stderr.write(marker.decode("ascii"))
+                            sys.stderr.flush()
+                        capture["mirrorTruncated"] = True
+    except (OSError, ValueError) as error:
         capture["truncated"] = True
+        capture["readError"] = str(error)
+        with budget["lock"]:
+            if budget["error"] is None:
+                budget["error"] = f"cannot read command output: {error}"
+        abort.set()
     finally:
         stream.close()
 
@@ -123,6 +172,7 @@ def execute_command(
     working_directory: str,
     path_entries: tuple[Path, ...] = (),
     command_bindings: dict[str, ManagedCommandBinding] | None = None,
+    environment_overrides: Mapping[str, str | None] | None = None,
     stream_output: bool = False,
 ) -> dict[str, Any]:
     working = _contained_working_directory(root, working_directory)
@@ -139,6 +189,11 @@ def execute_command(
                 command_environment.get("PATH", ""),
             ]
         )
+    for name, value in (environment_overrides or {}).items():
+        if value is None:
+            command_environment.pop(name, None)
+        else:
+            command_environment[name] = value
     try:
         supervisor = process_supervisor()
         effective_run = run
@@ -166,24 +221,60 @@ def execute_command(
             "error": str(error),
             "stdout": "",
             "stderr": "",
+            "stdoutBytes": 0,
+            "stderrBytes": 0,
+            "stdoutSha256": hashlib.sha256(b"").hexdigest(),
+            "stderrSha256": hashlib.sha256(b"").hexdigest(),
             "outputTruncated": False,
+            "streamOutputTruncated": False,
             "pathEntries": [str(path) for path in path_entries],
         }
     assert process.stdout is not None
     assert process.stderr is not None
-    stdout_capture: dict[str, Any] = {"data": bytearray(), "truncated": False}
-    stderr_capture: dict[str, Any] = {"data": bytearray(), "truncated": False}
+    stdout_capture: dict[str, Any] = {
+        "data": bytearray(),
+        "truncated": False,
+        "bytes": 0,
+        "sha256": hashlib.sha256(),
+        "mirroredBytes": 0,
+        "mirrorTruncated": False,
+    }
+    stderr_capture: dict[str, Any] = {
+        "data": bytearray(),
+        "truncated": False,
+        "bytes": 0,
+        "sha256": hashlib.sha256(),
+        "mirroredBytes": 0,
+        "mirrorTruncated": False,
+    }
+    for capture in (stdout_capture, stderr_capture):
+        capture["limitExceeded"] = False
+        capture["readError"] = None
+    output_budget: dict[str, Any] = {
+        "bytes": 0,
+        "error": None,
+        "lock": threading.Lock(),
+    }
+    output_abort = threading.Event()
     drain_threads = (
         threading.Thread(
             target=_drain_output,
             args=(process.stdout, stdout_capture),
-            kwargs={"mirror": stream_output},
+            kwargs={
+                "mirror": stream_output,
+                "budget": output_budget,
+                "abort": output_abort,
+            },
             daemon=True,
         ),
         threading.Thread(
             target=_drain_output,
             args=(process.stderr, stderr_capture),
-            kwargs={"mirror": stream_output},
+            kwargs={
+                "mirror": stream_output,
+                "budget": output_budget,
+                "abort": output_abort,
+            },
             daemon=True,
         ),
     )
@@ -193,19 +284,38 @@ def execute_command(
     error_message: str | None = None
     command_tree_bounded = True
     try:
-        exit_code = process.wait(timeout=timeout_seconds)
-        if exit_code != 0:
-            status = "failed"
-    except subprocess.TimeoutExpired:
-        status = "timed-out"
-        error_message = f"exceeded {timeout_seconds} seconds"
-        cleanup = supervisor.terminate(
-            process, grace_seconds=TERMINATION_GRACE_SECONDS
-        )
-        command_tree_bounded = cleanup.bounded
-        if cleanup.error is not None:
-            error_message = cleanup.error
-        exit_code = process.returncode
+        deadline = monotonic_start + timeout_seconds
+        while True:
+            if output_abort.is_set():
+                status = "failed"
+                error_message = output_budget["error"] or "command output capture failed"
+                cleanup = supervisor.terminate(
+                    process, grace_seconds=TERMINATION_GRACE_SECONDS
+                )
+                command_tree_bounded = cleanup.bounded
+                if cleanup.error is not None:
+                    error_message = cleanup.error
+                exit_code = process.returncode
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                status = "timed-out"
+                error_message = f"exceeded {timeout_seconds} seconds"
+                cleanup = supervisor.terminate(
+                    process, grace_seconds=TERMINATION_GRACE_SECONDS
+                )
+                command_tree_bounded = cleanup.bounded
+                if cleanup.error is not None:
+                    error_message = cleanup.error
+                exit_code = process.returncode
+                break
+            try:
+                exit_code = process.wait(timeout=min(remaining, 0.05))
+            except subprocess.TimeoutExpired:
+                continue
+            if exit_code != 0:
+                status = "failed"
+            break
     except KeyboardInterrupt:
         supervisor.terminate(process, grace_seconds=TERMINATION_GRACE_SECONDS)
         raise
@@ -227,6 +337,9 @@ def execute_command(
             error_message = (
                 "command process group retained output streams after bounded termination"
             )
+        if output_abort.is_set():
+            status = "failed"
+            error_message = output_budget["error"] or "command output capture failed"
         if not command_tree_bounded:
             status = "failed"
             error_message = (
@@ -247,8 +360,15 @@ def execute_command(
         "commandSha256": command_digest,
         "stdout": stdout,
         "stderr": stderr,
+        "stdoutBytes": stdout_capture["bytes"],
+        "stderrBytes": stderr_capture["bytes"],
+        "stdoutSha256": stdout_capture["sha256"].hexdigest(),
+        "stderrSha256": stderr_capture["sha256"].hexdigest(),
         "outputTruncated": bool(
             stdout_capture["truncated"] or stderr_capture["truncated"]
+        ),
+        "streamOutputTruncated": bool(
+            stdout_capture["mirrorTruncated"] or stderr_capture["mirrorTruncated"]
         ),
         "pathEntries": [str(path) for path in path_entries],
     }
@@ -380,7 +500,7 @@ def _probe_requirement(
                 output_matches = (
                     bounded_regex.search(
                         probe.output_regex,
-                        stream,
+                        _canonical_regex_output(stream),
                         bounded_regex.MULTILINE,
                         timeout=min(remaining, OUTPUT_REGEX_TIMEOUT_SECONDS),
                         concurrent=True,

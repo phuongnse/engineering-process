@@ -16,7 +16,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "changeId": {
       "type": "string",
       "maxLength": 64,
@@ -101,5 +101,37 @@
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1, "maxLength": 1000}
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "workItems": {
+            "maxItems": 256,
+            "items": {
+              "properties": {
+                "affectedPaths": {"maxItems": 256},
+                "verificationProfiles": {"maxItems": 64}
+              }
+            }
+          },
+          "acceptancePlan": {
+            "maxItems": 256,
+            "items": {
+              "properties": {
+                "workItems": {"maxItems": 256},
+                "verificationProfiles": {"maxItems": 64}
+              }
+            }
+          },
+          "risks": {"maxItems": 256},
+          "openDecisions": {"maxItems": 256}
+        }
+      }
+    }
+  ]
 }

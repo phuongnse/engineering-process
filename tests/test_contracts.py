@@ -1,11 +1,17 @@
+import hashlib
+import json
 import unittest
 
 from engineering_process.contracts import (
+    CORE_QUALITY_DIMENSIONS,
     ContractError,
+    derive_release_version,
+    validate_adoption_migration,
     validate_change,
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_release,
     validate_review,
 )
 
@@ -13,7 +19,7 @@ from engineering_process.contracts import (
 class ProjectContractTests(unittest.TestCase):
     def valid_project(self):
         return {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "project": "sample-project",
             "lifecycle": {"requiredProfiles": ["development"]},
             "profiles": {
@@ -52,6 +58,161 @@ class ProjectContractTests(unittest.TestCase):
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
 
+    def test_adoption_migration_binds_distinct_final_versions_and_project(self):
+        project = self.valid_project()
+        target_content = (
+            json.dumps(project, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+        document = {
+            "schemaVersion": 1,
+            "fromProcessVersion": "0.1.1",
+            "toProcessVersion": "0.2.0",
+            "sourceProjectDigest": f"sha256:{'0' * 64}",
+            "targetProjectDigest": (
+                "sha256:" + hashlib.sha256(target_content).hexdigest()
+            ),
+            "project": project,
+        }
+
+        validate_adoption_migration(document)
+
+        document["toProcessVersion"] = "0.1.1"
+        with self.assertRaisesRegex(ContractError, "must differ"):
+            validate_adoption_migration(document)
+
+        document["toProcessVersion"] = "0.2.0"
+        document["project"]["schemaVersion"] = 99
+        with self.assertRaisesRegex(ContractError, "schemaVersion"):
+            validate_adoption_migration(document)
+
+    def test_accepts_schema_four_impact_graph(self):
+        document = self.valid_project()
+        document["impact"] = {
+            "baseRefs": ["origin/main", "main"],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {
+                    "id": "api",
+                    "paths": ["openapi.json", "src/api/**"],
+                    "affects": ["frontend"],
+                },
+                {
+                    "id": "frontend",
+                    "paths": ["frontend/**"],
+                    "affects": [],
+                },
+            ],
+        }
+        document["profiles"]["development"][0]["components"] = ["frontend"]
+
+        project = validate_project(document)
+
+        self.assertEqual(project.impact.base_refs, ("origin/main", "main"))
+        self.assertEqual(
+            project.profiles["development"][0].components,
+            ("frontend",),
+        )
+        self.assertEqual(project.impact.components["api"].affects, ("frontend",))
+
+    def test_impact_contract_is_additive_to_schema_three_but_not_older_majors(self):
+        document = self.valid_project()
+        document["schemaVersion"] = 3
+        document["impact"] = {
+            "baseRefs": ["main"],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {"id": "source", "paths": ["src/**"], "affects": []}
+            ],
+        }
+        document["lifecycle"]["qualityExtensions"] = ["project-accessibility"]
+        document["profiles"]["development"][0]["components"] = ["source"]
+
+        project = validate_project(document)
+
+        self.assertEqual(("source",), project.profiles["development"][0].components)
+        self.assertEqual(("project-accessibility",), project.quality_extensions)
+
+        document["schemaVersion"] = 2
+        del document["environment"]["foregroundOnly"]
+
+        with self.assertRaisesRegex(
+            ContractError, "unknown properties: impact|qualityExtensions|components"
+        ):
+            validate_project(document)
+
+    def test_rejects_invalid_impact_references_and_portability(self):
+        cases = (
+            (
+                {
+                    "baseRefs": ["main"],
+                    "unmatchedPaths": "all-scoped-checks",
+                    "components": [
+                        {
+                            "id": "source",
+                            "paths": ["src\\**"],
+                            "affects": [],
+                        }
+                    ],
+                },
+                "portable relative glob",
+            ),
+            (
+                {
+                    "baseRefs": ["main"],
+                    "unmatchedPaths": "all-scoped-checks",
+                    "components": [
+                        {
+                            "id": "source",
+                            "paths": ["src/**"],
+                            "affects": ["missing"],
+                        }
+                    ],
+                },
+                "undefined components: missing",
+            ),
+        )
+        for impact, message in cases:
+            with self.subTest(message=message):
+                document = self.valid_project()
+                document["impact"] = impact
+                with self.assertRaisesRegex(ContractError, message):
+                    validate_project(document)
+
+    def test_impact_contract_enforces_resource_bounds(self):
+        document = self.valid_project()
+        document["impact"] = {
+            "baseRefs": [f"refs/heads/base-{index}" for index in range(17)],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {"id": "source", "paths": ["src/**"], "affects": []}
+            ],
+        }
+        with self.assertRaisesRegex(ContractError, "baseRefs: exceeds 16"):
+            validate_project(document)
+
+        document["impact"]["baseRefs"] = ["main"]
+        document["impact"]["components"][0]["paths"] = [
+            f"src/file-{index}.py" for index in range(65)
+        ]
+        with self.assertRaisesRegex(ContractError, "paths: exceeds 64"):
+            validate_project(document)
+
+        document["impact"]["components"][0]["paths"] = ["src/**suffix"]
+        with self.assertRaisesRegex(ContractError, "portable relative glob"):
+            validate_project(document)
+
+        document = self.valid_project()
+        document["impact"] = {
+            "baseRefs": ["main"],
+            "unmatchedPaths": "all-scoped-checks",
+            "components": [
+                {"id": "source", "paths": ["src/**"], "affects": []}
+            ],
+        }
+        document["profiles"]["development"][0]["components"] = ["missing"]
+        with self.assertRaisesRegex(ContractError, "undefined components: missing"):
+            validate_project(document)
+
     def test_preserves_historical_project_manifest_versions(self):
         schema_one = self.valid_project()
         schema_one["schemaVersion"] = 1
@@ -62,6 +223,40 @@ class ProjectContractTests(unittest.TestCase):
         schema_two["schemaVersion"] = 2
         del schema_two["environment"]["foregroundOnly"]
         self.assertFalse(validate_project(schema_two).environment.foreground_only)
+
+    def test_project_resource_bounds_use_a_new_schema_major(self):
+        legacy = self.valid_project()
+        legacy["schemaVersion"] = 1
+        del legacy["environment"]
+        check = legacy["profiles"]["development"][0]
+        legacy["profiles"] = {
+            f"profile-{index}": [dict(check)] for index in range(65)
+        }
+        legacy["lifecycle"]["requiredProfiles"] = ["profile-0"]
+        self.assertEqual(65, len(validate_project(legacy).profiles))
+
+        schema_three = self.valid_project()
+        schema_three["schemaVersion"] = 3
+        schema_three["profiles"] = {
+            f"profile-{index}": [dict(check)] for index in range(65)
+        }
+        schema_three["lifecycle"]["requiredProfiles"] = ["profile-0"]
+        schema_three["environment"]["profiles"] = {
+            f"profile-{index}": ["python-runtime"] for index in range(65)
+        }
+        schema_three["environment"]["defaultProfile"] = "profile-0"
+        self.assertEqual(65, len(validate_project(schema_three).profiles))
+
+        bounded = self.valid_project()
+        bounded["profiles"] = {
+            f"profile-{index}": [dict(check)] for index in range(65)
+        }
+        bounded["lifecycle"]["requiredProfiles"] = ["profile-0"]
+        bounded["environment"]["profiles"] = {
+            f"profile-{index}": ["python-runtime"] for index in range(65)
+        }
+        with self.assertRaisesRegex(ContractError, "exceeds 64 profiles"):
+            validate_project(bounded)
 
     def test_schema_two_batch_binding_remains_readable_for_manual_migration(self):
         document = self.valid_project()
@@ -193,6 +388,208 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_release_version_is_derived_from_highest_public_change(self):
+        cases = (
+            ("0.1.1", ["fix"], "0.1.2", "patch", "backward-compatible"),
+            (
+                "0.1.1",
+                ["fix", "capability"],
+                "0.2.0",
+                "minor",
+                "backward-compatible",
+            ),
+            ("0.1.1", ["breaking"], "0.2.0", "minor", "incompatible"),
+            ("1.4.2", ["breaking"], "2.0.0", "major", "incompatible"),
+        )
+        for previous, changes, version, classification, compatibility in cases:
+            with self.subTest(previous=previous, changes=changes):
+                plan = derive_release_version(previous, changes)
+                self.assertEqual(version, plan.version)
+                self.assertEqual(classification, plan.classification)
+                self.assertEqual(compatibility, plan.compatibility)
+
+    def test_release_version_planning_rejects_missing_or_invalid_inputs(self):
+        with self.assertRaisesRegex(ContractError, "at least one change type"):
+            derive_release_version("0.1.1", [])
+        with self.assertRaisesRegex(ContractError, "unknown release change types"):
+            derive_release_version("0.1.1", ["progress"])
+        with self.assertRaisesRegex(ContractError, "final SemVer"):
+            derive_release_version("0.2.0-rc.1", ["fix"])
+
+    def valid_change(self):
+        return {
+            "schemaVersion": 3,
+            "id": "production-change",
+            "summary": "Exercise the production contract",
+            "source": "test",
+            "comparisonBase": "main",
+            "specification": {
+                "kind": "change-contract",
+                "reference": "test",
+                "rationale": "The fixture owns this bounded behavior.",
+            },
+            "risk": "medium",
+            "affectedProjects": ["sample-project"],
+            "acceptanceCriteria": [
+                {"id": "ac-1", "outcome": "The production boundary is verified"}
+            ],
+            "requiredProfiles": ["review"],
+            "quality": {
+                "standard": "production-v1",
+                "assessments": [
+                    {
+                        "dimension": dimension,
+                        "status": "applicable",
+                        "rationale": "The fixture verifies this dimension.",
+                        "criteria": ["ac-1"],
+                    }
+                    for dimension in CORE_QUALITY_DIMENSIONS
+                ],
+            },
+            "signOff": {
+                "required": False,
+                "status": "not-required",
+                "evidence": None,
+            },
+        }
+
+    def test_new_changes_require_every_production_dimension(self):
+        document = self.valid_change()
+        validate_change(document)
+
+        document["quality"]["assessments"].pop()
+        with self.assertRaisesRegex(ContractError, "missing core dimensions"):
+            validate_change(document)
+
+    def test_not_applicable_quality_requires_rationale_and_no_criteria(self):
+        document = self.valid_change()
+        privacy = next(
+            item
+            for item in document["quality"]["assessments"]
+            if item["dimension"] == "privacy"
+        )
+        privacy["status"] = "not-applicable"
+        with self.assertRaisesRegex(ContractError, "require an empty list"):
+            validate_change(document)
+        privacy["criteria"] = []
+        validate_change(document)
+
+    def test_release_identity_and_changes_derive_canonical_governed_release(self):
+        document = {
+            "schemaVersion": 2,
+            "previousVersion": "0.1.1",
+            "version": "0.2.0",
+            "classification": "minor",
+            "compatibility": "backward-compatible",
+            "schemaImpact": "additive",
+            "migration": None,
+            "identity": {
+                "package": "engineering-process",
+                "distribution": "engineering_process",
+                "tag": "v0.2.0",
+                "releaseName": "v0.2.0",
+                "runtimeVersion": {
+                    "path": "engineering_process/__init__.py",
+                    "variable": "VERSION",
+                },
+                "artifacts": [
+                    "engineering_process-0.2.0-py3-none-any.whl",
+                    "engineering_process-0.2.0.tar.gz",
+                ],
+                "receiptAsset": "engineering-process-v0.2.0-evidence.json",
+            },
+            "provenance": {
+                "mode": "governed",
+                "statement": "The receipt binds the release.",
+                "lifecycleReceipt": {
+                    "asset": "engineering-process-v0.2.0-evidence.json",
+                    "project": "engineering-process",
+                    "changeId": "release-0-2-0",
+                    "cycle": 2,
+                },
+            },
+            "changes": [
+                {
+                    "id": "portable-evidence",
+                    "type": "capability",
+                    "surfaces": ["evidence"],
+                    "rationale": "Add portable evidence.",
+                }
+            ],
+        }
+        release = validate_release(document)
+        self.assertEqual("v0.2.0", release.release_name)
+
+        document["identity"]["releaseName"] = "engineering-process 0.2.0"
+        with self.assertRaisesRegex(ContractError, "governed releases must use v0.2.0"):
+            validate_release(document)
+
+        document["identity"]["releaseName"] = "v0.2.0"
+        document["classification"] = "patch"
+        document["version"] = "0.1.2"
+        document["identity"]["tag"] = "v0.1.2"
+        document["identity"]["releaseName"] = "v0.1.2"
+        document["identity"]["artifacts"] = [
+            "engineering_process-0.1.2-py3-none-any.whl",
+            "engineering_process-0.1.2.tar.gz",
+        ]
+        document["identity"]["receiptAsset"] = "engineering-process-v0.1.2-evidence.json"
+        document["provenance"]["lifecycleReceipt"]["asset"] = document["identity"]["receiptAsset"]
+        with self.assertRaisesRegex(ContractError, "changes require minor"):
+            validate_release(document)
+    def test_release_requires_the_exact_declared_semver_increment(self):
+        document = {
+            "schemaVersion": 1,
+            "previousVersion": "0.1.1",
+            "version": "0.2.0",
+            "classification": "minor",
+            "compatibility": "backward-compatible",
+            "schemaImpact": "additive",
+            "migration": None,
+        }
+
+        release = validate_release(document)
+
+        self.assertEqual("0.2.0", release.version)
+        document["version"] = "0.4.0"
+        with self.assertRaisesRegex(ContractError, "must be 0.2.0"):
+            validate_release(document)
+
+    def test_release_requires_compatible_patch_and_migration_for_breaking_change(self):
+        document = {
+            "schemaVersion": 1,
+            "previousVersion": "1.2.3",
+            "version": "1.2.4",
+            "classification": "patch",
+            "compatibility": "incompatible",
+            "schemaImpact": "breaking",
+            "migration": "Migrate the project contract before upgrade.",
+        }
+        with self.assertRaisesRegex(ContractError, "patch release"):
+            validate_release(document)
+
+        document.update(
+            version="2.0.0",
+            classification="major",
+            migration=None,
+        )
+        with self.assertRaisesRegex(ContractError, "require guidance"):
+            validate_release(document)
+
+    def test_stable_incompatible_minor_is_rejected(self):
+        with self.assertRaisesRegex(ContractError, "requires a major"):
+            validate_release(
+                {
+                    "schemaVersion": 1,
+                    "previousVersion": "1.2.3",
+                    "version": "1.3.0",
+                    "classification": "minor",
+                    "compatibility": "incompatible",
+                    "schemaImpact": "unchanged",
+                    "migration": "Replace the removed command.",
+                }
+            )
+
     def test_lock_requires_sorted_skills_and_digest(self):
         with self.assertRaisesRegex(ContractError, "must be sorted"):
             validate_process_lock(
@@ -303,4 +700,36 @@ class ArtifactContractTests(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ContractError, "unknown ids"):
+            validate_plan(document)
+
+    def test_plan_resource_bounds_use_a_new_schema_major(self):
+        work_items = [
+            {
+                "id": f"work-{index}",
+                "outcome": "Implement it",
+                "affectedPaths": ["src/"],
+                "verificationProfiles": ["development"],
+            }
+            for index in range(257)
+        ]
+        document = {
+            "schemaVersion": 1,
+            "changeId": "change-1",
+            "contractDigest": f"sha256:{'0' * 64}",
+            "approach": "Use the current owner",
+            "workItems": work_items,
+            "acceptancePlan": [
+                {
+                    "criterionId": "ac-1",
+                    "workItems": ["work-0"],
+                    "verificationProfiles": ["development"],
+                }
+            ],
+            "risks": [],
+            "openDecisions": [],
+        }
+
+        validate_plan(document)
+        document["schemaVersion"] = 2
+        with self.assertRaisesRegex(ContractError, "exceeds 256"):
             validate_plan(document)

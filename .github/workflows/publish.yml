@@ -9,10 +9,11 @@ permissions:
 
 jobs:
   build:
-    name: Build and verify distributions
+    name: Revalidate immutable release assets
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      attestations: read
       contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -24,47 +25,81 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Validate release tag and source
+      - name: Install exact public authority and release dependencies
         run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import subprocess
-          import tomllib
+          python -m venv "$RUNNER_TEMP/process-authority"
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            --require-hashes -r requirements/process.txt
+          python -m pip install --require-hashes \
+            -r engineering_process/requirements-release.txt
 
-          document = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-          expected_tag = "v" + document["project"]["version"]
-          actual_tag = os.environ["GITHUB_REF_NAME"]
-          if actual_tag != expected_tag:
-              raise SystemExit(
-                  f"release tag {actual_tag!r} does not match project version {expected_tag!r}"
-              )
-          subprocess.run(
-              ["git", "merge-base", "--is-ancestor", os.environ["GITHUB_SHA"], "origin/main"],
-              check=True,
-          )
-          PY
-
-      - name: Build distributions
+      - name: Download immutable release evidence and distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python -m pip install -r engineering_process/requirements-dev.txt
-          python -m build --outdir dist
+          mkdir -p "$RUNNER_TEMP/release-assets/distributions"
+          receipt_asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
+          attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-assets"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
+          python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
+            > "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          {
+            printf '%s\n' "$receipt_asset" "$attestation_asset"
+            cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
+          while IFS= read -r artifact; do
+            gh release download "$GITHUB_REF_NAME" \
+              --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
+          done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          printf 'RECEIPT_PATH=%s\n' \
+            "$RUNNER_TEMP/release-assets/$receipt_asset" >> "$GITHUB_ENV"
+          printf 'ATTESTATION_PATH=%s\n' \
+            "$RUNNER_TEMP/release-assets/$attestation_asset" >> "$GITHUB_ENV"
 
-      - name: Verify built wheel
+      - name: Validate immutable release identity and artifact bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ github.event.release.name }}
         run: |
-          python -m pip install --force-reinstall dist/*.whl
+          gh release verify "$GITHUB_REF_NAME"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
+          cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
+            "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
+          gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
+          while IFS= read -r artifact; do
+            gh release verify-asset "$GITHUB_REF_NAME" \
+              "$RUNNER_TEMP/release-assets/distributions/$artifact"
+          done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "$RECEIPT_PATH" --json
+          python processctl.py publication validate-release \
+            --project-root . \
+            --tag "$GITHUB_REF_NAME" \
+            --release-name "$RELEASE_NAME" \
+            --commit "$GITHUB_SHA" \
+            --main-ref origin/main \
+            --receipt "$RECEIPT_PATH"
+          python processctl.py publication validate-artifacts \
+            --project-root . \
+            --artifacts "$RUNNER_TEMP/release-assets/distributions" \
+            --attestation "$ATTESTATION_PATH" \
+            --commit "$GITHUB_SHA" \
+            --receipt "$RECEIPT_PATH"
+
+      - name: Verify prepared wheel
+        run: |
+          python -m pip install --force-reinstall \
+            --no-deps \
+            "$RUNNER_TEMP"/release-assets/distributions/*.whl
           cd "$RUNNER_TEMP"
           processctl digest
           processctl skills validate
           python -m unittest discover -s "$GITHUB_WORKSPACE/tests" -p 'test_*.py'
-
-      - name: Preserve verified distributions
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: python-distributions
-          path: dist/
-          if-no-files-found: error
-          retention-days: 1
 
   pypi:
     name: Publish to PyPI
@@ -75,16 +110,86 @@ jobs:
       name: pypi
       url: https://pypi.org/project/engineering-process/
     permissions:
+      attestations: read
       contents: read
       id-token: write
     steps:
-      - name: Restore verified distributions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          name: python-distributions
-          path: dist/
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install exact public authority and release dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/process-authority"
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            --require-hashes -r requirements/process.txt
+          python -m pip install --require-hashes \
+            -r engineering_process/requirements-release.txt
+
+      - name: Download immutable release evidence and distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-assets/distributions"
+          receipt_asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
+          attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-assets"
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
+          python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
+            > "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          {
+            printf '%s\n' "$receipt_asset" "$attestation_asset"
+            cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
+          while IFS= read -r artifact; do
+            gh release download "$GITHUB_REF_NAME" \
+              --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
+          done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          printf 'RECEIPT_PATH=%s\n' \
+            "$RUNNER_TEMP/release-assets/$receipt_asset" >> "$GITHUB_ENV"
+          printf 'ATTESTATION_PATH=%s\n' \
+            "$RUNNER_TEMP/release-assets/$attestation_asset" >> "$GITHUB_ENV"
+
+      - name: Revalidate immutable release immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+        run: |
+          gh release verify "$GITHUB_REF_NAME"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
+          cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
+            "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
+          gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
+          while IFS= read -r artifact; do
+            gh release verify-asset "$GITHUB_REF_NAME" \
+              "$RUNNER_TEMP/release-assets/distributions/$artifact"
+          done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
+          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "$RECEIPT_PATH" --json
+          python processctl.py publication validate-release \
+            --project-root . \
+            --tag "$GITHUB_REF_NAME" \
+            --release-name "$RELEASE_NAME" \
+            --commit "$GITHUB_SHA" \
+            --main-ref origin/main \
+            --receipt "$RECEIPT_PATH"
+          python processctl.py publication validate-artifacts \
+            --project-root . \
+            --artifacts "$RUNNER_TEMP/release-assets/distributions" \
+            --attestation "$ATTESTATION_PATH" \
+            --commit "$GITHUB_SHA" \
+            --receipt "$RECEIPT_PATH"
 
       - name: Publish distributions with attestations
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
-          packages-dir: dist/
+          packages-dir: ${{ runner.temp }}/release-assets/distributions/

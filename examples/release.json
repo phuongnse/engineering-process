@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 2,
+  "previousVersion": "1.1.0",
+  "version": "1.2.0",
+  "classification": "minor",
+  "compatibility": "backward-compatible",
+  "schemaImpact": "additive",
+  "migration": null,
+  "identity": {
+    "package": "engineering-process",
+    "distribution": "engineering_process",
+    "tag": "v1.2.0",
+    "releaseName": "v1.2.0",
+    "runtimeVersion": {
+      "path": "engineering_process/__init__.py",
+      "variable": "VERSION"
+    },
+    "artifacts": [
+      "engineering_process-1.2.0-py3-none-any.whl",
+      "engineering_process-1.2.0.tar.gz"
+    ],
+    "receiptAsset": "engineering-process-v1.2.0-evidence.json"
+  },
+  "provenance": {
+    "mode": "governed",
+    "statement": "The immutable lifecycle receipt binds the reviewed checkpoint to this release.",
+    "lifecycleReceipt": {
+      "asset": "engineering-process-v1.2.0-evidence.json",
+      "project": "engineering-process",
+      "changeId": "release-1-2-0",
+      "cycle": 2
+    }
+  },
+  "changes": [
+    {
+      "id": "portable-evidence-export",
+      "type": "capability",
+      "surfaces": ["evidence", "lifecycle"],
+      "rationale": "Add a portable lifecycle receipt for governed publication."
+    }
+  ]
+}

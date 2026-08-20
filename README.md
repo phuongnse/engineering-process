@@ -27,6 +27,14 @@ The core ships only the agent-neutral reviewer-attestation contract. Host-specif
 launchers and model configuration are separate integrations and are never part of a
 required process bundle.
 
+This repository follows the same lifecycle it distributes. The exact public N-1
+release pinned in `.process/process.lock` governs development of N+1; the checkout
+under test never supplies its own lifecycle authority. Managed N-1 skills live in
+`.agents/skills`, while editable N+1 distribution sources live in
+`process_assets/skills`. The bootstrap trust chain and evidence boundary are defined
+in [`SELF_HOSTING.md`](./SELF_HOSTING.md); package, schema, release, and adoption
+versions are governed by [`VERSIONING.md`](./VERSIONING.md).
+
 Python 3.11 or newer and Git are required. Windows command containment requires
 Windows 10 or Windows Server 2016 and newer so Job Object membership can be attached
 atomically during process creation. Lifecycle state is stored under ignored
@@ -62,7 +70,9 @@ project/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .gitignore             # includes .process/runs/
 └── .process/
-    └── project.json       # project profiles and lifecycle baseline
+    ├── adopt-process.py             # hash-locked adoption runner
+    ├── adopt-process-windows-job.py # Windows process containment
+    └── project.json                 # profiles and lifecycle baseline
 ~~~
 
 Install `processctl` from a tagged release and create a candidate manifest from
@@ -78,11 +88,34 @@ processctl doctor --project-root .
 
 `project init` validates the manifest, preflights ownership conflicts, writes the
 lock, installs the managed `AGENTS.md` and pull-request contracts, adds the ignored
-lifecycle-state path, and synchronizes the selected skills. It refuses to replace
-differing project configuration or unmanaged skills unless the conflict is resolved
-explicitly. `sync --check` and `doctor` detect drift in skills, the managed agent
-contract, and the pull-request block. A consumer never authors or maintains process
-skills locally.
+lifecycle-state path and canonical managed-skill Git attributes, and synchronizes
+the selected skills and adoption runner. It refuses to replace differing project
+configuration or unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
+`doctor` detect drift in skills, the managed agent contract, the pull-request block,
+and the bounded process-owned `.agents/.gitattributes` file. That file is closer to
+the managed tree than project-root attributes, canonicalizes LF only for text assets
+under `.agents/skills`, and disables inherited working-tree encoding, filter, and
+ident transforms for those assets. A self-rule applies the same byte-stable policy
+to `.agents/.gitattributes`; binary detection remains automatic. Deeper repository
+attribute files are rejected by existing managed-tree ownership and content checks.
+External Git overrides that alter a checkout still fail byte-exact distribution
+attestation. A consumer never authors or maintains process skills locally.
+
+For an existing consumer, a published version is adopted through one Renovate draft.
+The managed runner installs the target authority from the complete hash lock outside
+the checkout and atomically updates the process lock and managed assets. If the
+consumer chooses or requires new project configuration, it adds
+`.process/adoption-migrations/<target-version>.json`; the installed target authority
+binds the source and target manifest digests, validates the complete target manifest,
+and updates `.process/project.json` in the same rollback transaction. Optional
+capabilities are never inferred. CI and a fresh isolated review context approve the
+fully materialized checkpoint; merge completes adoption and no post-merge sync runs.
+
+The engineering-process producer repository separately owns its root
+`.gitattributes` policy so tracked text sources and distribution inputs are LF and
+byte-stable on every supported checkout. That producer policy is not synchronized
+into a consumer root; consumers receive only the bounded `.agents/.gitattributes`
+asset described above.
 
 The single project-manifest contract includes environment profiles, project-attested
 read-only requirement probes, remediation, declarative managed-tool artifacts, and
@@ -192,12 +225,88 @@ HTTPS, declared size/checksum/archive/path boundaries and derives their approval
 `network` plus `user-files`. Use a command action only for project-native package
 managers or domain preparation that cannot be represented by the managed-tool
 primitive, and declare every possible scope truthfully. New consumers use
-project-manifest schema 3. Schema 1 (without an environment contract) and schema 2
-(the original environment contract) remain readable for backward compatibility; they
-are not relabeled as newer shapes. A consumer upgrades explicitly to schema 3 to
-attest foreground-only task execution and use managed script bindings. New integrations
+project-manifest schema 4. Schema 1 (without an environment contract), schema 2
+(the original environment contract), and schema 3 remain readable for backward
+compatibility; they are not relabeled as newer shapes. Schema 3 introduced
+foreground-only task execution and managed script bindings. Portable impact
+declarations and quality extensions are additive optional schema-3 capabilities;
+schema 4 adds resource bounds to previously published fields without tightening those
+historical readers. New integrations
 receive the complete environment contract instead of creating a project-local doctor
 or setup lifecycle.
+
+To migrate a live project manifest from schema 3 to 4, keep the same field meanings
+and first reduce it to at most 64 profiles, 256 checks per profile, 1,024 checks in
+total, and 256 arguments per check, probe, or command setup action; then change
+`schemaVersion` and run `processctl contract validate --kind project`. Historical
+schema-3 artifacts do not need rewriting. Plan schema 1 follows the same policy:
+new plans use schema 2, with at most 256 work/mapping/risk/decision entries and 64
+verification profiles per mapping.
+
+## Affected-check selection
+
+Schema 3 and schema 4 optionally declare the same portable impact graph. Components
+own canonical forward-slash glob patterns and list downstream components in
+`affects`; profile checks list the components that can invalidate them. The
+distribution discovers the
+committed diff from an exact Git merge base and combines staged, unstaged, and
+untracked paths, then computes the transitive component closure and runs only the
+selected checks.
+
+~~~json
+{
+  "impact": {
+    "baseRefs": ["origin/main", "main"],
+    "unmatchedPaths": "all-scoped-checks",
+    "components": [
+      {
+        "id": "api-contract",
+        "paths": ["openapi.json"],
+        "affects": ["frontend"]
+      },
+      {
+        "id": "frontend",
+        "paths": ["frontend/**"],
+        "affects": []
+      }
+    ]
+  },
+  "profiles": {
+    "development": [
+      {
+        "id": "frontend-unit",
+        "run": ["node", "node_modules/vitest/vitest.mjs", "run"],
+        "timeoutSeconds": 900,
+        "components": ["frontend"]
+      }
+    ]
+  }
+}
+~~~
+
+A check without `components` is deliberately always-run. A manifest without an
+`impact` object deliberately runs its complete profile through the same runner; this
+is suitable for small repositories and is not a legacy execution engine. Any changed
+path that matches no component selects every component-scoped check, so an incomplete
+graph fails toward broader verification instead of silently omitting evidence.
+
+Standalone verification tries `impact.baseRefs` in order or accepts an explicit
+`--base-ref`. Lifecycle verification ignores those defaults and binds selection to
+the registered change contract's immutable `comparisonBase`. Inspect a plan without
+probing tools or executing checks:
+
+~~~text
+processctl verify --project-root . --profile development --plan-only
+processctl verify --project-root . --profile development --plan-only \
+  --base-ref origin/main --json
+~~~
+
+Evidence records the resolved base and merge-base commits, changed and unmatched
+paths, direct and transitive components, and a reason for every selected or skipped
+check. A selected project command can read that exact immutable scope from the JSON
+file named by `ENGINEERING_PROCESS_IMPACT_FILE`. This is intended only for bounded
+domain analyzers, such as selecting affected MSBuild projects; changed-path discovery,
+component closure, check routing, and evidence remain distribution-owned.
 
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
@@ -213,6 +322,10 @@ local path.
 
 `project.json.lifecycle.requiredProfiles` is the minimum evidence for every change.
 Individual change contracts may add profiles but cannot remove the baseline.
+Every new contract also applies [`production-v1`](PRODUCTION_STANDARD.md) to the ten
+portable quality dimensions. Projects may add declared `project-*` dimensions but
+cannot remove or weaken the shared minimum. The same contract governs this repository
+through its public N-1 self-hosting boundary.
 Agents enter non-trivial delivery through the synchronized `run-change` skill; phase
 skills are internal owners, not a workflow each project must reconnect.
 
@@ -272,6 +385,25 @@ pending findings before any transition is allowed.
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately authorized project workflows.
 
+Completed local evidence can be moved across machines or attached to a release as a
+bounded receipt. Export and validate it before any explicit prune:
+
+~~~text
+processctl evidence export --project-root . --change-id issue-123 \
+  --output issue-123-evidence.json
+processctl evidence validate issue-123-evidence.json
+processctl evidence prune --project-root . --change-id issue-123 \
+  --receipt issue-123-evidence.json
+processctl evidence prune --project-root . --change-id issue-123 \
+  --receipt issue-123-evidence.json --apply
+~~~
+
+The first prune command is a preview. `--apply` is accepted only for a completed run
+whose current state matches the validated external receipt. Active, failed,
+unexported, mismatched, or tampered evidence remains fail-closed. A partial deletion
+failure remains under an explicit `.pruning-*` quarantine and must be recovered from
+the retained validated receipt; it is never presented again as a complete local run.
+
 ## Publication contract
 
 Validate common metadata before creating or updating a review object:
@@ -283,6 +415,10 @@ processctl publication validate-range --project-root . \
   --branch feat/short-description --range origin/main..HEAD
 processctl publication validate-pr --title "feat(scope): describe the change" \
   --branch feat/short-description --state draft --body-file pr.md
+processctl contract validate --kind release release.json
+processctl publication validate-release --project-root . \
+  --tag v0.2.0 --release-name v0.2.0 \
+  --commit <checkpoint> --main-ref origin/main
 ~~~
 
 Manual branches use `{type}/{kebab-description}`. Automation uses the provider-neutral
@@ -302,11 +438,13 @@ pull-request descriptions; use visible CommonMark instead.
 ## Trust boundary
 
 The CLI proves structural separation: reviewer actor id and context id must both be
-unused by implementation, and the review must match the verified checkpoint. The
-agent host or human organization owns the truth of the identity attestation. A host
-adapter should create a read-only isolated context, pass stable identities to
-`change review start`, and preserve its evidence. Self-asserted separation without a
-host or human attestation does not satisfy the process.
+unused by implementation, every review assignment in the project must use a fresh
+context id, and the review must match the verified checkpoint. The agent host or
+human organization owns the truth of the identity attestation. A host adapter should
+create a read-only isolated context with no inherited implementation or prior-review
+conversation, pass stable identities to `change review start`, and preserve its
+evidence. A stable reviewer actor or role may be reused with a fresh context; merely
+renaming retained context does not satisfy the process.
 
 `change review submit` may be invoked by a coordinator transporting the assigned
 reviewer's exact report. The CLI validates that artifact against the assignment and
@@ -321,8 +459,38 @@ authenticates who produced it.
   templates, bundle catalog, and
   complete selected skill resources. Startup fails when installed runtime dependency
   versions differ from that lock.
-- Versioned JSON schemas define change, plan, verification, review, lifecycle, and
-  completion-related artifacts.
+- `requirements/process.in` owns the direct authority pin. Renovate uses the
+  pip-compile manager to update its complete binary-only hash lock, then the managed
+  `.process/adopt-process.py` runner rejects symlink, junction, or reparse input in
+  every supplied path component, snapshots one bounded stable copy outside the
+  checkout, binds every path component against concurrent retargeting, and uses that
+  exact digest for installation and `processctl adoption apply`. POSIX process groups
+  and a managed Windows kill-on-close Job Object contain every child. The resulting
+  draft contains the new lock, managed contracts, skill snapshots, and any
+  target-version consumer-owned project migration; after CI and fresh-context
+  independent review, merge is the end of adoption.
+- Versioned JSON schemas define change, plan, verification, review, lifecycle,
+  completion-related artifacts, and the release classification contract. The release
+  gate binds that contract to the exact SemVer increment, package version, latest
+  reachable prior tag, immutable checkpoint, and main ancestry.
+- Remote matrix jobs publish one bounded supplemental-verification schema-1 bundle
+  per platform/runtime. Its manifest binds the exact source and workflow checkpoints,
+  automation actor/context, run URL, platform/runtime identity, selected impact,
+  configured timeouts, output byte counts/digests, truncation state, and the hashes of
+  its schema-2 profile reports. GitHub's artifact id and digest complete the immutable
+  remote reference; this supplements rather than replaces N-1 lifecycle evidence.
+- New lifecycle work uses bounded plan schema 2. Selective-impact consumers may add
+  the optional capability on project schema 3, while new integrations use bounded
+  project schema 4. Plan schema 1 and the pre-existing fields of project schemas 1-3
+  retain their published validation behavior instead of being tightened in place.
+- `release.json` is the single release-identity owner. Governed GitHub tag and title
+  are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
+  lifecycle receipt, and later consumer locks must match it. Earlier immutable
+  releases are recorded explicitly as bootstrap history rather than retroactively
+  claimed as governed.
+- `VERSIONING.md` owns package-versus-schema classification and the explicit
+  Renovate-assisted adoption boundary. `processctl publication plan-version` derives
+  the only permitted next package version from the release change types.
 - Project commands run without a shell and inherit the caller environment. Never put
   secrets in manifests, arguments, or reports.
 - Consumer skill roots are distribution-owned: unmanaged `SKILL.md` files or catalog
@@ -341,7 +509,7 @@ authenticates who produced it.
 python -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-.venv/bin/python processctl.py skills validate --root .agents/skills
+.venv/bin/python processctl.py skills validate --root process_assets/skills
 .venv/bin/python processctl.py digest
 ~~~
 

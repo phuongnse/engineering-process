@@ -1,22 +1,40 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "project": "sample-project",
   "lifecycle": {
     "requiredProfiles": ["development", "review"]
+  },
+  "impact": {
+    "baseRefs": ["origin/main", "main"],
+    "unmatchedPaths": "all-scoped-checks",
+    "components": [
+      {
+        "id": "docs",
+        "paths": ["**/*.md"],
+        "affects": []
+      },
+      {
+        "id": "source",
+        "paths": ["**/*.py", "pyproject.toml"],
+        "affects": []
+      }
+    ]
   },
   "profiles": {
     "development": [
       {
         "id": "unit",
         "run": ["python", "-m", "unittest"],
-        "timeoutSeconds": 600
+        "timeoutSeconds": 600,
+        "components": ["source"]
       }
     ],
     "review": [
       {
         "id": "full",
         "run": ["python", "-m", "unittest", "discover"],
-        "timeoutSeconds": 1800
+        "timeoutSeconds": 1800,
+        "components": ["docs", "source"]
       }
     ]
   },
