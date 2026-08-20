@@ -21,7 +21,7 @@
       "required": [
         "requireChangeRequest",
         "blockDeletion",
-        "blockNonFastForward",
+        "blockHistoryRewrite",
         "bypass",
         "requireUpToDate",
         "requiredChecks"
@@ -33,7 +33,7 @@
         "blockDeletion": {
           "const": true
         },
-        "blockNonFastForward": {
+        "blockHistoryRewrite": {
           "const": true
         },
         "bypass": {

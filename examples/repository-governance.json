@@ -3,7 +3,7 @@
   "defaultBranch": {
     "requireChangeRequest": true,
     "blockDeletion": true,
-    "blockNonFastForward": true,
+    "blockHistoryRewrite": true,
     "bypass": "forbidden",
     "requireUpToDate": false,
     "requiredChecks": [

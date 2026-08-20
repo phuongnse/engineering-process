@@ -44,7 +44,7 @@ DEFAULT_POLICY = {
     "defaultBranch": {
         "requireChangeRequest": True,
         "blockDeletion": True,
-        "blockNonFastForward": True,
+        "blockHistoryRewrite": True,
         "bypass": "forbidden",
         "requireUpToDate": False,
         "requiredChecks": ["Change metadata policy", "Merge eligibility"],

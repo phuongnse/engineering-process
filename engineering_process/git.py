@@ -236,6 +236,19 @@ def tracked_index_paths(
         timeout_seconds=timeout_seconds,
         max_stdout_bytes=max_stdout_bytes,
     )
+    return validate_tracked_index_result(
+        result,
+        label=label,
+        max_paths=max_paths,
+    )
+
+
+def validate_tracked_index_result(
+    result: GitResult,
+    *,
+    label: str,
+    max_paths: int,
+) -> list[bytes]:
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ContractError(
