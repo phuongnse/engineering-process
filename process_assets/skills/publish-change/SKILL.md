@@ -21,7 +21,9 @@ without duplicating implementation, verification, or review.
    draft/ready state; then run any stronger project-declared publication checks. If
    the project declares repository governance, require its read-only provider check
    to confirm pull-request-only integration, current stable checks, and no policy
-   drift before merge or release.
+   drift before merge or release. For each satisfied standard requirement, publish
+   exactly one canonical HTTPS evidence link in its owning section: `Evidence:
+   contract`, `Evidence: verification`, or `Evidence: independent review`.
 4. Perform only the authorized remote action. Preserve draft state unless ready state
    was explicitly requested.
    For a release, export and validate the completion receipt, derive the only
@@ -47,6 +49,9 @@ without duplicating implementation, verification, or review.
 - Do not infer permission to create or update remote repository rules. A missing or
   drifted integration policy blocks publication until the repository owner separately
   authorizes a current compare-before-write plan.
+- Do not present an internal actor alias, context id, local path, or unpublished digest
+  as externally referenceable evidence. Publish the artifact through an authorized
+  project-owned boundary first, then link its stable review-object URL.
 - Metadata-only work may skip code implementation only when project policy permits it.
 
 ## Output

@@ -16,7 +16,11 @@ Publication conventions are distribution-owned as well: manual and automation br
 names, Conventional Commit subjects, PR titles, the managed PR-description structure,
 structured requirement statuses, and draft-versus-ready semantics are validated by
 `processctl publication ...`. Projects populate those sections with their own contract,
-impact, risk, evidence, and review details and may append stronger domain checks.
+impact, risk, evidence, and review details and may append stronger domain checks. A
+satisfied scope, verification, or independent-review claim must include its canonical
+HTTPS evidence reference in the owning section. Internal reviewer aliases, local
+lifecycle paths, context IDs, and unpublished digests do not satisfy that publication
+boundary.
 
 Hosted repository integration is declared separately in
 `.process/repository-governance.json`. The portable baseline requires

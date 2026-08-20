@@ -51,6 +51,13 @@ never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares
 that evidence one-for-one with the change contract before approval.
 
+Publication evidence is referenceable from the review object. Every satisfied
+standard requirement links exactly one visible, bounded HTTPS artifact in its owning
+section using the canonical contract, verification, or independent-review evidence
+label. Internal aliases, local paths, context IDs, and unpublished digests remain
+useful lifecycle details but never substitute for a published reference. Metadata
+validation checks link structure and ownership without fetching untrusted targets.
+
 Remote matrix claims require one bounded supplemental bundle per platform/runtime.
 The schema-1 manifest binds the exact source and workflow checkpoints, automation
 actor/context, run identity and URL, platform/runtime identity, selected impact,

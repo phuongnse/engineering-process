@@ -78,7 +78,8 @@ rules, release immutability, and the PyPI publisher identity remain mandatory.
 1. Complete the repository's own process lifecycle on an immutable checkpoint and
    require independent review plus the complete verification matrix,
    `Change metadata policy`, `Merge eligibility`,
-   and live repository policy check to pass. Export the
+   and live repository policy check to pass. Publish canonical contract,
+   verification, and independent-review references in the ready change request. Export the
    completed receipt bound to the pinned public N-1 authority and artifact digests.
 2. Update the ordered `release.json.changes`; let their types determine the exact
    SemVer classification. Set the same version in `release.json`, `pyproject.toml`,

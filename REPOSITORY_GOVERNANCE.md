@@ -25,6 +25,12 @@ matrix and domain job names remain project-owned implementation details behind
 `Merge eligibility`; copying all of them into remote settings creates avoidable
 configuration drift.
 
+`Change metadata policy` also binds each satisfied publication claim to one visible
+canonical HTTPS reference in its owning section. A structural status without its
+published contract, verification, or independent-review reference fails before
+merge. The validator does not fetch the target; projects retain access-control,
+retention, and immutability ownership for the linked evidence.
+
 A protected branch prevents merging a checkpoint whose required checks are red or
 missing. It cannot make a flaky check reliable, and it cannot prove that a later
 post-merge rerun will have the same result. Reliability defects still require their

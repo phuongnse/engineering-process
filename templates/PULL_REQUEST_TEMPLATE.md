@@ -5,7 +5,10 @@
 
 ## Contract and scope
 
-<!-- Link the owning spec, change contract, issue, or decision. State explicit N/A with a reason. -->
+<!--
+Link the owning spec, change contract, issue, or decision. When satisfied, add
+exactly one [Evidence: contract](https://...) link.
+-->
 
 ## Impact and risk
 
@@ -13,11 +16,19 @@
 
 ## Verification
 
-<!-- List exact current commands/evidence and any blocked or intentionally omitted boundary. -->
+<!--
+List exact current commands/evidence and any blocked or intentionally omitted
+boundary. When satisfied, add exactly one
+[Evidence: verification](https://...) link.
+-->
 
 ## Independent review
 
-<!-- Record reviewer separation, reviewed checkpoint, verdict, and required-finding status. -->
+<!--
+Record reviewer separation, reviewed checkpoint, verdict, and required-finding
+status. When satisfied, add exactly one
+[Evidence: independent review](https://...) link.
+-->
 
 ## Requirements and rules followed
 

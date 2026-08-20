@@ -117,6 +117,12 @@ in `release.json`. Consumer process adoption and live repository-ruleset activat
 remain separate changes with separate authorization. A process lock update never
 implicitly grants Administration permission or mutates a hosted repository.
 
+Requiring canonical HTTPS evidence references for satisfied publication requirements
+tightens the existing unversioned PR-body contract. Before 1.0 it is classified as a
+breaking public change in the later minor release. Existing drafts remain valid while
+requirements are pending; before becoming ready, each completed section migrates by
+publishing and linking its contract, verification, or independent-review artifact.
+
 Validate a prepared migration before the Renovate runner consumes it:
 
 ~~~text

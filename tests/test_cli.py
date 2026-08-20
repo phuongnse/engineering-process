@@ -9,6 +9,7 @@ from pathlib import Path
 
 from engineering_process.cli import main
 from engineering_process.contracts import read_json, validate_process_lock
+from engineering_process.publication import PR_DESCRIPTION_END, PR_DESCRIPTION_START
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +43,64 @@ class CliTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_cli_rejects_satisfied_publication_claims_without_references(self):
+        body = f"""{PR_DESCRIPTION_START}
+## Summary
+
+Reference publication evidence.
+
+## Contract and scope
+
+The accepted scope is complete.
+
+## Impact and risk
+
+No migration is required.
+
+## Verification
+
+All required profiles passed.
+
+## Independent review
+
+A separate reviewer approved the checkpoint.
+
+## Requirements and rules followed
+
+- [x] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: satisfied]
+- [x] **Verification evidence** — required current profiles pass on the published checkpoint. [status: satisfied]
+- [x] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: satisfied]
+{PR_DESCRIPTION_END}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "body.md"
+            path.write_text(body, encoding="utf-8")
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "publication",
+                        "validate-pr",
+                        "--title",
+                        "feat(process): require evidence references",
+                        "--branch",
+                        "feat/reference-evidence",
+                        "--state",
+                        "ready",
+                        "--body-file",
+                        str(path),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(1, result)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual("failed", report["status"])
+        self.assertEqual(
+            3,
+            sum("requires one [evidence:" in issue for issue in report["issues"]),
+        )
 
     def test_validates_project_adoption_migration_contract(self):
         stdout = io.StringIO()

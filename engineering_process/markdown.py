@@ -76,3 +76,33 @@ def normalized_rendered_inline_text(text: str) -> str:
         for character in normalized
     )
     return " ".join(normalized.split()).casefold()
+
+
+def visible_markdown_links(text: str) -> list[tuple[str, str]]:
+    """Return visible CommonMark link labels and destinations in source order."""
+
+    links: list[tuple[str, str]] = []
+    for block in _COMMONMARK.parse(text):
+        children = block.children
+        if block.type != "inline" or not children:
+            continue
+        index = 0
+        while index < len(children):
+            token = children[index]
+            if token.type != "link_open":
+                index += 1
+                continue
+            destination = token.attrGet("href")
+            depth = 1
+            end = index + 1
+            while end < len(children) and depth:
+                if children[end].type == "link_open":
+                    depth += 1
+                elif children[end].type == "link_close":
+                    depth -= 1
+                end += 1
+            if destination is not None and depth == 0:
+                label = _inline_text(children[index + 1 : end - 1])
+                links.append((label, destination))
+            index = end
+    return links
