@@ -224,7 +224,7 @@ class AdoptionRunnerTests(unittest.TestCase):
                         argv.index("--expected-requirements-digest") + 1
                     ]
                     self.assertEqual(observed_snapshot, [snapshot])
-                    self.assertEqual(source.resolve(), checkout)
+                    self.assertTrue(source.samefile(checkout))
                     self.assertEqual(digest, expected)
                     return json.dumps({"requirementsDigest": digest})
                 return ""

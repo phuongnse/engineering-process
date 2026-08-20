@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import shutil
 import stat
 import sys
@@ -158,33 +160,136 @@ def _copy_tracked_snapshot(
     project_root: Path, destination: Path, *, checkpoint: str | None = None
 ) -> list[PurePosixPath]:
     deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
+    checkpoint = checkpoint or _head_checkpoint(project_root)
     entries = _tracked_entries(
         project_root, checkpoint=checkpoint, deadline=deadline
     )
-    for relative, oid, size, mode in entries:
-        target = destination.joinpath(*relative.parts)
-        blob = run_git(
+    expected = {
+        relative.as_posix(): (relative, oid, size, mode)
+        for relative, oid, size, mode in entries
+    }
+    with tempfile.TemporaryDirectory(prefix="engineering-process-snapshot-") as directory:
+        archive_path = Path(directory) / "source.tar"
+        archive = run_git(
             project_root,
-            ["cat-file", "blob", oid],
-            label=f"distribution snapshot HEAD blob {relative}",
+            [
+                "archive",
+                "--format=tar",
+                f"--output={archive_path}",
+                checkpoint,
+            ],
+            label="distribution snapshot HEAD archive",
             timeout_seconds=remaining_seconds(
-                deadline, label=f"distribution snapshot HEAD blob {relative}"
+                deadline, label="distribution snapshot HEAD archive"
             ),
-            max_stdout_bytes=MAX_TRACKED_FILE_BYTES,
+            max_stdout_bytes=1_024,
         )
-        if blob.returncode != 0 or len(blob.stdout) != size:
+        if archive.returncode != 0:
+            detail = archive.stderr.decode("utf-8", errors="replace").strip()
             raise ContractError(
-                f"cannot materialize tracked HEAD blob with declared size: {relative}"
+                "cannot materialize tracked HEAD archive"
+                + (f": {detail}" if detail else "")
             )
-        target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with target.open("xb") as output_stream:
-                output_stream.write(blob.stdout)
+            before = archive_path.lstat()
         except OSError as error:
             raise ContractError(
-                f"cannot materialize tracked HEAD blob {relative}: {error}"
+                f"cannot inspect tracked HEAD archive: {error}"
             ) from error
-        target.chmod(stat.S_IMODE(mode))
+        if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_ARCHIVE_BYTES:
+            raise ContractError("tracked HEAD archive is not a bounded regular file")
+
+        seen: set[str] = set()
+        names: set[str] = set()
+        try:
+            with archive_path.open("rb") as archive_stream:
+                opened = os.fstat(archive_stream.fileno())
+                if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(
+                    opened, before
+                ):
+                    raise ContractError(
+                        "tracked HEAD archive changed while opening"
+                    )
+                with tarfile.open(fileobj=archive_stream, mode="r:") as source:
+                    for index, member in enumerate(source, start=1):
+                        remaining_seconds(
+                            deadline, label="distribution snapshot HEAD archive"
+                        )
+                        if index > MAX_ARCHIVE_MEMBERS:
+                            raise ContractError(
+                                f"tracked HEAD archive exceeds {MAX_ARCHIVE_MEMBERS} members"
+                            )
+                        try:
+                            encoded_name = member.name.encode("utf-8")
+                        except UnicodeEncodeError as error:
+                            raise ContractError(
+                                "tracked HEAD archive paths must use UTF-8"
+                            ) from error
+                        name = portable_git_path(
+                            encoded_name, label="distribution snapshot HEAD archive"
+                        )
+                        if name in names:
+                            raise ContractError(
+                                f"tracked HEAD archive contains duplicate member: {name}"
+                            )
+                        names.add(name)
+                        if member.isdir():
+                            if member.size != 0:
+                                raise ContractError(
+                                    f"tracked HEAD archive directory has content: {name}"
+                                )
+                            continue
+                        if not member.isreg() or name not in expected:
+                            raise ContractError(
+                                f"tracked HEAD archive contains unexpected member: {name}"
+                            )
+                        relative, oid, size, mode = expected[name]
+                        if member.size != size or bool(member.mode & 0o111) != bool(
+                            mode & 0o111
+                        ):
+                            raise ContractError(
+                                f"tracked HEAD archive metadata differs from the tree: {name}"
+                            )
+                        member_stream = source.extractfile(member)
+                        if member_stream is None:
+                            raise ContractError(
+                                f"cannot read tracked HEAD archive member: {name}"
+                            )
+                        with member_stream:
+                            content = member_stream.read(size + 1)
+                        if len(content) != size:
+                            raise ContractError(
+                                f"tracked HEAD archive member has the wrong size: {name}"
+                            )
+                        algorithm = "sha1" if len(oid) == 40 else "sha256"
+                        digest = hashlib.new(algorithm, usedforsecurity=False)
+                        digest.update(f"blob {size}\0".encode("ascii"))
+                        digest.update(content)
+                        if digest.hexdigest() != oid:
+                            raise ContractError(
+                                f"tracked HEAD archive member differs from its blob: {name}"
+                            )
+                        target = destination.joinpath(*relative.parts)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with target.open("xb") as output_stream:
+                            output_stream.write(content)
+                        target.chmod(stat.S_IMODE(mode))
+                        seen.add(name)
+                after = archive_path.lstat()
+        except (OSError, tarfile.TarError) as error:
+            raise ContractError(f"cannot read tracked HEAD archive: {error}") from error
+        if (
+            after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_mode != before.st_mode
+            or not os.path.samestat(after, before)
+        ):
+            raise ContractError("tracked HEAD archive changed while reading")
+        missing = sorted(set(expected) - seen)
+        if missing:
+            raise ContractError(
+                f"tracked HEAD archive is missing tree member: {missing[0]}"
+            )
     return [path for path, _oid, _size, _mode in entries]
 
 

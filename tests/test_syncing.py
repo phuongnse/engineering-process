@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -65,6 +66,49 @@ class SyncTests(unittest.TestCase):
                     SimpleNamespace(st_dev=456, st_ino=0),
                 )
             )
+
+    def test_managed_skill_comparison_does_not_use_cached_direntry_identity(self):
+        original_scandir = os.scandir
+
+        class CachedEntry:
+            def __init__(self, entry):
+                self.name = entry.name
+                self.path = entry.path
+
+            def stat(self, *, follow_symlinks=True):
+                value = os.stat(self.path, follow_symlinks=follow_symlinks)
+                return SimpleNamespace(
+                    st_dev=0,
+                    st_ino=0,
+                    st_mode=value.st_mode,
+                    st_mtime_ns=value.st_mtime_ns,
+                    st_size=value.st_size,
+                )
+
+        class CachedScan:
+            def __init__(self, path):
+                with original_scandir(path) as entries:
+                    self.entries = [CachedEntry(entry) for entry in entries]
+
+            def __enter__(self):
+                return iter(self.entries)
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "file.txt").write_text("stable\n", encoding="utf-8")
+            with mock.patch.object(syncing.os, "scandir", side_effect=CachedScan):
+                self.assertEqual(
+                    {
+                        "file.txt": (
+                            len(b"stable\n"),
+                            hashlib.sha256(b"stable\n").hexdigest(),
+                        )
+                    },
+                    syncing._files(root, ignore_marker=False),
+                )
 
     def test_managed_skill_comparison_rejects_symlinks_and_resource_overflow(self):
         with tempfile.TemporaryDirectory() as directory:

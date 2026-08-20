@@ -158,7 +158,10 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
                 encoded, label=f"{path}: managed skill comparison"
             )
             try:
-                before = child.stat(follow_symlinks=False)
+                # DirEntry.stat() may reuse incomplete directory-enumeration
+                # metadata on Windows.  A path lstat obtains the same stable
+                # file identity surface used by the opened handle below.
+                before = Path(child.path).lstat()
             except OSError as error:
                 raise ContractError(
                     f"{child.path}: cannot inspect managed skill entry: {error}"

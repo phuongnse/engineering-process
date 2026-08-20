@@ -150,6 +150,61 @@ class SourceCheckoutTests(unittest.TestCase):
                     (snapshot / "tracked.txt").read_text(encoding="utf-8"),
                 )
 
+    def test_snapshot_preserves_exact_binary_blob_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._initialize_repository(root)
+            expected = b"binary\x00line\nwindows\r\nend\xff"
+            binary = root / "payload.bin"
+            binary.write_bytes(expected)
+            subprocess.run(["git", "add", "payload.bin"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "binary"],
+                cwd=root,
+                check=True,
+            )
+
+            with tempfile.TemporaryDirectory() as snapshot_directory:
+                snapshot = Path(snapshot_directory)
+                _copy_tracked_snapshot(root, snapshot)
+                self.assertEqual(expected, (snapshot / "payload.bin").read_bytes())
+
+    def test_snapshot_rejects_archive_attribute_transform_or_omission(self):
+        cases = {
+            "export-subst": (
+                "tracked.txt export-subst\n",
+                "metadata differs from the tree|differs from its blob",
+            ),
+            "export-ignore": (
+                "tracked.txt export-ignore\n",
+                "missing tree member",
+            ),
+        }
+        for name, (attributes, error) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._initialize_repository(root)
+                (root / "tracked.txt").write_text(
+                    "$Format:%H$\n", encoding="utf-8"
+                )
+                (root / ".gitattributes").write_text(
+                    attributes, encoding="utf-8"
+                )
+                subprocess.run(
+                    ["git", "add", ".gitattributes", "tracked.txt"],
+                    cwd=root,
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "commit", "--quiet", "-m", name],
+                    cwd=root,
+                    check=True,
+                )
+
+                with tempfile.TemporaryDirectory() as snapshot_directory:
+                    with self.assertRaisesRegex(ContractError, error):
+                        _copy_tracked_snapshot(root, Path(snapshot_directory))
+
     def test_snapshot_can_pin_the_checkpoint_across_a_ref_move(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
