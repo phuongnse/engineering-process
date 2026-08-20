@@ -253,16 +253,20 @@ class DocumentationArchitectureTests(unittest.TestCase):
             / "SKILL.md"
         ).read_text(encoding="utf-8")
 
-        for raw_owner in (standard, skill):
-            owner = " ".join(raw_owner.split())
-            self.assertIn("independent role", owner)
-            self.assertIn("cycle counters", owner)
-            self.assertIn("machine-verifiable record", owner)
-            self.assertIn("full checkpoint once", owner)
-        self.assertIn(
-            "audit fields, not public identities", " ".join(standard.split())
+        required_phrases = (
+            "independent role, attested separation, review outcome, "
+            "required-finding disposition, and exact immutable source",
+            "machine actor aliases, context identifiers, cycle counters, local paths, "
+            "and digests remain in a clearly labeled machine-verifiable record",
+            "audit fields, not public identities",
+            "omits the container number from headings",
+            "states the full checkpoint once",
+            "does not use short hashes as decoration",
         )
-        self.assertIn("omit its number from headings", " ".join(skill.split()))
+        for raw_owner in (standard, skill):
+            owner = " ".join(raw_owner.split()).casefold()
+            for phrase in required_phrases:
+                self.assertIn(phrase, owner)
 
 
 if __name__ == "__main__":

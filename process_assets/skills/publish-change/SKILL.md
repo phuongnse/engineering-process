@@ -25,12 +25,12 @@ without duplicating implementation, verification, or review.
    requirement, publish the referenceable evidence required by the current
    publication contract in the section that owns the claim.
 4. Render public evidence for a reader who does not know the local orchestrator.
-   Describe the independent role, attested isolation, verdict, finding outcome, and
-   exact immutable source. Do not present actor aliases, context ids, or cycle counters
-   as reviewer names or headings. Retain the unmodified lifecycle fields only inside a
-   clearly labeled machine-verifiable record. When evidence is already inside a review
-   object, omit its number from headings and state the full checkpoint once in the
-   identity summary instead of decorating headings with a short hash.
+   Public evidence names the independent role, attested separation, review outcome,
+   required-finding disposition, and exact immutable source. Machine actor aliases,
+   context identifiers, cycle counters, local paths, and digests remain in a clearly
+   labeled machine-verifiable record; they are audit fields, not public identities.
+   Inside a review object, evidence omits the container number from headings, states
+   the full checkpoint once, and does not use short hashes as decoration.
 5. Perform only the authorized remote action. Preserve draft state unless ready state
    was explicitly requested.
    For a release, export and validate the completion receipt, derive the only
