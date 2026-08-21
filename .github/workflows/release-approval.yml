@@ -1,68 +1,79 @@
-name: Release Approval
+name: Release Authorization
 
 on:
-  pull_request_review:
-    types: [submitted, dismissed]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   actions: read
+  checks: read
   contents: read
   pull-requests: write
   statuses: write
 
 concurrency:
-  group: release-approval-${{ github.event.pull_request.head.sha }}
-  cancel-in-progress: true
+  group: release-authorization-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
-  approve:
-    name: Bind independent approval to the exact candidate
+  authorize:
+    name: Bind independent verification to the exact candidate
     if: >-
-      github.event.pull_request.head.ref == 'automation/release/next' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.review.state == 'approved'
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'automation/release/next' &&
+      github.event.workflow_run.pull_requests[0].number != null
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
-      - name: Mark release authorization pending
+      - name: Resolve and validate the internal Release PR
+        id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          test -n "$PR_NUMBER"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.ref)" = "automation/release/next"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.repo.full_name)" = "$GITHUB_REPOSITORY"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .base.ref)" = main
+          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
+            --jq 'map(select(.context == "release-authorization"))[0].state // empty')"
+          if test "$state" = success; then
+            echo "already_authorized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_authorized=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Mark release authorization pending
+        if: steps.resolve.outputs.already_authorized != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: >-
           gh api --method POST
           "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
           -f state=pending
           -f context=release-authorization
-          -f description='Validating exact candidate review evidence'
-
-      - name: Require an independent repository reviewer on the exact head
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEW_COMMIT: ${{ github.event.review.commit_id }}
-          REVIEWER: ${{ github.event.review.user.login }}
-          REVIEWER_TYPE: ${{ github.event.review.user.type }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          ASSOCIATION: ${{ github.event.review.author_association }}
-        run: |
-          test "$REVIEW_COMMIT" = "$HEAD_SHA"
-          test "$REVIEWER_TYPE" = User
-          test "$REVIEWER" != "$AUTHOR"
-          case "$ASSOCIATION" in
-            OWNER|MEMBER|COLLABORATOR) ;;
-            *) echo "reviewer lacks trusted repository association" >&2; exit 1 ;;
-          esac
+          -f description='Binding independent automated verification'
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: steps.resolve.outputs.already_authorized != 'true'
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: steps.resolve.outputs.already_authorized != 'true'
         with:
           python-version: "3.14"
 
       - name: Install the exact public N-1 authority
+        if: steps.resolve.outputs.already_authorized != 'true'
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
@@ -73,16 +84,46 @@ jobs:
             -r engineering_process/requirements-build.txt
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
 
+      - name: Restore and validate independent verification evidence
+        if: steps.resolve.outputs.already_authorized != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/independent-review"
+          gh run download "$CI_RUN_ID" \
+            --name "independent-review-$PR_NUMBER-$HEAD_SHA" \
+            --dir "$RUNNER_TEMP/independent-review"
+          python -c '
+          import json, os, pathlib
+          report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "independent-review" / "report.json").read_text(encoding="utf-8"))
+          assert report["status"] == "passed"
+          assert report["governanceMode"] == "single-maintainer"
+          assert report["verificationKind"] == "independent-automated"
+          assert report["repository"] == os.environ["GITHUB_REPOSITORY"]
+          assert report["headSha"] == os.environ["HEAD_SHA"]
+          assert report["verifierRepository"] == "phuongnse/renovate-ops"
+          assert report["verifierSha"] == "48a644b081ea9d098796432750f892e2e3f44614"
+          '
+
       - name: Restore the successful exact-head candidate lifecycle
+        if: steps.resolve.outputs.already_authorized != 'true'
         id: identity
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           change_id="$(python -c 'import json; print(json.load(open(".release/change.json", encoding="utf-8"))["id"])')"
-          run_id="$(gh run list --workflow release-candidate.yml --commit "$HEAD_SHA" \
-            --status success --limit 20 --json databaseId,headSha \
-            --jq 'map(select(.headSha == env.HEAD_SHA))[0].databaseId // empty')"
+          run_id=""
+          for _attempt in $(seq 1 60); do
+            run_id="$(gh run list --workflow release-candidate.yml --commit "$HEAD_SHA" \
+              --status success --limit 20 --json databaseId,headSha \
+              --jq 'map(select(.headSha == env.HEAD_SHA))[0].databaseId // empty')"
+            test -z "$run_id" || break
+            sleep 15
+          done
           test -n "$run_id"
           mkdir -p ".process/runs/$change_id"
           gh run download "$run_id" --name "release-candidate-$HEAD_SHA" \
@@ -93,16 +134,20 @@ jobs:
           printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
           printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
 
-      - name: Finalize the independently approved lifecycle
+      - name: Finalize the independently verified lifecycle
+        if: steps.resolve.outputs.already_authorized != 'true'
         env:
           CHANGE_ID: ${{ steps.identity.outputs.change_id }}
-          CONTEXT_ID: release-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          CONTEXT_ID: release-pr-${{ steps.resolve.outputs.pr_number }}-${{ github.event.workflow_run.head_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
+          INDEPENDENT_EVIDENCE: ${{ runner.temp }}/independent-review/report.json
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
           processctl change status --change-id "$CHANGE_ID"
           python verification/prepare_release_review.py \
-            --change-id "$CHANGE_ID" --output "$RUNNER_TEMP/release-review.json"
+            --change-id "$CHANGE_ID" \
+            --independent-evidence "$INDEPENDENT_EVIDENCE" \
+            --output "$RUNNER_TEMP/release-review.json"
           processctl change review submit \
             --change-id "$CHANGE_ID" --report "$RUNNER_TEMP/release-review.json"
           processctl change finish \
@@ -122,20 +167,22 @@ jobs:
           fi
 
       - name: Preserve release authorization evidence
+        if: steps.resolve.outputs.already_authorized != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-authorization-${{ github.event.pull_request.head.sha }}
+          name: release-authorization-${{ github.event.workflow_run.head_sha }}
           path: ${{ runner.temp }}/release-authorization/${{ steps.identity.outputs.evidence_asset }}
           if-no-files-found: error
           retention-days: 30
           compression-level: 9
           include-hidden-files: false
 
-      - name: Mark the reviewed Release PR ready
+      - name: Mark the verified Release PR ready
+        if: steps.resolve.outputs.already_authorized != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           python processctl.py publication release-pr-body \
             --state approved --output "$RUNNER_TEMP/release-pr.md"
@@ -143,36 +190,16 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
             -f state=success \
             -f context=release-authorization \
-            -f description='Exact candidate independently approved'
+            -f description='Exact candidate independently verified; merge authorizes release'
 
       - name: Fail the release authorization status
-        if: ${{ failure() }}
+        if: ${{ failure() && steps.resolve.outputs.already_authorized != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: >-
           gh api --method POST
           "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
           -f state=failure
           -f context=release-authorization
           -f description='Release authorization evidence failed'
-
-  reject:
-    name: Reject non-approved release review
-    if: >-
-      github.event.pull_request.head.ref == 'automation/release/next' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.review.state != 'approved'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Reject release authorization
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: >-
-          gh api --method POST
-          "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
-          -f state=failure
-          -f context=release-authorization
-          -f description='An approving independent review is required'

@@ -24,22 +24,35 @@ class ReleaseCandidateTests(unittest.TestCase):
             "workspaceFingerprint": f"sha256:{'b' * 64}",
             "comparisonBase": "c" * 40,
             "reviewer": {
-                "actorId": "github-release-reviewer",
+                "actorId": "renovate-ops-independent-reviewer",
                 "contextId": "release-pr-7-" + "a" * 40,
-                "kind": "human",
+                "kind": "agent",
             },
             "independence": {
-                "method": "separate-person",
-                "attestedBy": "github-repository-rules",
-                "evidence": "github://sample/repository/pull/7",
+                "method": "isolated-context",
+                "attestedBy": "renovate-ops-48a644b081ea9d098796432750f892e2e3f44614",
+                "evidence": "github://phuongnse/renovate-ops/commit/48a644b081ea9d098796432750f892e2e3f44614",
             },
         }
+        independent_evidence = {
+            "status": "passed",
+            "governanceMode": "single-maintainer",
+            "verificationKind": "independent-automated",
+            "repository": "phuongnse/engineering-process",
+            "headSha": "a" * 40,
+            "verifierRepository": "phuongnse/renovate-ops",
+            "verifierSha": "48a644b081ea9d098796432750f892e2e3f44614",
+        }
 
-        report = approved_review_from_assignment(assignment)
+        report = approved_review_from_assignment(assignment, independent_evidence)
 
         self.assertEqual("approved", report["verdict"])
         self.assertEqual(assignment["checkpoint"], report["checkpoint"])
         self.assertEqual(assignment["reviewer"], report["reviewer"])
+
+        invalid_evidence = dict(independent_evidence, verifierSha="b" * 40)
+        with self.assertRaisesRegex(ContractError, "invalid verifierSha"):
+            approved_review_from_assignment(assignment, invalid_evidence)
 
     def initialize_project(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)

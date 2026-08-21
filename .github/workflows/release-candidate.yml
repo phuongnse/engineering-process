@@ -15,23 +15,35 @@ concurrency:
 jobs:
   verify:
     name: Verify exact Release PR candidate
-    if: >-
-      github.event.pull_request.head.ref == 'automation/release/next' &&
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
+      - name: Record non-release applicability
+        if: >-
+          github.event.pull_request.head.ref != 'automation/release/next' ||
+          github.event.pull_request.head.repo.full_name != github.repository
+        run: echo "Release candidate verification is not applicable to this pull request."
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: >-
+          github.event.pull_request.head.ref == 'automation/release/next' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: >-
+          github.event.pull_request.head.ref == 'automation/release/next' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         with:
           python-version: "3.14"
 
       - name: Install the exact public N-1 authority and project dependencies
+        if: >-
+          github.event.pull_request.head.ref == 'automation/release/next' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
@@ -43,16 +55,21 @@ jobs:
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
 
       - name: Resolve the generated lifecycle identity
+        if: >-
+          github.event.pull_request.head.ref == 'automation/release/next' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         id: identity
         run: |
           change_id="$(python -c 'import json; print(json.load(open(".release/change.json", encoding="utf-8"))["id"])')"
           printf 'change_id=%s\n' "$change_id" >> "$GITHUB_OUTPUT"
 
       - name: Verify and bind the immutable candidate under N-1
+        if: >-
+          github.event.pull_request.head.ref == 'automation/release/next' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         env:
           CHANGE_ID: ${{ steps.identity.outputs.change_id }}
           CONTEXT_ID: release-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-          REVIEW_URL: ${{ github.event.pull_request.html_url }}
         run: |
           processctl doctor
           processctl contract validate --kind change .release/change.json
@@ -73,12 +90,15 @@ jobs:
             --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
             --change-id "$CHANGE_ID" --profile review
           processctl change review start \
-            --actor github-release-reviewer --context "review-$CONTEXT_ID" --actor-kind human \
-            --change-id "$CHANGE_ID" --method separate-person \
-            --attested-by github-repository-rules \
-            --attestation-evidence "$REVIEW_URL"
+            --actor renovate-ops-independent-reviewer --context "review-$CONTEXT_ID" --actor-kind agent \
+            --change-id "$CHANGE_ID" --method isolated-context \
+            --attested-by renovate-ops-48a644b081ea9d098796432750f892e2e3f44614 \
+            --attestation-evidence "github://phuongnse/renovate-ops/commit/48a644b081ea9d098796432750f892e2e3f44614"
 
       - name: Preserve the exact review-pending lifecycle
+        if: >-
+          github.event.pull_request.head.ref == 'automation/release/next' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-candidate-${{ github.event.pull_request.head.sha }}

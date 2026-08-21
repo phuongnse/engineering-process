@@ -61,20 +61,21 @@ Release PR is the only version-bearing checkpoint.
 
 ## Release authorization
 
-`release-candidate.yml` checks out the exact internal Release PR head with read-only
-repository permissions. It installs the hash-locked public N-1 authority, runs both
-required lifecycle profiles, starts an independent-review assignment, and preserves
-the review-pending state as a bounded Actions artifact.
+`release-candidate.yml` always reports a stable required check. For an internal Release
+PR it checks out the exact head with read-only repository permissions, installs the
+hash-locked public N-1 authority, runs both required lifecycle profiles, starts an
+isolated agent-review assignment bound to the immutable `renovate-ops` verifier, and
+preserves the review-pending state as a bounded Actions artifact. Other PRs receive an
+explicit not-applicable success instead of a skipped required check.
 
-The Release PR initially carries pending managed statuses, so publication validation
-cannot pass or merge it. An eligible repository reviewer approves that exact head.
-`release-approval.yml`
-runs from protected base workflow code, verifies that the reviewer is a different
-trusted person and that the approved commit is still the PR head, restores the exact
-successful candidate lifecycle, submits the immutable approved report, completes it,
-and exports its evidence. It then marks the managed checklist satisfied, which triggers
-fresh PR validation, and sets `release-authorization` on that exact SHA. It cannot
-approve a changed head or a fork.
+The Release PR initially carries pending managed statuses. After CI succeeds,
+`release-approval.yml` runs from protected default-branch workflow code via
+`workflow_run`. It validates the exact PR head, downloads the read-only external
+verification report, requires the pinned verifier repository and commit, restores the
+exact successful candidate lifecycle, submits the approved agent report, completes it,
+and exports its evidence. It then marks the managed checklist satisfied and sets
+`release-authorization` on that exact SHA. No separate human review is manufactured;
+the explicit merge by the sole maintainer is the human authorization.
 
 Merging that ready Release PR is the only publication authorization. No maintainer
 runs a release command, creates a tag, creates a GitHub Release, uploads an asset, or
