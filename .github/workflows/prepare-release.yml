@@ -78,11 +78,13 @@ jobs:
           printf 'EVIDENCE_PATH=%s\n' \
             "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
           if test "$MODE" = governed; then
-            python "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
+            "$RUNNER_TEMP/process-authority/bin/python" \
+              "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
               evidence validate \
               "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
           else
-            python "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
+            "$RUNNER_TEMP/process-authority/bin/python" \
+              "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
               evidence validate-bootstrap \
               "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
           fi
@@ -99,7 +101,10 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
-          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
+          controller=(
+            "$RUNNER_TEMP/process-authority/bin/python"
+            "$GITHUB_WORKSPACE/.release-controller/processctl.py"
+          )
           "${controller[@]}" contract validate --kind release release.json
           evidence_args=()
           if test "$MODE" = governed; then
