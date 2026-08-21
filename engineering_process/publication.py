@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import re
 from pathlib import Path
 
@@ -243,12 +246,66 @@ def managed_pull_request_visibility_issues(body: str) -> list[str]:
 
 
 PROJECT_EXTENSION_HEADING = "## Project-specific requirements"
+RENOVATE_DEBUG_COMMENT_RE = re.compile(
+    r"^<!--renovate-debug:(?P<payload>[A-Za-z0-9+/]{1,4096}={0,2})-->$"
+)
+RENOVATE_DEBUG_KEYS = {
+    "createdInVer",
+    "updatedInVer",
+    "targetBranch",
+    "labels",
+}
+
+
+def _strip_renovate_debug_comment(extension: str) -> tuple[str, list[str]]:
+    lines = extension.strip().splitlines()
+    matches = [
+        (index, match)
+        for index, line in enumerate(lines)
+        if (match := RENOVATE_DEBUG_COMMENT_RE.fullmatch(line)) is not None
+    ]
+    if not matches:
+        return extension, []
+    if len(matches) != 1 or matches[0][0] != len(lines) - 1:
+        return extension, ["Renovate metadata comment must appear exactly once at the end"]
+    _, match = matches[0]
+    try:
+        decoded = base64.b64decode(match.group("payload"), validate=True)
+        if len(decoded) > 3072:
+            raise ValueError("payload exceeds 3072 decoded bytes")
+        metadata = json.loads(decoded.decode("utf-8"))
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return extension, ["Renovate metadata comment must contain bounded base64 JSON"]
+    if not isinstance(metadata, dict) or set(metadata) != RENOVATE_DEBUG_KEYS:
+        return extension, ["Renovate metadata comment has an unexpected JSON contract"]
+    if any(
+        not isinstance(metadata[key], str)
+        or not metadata[key]
+        or len(metadata[key]) > 64
+        for key in ("createdInVer", "updatedInVer")
+    ):
+        return extension, ["Renovate metadata versions must be bounded strings"]
+    if metadata["targetBranch"] != "main":
+        return extension, ["Renovate metadata must target protected main"]
+    labels = metadata["labels"]
+    if (
+        not isinstance(labels, list)
+        or len(labels) > 50
+        or any(not isinstance(label, str) or len(label) > 100 for label in labels)
+    ):
+        return extension, ["Renovate metadata labels must be a bounded string list"]
+    return "\n".join(lines[:-1]).strip(), []
 
 
 def validate_project_extensions(body: str, *, allow_pending: bool) -> list[str]:
     body = _normalized_markdown(body)
     _, end = _managed_span(body)
     extension = body[end:]
+    if not extension.strip():
+        return []
+    extension, metadata_issues = _strip_renovate_debug_comment(extension)
+    if metadata_issues:
+        return metadata_issues
     if not extension.strip():
         return []
     if contains_raw_html(extension):

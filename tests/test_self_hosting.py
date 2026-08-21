@@ -204,6 +204,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("reviewed_pr_number: ${{ inputs.release_pr_number }}", workflow)
         self.assertIn("reviewed_head_sha: ${{ inputs.release_head_sha }}", workflow)
+        self.assertIn(
+            "if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
+            workflow,
+        )
         self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
         self.assertIn("PR_BODY_PATH: ${{ steps.release.outputs.body_path }}", workflow)
         self.assertIn("verification/generate_ci_evidence.py", workflow)
