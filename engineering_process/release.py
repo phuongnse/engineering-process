@@ -118,10 +118,6 @@ def validate_reviewed_checkpoint(
         ],
     )
     if reviewed_checkpoint != release_checkpoint:
-        _git(
-            project_root,
-            ["merge-base", "--is-ancestor", reviewed_checkpoint, release_checkpoint],
-        )
         reviewed_tree = _git(
             project_root,
             ["rev-parse", "--verify", f"{reviewed_checkpoint}^{{tree}}"],

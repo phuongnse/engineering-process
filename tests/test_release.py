@@ -219,6 +219,49 @@ class ReleaseCheckpointTests(unittest.TestCase):
             self.assertEqual(reviewed, result["reviewedCheckpoint"])
             self.assertEqual(checkpoint, result["checkpoint"])
 
+    def test_accepts_squash_commit_with_the_identical_reviewed_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "repo"
+            root.mkdir()
+            self.initialize_repository(root)
+            reviewed = self.write_contract(root)
+            parent = subprocess.check_output(
+                ["git", "rev-parse", f"{reviewed}^"], cwd=root, text=True
+            ).strip()
+            tree = subprocess.check_output(
+                ["git", "rev-parse", f"{reviewed}^{{tree}}"], cwd=root, text=True
+            ).strip()
+            checkpoint = subprocess.check_output(
+                ["git", "commit-tree", tree, "-p", parent],
+                cwd=root,
+                text=True,
+                input="chore: squash reviewed release\n",
+            ).strip()
+            subprocess.run(["git", "reset", "--hard", checkpoint], cwd=root, check=True)
+            subprocess.run(
+                ["git", "tag", "-f", "v0.2.0", checkpoint], cwd=root, check=True
+            )
+            receipt = base / "sample-v0.2.0-evidence.json"
+            receipt.write_text("{}", encoding="utf-8")
+
+            with patch(
+                "engineering_process.release.validate_receipt",
+                return_value=self.receipt_result(reviewed),
+            ):
+                result = validate_release_checkpoint(
+                    root,
+                    tag="v0.2.0",
+                    release_name="v0.2.0",
+                    commit=checkpoint,
+                    main_ref="main",
+                    receipt_path=receipt,
+                    reviewed_commit=reviewed,
+                )
+
+            self.assertEqual(reviewed, result["reviewedCheckpoint"])
+            self.assertEqual(checkpoint, result["checkpoint"])
+
     def test_accepts_one_bootstrap_authority_after_uncontracted_history(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

@@ -21,6 +21,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check out the base-controlled release validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          path: .release-controller
+
+      - name: Keep controller code outside the release source fingerprint
+        run: printf '/.release-controller/\n' >> .git/info/exclude
+
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
@@ -73,6 +84,7 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
+          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
           gh release verify "$GITHUB_REF_NAME"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
@@ -86,22 +98,22 @@ jobs:
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           evidence_args=()
           if test "$MODE" = governed; then
-            "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "${controller[@]}" evidence validate \
               "$EVIDENCE_PATH" --json
             evidence_args+=(--receipt "$EVIDENCE_PATH")
           else
-            python processctl.py evidence validate-bootstrap \
+            "${controller[@]}" evidence validate-bootstrap \
               "$EVIDENCE_PATH" --json
             evidence_args+=(--authorization "$EVIDENCE_PATH")
           fi
-          python processctl.py publication validate-release \
+          "${controller[@]}" publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
             --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
             --main-ref origin/main \
             "${evidence_args[@]}"
-          python processctl.py publication validate-artifacts \
+          "${controller[@]}" publication validate-artifacts \
             --project-root . \
             --artifacts "$RUNNER_TEMP/release-assets/distributions" \
             --attestation "$ATTESTATION_PATH" \
@@ -135,6 +147,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Check out the base-controlled release validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          path: .release-controller
+
+      - name: Keep controller code outside the release source fingerprint
+        run: printf '/.release-controller/\n' >> .git/info/exclude
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -188,6 +211,7 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
+          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
           gh release verify "$GITHUB_REF_NAME"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
@@ -201,22 +225,22 @@ jobs:
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           evidence_args=()
           if test "$MODE" = governed; then
-            "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            "${controller[@]}" evidence validate \
               "$EVIDENCE_PATH" --json
             evidence_args+=(--receipt "$EVIDENCE_PATH")
           else
-            python processctl.py evidence validate-bootstrap \
+            "${controller[@]}" evidence validate-bootstrap \
               "$EVIDENCE_PATH" --json
             evidence_args+=(--authorization "$EVIDENCE_PATH")
           fi
-          python processctl.py publication validate-release \
+          "${controller[@]}" publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
             --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
             --main-ref origin/main \
             "${evidence_args[@]}"
-          python processctl.py publication validate-artifacts \
+          "${controller[@]}" publication validate-artifacts \
             --project-root . \
             --artifacts "$RUNNER_TEMP/release-assets/distributions" \
             --attestation "$ATTESTATION_PATH" \

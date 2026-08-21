@@ -69,6 +69,17 @@ jobs:
           persist-credentials: true
           ref: ${{ steps.release-pr.outputs.release_sha }}
 
+      - name: Check out the base-controlled release validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          path: .release-controller
+
+      - name: Keep controller code outside the release source fingerprint
+        run: printf '/.release-controller/\n' >> .git/info/exclude
+
       - name: Fetch and bind the immutable reviewed head
         env:
           PR_NUMBER: ${{ steps.release-pr.outputs.pr_number }}
@@ -85,9 +96,9 @@ jobs:
       - name: Install exact release validation dependencies
         run: >-
           python -m pip install
-          -r engineering_process/requirements-runtime.txt
-          -r engineering_process/requirements-dev.txt
-          -r engineering_process/requirements-build.txt
+          -r .release-controller/engineering_process/requirements-runtime.txt
+          -r .release-controller/engineering_process/requirements-dev.txt
+          -r .release-controller/engineering_process/requirements-build.txt
 
       - name: Resolve immutable release identities
         id: identity
@@ -128,17 +139,19 @@ jobs:
           REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
           RELEASE_SHA: ${{ steps.release-pr.outputs.release_sha }}
         run: |
+          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
           evidence_args=(--reviewed-commit "$REVIEWED_SHA")
           if test "$MODE" = governed; then
-            python processctl.py evidence validate \
+            "${controller[@]}" evidence validate \
               "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
             evidence_args+=(--receipt "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET")
           else
-            python processctl.py evidence validate-bootstrap \
+            "${controller[@]}" evidence validate-bootstrap \
               "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
             evidence_args+=(--authorization "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET")
           fi
-          python processctl.py publication authorize-release \
+          "${controller[@]}" publication authorize-release \
+            --project-root "$GITHUB_WORKSPACE" \
             --tag "$TAG" --release-name "$TAG" --commit "$RELEASE_SHA" \
             --main-ref origin/main "${evidence_args[@]}"
 
