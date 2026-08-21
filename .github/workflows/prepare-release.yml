@@ -25,6 +25,17 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.tag }}
 
+      - name: Check out the base-controlled release validator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          path: .release-controller
+
+      - name: Keep controller code outside the release source fingerprint
+        run: printf '/.release-controller/\n' >> .git/info/exclude
+
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
@@ -67,10 +78,12 @@ jobs:
           printf 'EVIDENCE_PATH=%s\n' \
             "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
           if test "$MODE" = governed; then
-            "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+            python "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
+              evidence validate \
               "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
           else
-            python processctl.py evidence validate-bootstrap \
+            python "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
+              evidence validate-bootstrap \
               "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
           fi
           printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify 'HEAD^{commit}')" \
@@ -86,14 +99,15 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
-          python processctl.py contract validate --kind release release.json
+          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
+          "${controller[@]}" contract validate --kind release release.json
           evidence_args=()
           if test "$MODE" = governed; then
             evidence_args+=(--receipt "$EVIDENCE_PATH")
           else
             evidence_args+=(--authorization "$EVIDENCE_PATH")
           fi
-          python processctl.py publication validate-release \
+          "${controller[@]}" publication validate-release \
             --project-root . \
             --tag "$RELEASE_TAG" \
             --release-name "$RELEASE_TAG" \
