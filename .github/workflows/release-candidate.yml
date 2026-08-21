@@ -124,8 +124,8 @@ jobs:
           processctl change review start \
             --actor renovate-ops-independent-reviewer --context "review-$CONTEXT_ID" --actor-kind agent \
             --change-id "$CHANGE_ID" --method isolated-context \
-            --attested-by renovate-ops-abe046318b3e1f7a2801faaaf891a6dd05fd6822 \
-            --attestation-evidence "github://phuongnse/renovate-ops/commit/abe046318b3e1f7a2801faaaf891a6dd05fd6822"
+            --attested-by renovate-ops-f22b05f7813d5868f2a728f203a59afa5d6f18d2 \
+            --attestation-evidence "github://phuongnse/renovate-ops/commit/f22b05f7813d5868f2a728f203a59afa5d6f18d2"
 
       - name: Preserve the exact review-pending lifecycle
         if: >-

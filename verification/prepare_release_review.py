@@ -13,7 +13,7 @@ from engineering_process.contracts import ContractError, read_json, validate_rev
 from engineering_process.lifecycle import load_state
 
 TRUSTED_VERIFIER_REPOSITORY = "phuongnse/renovate-ops"
-TRUSTED_VERIFIER_SHA = "abe046318b3e1f7a2801faaaf891a6dd05fd6822"
+TRUSTED_VERIFIER_SHA = "f22b05f7813d5868f2a728f203a59afa5d6f18d2"
 
 
 def approved_review_from_assignment(

@@ -33,7 +33,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("workflow_run:", approval)
         self.assertIn("github.event.workflow_run.head_sha", approval)
         self.assertIn("independent-review-$PR_NUMBER-$HEAD_SHA", approval)
-        self.assertIn("abe046318b3e1f7a2801faaaf891a6dd05fd6822", approval)
+        self.assertIn("f22b05f7813d5868f2a728f203a59afa5d6f18d2", approval)
         self.assertIn("release-authorization", approval)
         self.assertIn("statuses: write", approval)
         self.assertIn("release-changes/*.json", generator)

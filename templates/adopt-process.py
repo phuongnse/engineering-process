@@ -83,12 +83,24 @@ def _terminate_posix_group(process_group: int) -> bool:
         os.killpg(process_group, signal.SIGTERM)
     except ProcessLookupError:
         return True
+    except PermissionError as error:
+        if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+            return True
+        raise RuntimeError(
+            "command process group could not be signaled during bounded termination"
+        ) from error
     if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
         return True
     try:
         os.killpg(process_group, signal.SIGKILL)
     except ProcessLookupError:
         return True
+    except PermissionError as error:
+        if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+            return True
+        raise RuntimeError(
+            "command process group could not be killed during bounded termination"
+        ) from error
     if not _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
         raise RuntimeError("command process group survived bounded termination")
     return True
