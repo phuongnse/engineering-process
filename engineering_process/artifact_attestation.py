@@ -9,8 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import ContractError, Release, read_json, validate_release
-from .evidence import MAX_RECEIPT_BYTES, validate_receipt
+from .evidence import (
+    MAX_RECEIPT_BYTES,
+    validate_bootstrap_authorization,
+    validate_receipt,
+)
 from .git import run_git
+from .release import validate_reviewed_checkpoint
 
 
 ATTESTATION_KIND = "engineering-process-distribution-attestation"
@@ -24,7 +29,7 @@ ARTIFACT_ENUMERATION_TIMEOUT_SECONDS = 5.0
 
 def attestation_asset_name(release: Release) -> str:
     if release.package_name is None or release.tag is None:
-        raise ContractError("artifact attestation requires release identity schemaVersion 2")
+        raise ContractError("artifact attestation requires an identity-bearing release")
     return f"{release.package_name}-{release.tag}-artifacts.json"
 
 
@@ -120,7 +125,11 @@ def _checkpoint(project_root: Path) -> str:
 
 
 def _receipt_identity(
-    release: Release, receipt_path: Path | None, *, checkpoint: str
+    project_root: Path,
+    release: Release,
+    receipt_path: Path | None,
+    *,
+    checkpoint: str,
 ) -> dict[str, Any] | None:
     if release.provenance_mode == "governed":
         if receipt_path is None:
@@ -132,9 +141,13 @@ def _receipt_identity(
             receipt["project"] != release.receipt_project
             or receipt["changeId"] != release.receipt_change_id
             or receipt["cycle"] != release.receipt_cycle
-            or receipt["checkpoint"] != checkpoint
         ):
             raise ContractError("artifact attestation receipt does not match release checkpoint")
+        validate_reviewed_checkpoint(
+            project_root,
+            reviewed_commit=receipt["checkpoint"],
+            release_commit=checkpoint,
+        )
         _, receipt_digest = _sha256_bytes(
             receipt_path,
             limit=MAX_RECEIPT_BYTES,
@@ -152,6 +165,54 @@ def _receipt_identity(
         }
     if receipt_path is not None:
         raise ContractError("bootstrap or legacy artifact attestation must not claim a receipt")
+    return None
+
+
+def _bootstrap_authorization_identity(
+    project_root: Path,
+    release: Release,
+    authorization_path: Path | None,
+    *,
+    checkpoint: str,
+) -> dict[str, Any] | None:
+    if release.provenance_mode == "bootstrap-authority":
+        if authorization_path is None:
+            raise ContractError(
+                "bootstrap artifact attestation requires authorization evidence"
+            )
+        if authorization_path.name != release.authorization_asset:
+            raise ContractError(
+                "artifact attestation authorization filename does not match release identity"
+            )
+        authorization = validate_bootstrap_authorization(authorization_path)
+        if authorization["project"] != release.package_name:
+            raise ContractError(
+                "artifact attestation authorization project does not match release"
+            )
+        validate_reviewed_checkpoint(
+            project_root,
+            reviewed_commit=authorization["checkpoint"],
+            release_commit=checkpoint,
+        )
+        _, authorization_digest = _sha256_bytes(
+            authorization_path,
+            limit=MAX_RECEIPT_BYTES,
+            label="artifact attestation bootstrap authorization",
+        )
+        return {
+            "asset": authorization_path.name,
+            "sha256": authorization_digest,
+            "processVersion": authorization["processVersion"],
+            "processDigest": authorization["processDigest"],
+            "project": authorization["project"],
+            "changeId": authorization["changeId"],
+            "cycle": authorization["cycle"],
+            "checkpoint": authorization["checkpoint"],
+        }
+    if authorization_path is not None:
+        raise ContractError(
+            "governed or legacy artifact attestation must not claim bootstrap authorization"
+        )
     return None
 
 
@@ -237,13 +298,14 @@ def _expected_attestation(
     project_root: Path,
     artifact_root: Path,
     receipt_path: Path | None,
+    authorization_path: Path | None,
     *,
     checkpoint: str,
 ) -> dict[str, Any]:
     release_path = project_root / "release.json"
     release = validate_release(read_json(release_path), str(release_path))
     if not release.artifacts or release.package_name is None or release.tag is None:
-        raise ContractError("artifact attestation requires release identity schemaVersion 2")
+        raise ContractError("artifact attestation requires an identity-bearing release")
     _, contract_digest = _sha256_bytes(
         release_path,
         limit=1_000_000,
@@ -262,7 +324,13 @@ def _expected_attestation(
             "artifacts": list(release.artifacts),
         },
         "lifecycleReceipt": _receipt_identity(
-            release, receipt_path, checkpoint=checkpoint
+            project_root, release, receipt_path, checkpoint=checkpoint
+        ),
+        "bootstrapAuthorization": _bootstrap_authorization_identity(
+            project_root,
+            release,
+            authorization_path,
+            checkpoint=checkpoint,
         ),
         "artifacts": _artifact_entries(artifact_root, release),
     }
@@ -274,6 +342,7 @@ def create_distribution_attestation(
     output_path: Path,
     *,
     receipt_path: Path | None,
+    authorization_path: Path | None = None,
     checkpoint: str | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve(strict=True)
@@ -294,6 +363,7 @@ def create_distribution_attestation(
         project_root,
         artifact_root,
         receipt_path,
+        authorization_path,
         checkpoint=checkpoint,
     )
     data = json.dumps(
@@ -318,6 +388,7 @@ def validate_distribution_attestation(
     attestation_path: Path,
     *,
     receipt_path: Path | None,
+    authorization_path: Path | None = None,
     checkpoint: str,
 ) -> dict[str, Any]:
     project_root = project_root.resolve(strict=True)
@@ -342,6 +413,7 @@ def validate_distribution_attestation(
         project_root,
         artifact_root,
         receipt_path,
+        authorization_path,
         checkpoint=checkpoint,
     )
     if document != expected:

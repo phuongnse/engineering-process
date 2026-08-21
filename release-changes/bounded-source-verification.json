@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "bounded-source-verification",
+  "type": "fix",
+  "surfaces": [
+    "distribution",
+    "portability",
+    "verification"
+  ],
+  "rationale": "Build from a clean tracked snapshot and bind cross-platform source, dependency, output, timeout, and artifact evidence without generated-state contamination.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

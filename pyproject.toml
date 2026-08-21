@@ -59,6 +59,7 @@ engineering_process = ["requirements-*.txt"]
   "schemas/process-lock.schema.json",
   "schemas/project.schema.json",
   "schemas/release.schema.json",
+  "schemas/release-change.schema.json",
   "schemas/review.schema.json",
   "schemas/reviewer-attestation.schema.json",
   "schemas/supplemental-verification.schema.json",
@@ -70,6 +71,7 @@ engineering_process = ["requirements-*.txt"]
   "examples/plan.json",
   "examples/project.json",
   "examples/release.json",
+  "examples/release-change.json",
   "examples/review.json",
 ]
 "share/engineering-process/skills/cross-repo-change" = [

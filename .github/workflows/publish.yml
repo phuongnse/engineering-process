@@ -25,6 +25,14 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Resolve release evidence identity
+        id: identity
+        run: |
+          mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
+          evidence_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print(release["identity"]["receiptAsset"] or release["identity"]["authorizationAsset"])')"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
+
       - name: Install exact public authority and release dependencies
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
@@ -36,26 +44,26 @@ jobs:
       - name: Download immutable release evidence and distributions
         env:
           GH_TOKEN: ${{ github.token }}
+          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
           mkdir -p "$RUNNER_TEMP/release-assets/distributions"
-          receipt_asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
           gh release download "$GITHUB_REF_NAME" \
-            --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-assets"
+            --pattern "$EVIDENCE_ASSET" --dir "$RUNNER_TEMP/release-assets"
           gh release download "$GITHUB_REF_NAME" \
             --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
           python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
             > "$RUNNER_TEMP/release-assets/artifact-names.txt"
           {
-            printf '%s\n' "$receipt_asset" "$attestation_asset"
+            printf '%s\n' "$EVIDENCE_ASSET" "$attestation_asset"
             cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
           } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
           while IFS= read -r artifact; do
             gh release download "$GITHUB_REF_NAME" \
               --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
-          printf 'RECEIPT_PATH=%s\n' \
-            "$RUNNER_TEMP/release-assets/$receipt_asset" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_PATH=%s\n' \
+            "$RUNNER_TEMP/release-assets/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
           printf 'ATTESTATION_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$attestation_asset" >> "$GITHUB_ENV"
 
@@ -63,33 +71,42 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: ${{ github.event.release.name }}
+          MODE: ${{ steps.identity.outputs.mode }}
         run: |
           gh release verify "$GITHUB_REF_NAME"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
           cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
             "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
-          gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$EVIDENCE_PATH"
           gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
           while IFS= read -r artifact; do
             gh release verify-asset "$GITHUB_REF_NAME" \
               "$RUNNER_TEMP/release-assets/distributions/$artifact"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
-          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
-            "$RECEIPT_PATH" --json
+          evidence_args=()
+          if test "$MODE" = governed; then
+            "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+              "$EVIDENCE_PATH" --json
+            evidence_args+=(--receipt "$EVIDENCE_PATH")
+          else
+            python processctl.py evidence validate-bootstrap \
+              "$EVIDENCE_PATH" --json
+            evidence_args+=(--authorization "$EVIDENCE_PATH")
+          fi
           python processctl.py publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
             --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
             --main-ref origin/main \
-            --receipt "$RECEIPT_PATH"
+            "${evidence_args[@]}"
           python processctl.py publication validate-artifacts \
             --project-root . \
             --artifacts "$RUNNER_TEMP/release-assets/distributions" \
             --attestation "$ATTESTATION_PATH" \
             --commit "$GITHUB_SHA" \
-            --receipt "$RECEIPT_PATH"
+            "${evidence_args[@]}"
 
       - name: Verify prepared wheel
         run: |
@@ -123,6 +140,14 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Resolve release evidence identity
+        id: identity
+        run: |
+          mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
+          evidence_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print(release["identity"]["receiptAsset"] or release["identity"]["authorizationAsset"])')"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
+
       - name: Install exact public authority and release dependencies
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
@@ -134,26 +159,26 @@ jobs:
       - name: Download immutable release evidence and distributions
         env:
           GH_TOKEN: ${{ github.token }}
+          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
           mkdir -p "$RUNNER_TEMP/release-assets/distributions"
-          receipt_asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
           gh release download "$GITHUB_REF_NAME" \
-            --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-assets"
+            --pattern "$EVIDENCE_ASSET" --dir "$RUNNER_TEMP/release-assets"
           gh release download "$GITHUB_REF_NAME" \
             --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
           python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
             > "$RUNNER_TEMP/release-assets/artifact-names.txt"
           {
-            printf '%s\n' "$receipt_asset" "$attestation_asset"
+            printf '%s\n' "$EVIDENCE_ASSET" "$attestation_asset"
             cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
           } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
           while IFS= read -r artifact; do
             gh release download "$GITHUB_REF_NAME" \
               --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
-          printf 'RECEIPT_PATH=%s\n' \
-            "$RUNNER_TEMP/release-assets/$receipt_asset" >> "$GITHUB_ENV"
+          printf 'EVIDENCE_PATH=%s\n' \
+            "$RUNNER_TEMP/release-assets/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
           printf 'ATTESTATION_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$attestation_asset" >> "$GITHUB_ENV"
 
@@ -161,33 +186,42 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: ${{ github.event.release.name }}
+          MODE: ${{ steps.identity.outputs.mode }}
         run: |
           gh release verify "$GITHUB_REF_NAME"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
           cmp "$RUNNER_TEMP/release-assets/expected-release-assets.txt" \
             "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
-          gh release verify-asset "$GITHUB_REF_NAME" "$RECEIPT_PATH"
+          gh release verify-asset "$GITHUB_REF_NAME" "$EVIDENCE_PATH"
           gh release verify-asset "$GITHUB_REF_NAME" "$ATTESTATION_PATH"
           while IFS= read -r artifact; do
             gh release verify-asset "$GITHUB_REF_NAME" \
               "$RUNNER_TEMP/release-assets/distributions/$artifact"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
-          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
-            "$RECEIPT_PATH" --json
+          evidence_args=()
+          if test "$MODE" = governed; then
+            "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+              "$EVIDENCE_PATH" --json
+            evidence_args+=(--receipt "$EVIDENCE_PATH")
+          else
+            python processctl.py evidence validate-bootstrap \
+              "$EVIDENCE_PATH" --json
+            evidence_args+=(--authorization "$EVIDENCE_PATH")
+          fi
           python processctl.py publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
             --release-name "$RELEASE_NAME" \
             --commit "$GITHUB_SHA" \
             --main-ref origin/main \
-            --receipt "$RECEIPT_PATH"
+            "${evidence_args[@]}"
           python processctl.py publication validate-artifacts \
             --project-root . \
             --artifacts "$RUNNER_TEMP/release-assets/distributions" \
             --attestation "$ATTESTATION_PATH" \
             --commit "$GITHUB_SHA" \
-            --receipt "$RECEIPT_PATH"
+            "${evidence_args[@]}"
 
       - name: Publish distributions with attestations
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1

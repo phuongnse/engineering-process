@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from engineering_process.artifact_attestation import (
     _artifact_entries,
+    _bootstrap_authorization_identity,
     create_distribution_attestation,
     validate_distribution_attestation,
 )
@@ -15,6 +16,71 @@ from engineering_process.contracts import ContractError, Release
 
 
 class ArtifactAttestationTests(unittest.TestCase):
+    def test_bootstrap_authorization_binds_reviewed_tree_to_release_commit(self):
+        release = Release(
+            previous_version="0.1.1",
+            version="0.2.0",
+            classification="minor",
+            compatibility="backward-compatible",
+            schema_impact="additive",
+            migration=None,
+            package_name="sample",
+            authorization_asset="sample-v0.2.0-bootstrap-authorization.json",
+            provenance_mode="bootstrap-authority",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            authorization = root / release.authorization_asset
+            authorization.write_text("{}\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "tests@example.invalid"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Tests"], cwd=root, check=True
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "reviewed release tree"],
+                cwd=root,
+                check=True,
+            )
+            reviewed = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            subprocess.run(
+                ["git", "commit", "--allow-empty", "-qm", "merge release"],
+                cwd=root,
+                check=True,
+            )
+            checkpoint = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            summary = {
+                "project": "sample",
+                "changeId": "release-0-2-0",
+                "cycle": 1,
+                "checkpoint": reviewed,
+                "processVersion": "0.1.1",
+                "processDigest": f"sha256:{'0' * 64}",
+            }
+
+            with patch(
+                "engineering_process.artifact_attestation.validate_bootstrap_authorization",
+                return_value=summary,
+            ):
+                identity = _bootstrap_authorization_identity(
+                    root,
+                    release,
+                    authorization,
+                    checkpoint=checkpoint,
+                )
+
+            self.assertEqual(reviewed, identity["checkpoint"])
+            self.assertEqual(authorization.name, identity["asset"])
+
     def test_artifact_enumeration_is_count_name_and_time_bounded(self):
         release = Release(
             previous_version="0.1.0",

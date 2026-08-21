@@ -239,10 +239,21 @@ class Release:
     runtime_version_variable: str | None = None
     artifacts: tuple[str, ...] = ()
     receipt_asset: str | None = None
+    authorization_asset: str | None = None
     receipt_change_id: str | None = None
     receipt_project: str | None = None
     receipt_cycle: int | None = None
     provenance_mode: str = "legacy"
+
+
+@dataclass(frozen=True)
+class ReleaseChange:
+    identifier: str
+    change_type: str
+    surfaces: tuple[str, ...]
+    rationale: str
+    schema_impact: str
+    migration: str | None
 
 
 def read_json(path: Path) -> Any:
@@ -1297,8 +1308,8 @@ def validate_adoption_migration(
 def validate_release(document: Any, path: str = "release") -> Release:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2}:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    if schema_version not in {1, 2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
     _exact_keys(
         value,
         required={
@@ -1312,7 +1323,7 @@ def validate_release(document: Any, path: str = "release") -> Release:
         }
         | (
             {"identity", "provenance", "changes"}
-            if schema_version == 2
+            if schema_version in {2, 3}
             else set()
         ),
         optional={"$schema"},
@@ -1392,11 +1403,12 @@ def validate_release(document: Any, path: str = "release") -> Release:
     runtime_version_variable: str | None = None
     artifacts: tuple[str, ...] = ()
     receipt_asset: str | None = None
+    authorization_asset: str | None = None
     receipt_change_id: str | None = None
     receipt_project: str | None = None
     receipt_cycle: int | None = None
     provenance_mode = "legacy"
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         changes = value["changes"]
         if not isinstance(changes, list) or not changes:
             raise ContractError(f"{path}.changes: must not be empty")
@@ -1457,17 +1469,20 @@ def validate_release(document: Any, path: str = "release") -> Release:
             )
 
         identity = _object(value["identity"], f"{path}.identity")
+        identity_required = {
+            "package",
+            "distribution",
+            "tag",
+            "releaseName",
+            "runtimeVersion",
+            "artifacts",
+            "receiptAsset",
+        }
+        if schema_version == 3:
+            identity_required.add("authorizationAsset")
         _exact_keys(
             identity,
-            required={
-                "package",
-                "distribution",
-                "tag",
-                "releaseName",
-                "runtimeVersion",
-                "artifacts",
-                "receiptAsset",
-            },
+            required=identity_required,
             path=f"{path}.identity",
         )
         package_name = _string(identity["package"], f"{path}.identity.package", max_length=128)
@@ -1526,6 +1541,14 @@ def validate_release(document: Any, path: str = "release") -> Release:
             receipt_asset = _string(
                 receipt_asset, f"{path}.identity.receiptAsset", max_length=200
             )
+        if schema_version == 3:
+            authorization_asset = identity["authorizationAsset"]
+            if authorization_asset is not None:
+                authorization_asset = _string(
+                    authorization_asset,
+                    f"{path}.identity.authorizationAsset",
+                    max_length=200,
+                )
 
         provenance = _object(value["provenance"], f"{path}.provenance")
         _exact_keys(
@@ -1534,9 +1557,12 @@ def validate_release(document: Any, path: str = "release") -> Release:
             path=f"{path}.provenance",
         )
         provenance_mode = provenance["mode"]
-        if provenance_mode not in {"bootstrap-history", "governed"}:
+        allowed_modes = {"bootstrap-history", "governed"}
+        if schema_version == 3:
+            allowed_modes.add("bootstrap-authority")
+        if provenance_mode not in allowed_modes:
             raise ContractError(
-                f"{path}.provenance.mode: must be bootstrap-history or governed"
+                f"{path}.provenance.mode: invalid for schemaVersion {schema_version}"
             )
         _string(
             provenance["statement"], f"{path}.provenance.statement", max_length=1000
@@ -1551,6 +1577,31 @@ def validate_release(document: Any, path: str = "release") -> Release:
                 raise ContractError(
                     f"{path}.identity.receiptAsset: bootstrap history must use null"
                 )
+            if authorization_asset is not None:
+                raise ContractError(
+                    f"{path}.identity.authorizationAsset: bootstrap history must use null"
+                )
+        elif provenance_mode == "bootstrap-authority":
+            if release_name != expected_tag:
+                raise ContractError(
+                    f"{path}.identity.releaseName: bootstrap authority must use {expected_tag}"
+                )
+            if lifecycle_receipt is not None:
+                raise ContractError(
+                    f"{path}.provenance.lifecycleReceipt: bootstrap authority must use null"
+                )
+            if receipt_asset is not None:
+                raise ContractError(
+                    f"{path}.identity.receiptAsset: bootstrap authority must use null"
+                )
+            expected_authorization_asset = (
+                f"{package_name}-{expected_tag}-bootstrap-authorization.json"
+            )
+            if authorization_asset != expected_authorization_asset:
+                raise ContractError(
+                    f"{path}.identity.authorizationAsset: must be "
+                    f"{expected_authorization_asset}"
+                )
         else:
             if release_name != expected_tag:
                 raise ContractError(
@@ -1560,6 +1611,10 @@ def validate_release(document: Any, path: str = "release") -> Release:
             if receipt_asset != expected_receipt_asset:
                 raise ContractError(
                     f"{path}.identity.receiptAsset: must be {expected_receipt_asset}"
+                )
+            if authorization_asset is not None:
+                raise ContractError(
+                    f"{path}.identity.authorizationAsset: governed releases must use null"
                 )
             receipt = _object(
                 lifecycle_receipt, f"{path}.provenance.lifecycleReceipt"
@@ -1615,10 +1670,78 @@ def validate_release(document: Any, path: str = "release") -> Release:
         runtime_version_variable=runtime_version_variable,
         artifacts=artifacts,
         receipt_asset=receipt_asset,
+        authorization_asset=authorization_asset,
         receipt_change_id=receipt_change_id,
         receipt_project=receipt_project,
         receipt_cycle=receipt_cycle,
         provenance_mode=provenance_mode,
+    )
+
+
+def validate_release_change(
+    document: Any, path: str = "release-change"
+) -> ReleaseChange:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "id",
+            "type",
+            "surfaces",
+            "rationale",
+            "schemaImpact",
+            "migration",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    identifier = _string(value["id"], f"{path}.id", max_length=64)
+    if PROFILE_PATTERN.fullmatch(identifier) is None:
+        raise ContractError(f"{path}.id: invalid change id")
+    change_type = value["type"]
+    if change_type not in {"fix", "capability", "breaking"}:
+        raise ContractError(f"{path}.type: must be fix, capability, or breaking")
+    surfaces = _string_list(
+        value["surfaces"],
+        f"{path}.surfaces",
+        pattern=PROFILE_PATTERN,
+        maximum=MAX_CONTRACT_ITEMS,
+    )
+    if surfaces != sorted(surfaces):
+        raise ContractError(f"{path}.surfaces: must be sorted")
+    rationale = _string(value["rationale"], f"{path}.rationale", max_length=1000)
+    schema_impact = value["schemaImpact"]
+    if schema_impact not in {"unchanged", "additive", "breaking"}:
+        raise ContractError(
+            f"{path}.schemaImpact: must be unchanged, additive, or breaking"
+        )
+    migration = value["migration"]
+    if migration is not None:
+        migration = _string(migration, f"{path}.migration", max_length=1000)
+    if change_type == "breaking" and migration is None:
+        raise ContractError(f"{path}.migration: breaking changes require guidance")
+    if change_type != "breaking" and migration is not None:
+        raise ContractError(
+            f"{path}.migration: backward-compatible changes must use null"
+        )
+    if schema_impact == "breaking" and change_type != "breaking":
+        raise ContractError(
+            f"{path}.schemaImpact: breaking schema impact requires a breaking change"
+        )
+    if schema_impact == "additive" and change_type == "fix":
+        raise ContractError(
+            f"{path}.schemaImpact: additive schema impact requires a capability change"
+        )
+    return ReleaseChange(
+        identifier=identifier,
+        change_type=change_type,
+        surfaces=tuple(surfaces),
+        rationale=rationale,
+        schema_impact=schema_impact,
+        migration=migration,
     )
 
 

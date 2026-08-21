@@ -1,10 +1,10 @@
 name: Prepare Release
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       tag:
-        description: Existing governed release tag attached to a draft release
+        description: Exact authorized release tag attached to a draft release
         required: true
         type: string
 
@@ -29,6 +29,14 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Resolve release evidence identity
+        id: identity
+        run: |
+          mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
+          evidence_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print(release["identity"]["receiptAsset"] or release["identity"]["authorizationAsset"])')"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
+
       - name: Require the exact draft release identity
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,21 +51,28 @@ jobs:
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
             --require-hashes -r requirements/process.txt
 
-      - name: Obtain and validate the draft lifecycle receipt
+      - name: Obtain and validate exact authorization evidence
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          MODE: ${{ steps.identity.outputs.mode }}
+          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
-          test "$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')" = governed
-          receipt_asset="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
-          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')" = "$receipt_asset"
-          mkdir -p "$RUNNER_TEMP/release-receipt"
+          test "$MODE" = governed -o "$MODE" = bootstrap-authority
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | grep -Fx "$EVIDENCE_ASSET" >/dev/null
+          mkdir -p "$RUNNER_TEMP/release-evidence"
           gh release download "$RELEASE_TAG" \
-            --pattern "$receipt_asset" --dir "$RUNNER_TEMP/release-receipt"
-          printf 'RECEIPT_PATH=%s\n' \
-            "$RUNNER_TEMP/release-receipt/$receipt_asset" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
-            "$RUNNER_TEMP/release-receipt/$receipt_asset" --json
+            --pattern "$EVIDENCE_ASSET" --dir "$RUNNER_TEMP/release-evidence"
+          printf 'EVIDENCE_PATH=%s\n' \
+            "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
+          if test "$MODE" = governed; then
+            "$RUNNER_TEMP/process-authority/bin/processctl" evidence validate \
+              "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
+          else
+            python processctl.py evidence validate-bootstrap \
+              "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
+          fi
           printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify HEAD^{commit})" \
             >> "$GITHUB_ENV"
 
@@ -69,23 +84,38 @@ jobs:
       - name: Validate draft release contract and checkpoint
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          MODE: ${{ steps.identity.outputs.mode }}
         run: |
           python processctl.py contract validate --kind release release.json
+          evidence_args=()
+          if test "$MODE" = governed; then
+            evidence_args+=(--receipt "$EVIDENCE_PATH")
+          else
+            evidence_args+=(--authorization "$EVIDENCE_PATH")
+          fi
           python processctl.py publication validate-release \
             --project-root . \
             --tag "$RELEASE_TAG" \
             --release-name "$RELEASE_TAG" \
             --commit "$CHECKPOINT" \
             --main-ref origin/main \
-            --receipt "$RECEIPT_PATH"
+            "${evidence_args[@]}"
 
       - name: Build and attest distributions from the verified HEAD tree
+        env:
+          MODE: ${{ steps.identity.outputs.mode }}
         run: |
           mkdir -p "$RUNNER_TEMP/draft-assets/distributions"
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
+          evidence_args=()
+          if test "$MODE" = governed; then
+            evidence_args+=(--receipt "$EVIDENCE_PATH")
+          else
+            evidence_args+=(--authorization "$EVIDENCE_PATH")
+          fi
           python verification/verify_distribution.py \
             --output "$RUNNER_TEMP/draft-assets/distributions" \
-            --receipt "$RECEIPT_PATH" \
+            "${evidence_args[@]}" \
             --attestation "$RUNNER_TEMP/draft-assets/$attestation_asset"
           printf 'ATTESTATION_PATH=%s\n' \
             "$RUNNER_TEMP/draft-assets/$attestation_asset" >> "$GITHUB_ENV"
@@ -106,11 +136,20 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
-          gh release upload "$RELEASE_TAG" \
-            "$RUNNER_TEMP"/draft-assets/distributions/* \
-            "$ATTESTATION_PATH"
+          for local_path in "$RUNNER_TEMP"/draft-assets/distributions/* "$ATTESTATION_PATH"; do
+            asset="$(basename "$local_path")"
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+              | grep -Fx "$asset" >/dev/null; then
+              mkdir -p "$RUNNER_TEMP/existing-assets/$asset"
+              gh release download "$RELEASE_TAG" --pattern "$asset" \
+                --dir "$RUNNER_TEMP/existing-assets/$asset"
+              cmp "$local_path" "$RUNNER_TEMP/existing-assets/$asset/$asset"
+            else
+              gh release upload "$RELEASE_TAG" "$local_path"
+            fi
+          done
           {
-            basename "$RECEIPT_PATH"
+            basename "$EVIDENCE_PATH"
             basename "$ATTESTATION_PATH"
             python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))'
           } | LC_ALL=C sort > "$RUNNER_TEMP/expected-release-assets.txt"

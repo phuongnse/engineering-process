@@ -470,9 +470,10 @@ authenticates who produced it.
   target-version consumer-owned project migration; after CI and fresh-context
   independent review, merge is the end of adoption.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
-  completion-related artifacts, and the release classification contract. The release
-  gate binds that contract to the exact SemVer increment, package version, latest
-  reachable prior tag, immutable checkpoint, and main ancestry.
+  completion-related artifacts, release-change fragments, and the release
+  classification contract. The generated Release PR gate binds that contract to the
+  exact SemVer increment, package version, latest reachable prior tag, reviewed head,
+  identical merge tree, immutable checkpoint, and main ancestry.
 - Remote matrix jobs publish one bounded supplemental-verification schema-1 bundle
   per platform/runtime. Its manifest binds the exact source and workflow checkpoints,
   automation actor/context, run URL, platform/runtime identity, selected impact,
@@ -485,12 +486,16 @@ authenticates who produced it.
   retain their published validation behavior instead of being tightened in place.
 - `release.json` is the single release-identity owner. Governed GitHub tag and title
   are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
-  lifecycle receipt, and later consumer locks must match it. Earlier immutable
-  releases are recorded explicitly as bootstrap history rather than retroactively
-  claimed as governed.
+  authorization evidence, and later consumer locks must match it. Public-impact PRs
+  add bounded `release-changes/<id>.json` fragments; automation aggregates them into
+  one reviewed Release PR and never writes a chosen version directly to protected
+  `main`. Recorded bootstrap history transitions once through a separately typed
+  bootstrap-authority bundle, then all later releases require a public N-1 lifecycle
+  receipt.
 - `VERSIONING.md` owns package-versus-schema classification and the explicit
-  Renovate-assisted adoption boundary. `processctl publication plan-version` derives
-  the only permitted next package version from the release change types.
+  Renovate-assisted adoption boundary. `processctl publication prepare-release`
+  derives and materializes the only permitted next package version from the complete
+  fragment set.
 - Project commands run without a shell and inherit the caller environment. Never put
   secrets in manifests, arguments, or reports.
 - Consumer skill roots are distribution-owned: unmanaged `SKILL.md` files or catalog
@@ -516,5 +521,6 @@ python -m venv .venv
 Version 0.x remains a compatibility pilot. A 1.0 release requires publishing the CLI,
 running consumer CI through the published artifact, and completing forward tests on
 representative agent hosts. Portable evaluation fixtures live in `evals/cases.json`.
-Maintainer release steps and the secretless PyPI publisher identity are defined in
+Automated Release PR authorization, repository controls, recovery rules, and the
+secretless PyPI publisher identity are defined in
 [`RELEASING.md`](https://github.com/phuongnse/engineering-process/blob/main/RELEASING.md).

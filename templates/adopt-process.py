@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -441,6 +442,42 @@ def _run(argv: list[str], *, cwd: Path) -> str:
     return stdout.text()
 
 
+def _current_process_version(project_root: Path) -> str:
+    lock_path = project_root / ".process" / "process.lock"
+    content = _read_stable_requirements(
+        lock_path, containment_root=project_root
+    )
+    try:
+        document = json.loads(content.decode("utf-8"))
+        version = document["process"]["version"]
+    except (UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise RuntimeError("current process lock has no valid version") from error
+    if not isinstance(version, str) or re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+        version,
+    ) is None:
+        raise RuntimeError("current process lock version must be final SemVer")
+    return version
+
+
+def _installed_process_version(python: Path, *, cwd: Path) -> str:
+    version = _run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import engineering_process; print(engineering_process.VERSION)",
+        ],
+        cwd=cwd,
+    ).strip()
+    if re.fullmatch(
+        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+        version,
+    ) is None:
+        raise RuntimeError("installed process version must be final SemVer")
+    return version
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Materialize one hash-locked engineering-process adoption"
@@ -462,6 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     requirements_digest = (
         "sha256:" + hashlib.sha256(requirements_content).hexdigest()
     )
+    current_version = _current_process_version(project_root)
 
     with tempfile.TemporaryDirectory(
         prefix="engineering-process-adoption-"
@@ -513,26 +551,39 @@ def main(argv: list[str] | None = None) -> int:
             "checkout requirements lock",
             containment_root=requirements_root,
         )
-        output = _run(
-            [
-                str(python),
-                "-I",
-                "-m",
-                "engineering_process",
-                "adoption",
-                "apply",
-                "--project-root",
-                str(project_root),
-                "--requirements-lock",
-                str(requirements_snapshot),
-                "--requirements-source",
-                str(requirements_source),
-                "--expected-requirements-digest",
-                requirements_digest,
-                "--json",
-            ],
-            cwd=environment_root,
+        target_version = _installed_process_version(
+            python, cwd=environment_root
         )
+        if target_version == current_version:
+            output = json.dumps(
+                {
+                    "requirementsDigest": requirements_digest,
+                    "status": "unchanged",
+                    "version": target_version,
+                },
+                sort_keys=True,
+            )
+        else:
+            output = _run(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "engineering_process",
+                    "adoption",
+                    "apply",
+                    "--project-root",
+                    str(project_root),
+                    "--requirements-lock",
+                    str(requirements_snapshot),
+                    "--requirements-source",
+                    str(requirements_source),
+                    "--expected-requirements-digest",
+                    requirements_digest,
+                    "--json",
+                ],
+                cwd=environment_root,
+            )
         _require_unchanged(
             requirements_snapshot,
             requirements_content,

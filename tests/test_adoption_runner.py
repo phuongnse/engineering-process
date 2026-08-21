@@ -28,6 +28,14 @@ def load_runner():
 
 
 class AdoptionRunnerTests(unittest.TestCase):
+    def write_process_lock(self, root: Path, version: str = "0.1.0") -> None:
+        path = root / ".process" / "process.lock"
+        path.parent.mkdir()
+        path.write_text(
+            json.dumps({"process": {"version": version}}) + "\n",
+            encoding="utf-8",
+        )
+
     def process_is_running(self, pid: int) -> bool:
         if os.name == "nt":
             process_query_limited_information = 0x1000
@@ -204,6 +212,7 @@ class AdoptionRunnerTests(unittest.TestCase):
         digest = "sha256:" + hashlib.sha256(content).hexdigest()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            self.write_process_lock(root)
             source = root / "requirements" / "process.txt"
             source.parent.mkdir()
             source.write_bytes(content)
@@ -217,6 +226,8 @@ class AdoptionRunnerTests(unittest.TestCase):
                     self.assertNotEqual(source.resolve(), snapshot)
                     observed_snapshot.append(snapshot)
                     return ""
+                if any("engineering_process.VERSION" in part for part in argv):
+                    return "0.1.1\n"
                 if "adoption" in argv:
                     snapshot = Path(argv[argv.index("--requirements-lock") + 1])
                     checkout = Path(argv[argv.index("--requirements-source") + 1])
@@ -244,6 +255,47 @@ class AdoptionRunnerTests(unittest.TestCase):
                         ]
                     ),
                 )
+
+    def test_main_noops_when_the_hash_locked_target_is_already_adopted(self):
+        runner = load_runner()
+        content = b"--only-binary :all:\nengineering-process==0.1.1\n"
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_process_lock(root, "0.1.1")
+            source = root / "requirements" / "process.txt"
+            source.parent.mkdir()
+            source.write_bytes(content)
+            calls: list[list[str]] = []
+
+            def fake_run(argv, *, cwd):
+                del cwd
+                calls.append(argv)
+                if any("engineering_process.VERSION" in part for part in argv):
+                    return "0.1.1\n"
+                return ""
+
+            with (
+                mock.patch.object(runner, "_run", side_effect=fake_run),
+                mock.patch.object(runner.sys.stdout, "write") as write,
+            ):
+                self.assertEqual(
+                    0,
+                    runner.main(
+                        [
+                            "--project-root",
+                            str(root),
+                            "--requirements-lock",
+                            "requirements/process.txt",
+                        ]
+                    ),
+                )
+
+            self.assertFalse(any("adoption" in argv for argv in calls))
+            result = json.loads(write.call_args.args[0])
+            self.assertEqual("unchanged", result["status"])
+            self.assertEqual("0.1.1", result["version"])
+            self.assertEqual(digest, result["requirementsDigest"])
 
     def test_main_rejects_requirements_symlink_before_running_commands(self):
         runner = load_runner()
@@ -276,6 +328,7 @@ class AdoptionRunnerTests(unittest.TestCase):
         content = b"locked authority A\n"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            self.write_process_lock(root)
             source = root / "process.txt"
             source.write_bytes(content)
             calls = 0
@@ -350,6 +403,7 @@ class AdoptionRunnerTests(unittest.TestCase):
         runner = load_runner()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
+            self.write_process_lock(root)
             requirements = root / "requirements"
             saved = root / "saved-requirements"
             alternate = root / "alternate"
@@ -398,6 +452,7 @@ class AdoptionRunnerTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as outside_directory,
         ):
             root = Path(directory).resolve()
+            self.write_process_lock(root)
             requirements = root / "requirements"
             saved = root / "saved-requirements"
             outside = Path(outside_directory).resolve()
@@ -439,7 +494,7 @@ class AdoptionRunnerTests(unittest.TestCase):
                 )
 
             self.assertEqual(2, calls)
-            self.assertFalse((root / ".process" / "process.lock").exists())
+            self.assertTrue((root / ".process" / "process.lock").is_file())
 
     def test_path_identity_rejects_windows_reparse_attributes(self):
         runner = load_runner()

@@ -59,7 +59,8 @@
       "enabled": true,
       "automerge": false,
       "groupName": "engineering-process authority",
-      "commitMessageScope": "process",
+      "schedule": ["at any time"],
+      "prPriority": 100,
       "commitMessageTopic": "engineering-process authority"
     }
   ]

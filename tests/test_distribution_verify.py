@@ -53,6 +53,7 @@ class DistributionVerificationTests(unittest.TestCase):
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/adoption-migration.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/change.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/evidence-receipt.schema.json",
+            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release-change.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release.schema.json",
             "engineering_process-0.1.1.data/data/share/engineering-process/schemas/supplemental-verification.schema.json",
         ]
@@ -75,6 +76,7 @@ class DistributionVerificationTests(unittest.TestCase):
             "schemas/adoption-migration.schema.json",
             "schemas/change.schema.json",
             "schemas/evidence-receipt.schema.json",
+            "schemas/release-change.schema.json",
             "schemas/release.schema.json",
             "schemas/supplemental-verification.schema.json",
         ]
@@ -116,6 +118,7 @@ class DistributionVerificationTests(unittest.TestCase):
                 "schemas/adoption-migration.schema.json",
                 "schemas/change.schema.json",
                 "schemas/evidence-receipt.schema.json",
+                "schemas/release-change.schema.json",
                 "schemas/release.schema.json",
                 "schemas/supplemental-verification.schema.json",
             ]

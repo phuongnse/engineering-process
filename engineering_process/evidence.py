@@ -29,6 +29,7 @@ from .lifecycle import _change_lock, _validate_state, load_state
 
 MAX_RECEIPT_BYTES = 8_000_000
 RECEIPT_KIND = "engineering-process-lifecycle-receipt"
+BOOTSTRAP_AUTHORIZATION_KIND = "engineering-process-bootstrap-authorization"
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -85,7 +86,13 @@ def _entry(project_root: Path, reference: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str, Any]:
+def _export_evidence(
+    project_root: Path,
+    change_id: str,
+    output: Path,
+    *,
+    kind: str,
+) -> dict[str, Any]:
     project_root = project_root.resolve(strict=True)
     state = load_state(project_root, change_id)
     if state["phase"] != "completed" or state["completion"] is None:
@@ -107,7 +114,7 @@ def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str
     }
     receipt: dict[str, Any] = {
         "schemaVersion": 1,
-        "kind": RECEIPT_KIND,
+        "kind": kind,
         "process": {"version": lock.version, "digest": lock.digest},
         "project": state["project"],
         "changeId": state["changeId"],
@@ -146,7 +153,7 @@ def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        validated = validate_receipt(temporary)
+        validated = _validate_evidence(temporary, expected_kind=kind)
         temporary.replace(output)
     except ContractError:
         try:
@@ -161,6 +168,26 @@ def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str
             pass
         raise ContractError(f"{output}: cannot export lifecycle receipt: {error}") from error
     return validated
+
+
+def export_receipt(project_root: Path, change_id: str, output: Path) -> dict[str, Any]:
+    return _export_evidence(
+        project_root,
+        change_id,
+        output,
+        kind=RECEIPT_KIND,
+    )
+
+
+def export_bootstrap_authorization(
+    project_root: Path, change_id: str, output: Path
+) -> dict[str, Any]:
+    return _export_evidence(
+        project_root,
+        change_id,
+        output,
+        kind=BOOTSTRAP_AUTHORIZATION_KIND,
+    )
 
 
 def _require_exact(value: dict[str, Any], expected: set[str], path: str) -> None:
@@ -203,7 +230,7 @@ def _validate_entry(entry: Any, path: str) -> dict[str, Any]:
     return document
 
 
-def validate_receipt(path: Path) -> dict[str, Any]:
+def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     receipt = _read_receipt(path)
     _require_exact(
         receipt,
@@ -221,7 +248,7 @@ def validate_receipt(path: Path) -> dict[str, Any]:
         },
         "receipt",
     )
-    if receipt["schemaVersion"] != 1 or receipt["kind"] != RECEIPT_KIND:
+    if receipt["schemaVersion"] != 1 or receipt["kind"] != expected_kind:
         raise ContractError("receipt: unsupported schemaVersion or kind")
     if (
         not isinstance(receipt["project"], str)
@@ -386,6 +413,17 @@ def validate_receipt(path: Path) -> dict[str, Any]:
         "stateCanonicalDigest": state_entry["canonicalDigest"],
         "sha256": f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}",
     }
+
+
+def validate_receipt(path: Path) -> dict[str, Any]:
+    return _validate_evidence(path, expected_kind=RECEIPT_KIND)
+
+
+def validate_bootstrap_authorization(path: Path) -> dict[str, Any]:
+    return _validate_evidence(
+        path,
+        expected_kind=BOOTSTRAP_AUTHORIZATION_KIND,
+    )
 
 
 def prune_completed_run(

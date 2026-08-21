@@ -12,6 +12,7 @@ from engineering_process.contracts import (
     validate_process_lock,
     validate_project,
     validate_release,
+    validate_release_change,
     validate_review,
 )
 
@@ -388,6 +389,68 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_release_schema_three_separates_bootstrap_authorization_from_receipts(self):
+        document = {
+            "schemaVersion": 3,
+            "previousVersion": "0.1.1",
+            "version": "0.2.0",
+            "classification": "minor",
+            "compatibility": "backward-compatible",
+            "schemaImpact": "additive",
+            "migration": None,
+            "identity": {
+                "package": "sample",
+                "distribution": "sample",
+                "tag": "v0.2.0",
+                "releaseName": "v0.2.0",
+                "runtimeVersion": {"path": "sample.py", "variable": "VERSION"},
+                "artifacts": [
+                    "sample-0.2.0-py3-none-any.whl",
+                    "sample-0.2.0.tar.gz",
+                ],
+                "receiptAsset": None,
+                "authorizationAsset": "sample-v0.2.0-bootstrap-authorization.json",
+            },
+            "provenance": {
+                "mode": "bootstrap-authority",
+                "statement": "One reviewed bootstrap authority.",
+                "lifecycleReceipt": None,
+            },
+            "changes": [
+                {
+                    "id": "publish-authority",
+                    "type": "capability",
+                    "surfaces": ["publication"],
+                    "rationale": "Publish the lifecycle evidence authority.",
+                }
+            ],
+        }
+
+        release = validate_release(document)
+
+        self.assertEqual("bootstrap-authority", release.provenance_mode)
+        document["identity"]["receiptAsset"] = "sample-v0.2.0-evidence.json"
+        with self.assertRaisesRegex(ContractError, "must use null"):
+            validate_release(document)
+
+    def test_release_change_requires_migration_for_breaking_behavior(self):
+        document = {
+            "schemaVersion": 1,
+            "id": "remove-command",
+            "type": "breaking",
+            "surfaces": ["cli"],
+            "rationale": "Remove the retired command.",
+            "schemaImpact": "unchanged",
+            "migration": "Use processctl replacement instead.",
+        }
+
+        change = validate_release_change(document)
+
+        self.assertEqual("remove-command", change.identifier)
+        document["migration"] = None
+        with self.assertRaisesRegex(ContractError, "require guidance"):
+            validate_release_change(document)
+
     def test_release_version_is_derived_from_highest_public_change(self):
         cases = (
             ("0.1.1", ["fix"], "0.1.2", "patch", "backward-compatible"),
