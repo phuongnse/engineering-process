@@ -69,11 +69,13 @@ jobs:
           test "$(jq -r .head.ref "$RUNNER_TEMP/release-pr.json")" = automation/release/next
           test "$(jq -r .head.repo.full_name "$RUNNER_TEMP/release-pr.json")" = "$GITHUB_REPOSITORY"
           test "$(jq -r .head.sha "$RUNNER_TEMP/release-pr.json")" = "$RELEASE_HEAD_SHA"
+          jq -r '.body // ""' "$RUNNER_TEMP/release-pr.json" > "$RUNNER_TEMP/release-pr-body.md"
           {
             printf 'title=%s\n' "$(jq -r .title "$RUNNER_TEMP/release-pr.json")"
             printf 'branch=%s\n' "$(jq -r .head.ref "$RUNNER_TEMP/release-pr.json")"
             printf 'state=%s\n' "$(jq -r 'if .draft then "draft" else "ready" end' "$RUNNER_TEMP/release-pr.json")"
             printf 'base_sha=%s\n' "$(jq -r .base.sha "$RUNNER_TEMP/release-pr.json")"
+            printf 'body_path=%s\n' "$RUNNER_TEMP/release-pr-body.md"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -106,10 +108,16 @@ jobs:
       - name: Validate publication metadata
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: |
+          if test -n "$PR_BODY_PATH"; then
+            PR_BODY="$(cat "$PR_BODY_PATH")"
+            export PR_BODY
+          fi
           processctl publication validate-pr --title "$PR_TITLE" --branch "$PR_BRANCH" --state "$PR_STATE"
           processctl publication validate-range --project-root . --branch "$PR_BRANCH" --range "$PR_BASE_SHA..$PR_HEAD_SHA"
         env:
           PR_TITLE: ${{ steps.release.outputs.title || github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BODY_PATH: ${{ steps.release.outputs.body_path }}
           PR_BRANCH: ${{ steps.release.outputs.branch || github.head_ref }}
           PR_STATE: ${{ steps.release.outputs.state || (github.event.pull_request.draft && 'draft' || 'ready') }}
           PR_BASE_SHA: ${{ steps.release.outputs.base_sha || github.event.pull_request.base.sha }}
