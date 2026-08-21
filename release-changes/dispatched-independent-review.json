@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "dispatched-independent-review",
+  "type": "fix",
+  "surfaces": [
+    "evidence",
+    "verification",
+    "workflow"
+  ],
+  "rationale": "Bind event-dispatched independent review to the exact synthesized pull-request payload through an explicit immutable verifier input.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

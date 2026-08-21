@@ -27,7 +27,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: phuongnse/renovate-ops/.github/workflows/independent-review.yml@abe046318b3e1f7a2801faaaf891a6dd05fd6822
+    uses: phuongnse/renovate-ops/.github/workflows/independent-review.yml@f22b05f7813d5868f2a728f203a59afa5d6f18d2
     with:
       reviewed_pr_number: ${{ inputs.release_pr_number }}
       reviewed_head_sha: ${{ inputs.release_head_sha }}
