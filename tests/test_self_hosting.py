@@ -148,6 +148,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("expected-release-assets.txt", prepare)
         self.assertIn("pull_request_target:", release)
         self.assertIn('".github/workflows/release.yml"', release)
+        self.assertIn('".github/workflows/prepare-release.yml"', release)
+        self.assertIn('".github/workflows/publish.yml"', release)
         self.assertIn("automation/release/next", release)
         self.assertIn('refs/pull/$PR_NUMBER/head', release)
         self.assertIn("steps.release-pr.outputs.reviewed_sha", release)
@@ -366,6 +368,7 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertIn("github.workflow_sha", workflow)
         self.assertIn(".release-controller/processctl.py", workflow)
+        self.assertIn("process-authority/bin/python", workflow)
         self.assertGreaterEqual(
             workflow.count('"${controller[@]}" evidence validate'), 2
         )

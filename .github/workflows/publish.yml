@@ -84,7 +84,10 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
-          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
+          controller=(
+            "$RUNNER_TEMP/process-authority/bin/python"
+            "$GITHUB_WORKSPACE/.release-controller/processctl.py"
+          )
           gh release verify "$GITHUB_REF_NAME"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"
@@ -211,7 +214,10 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
-          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
+          controller=(
+            "$RUNNER_TEMP/process-authority/bin/python"
+            "$GITHUB_WORKSPACE/.release-controller/processctl.py"
+          )
           gh release verify "$GITHUB_REF_NAME"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' \
             | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/actual-release-assets.txt"

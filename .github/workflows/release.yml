@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/release.yml"
+      - ".github/workflows/prepare-release.yml"
+      - ".github/workflows/publish.yml"
 
 permissions:
   actions: read
