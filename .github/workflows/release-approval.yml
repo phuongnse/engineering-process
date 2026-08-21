@@ -1,9 +1,20 @@
 name: Release Authorization
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful exact-head CI run to authorize
+        required: true
+        type: string
+      release_pr_number:
+        description: Exact open Release PR number
+        required: true
+        type: string
+      release_head_sha:
+        description: Exact open Release PR head
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -13,18 +24,12 @@ permissions:
   statuses: write
 
 concurrency:
-  group: release-authorization-${{ github.event.workflow_run.head_sha }}
+  group: release-authorization-${{ inputs.release_head_sha }}
   cancel-in-progress: false
 
 jobs:
   authorize:
     name: Bind independent verification to the exact candidate
-    if: >-
-      (github.event.workflow_run.event == 'pull_request' ||
-      github.event.workflow_run.event == 'workflow_dispatch') &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'automation/release/next' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -32,24 +37,34 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          PR_NUMBER: ${{ inputs.release_pr_number }}
         run: |
-          if test -z "$PR_NUMBER"; then
-            owner="${GITHUB_REPOSITORY%%/*}"
-            gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$owner:$HEAD_BRANCH" \
-              > "$RUNNER_TEMP/release-pulls.json"
-            test "$(jq length "$RUNNER_TEMP/release-pulls.json")" = 1
-            PR_NUMBER="$(jq -r '.[0].number' "$RUNNER_TEMP/release-pulls.json")"
-          fi
+          printf '%s' "$CI_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          for _attempt in $(seq 1 60); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" \
+              > "$RUNNER_TEMP/ci-run.json"
+            test "$(jq -r .status "$RUNNER_TEMP/ci-run.json")" != completed || break
+            sleep 2
+          done
+          test "$(jq -r .status "$RUNNER_TEMP/ci-run.json")" = completed
+          test "$(jq -r .conclusion "$RUNNER_TEMP/ci-run.json")" = success
+          test "$(jq -r .event "$RUNNER_TEMP/ci-run.json")" = workflow_dispatch
+          test "$(jq -r .path "$RUNNER_TEMP/ci-run.json")" = .github/workflows/ci.yml
+          test "$(jq -r .head_branch "$RUNNER_TEMP/ci-run.json")" = automation/release/next
+          test "$(jq -r .head_sha "$RUNNER_TEMP/ci-run.json")" = "$HEAD_SHA"
+          test "$(jq -r .head_repository.full_name "$RUNNER_TEMP/ci-run.json")" = "$GITHUB_REPOSITORY"
           test -n "$PR_NUMBER"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .state)" = open
           test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$HEAD_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.ref)" = "automation/release/next"
           test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.repo.full_name)" = "$GITHUB_REPOSITORY"
           test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .base.ref)" = main
           state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
-            --jq 'map(select(.context == "release-authorization"))[0].state // empty')"
+            --jq '.statuses | map(select(.context == "release-authorization")) | sort_by(.created_at) | last | .state // empty')"
           if test "$state" = success; then
             echo "already_authorized=true" >> "$GITHUB_OUTPUT"
           else
@@ -61,7 +76,7 @@ jobs:
         if: steps.resolve.outputs.already_authorized != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
         run: >-
           gh api --method POST
           "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
@@ -74,7 +89,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.release_head_sha }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: steps.resolve.outputs.already_authorized != 'true'
@@ -97,8 +112,8 @@ jobs:
         if: steps.resolve.outputs.already_authorized != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ github.event.workflow_run.id }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
         run: |
           mkdir -p "$RUNNER_TEMP/independent-review"
@@ -122,7 +137,7 @@ jobs:
         id: identity
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
         run: |
           change_id="$(python -c 'import json; print(json.load(open(".release/change.json", encoding="utf-8"))["id"])')"
           run_id=""
@@ -147,7 +162,7 @@ jobs:
         if: steps.resolve.outputs.already_authorized != 'true'
         env:
           CHANGE_ID: ${{ steps.identity.outputs.change_id }}
-          CONTEXT_ID: release-pr-${{ steps.resolve.outputs.pr_number }}-${{ github.event.workflow_run.head_sha }}
+          CONTEXT_ID: release-pr-${{ steps.resolve.outputs.pr_number }}-${{ inputs.release_head_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
           INDEPENDENT_EVIDENCE: ${{ runner.temp }}/independent-review/report.json
           MODE: ${{ steps.identity.outputs.mode }}
@@ -179,7 +194,7 @@ jobs:
         if: steps.resolve.outputs.already_authorized != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-authorization-${{ github.event.workflow_run.head_sha }}
+          name: release-authorization-${{ inputs.release_head_sha }}
           path: ${{ runner.temp }}/release-authorization/${{ steps.identity.outputs.evidence_asset }}
           if-no-files-found: error
           retention-days: 30
@@ -191,7 +206,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
         run: |
           python processctl.py publication release-pr-body \
             --state approved --output "$RUNNER_TEMP/release-pr.md"
@@ -208,7 +223,7 @@ jobs:
         if: ${{ failure() && steps.resolve.outputs.already_authorized != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
         run: >-
           gh api --method POST
           "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"

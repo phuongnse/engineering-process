@@ -26,12 +26,20 @@ class SelfHostingTests(unittest.TestCase):
         generator = (
             PROCESS_ROOT / ".github" / "workflows" / "release-pr.yml"
         ).read_text(encoding="utf-8")
+        ci = (
+            PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("contents: read", candidate)
         self.assertNotIn("contents: write", candidate)
         self.assertIn("github.event.pull_request.head.repo.full_name", candidate)
-        self.assertIn("workflow_run:", approval)
-        self.assertIn("github.event.workflow_run.head_sha", approval)
+        self.assertIn("workflow_dispatch:", approval)
+        self.assertNotIn("workflow_run:", approval)
+        self.assertIn("ci_run_id:", approval)
+        self.assertIn("release_pr_number:", approval)
+        self.assertIn("release_head_sha:", approval)
+        self.assertIn("actions/runs/$CI_RUN_ID", approval)
+        self.assertIn('test "$(jq -r .path "$RUNNER_TEMP/ci-run.json")" = .github/workflows/ci.yml', approval)
         self.assertIn("independent-review-$PR_NUMBER-$HEAD_SHA", approval)
         self.assertIn("f22b05f7813d5868f2a728f203a59afa5d6f18d2", approval)
         self.assertIn("release-authorization", approval)
@@ -43,7 +51,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("actions: write", generator)
         self.assertIn('gh workflow run release-candidate.yml --ref "$RELEASE_BRANCH"', generator)
         self.assertIn('gh workflow run ci.yml --ref "$RELEASE_BRANCH"', generator)
-        self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", approval)
+        self.assertIn('gh workflow run release-approval.yml --ref main', ci)
+        self.assertIn('-f ci_run_id="$GITHUB_RUN_ID"', ci)
         self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):

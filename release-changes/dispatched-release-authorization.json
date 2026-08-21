@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "dispatched-release-authorization",
+  "type": "fix",
+  "surfaces": [
+    "evidence",
+    "publication",
+    "workflow"
+  ],
+  "rationale": "Dispatch base-controlled release authorization directly from successful exact-head CI and revalidate its immutable run identity before approval.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}
