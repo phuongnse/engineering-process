@@ -1,0 +1,60 @@
+{
+  "acceptancePlan": [
+    {
+      "criterionId": "ac-identity",
+      "verificationProfiles": [
+        "development",
+        "review"
+      ],
+      "workItems": [
+        "work-release"
+      ]
+    },
+    {
+      "criterionId": "ac-publication",
+      "verificationProfiles": [
+        "development",
+        "review"
+      ],
+      "workItems": [
+        "work-release"
+      ]
+    },
+    {
+      "criterionId": "ac-review",
+      "verificationProfiles": [
+        "development",
+        "review"
+      ],
+      "workItems": [
+        "work-release"
+      ]
+    }
+  ],
+  "approach": "Validate the generated release contract and every declared surface, build from the exact reviewed tree, and permit publication only after independent approval and merge.",
+  "changeId": "release-0-2-0",
+  "contractDigest": "sha256:df50079532ceaa47d5386c41fcf923fa60f79496865b641b992c825f76932ac0",
+  "openDecisions": [],
+  "risks": [
+    {
+      "mitigation": "Bind review evidence, merge-tree equality, tag, release assets, attestation, and PyPI upload to one immutable identity.",
+      "risk": "Publication could use source or artifacts other than the reviewed candidate."
+    }
+  ],
+  "schemaVersion": 1,
+  "workItems": [
+    {
+      "affectedPaths": [
+        "release.json",
+        "pyproject.toml",
+        "engineering_process/__init__.py"
+      ],
+      "id": "work-release",
+      "outcome": "Verify and publish the exact generated release candidate",
+      "verificationProfiles": [
+        "development",
+        "review"
+      ]
+    }
+  ]
+}
