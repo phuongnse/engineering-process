@@ -63,11 +63,24 @@ jobs:
             printf 'release_sha=%s\n' "$release_sha"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Create short-lived release publication token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+          permission-contents: write
+          permission-metadata: read
+          permission-workflows: write
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: true
           ref: ${{ steps.release-pr.outputs.release_sha }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Check out the base-controlled release validator
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
