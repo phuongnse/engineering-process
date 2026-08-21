@@ -7,7 +7,7 @@
     "supply-chain",
     "workflow"
   ],
-  "rationale": "Create and refresh the governed Release PR with a repository-scoped GitHub App token so native required checks run without approval-required workflow suites.",
+  "rationale": "Return each refreshed Release PR to draft, create its native required checks with a repository-scoped GitHub App token, and bind authorization dispatch to the event-specific exact head.",
   "schemaImpact": "unchanged",
   "migration": null
 }

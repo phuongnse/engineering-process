@@ -43,6 +43,18 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Return an existing Release PR to draft
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_BRANCH: automation/release/next
+        run: |
+          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
+            --json number --jq '.[0].number // empty')"
+          if test -n "$pr_number" && \
+            test "$(gh pr view "$pr_number" --json isDraft --jq .isDraft)" = false; then
+            gh pr ready "$pr_number" --undo
+          fi
+
       - name: Install exact candidate dependencies
         run: >-
           python -m pip install

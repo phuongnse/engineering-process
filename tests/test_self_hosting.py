@@ -54,6 +54,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("permission-workflows: write", generator)
         self.assertIn("token: ${{ steps.app-token.outputs.token }}", generator)
         self.assertIn("GH_TOKEN: ${{ steps.app-token.outputs.token }}", generator)
+        self.assertIn('gh pr ready "$pr_number" --undo', generator)
         self.assertNotIn('gh workflow run release-candidate.yml', generator)
         self.assertNotIn('gh workflow run ci.yml', generator)
         self.assertIn("github.event_name == 'pull_request'", ci)
@@ -63,6 +64,7 @@ class SelfHostingTests(unittest.TestCase):
             ci,
         )
         self.assertIn('-f ci_run_id="$GITHUB_RUN_ID"', ci)
+        self.assertIn('if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then', ci)
         self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
