@@ -133,6 +133,31 @@ class AdoptionRunnerTests(unittest.TestCase):
                     cwd=Path(directory),
                 )
 
+    @unittest.skipIf(os.name == "nt", "POSIX process group semantics")
+    def test_permission_race_allows_terminated_process_group_to_drain(self):
+        runner = load_runner()
+        runner.TERMINATION_TIMEOUT_SECONDS = 0.1
+
+        with mock.patch.object(
+            runner, "_process_group_exists", side_effect=[True, False]
+        ), mock.patch.object(
+            runner.os, "killpg", side_effect=PermissionError("group is draining")
+        ):
+            self.assertTrue(runner._terminate_posix_group(12345))
+
+    @unittest.skipIf(os.name == "nt", "POSIX process group semantics")
+    def test_permission_failure_blocks_when_process_group_survives(self):
+        runner = load_runner()
+        runner.TERMINATION_TIMEOUT_SECONDS = 0.01
+
+        with mock.patch.object(
+            runner, "_process_group_exists", return_value=True
+        ), mock.patch.object(
+            runner.os, "killpg", side_effect=PermissionError("not permitted")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "could not be signaled"):
+                runner._terminate_posix_group(12345)
+
     def test_successful_parent_cannot_leave_detached_output_descendant(self):
         runner = load_runner()
         runner.TERMINATION_TIMEOUT_SECONDS = 2
