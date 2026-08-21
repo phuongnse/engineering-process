@@ -114,7 +114,7 @@ jobs:
           assert report["repository"] == os.environ["GITHUB_REPOSITORY"]
           assert report["headSha"] == os.environ["HEAD_SHA"]
           assert report["verifierRepository"] == "phuongnse/renovate-ops"
-          assert report["verifierSha"] == "33cae0bb9c4aea9af1cda65956c7be10db1e4360"
+          assert report["verifierSha"] == "abe046318b3e1f7a2801faaaf891a6dd05fd6822"
           '
 
       - name: Restore the successful exact-head candidate lifecycle
