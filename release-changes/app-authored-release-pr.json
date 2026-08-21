@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "app-authored-release-pr",
+  "type": "fix",
+  "surfaces": [
+    "publication",
+    "supply-chain",
+    "workflow"
+  ],
+  "rationale": "Create and refresh the governed Release PR with a repository-scoped GitHub App token so native required checks run without approval-required workflow suites.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}
