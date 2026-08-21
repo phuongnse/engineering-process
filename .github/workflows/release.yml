@@ -49,9 +49,11 @@ jobs:
           mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
           tag="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["tag"])')"
           evidence_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print(release["identity"]["receiptAsset"] or release["identity"]["authorizationAsset"])')"
-          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
-          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
+          {
+            printf 'mode=%s\n' "$mode"
+            printf 'tag=%s\n' "$tag"
+            printf 'evidence_asset=%s\n' "$evidence_asset"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Restore exact-head release authorization evidence
         env:

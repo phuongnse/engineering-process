@@ -6,16 +6,31 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_pr_number:
+        description: Exact Release PR number created by the Release PR workflow
+        required: true
+        type: string
+      release_head_sha:
+        description: Exact Release PR head created by the Release PR workflow
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   independent-review:
     name: independent-review
     permissions:
       contents: read
-    uses: phuongnse/renovate-ops/.github/workflows/independent-review.yml@48a644b081ea9d098796432750f892e2e3f44614
+      pull-requests: read
+    uses: phuongnse/renovate-ops/.github/workflows/independent-review.yml@abe046318b3e1f7a2801faaaf891a6dd05fd6822
+    with:
+      reviewed_pr_number: ${{ inputs.release_pr_number }}
+      reviewed_head_sha: ${{ inputs.release_head_sha }}
 
   verify:
     runs-on: ${{ matrix.os }}
@@ -36,11 +51,38 @@ jobs:
           - os: windows-latest
             python-version: "3.14"
     steps:
+      - name: Resolve the dispatched Release PR
+        if: github.event_name == 'workflow_dispatch'
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
+          RELEASE_HEAD_SHA: ${{ inputs.release_head_sha }}
+        run: |
+          printf '%s' "$RELEASE_HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          test "$RELEASE_HEAD_SHA" = "$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR_NUMBER" \
+            > "$RUNNER_TEMP/release-pr.json"
+          test "$(jq -r .state "$RUNNER_TEMP/release-pr.json")" = open
+          test "$(jq -r .base.ref "$RUNNER_TEMP/release-pr.json")" = main
+          test "$(jq -r .head.ref "$RUNNER_TEMP/release-pr.json")" = automation/release/next
+          test "$(jq -r .head.repo.full_name "$RUNNER_TEMP/release-pr.json")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r .head.sha "$RUNNER_TEMP/release-pr.json")" = "$RELEASE_HEAD_SHA"
+          jq -r '.body // ""' "$RUNNER_TEMP/release-pr.json" > "$RUNNER_TEMP/release-pr-body.md"
+          {
+            printf 'title=%s\n' "$(jq -r .title "$RUNNER_TEMP/release-pr.json")"
+            printf 'branch=%s\n' "$(jq -r .head.ref "$RUNNER_TEMP/release-pr.json")"
+            printf 'state=%s\n' "$(jq -r 'if .draft then "draft" else "ready" end' "$RUNNER_TEMP/release-pr.json")"
+            printf 'base_sha=%s\n' "$(jq -r .base.sha "$RUNNER_TEMP/release-pr.json")"
+            printf 'body_path=%s\n' "$RUNNER_TEMP/release-pr-body.md"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.release_head_sha || github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -64,17 +106,22 @@ jobs:
           --requirements-lock requirements/process.txt
 
       - name: Validate publication metadata
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: |
+          if test -n "$PR_BODY_PATH"; then
+            PR_BODY="$(cat "$PR_BODY_PATH")"
+            export PR_BODY
+          fi
           processctl publication validate-pr --title "$PR_TITLE" --branch "$PR_BRANCH" --state "$PR_STATE"
           processctl publication validate-range --project-root . --branch "$PR_BRANCH" --range "$PR_BASE_SHA..$PR_HEAD_SHA"
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ steps.release.outputs.title || github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-          PR_BRANCH: ${{ github.head_ref }}
-          PR_STATE: ${{ github.event.pull_request.draft && 'draft' || 'ready' }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY_PATH: ${{ steps.release.outputs.body_path }}
+          PR_BRANCH: ${{ steps.release.outputs.branch || github.head_ref }}
+          PR_STATE: ${{ steps.release.outputs.state || (github.event.pull_request.draft && 'draft' || 'ready') }}
+          PR_BASE_SHA: ${{ steps.release.outputs.base_sha || github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ inputs.release_head_sha || github.event.pull_request.head.sha }}
 
       - name: Validate portable skills
         run: |
@@ -105,14 +152,14 @@ jobs:
           --runner-arch "$RUNNER_ARCH"
           --triggered-by "$GITHUB_ACTOR"
         env:
-          CI_CHECKPOINT: ${{ github.event.pull_request.head.sha || github.sha }}
-          CI_COMPARISON_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_CHECKPOINT: ${{ inputs.release_head_sha || github.event.pull_request.head.sha || github.sha }}
+          CI_COMPARISON_BASE: ${{ steps.release.outputs.base_sha || github.event.pull_request.base.sha || github.event.before }}
           CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
 
       - name: Upload supplemental verification evidence
         id: upload-evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: engineering-process-ci-evidence-${{ matrix.os }}-python-${{ matrix.python-version }}
           path: ${{ runner.temp }}/engineering-process-ci-evidence

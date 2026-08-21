@@ -73,7 +73,7 @@ jobs:
             python processctl.py evidence validate-bootstrap \
               "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
           fi
-          printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify HEAD^{commit})" \
+          printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify 'HEAD^{commit}')" \
             >> "$GITHUB_ENV"
 
       - name: Install hash-locked release dependencies

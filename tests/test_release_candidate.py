@@ -30,8 +30,8 @@ class ReleaseCandidateTests(unittest.TestCase):
             },
             "independence": {
                 "method": "isolated-context",
-                "attestedBy": "renovate-ops-48a644b081ea9d098796432750f892e2e3f44614",
-                "evidence": "github://phuongnse/renovate-ops/commit/48a644b081ea9d098796432750f892e2e3f44614",
+                "attestedBy": "renovate-ops-abe046318b3e1f7a2801faaaf891a6dd05fd6822",
+                "evidence": "github://phuongnse/renovate-ops/commit/abe046318b3e1f7a2801faaaf891a6dd05fd6822",
             },
         }
         independent_evidence = {
@@ -41,7 +41,7 @@ class ReleaseCandidateTests(unittest.TestCase):
             "repository": "phuongnse/engineering-process",
             "headSha": "a" * 40,
             "verifierRepository": "phuongnse/renovate-ops",
-            "verifierSha": "48a644b081ea9d098796432750f892e2e3f44614",
+            "verifierSha": "abe046318b3e1f7a2801faaaf891a6dd05fd6822",
         }
 
         report = approved_review_from_assignment(assignment, independent_evidence)

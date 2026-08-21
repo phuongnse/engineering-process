@@ -33,13 +33,18 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("workflow_run:", approval)
         self.assertIn("github.event.workflow_run.head_sha", approval)
         self.assertIn("independent-review-$PR_NUMBER-$HEAD_SHA", approval)
-        self.assertIn("48a644b081ea9d098796432750f892e2e3f44614", approval)
+        self.assertIn("abe046318b3e1f7a2801faaaf891a6dd05fd6822", approval)
         self.assertIn("release-authorization", approval)
         self.assertIn("statuses: write", approval)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".github/workflows/release-pr.yml"', generator)
         self.assertIn("gh pr create --draft", generator)
         self.assertIn("--force-with-lease", generator)
+        self.assertIn("actions: write", generator)
+        self.assertIn('gh workflow run release-candidate.yml --ref "$RELEASE_BRANCH"', generator)
+        self.assertIn('gh workflow run ci.yml --ref "$RELEASE_BRANCH"', generator)
+        self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", approval)
+        self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
         renovate = json.loads(
@@ -158,9 +163,14 @@ class SelfHostingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn(
-            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+            "ref: ${{ inputs.release_head_sha || github.event.pull_request.head.sha || github.sha }}",
             workflow,
         )
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("reviewed_pr_number: ${{ inputs.release_pr_number }}", workflow)
+        self.assertIn("reviewed_head_sha: ${{ inputs.release_head_sha }}", workflow)
+        self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
+        self.assertIn("PR_BODY_PATH: ${{ steps.release.outputs.body_path }}", workflow)
         self.assertIn("verification/generate_ci_evidence.py", workflow)
         self.assertIn(
             "python -m pip install -r engineering_process/requirements-runtime.txt "
@@ -178,7 +188,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('--workflow-sha "$CI_WORKFLOW_SHA"', workflow)
         self.assertIn("CI_WORKFLOW_SHA: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
-            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
             workflow,
         )
         self.assertIn("if-no-files-found: error", workflow)
