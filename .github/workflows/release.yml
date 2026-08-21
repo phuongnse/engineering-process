@@ -4,10 +4,15 @@ on:
   pull_request_target:
     branches: [main]
     types: [closed]
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release.yml"
 
 permissions:
   actions: read
   contents: write
+  pull-requests: read
 
 concurrency:
   group: engineering-process-governed-release
@@ -17,20 +22,61 @@ jobs:
   authorize:
     name: Authorize exact merged Release PR
     if: >-
-      github.event.pull_request.merged == true &&
+      github.event_name == 'push' ||
+      (github.event.pull_request.merged == true &&
       github.event.pull_request.head.ref == 'automation/release/next' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       publish_required: ${{ steps.draft.outputs.publish_required }}
       tag: ${{ steps.identity.outputs.tag }}
     steps:
+      - name: Resolve the exact merged Release PR
+        id: release-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          pr_number="$EVENT_PR_NUMBER"
+          if test -z "$pr_number"; then
+            owner="${GITHUB_REPOSITORY%%/*}"
+            gh api \
+              "repos/$GITHUB_REPOSITORY/pulls?state=closed&head=$owner:automation/release/next&base=main&sort=updated&direction=desc&per_page=20" \
+              > "$RUNNER_TEMP/release-pulls.json"
+            pr_number="$(jq -r 'map(select(.merged_at != null)) | sort_by(.merged_at) | last | .number // empty' "$RUNNER_TEMP/release-pulls.json")"
+          fi
+          printf '%s' "$pr_number" | grep -Eq '^[1-9][0-9]*$'
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
+            > "$RUNNER_TEMP/release-pr.json"
+          test "$(jq -r .merged "$RUNNER_TEMP/release-pr.json")" = true
+          test "$(jq -r .base.ref "$RUNNER_TEMP/release-pr.json")" = main
+          test "$(jq -r .head.ref "$RUNNER_TEMP/release-pr.json")" = automation/release/next
+          test "$(jq -r .head.repo.full_name "$RUNNER_TEMP/release-pr.json")" = "$GITHUB_REPOSITORY"
+          reviewed_sha="$(jq -r .head.sha "$RUNNER_TEMP/release-pr.json")"
+          release_sha="$(jq -r .merge_commit_sha "$RUNNER_TEMP/release-pr.json")"
+          printf '%s' "$reviewed_sha" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$release_sha" | grep -Eq '^[0-9a-f]{40}$'
+          {
+            printf 'pr_number=%s\n' "$pr_number"
+            printf 'reviewed_sha=%s\n' "$reviewed_sha"
+            printf 'release_sha=%s\n' "$release_sha"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: true
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ steps.release-pr.outputs.release_sha }}
+
+      - name: Fetch and bind the immutable reviewed head
+        env:
+          PR_NUMBER: ${{ steps.release-pr.outputs.pr_number }}
+          REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
+        run: |
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
+          git cat-file -e "$REVIEWED_SHA^{commit}"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -58,7 +104,7 @@ jobs:
       - name: Restore exact-head release authorization evidence
         env:
           GH_TOKEN: ${{ github.token }}
-          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
           status="$(gh api "repos/$GITHUB_REPOSITORY/commits/$REVIEWED_SHA/status" \
@@ -79,8 +125,8 @@ jobs:
           MODE: ${{ steps.identity.outputs.mode }}
           TAG: ${{ steps.identity.outputs.tag }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
-          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
+          RELEASE_SHA: ${{ steps.release-pr.outputs.release_sha }}
         run: |
           evidence_args=(--reviewed-commit "$REVIEWED_SHA")
           if test "$MODE" = governed; then
@@ -99,7 +145,7 @@ jobs:
       - name: Create or verify the immutable tag
         env:
           TAG: ${{ steps.identity.outputs.tag }}
-          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RELEASE_SHA: ${{ steps.release-pr.outputs.release_sha }}
         run: |
           existing="$(git rev-list -n 1 "$TAG" -- 2>/dev/null || true)"
           if test -n "$existing"; then
