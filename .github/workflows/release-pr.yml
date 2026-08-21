@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "release-changes/*.json"
+      - ".github/workflows/release-pr.yml"
 
 permissions:
   contents: write
@@ -88,7 +89,7 @@ jobs:
           pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
             --json number --jq '.[0].number // empty')"
           if test -z "$pr_number"; then
-            gh pr create --base main --head "$RELEASE_BRANCH" \
+            gh pr create --draft --base main --head "$RELEASE_BRANCH" \
               --title "chore(release): prepare $RELEASE_TAG" \
               --body-file "$RUNNER_TEMP/release-pr.md"
           else
