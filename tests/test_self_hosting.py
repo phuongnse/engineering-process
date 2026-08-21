@@ -37,6 +37,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("release-authorization", approval)
         self.assertIn("statuses: write", approval)
         self.assertIn("release-changes/*.json", generator)
+        self.assertIn('".github/workflows/release-pr.yml"', generator)
+        self.assertIn("gh pr create --draft", generator)
         self.assertIn("--force-with-lease", generator)
 
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
