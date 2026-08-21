@@ -51,7 +51,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("actions: write", generator)
         self.assertIn('gh workflow run release-candidate.yml --ref "$RELEASE_BRANCH"', generator)
         self.assertIn('gh workflow run ci.yml --ref "$RELEASE_BRANCH"', generator)
-        self.assertIn('gh workflow run release-approval.yml --ref main', ci)
+        self.assertIn(
+            'gh workflow run release-approval.yml --repo "$GITHUB_REPOSITORY" --ref main',
+            ci,
+        )
         self.assertIn('-f ci_run_id="$GITHUB_RUN_ID"', ci)
         self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
