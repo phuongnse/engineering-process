@@ -39,11 +39,24 @@ jobs:
           persist-credentials: true
           token: ${{ steps.app-token.outputs.token }}
 
+      - name: Detect pending release changes
+        id: applicability
+        run: |
+          pending="$(find release-changes -maxdepth 1 -type f -name '*.json' -print -quit)"
+          if test -n "$pending"; then
+            echo 'pending=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'pending=false' >> "$GITHUB_OUTPUT"
+            echo 'No pending release changes; Release PR generation is not applicable.'
+          fi
+
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: steps.applicability.outputs.pending == 'true'
         with:
           python-version: "3.14"
 
       - name: Return an existing Release PR to draft
+        if: steps.applicability.outputs.pending == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASE_BRANCH: automation/release/next
@@ -56,6 +69,7 @@ jobs:
           fi
 
       - name: Install exact candidate dependencies
+        if: steps.applicability.outputs.pending == 'true'
         run: >-
           python -m pip install
           -r engineering_process/requirements-runtime.txt
@@ -63,6 +77,7 @@ jobs:
           -r engineering_process/requirements-build.txt
 
       - name: Reset the bot-owned branch to protected main
+        if: steps.applicability.outputs.pending == 'true'
         id: branch
         env:
           RELEASE_BRANCH: automation/release/next
@@ -72,6 +87,7 @@ jobs:
           git switch -C "$RELEASE_BRANCH" "$GITHUB_SHA"
 
       - name: Derive and materialize the exact release candidate
+        if: steps.applicability.outputs.pending == 'true'
         id: release
         run: |
           python processctl.py publication prepare-release --json \
@@ -84,6 +100,7 @@ jobs:
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Commit the generated candidate
+        if: steps.applicability.outputs.pending == 'true'
         id: candidate
         env:
           RELEASE_BRANCH: automation/release/next
@@ -108,6 +125,7 @@ jobs:
           printf 'head_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create or refresh the Release PR
+        if: steps.applicability.outputs.pending == 'true'
         id: pull-request
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
