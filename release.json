@@ -1,37 +1,114 @@
 {
-  "schemaVersion": 2,
-  "previousVersion": "0.1.0",
-  "version": "0.1.1",
-  "classification": "patch",
+  "schemaVersion": 3,
+  "previousVersion": "0.1.1",
+  "version": "0.2.0",
+  "classification": "minor",
   "compatibility": "backward-compatible",
-  "schemaImpact": "unchanged",
+  "schemaImpact": "additive",
   "migration": null,
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.1.1",
-    "releaseName": "engineering-process 0.1.1",
+    "tag": "v0.2.0",
+    "releaseName": "v0.2.0",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.1.1-py3-none-any.whl",
-      "engineering_process-0.1.1.tar.gz"
+      "engineering_process-0.2.0-py3-none-any.whl",
+      "engineering_process-0.2.0.tar.gz"
     ],
-    "receiptAsset": null
+    "receiptAsset": null,
+    "authorizationAsset": "engineering-process-v0.2.0-bootstrap-authorization.json"
   },
   "provenance": {
-    "mode": "bootstrap-history",
-    "statement": "Recorded after the immutable public release; this history was not governed by the current lifecycle and does not claim a lifecycle receipt.",
+    "mode": "bootstrap-authority",
+    "statement": "A reviewed bootstrap-authority Release PR authorizes the first public lifecycle authority.",
     "lifecycleReceipt": null
   },
   "changes": [
     {
-      "id": "managed-download-closed-response",
+      "id": "app-authored-release-pr",
       "type": "fix",
-      "surfaces": ["execution"],
-      "rationale": "Close managed download responses deterministically after bounded use."
+      "surfaces": [
+        "publication",
+        "supply-chain",
+        "workflow"
+      ],
+      "rationale": "Return each refreshed Release PR to draft, create its native required checks with a repository-scoped GitHub App token, and bind authorization dispatch to the event-specific exact head."
+    },
+    {
+      "id": "automated-release-pipeline",
+      "type": "capability",
+      "surfaces": [
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Generate a reviewed Release PR and deterministically publish its immutable tag, release assets, PyPI distributions, and adoption candidates after merge."
+    },
+    {
+      "id": "bounded-source-verification",
+      "type": "fix",
+      "surfaces": [
+        "distribution",
+        "portability",
+        "verification"
+      ],
+      "rationale": "Build from a clean tracked snapshot and bind cross-platform source, dependency, output, timeout, and artifact evidence without generated-state contamination."
+    },
+    {
+      "id": "dispatched-independent-review",
+      "type": "fix",
+      "surfaces": [
+        "evidence",
+        "portability",
+        "verification",
+        "workflow"
+      ],
+      "rationale": "Bind event-dispatched independent review to the exact synthesized pull-request payload and preserve bounded cross-platform process cleanup under transient kernel accounting races."
+    },
+    {
+      "id": "dispatched-release-authorization",
+      "type": "fix",
+      "surfaces": [
+        "evidence",
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Dispatch base-controlled release authorization to the explicit producer repository from successful native or emergency exact-head CI and revalidate its immutable run identity before approval."
+    },
+    {
+      "id": "governed-publication-evidence",
+      "type": "capability",
+      "surfaces": [
+        "evidence",
+        "publication",
+        "release",
+        "supply-chain"
+      ],
+      "rationale": "Export portable completed-lifecycle evidence and cross-check release identity, immutable assets, distribution attestations, main ancestry, and public N-1 authority."
+    },
+    {
+      "id": "managed-process-adoption",
+      "type": "capability",
+      "surfaces": [
+        "adoption",
+        "renovate",
+        "self-hosting"
+      ],
+      "rationale": "Generate one complete hash-locked, rollback-safe process adoption candidate with managed assets and consumer-owned target-version migration."
+    },
+    {
+      "id": "production-governance",
+      "type": "capability",
+      "surfaces": [
+        "contracts",
+        "lifecycle",
+        "quality",
+        "verification"
+      ],
+      "rationale": "Enforce production quality dimensions, bounded selective impact, current immutable evidence, and independent review throughout the portable lifecycle."
     }
   ]
 }

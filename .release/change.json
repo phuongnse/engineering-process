@@ -1,0 +1,39 @@
+{
+  "acceptanceCriteria": [
+    {
+      "id": "ac-identity",
+      "outcome": "Every release identity surface matches the derived version and reviewed source checkpoint."
+    },
+    {
+      "id": "ac-publication",
+      "outcome": "The immutable tag, release assets, attestation, and PyPI distributions contain the verified bytes."
+    },
+    {
+      "id": "ac-review",
+      "outcome": "Required profiles pass and an independent reviewer approves the exact candidate with no open finding."
+    }
+  ],
+  "affectedProjects": [
+    "engineering-process"
+  ],
+  "comparisonBase": "df6e682d1bba1dc1aa82a2f4bbc21afc460c4bd5",
+  "id": "release-0-2-0",
+  "requiredProfiles": [
+    "development",
+    "review"
+  ],
+  "risk": "high",
+  "schemaVersion": 2,
+  "signOff": {
+    "evidence": null,
+    "required": false,
+    "status": "not-required"
+  },
+  "source": "Automatically aggregated reviewed release-change fragments",
+  "specification": {
+    "kind": "change-contract",
+    "rationale": "The release contract owns the exact public change set and identity surfaces.",
+    "reference": "release.json and VERSIONING.md"
+  },
+  "summary": "Authorize and publish engineering-process 0.2.0"
+}
