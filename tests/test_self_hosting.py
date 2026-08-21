@@ -152,6 +152,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('refs/pull/$PR_NUMBER/head', release)
         self.assertIn("steps.release-pr.outputs.reviewed_sha", release)
         self.assertIn("steps.release-pr.outputs.release_sha", release)
+        self.assertIn("actions/create-github-app-token@", release)
+        self.assertIn("permission-workflows: write", release)
+        self.assertIn("token: ${{ steps.app-token.outputs.token }}", release)
         self.assertIn("publication authorize-release", release)
         self.assertIn("gh release edit", release)
         for workflow in (release, prepare, publish):
