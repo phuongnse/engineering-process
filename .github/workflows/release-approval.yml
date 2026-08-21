@@ -52,7 +52,8 @@ jobs:
           done
           test "$(jq -r .status "$RUNNER_TEMP/ci-run.json")" = completed
           test "$(jq -r .conclusion "$RUNNER_TEMP/ci-run.json")" = success
-          test "$(jq -r .event "$RUNNER_TEMP/ci-run.json")" = workflow_dispatch
+          ci_event="$(jq -r .event "$RUNNER_TEMP/ci-run.json")"
+          test "$ci_event" = pull_request || test "$ci_event" = workflow_dispatch
           test "$(jq -r .path "$RUNNER_TEMP/ci-run.json")" = .github/workflows/ci.yml
           test "$(jq -r .head_branch "$RUNNER_TEMP/ci-run.json")" = automation/release/next
           test "$(jq -r .head_sha "$RUNNER_TEMP/ci-run.json")" = "$HEAD_SHA"

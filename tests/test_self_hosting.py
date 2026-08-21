@@ -39,6 +39,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("release_pr_number:", approval)
         self.assertIn("release_head_sha:", approval)
         self.assertIn("actions/runs/$CI_RUN_ID", approval)
+        self.assertIn(
+            'test "$ci_event" = pull_request || test "$ci_event" = workflow_dispatch',
+            approval,
+        )
         self.assertIn('test "$(jq -r .path "$RUNNER_TEMP/ci-run.json")" = .github/workflows/ci.yml', approval)
         self.assertIn("independent-review-$PR_NUMBER-$HEAD_SHA", approval)
         self.assertIn("f22b05f7813d5868f2a728f203a59afa5d6f18d2", approval)
