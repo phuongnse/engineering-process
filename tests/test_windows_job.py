@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from engineering_process import _windows_job
 
@@ -196,21 +197,35 @@ class WindowsJobTests(unittest.TestCase):
         kernel32.active_processes = [1, 0]
         kernel32.terminate_result = False
 
-        with self.assertRaisesRegex(OSError, "TerminateJobObject"):
-            _windows_job._run(
-                r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
-            )
+        with patch.object(_windows_job, "NATURAL_DRAIN_GRACE_MILLISECONDS", 0):
+            with self.assertRaisesRegex(OSError, "TerminateJobObject"):
+                _windows_job._run(
+                    r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
+                )
 
+        self.assertEqual([202, 201, 101], kernel32.closed_handles)
+
+    def test_completed_target_allows_job_accounting_to_drain(self):
+        kernel32 = FakeKernel32()
+        kernel32.active_processes = [1, 0]
+
+        exit_code = _windows_job._run(
+            r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
+        )
+
+        self.assertEqual(7, exit_code)
+        self.assertEqual(0, kernel32.termination_calls)
         self.assertEqual([202, 201, 101], kernel32.closed_handles)
 
     def test_descendant_cleanup_is_reported_as_a_command_failure(self):
         kernel32 = FakeKernel32()
         kernel32.active_processes = [1, 0]
 
-        with self.assertRaisesRegex(OSError, "left descendant processes"):
-            _windows_job._run(
-                r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
-            )
+        with patch.object(_windows_job, "NATURAL_DRAIN_GRACE_MILLISECONDS", 0):
+            with self.assertRaisesRegex(OSError, "left descendant processes"):
+                _windows_job._run(
+                    r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
+                )
 
         self.assertEqual(1, kernel32.termination_calls)
         self.assertEqual([202, 201, 101], kernel32.closed_handles)

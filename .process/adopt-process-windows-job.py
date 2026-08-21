@@ -34,6 +34,7 @@ WAIT_FAILED = 0xFFFFFFFF
 WAIT_OBJECT_0 = 0x00000000
 WAIT_TIMEOUT = 0x00000102
 CLEANUP_GRACE_MILLISECONDS = 5_000
+NATURAL_DRAIN_GRACE_MILLISECONDS = 250
 
 
 class IO_COUNTERS(ctypes.Structure):
@@ -215,6 +216,8 @@ def _cleanup_process_and_job(
     kernel32: Any,
     job: int,
     process_info: PROCESS_INFORMATION,
+    *,
+    allow_natural_drain: bool,
 ) -> tuple[list[OSError], int | None]:
     errors: list[OSError] = []
     if process_info.hProcess:
@@ -223,6 +226,18 @@ def _cleanup_process_and_job(
         except OSError as error:
             errors.append(error)
             active_processes = None
+        if allow_natural_drain and active_processes:
+            drain_deadline = (
+                time.monotonic() + NATURAL_DRAIN_GRACE_MILLISECONDS / 1000
+            )
+            while active_processes > 0 and time.monotonic() < drain_deadline:
+                time.sleep(0.01)
+                try:
+                    active_processes = _active_processes(kernel32, job)
+                except OSError as error:
+                    errors.append(error)
+                    active_processes = None
+                    break
         active_processes_before_cleanup = active_processes
 
         if active_processes is None or active_processes > 0:
@@ -360,7 +375,10 @@ def _run(
         caught_error = error
     finally:
         cleanup_errors, active_processes_before_cleanup = _cleanup_process_and_job(
-            kernel32, job, process_info
+            kernel32,
+            job,
+            process_info,
+            allow_natural_drain=caught_error is None,
         )
         if attribute_list_initialized and attribute_list is not None:
             kernel32.DeleteProcThreadAttributeList(attribute_list)
