@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -12,7 +13,7 @@ from .contracts import (
     validate_process_lock,
     validate_release,
 )
-from .evidence import validate_receipt
+from .evidence import validate_bootstrap_authorization, validate_receipt
 from .git import run_git
 
 
@@ -95,6 +96,47 @@ def _runtime_version(project_root: Path, relative_path: str, variable: str) -> s
     return matches[0]
 
 
+def validate_reviewed_checkpoint(
+    project_root: Path, *, reviewed_commit: str, release_commit: str
+) -> str:
+    reviewed_checkpoint = _git(
+        project_root,
+        [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            f"{reviewed_commit}^{{commit}}",
+        ],
+    )
+    release_checkpoint = _git(
+        project_root,
+        [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            f"{release_commit}^{{commit}}",
+        ],
+    )
+    if reviewed_checkpoint != release_checkpoint:
+        _git(
+            project_root,
+            ["merge-base", "--is-ancestor", reviewed_checkpoint, release_checkpoint],
+        )
+        reviewed_tree = _git(
+            project_root,
+            ["rev-parse", "--verify", f"{reviewed_checkpoint}^{{tree}}"],
+        )
+        release_tree = _git(
+            project_root,
+            ["rev-parse", "--verify", f"{release_checkpoint}^{{tree}}"],
+        )
+        if reviewed_tree != release_tree:
+            raise ContractError(
+                "release commit tree does not match the independently reviewed tree"
+            )
+    return reviewed_checkpoint
+
+
 def validate_release_checkpoint(
     project_root: Path,
     *,
@@ -103,13 +145,16 @@ def validate_release_checkpoint(
     commit: str,
     main_ref: str,
     receipt_path: Path | None = None,
+    authorization_path: Path | None = None,
+    reviewed_commit: str | None = None,
+    require_tag: bool = True,
 ) -> dict[str, Any]:
     release_path = project_root / "release.json"
     release = validate_release(read_json(release_path), str(release_path))
-    if release.provenance_mode != "governed":
+    if release.provenance_mode not in {"governed", "bootstrap-authority"}:
         raise ContractError(
-            "publication requires a governed release contract; bootstrap history "
-            "and legacy contracts are read-only"
+            "publication requires a governed or bootstrap-authority release "
+            "contract; bootstrap history and legacy contracts are read-only"
         )
     package_name, package_version = _project_metadata(project_root)
     if package_version != release.version:
@@ -151,7 +196,13 @@ def validate_release_checkpoint(
             )
 
     receipt: dict[str, Any] | None = None
+    authorization: dict[str, Any] | None = None
+    evidence_checkpoint: str | None = None
     if release.provenance_mode == "governed":
+        if authorization_path is not None:
+            raise ContractError(
+                "governed releases must not claim bootstrap authorization evidence"
+            )
         if receipt_path is None:
             raise ContractError("governed release requires a lifecycle receipt")
         if release.receipt_asset != receipt_path.name:
@@ -164,11 +215,11 @@ def validate_release_checkpoint(
             receipt["project"] != release.receipt_project
             or receipt["changeId"] != release.receipt_change_id
             or receipt["cycle"] != release.receipt_cycle
-            or receipt["checkpoint"] != commit
         ):
             raise ContractError(
-                "lifecycle receipt change, cycle, or checkpoint does not match release"
+                "lifecycle receipt change or cycle does not match release"
             )
+        evidence_checkpoint = receipt["checkpoint"]
         lock_path = project_root / ".process" / "process.lock"
         lock = validate_process_lock(read_json(lock_path), str(lock_path))
         if (
@@ -178,8 +229,26 @@ def validate_release_checkpoint(
             raise ContractError(
                 "lifecycle receipt authority does not match the pinned process lock"
             )
-    elif receipt_path is not None:
-        raise ContractError("bootstrap or legacy releases must not claim a lifecycle receipt")
+    else:
+        if receipt_path is not None:
+            raise ContractError(
+                "bootstrap authority releases must not claim a lifecycle receipt"
+            )
+        if authorization_path is None:
+            raise ContractError(
+                "bootstrap authority release requires authorization evidence"
+            )
+        if release.authorization_asset != authorization_path.name:
+            raise ContractError(
+                f"authorization filename {authorization_path.name!r} does not match "
+                f"release identity {release.authorization_asset!r}"
+            )
+        authorization = validate_bootstrap_authorization(authorization_path)
+        if authorization["project"] != package_name:
+            raise ContractError(
+                "bootstrap authorization project does not match release package"
+            )
+        evidence_checkpoint = authorization["checkpoint"]
 
     checkpoint = _git(
         project_root,
@@ -192,6 +261,23 @@ def validate_release_checkpoint(
     if head_checkpoint != checkpoint:
         raise ContractError(
             f"release checkout HEAD {head_checkpoint} does not match {checkpoint}"
+        )
+    assert evidence_checkpoint is not None
+    if reviewed_commit is not None:
+        reviewed_checkpoint = validate_reviewed_checkpoint(
+            project_root,
+            reviewed_commit=reviewed_commit,
+            release_commit=checkpoint,
+        )
+        if reviewed_checkpoint != evidence_checkpoint:
+            raise ContractError(
+                "declared reviewed commit does not match authorization evidence"
+            )
+    else:
+        reviewed_checkpoint = validate_reviewed_checkpoint(
+            project_root,
+            reviewed_commit=evidence_checkpoint,
+            release_commit=checkpoint,
         )
     worktree = run_git(
         project_root,
@@ -206,14 +292,15 @@ def validate_release_checkpoint(
         project_root,
         ["rev-parse", "--verify", "--end-of-options", f"{main_ref}^{{commit}}"],
     )
-    tag_checkpoint = _git(
-        project_root,
-        ["rev-list", "-n", "1", expected_tag, "--"],
-    )
-    if tag_checkpoint != checkpoint:
-        raise ContractError(
-            f"release tag {expected_tag} points to {tag_checkpoint}, not {checkpoint}"
+    if require_tag:
+        tag_checkpoint = _git(
+            project_root,
+            ["rev-list", "-n", "1", expected_tag, "--"],
         )
+        if tag_checkpoint != checkpoint:
+            raise ContractError(
+                f"release tag {expected_tag} points to {tag_checkpoint}, not {checkpoint}"
+            )
     _git(project_root, ["merge-base", "--is-ancestor", checkpoint, main_checkpoint])
 
     previous_tag = f"v{release.previous_version}"
@@ -241,11 +328,40 @@ def validate_release_checkpoint(
             f"{release_path}: previousVersion must name latest reachable release "
             f"{latest_prior_tag[1:]}, not {release.previous_version}"
         )
+    if release.provenance_mode == "bootstrap-authority":
+        lock_path = project_root / ".process" / "process.lock"
+        lock = validate_process_lock(read_json(lock_path), str(lock_path))
+        if lock.version != release.previous_version:
+            raise ContractError(
+                "bootstrap authority requires the process lock to pin previousVersion"
+            )
+        previous_contract = run_git(
+            project_root,
+            ["show", f"{previous_tag}:release.json"],
+            label="inspect previous release provenance",
+            timeout_seconds=30,
+            max_stdout_bytes=1_000_000,
+        )
+        if previous_contract.returncode == 0:
+            try:
+                previous_document = json.loads(previous_contract.stdout.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ContractError(
+                    "previous release contract is not valid UTF-8 JSON"
+                ) from error
+            previous_release = validate_release(
+                previous_document, f"{previous_tag}:release.json"
+            )
+            if previous_release.provenance_mode != "bootstrap-history":
+                raise ContractError(
+                    "bootstrap authority is permitted only after bootstrap history"
+                )
 
     return {
         "tag": expected_tag,
         "releaseName": release_name,
         "checkpoint": checkpoint,
+        "reviewedCheckpoint": reviewed_checkpoint,
         "mainCheckpoint": main_checkpoint,
         "previousTag": previous_tag,
         "previousCheckpoint": previous_checkpoint,
@@ -256,6 +372,8 @@ def validate_release_checkpoint(
         "migration": release.migration,
         "artifacts": list(release.artifacts),
         "receiptAsset": release.receipt_asset,
+        "authorizationAsset": release.authorization_asset,
         "provenanceMode": release.provenance_mode,
         "lifecycleReceipt": receipt,
+        "bootstrapAuthorization": authorization,
     }

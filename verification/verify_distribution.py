@@ -15,6 +15,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     parser.add_argument("--receipt", type=Path)
+    parser.add_argument("--authorization", type=Path)
     parser.add_argument("--attestation", type=Path)
     arguments = parser.parse_args()
     print(
@@ -23,6 +24,7 @@ if __name__ == "__main__":
                 PROJECT_ROOT,
                 output_root=arguments.output,
                 receipt_path=arguments.receipt,
+                authorization_path=arguments.authorization,
                 attestation_path=arguments.attestation,
             ),
             ensure_ascii=False,

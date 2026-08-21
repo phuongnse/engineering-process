@@ -23,6 +23,13 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class AdoptionTests(unittest.TestCase):
+    def target_requirements_bytes(self) -> bytes:
+        return (
+            "--only-binary :all:\n\n"
+            f"engineering-process=={VERSION} \\\n"
+            f"    --hash=sha256:{'0' * 64}\n"
+        ).encode("utf-8")
+
     def prepare_project(self, root: Path) -> Path:
         manifest = root / "project.json"
         manifest.write_text(
@@ -55,9 +62,7 @@ class AdoptionTests(unittest.TestCase):
         )
         requirements = root / "requirements" / "process.txt"
         requirements.parent.mkdir()
-        requirements.write_bytes(
-            (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
-        )
+        requirements.write_bytes(self.target_requirements_bytes())
         return requirements
 
     def prepare_project_migration(
@@ -93,13 +98,12 @@ class AdoptionTests(unittest.TestCase):
         return migration_path, source, target_content
 
     def test_requirements_lock_binds_exact_hashed_public_authority(self):
-        lock = validate_requirements_lock(
-            PROCESS_ROOT / "requirements" / "process.txt"
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            requirements = Path(directory) / "process.txt"
+            requirements.write_bytes(self.target_requirements_bytes())
+            lock = validate_requirements_lock(requirements)
 
-        authority = next(
-            pin for pin in lock.pins if pin.name == "engineering-process"
-        )
+        authority = next(pin for pin in lock.pins if pin.name == "engineering-process")
         self.assertEqual(VERSION, authority.version)
         self.assertTrue(authority.hashes)
         self.assertRegex(lock.digest, r"^sha256:[0-9a-f]{64}$")

@@ -38,6 +38,7 @@ REQUIRED_SUFFIXES = {
     "schemas/adoption-migration.schema.json",
     "schemas/change.schema.json",
     "schemas/evidence-receipt.schema.json",
+    "schemas/release-change.schema.json",
     "schemas/release.schema.json",
     "schemas/supplemental-verification.schema.json",
 }
@@ -428,6 +429,7 @@ def verify_distribution(
     *,
     output_root: Path | None = None,
     receipt_path: Path | None = None,
+    authorization_path: Path | None = None,
     attestation_path: Path | None = None,
 ) -> dict[str, object]:
     project_root = project_root.resolve(strict=True)
@@ -476,7 +478,7 @@ def verify_distribution(
             )
             if not release.artifacts:
                 raise ContractError(
-                    "release schemaVersion 2 identity is required for "
+                    "an identity-bearing release contract is required for "
                     "distribution verification"
                 )
             result = execute_command(
@@ -515,10 +517,11 @@ def verify_distribution(
             if attestation_path is not None:
                 assert resolved_output is not None
                 attestation = create_distribution_attestation(
-                    snapshot,
+                    project_root,
                     resolved_output,
                     attestation_path,
                     receipt_path=receipt_path,
+                    authorization_path=authorization_path,
                     checkpoint=checkpoint,
                 )
     finally:

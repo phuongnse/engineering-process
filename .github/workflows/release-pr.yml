@@ -1,0 +1,98 @@
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "release-changes/*.json"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: engineering-process-release-pr
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Create or update the governed Release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install exact candidate dependencies
+        run: >-
+          python -m pip install
+          -r engineering_process/requirements-runtime.txt
+          -r engineering_process/requirements-dev.txt
+          -r engineering_process/requirements-build.txt
+
+      - name: Reset the bot-owned branch to protected main
+        id: branch
+        env:
+          RELEASE_BRANCH: automation/release/next
+        run: |
+          remote_sha="$(git ls-remote --heads origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
+          printf 'remote_sha=%s\n' "$remote_sha" >> "$GITHUB_OUTPUT"
+          git switch -C "$RELEASE_BRANCH" "$GITHUB_SHA"
+
+      - name: Derive and materialize the exact release candidate
+        id: release
+        run: |
+          python processctl.py publication prepare-release --json \
+            > "$RUNNER_TEMP/release-candidate.json"
+          python processctl.py publication release-pr-body \
+            --state draft --output "$RUNNER_TEMP/release-pr.md" --json
+          version="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["version"])')"
+          tag="v$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the generated candidate
+        env:
+          RELEASE_BRANCH: automation/release/next
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          REMOTE_SHA: ${{ steps.branch.outputs.remote_sha }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add --all -- .release release-changes release.json pyproject.toml engineering_process/__init__.py
+          git diff --cached --quiet && {
+            echo "release candidate did not change the repository" >&2
+            exit 1
+          }
+          git commit -m "chore(release): prepare $RELEASE_TAG"
+          if test -n "$REMOTE_SHA"; then
+            git push \
+              --force-with-lease="refs/heads/$RELEASE_BRANCH:$REMOTE_SHA" \
+              origin "HEAD:refs/heads/$RELEASE_BRANCH"
+          else
+            git push --set-upstream origin "HEAD:refs/heads/$RELEASE_BRANCH"
+          fi
+
+      - name: Create or refresh the Release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: automation/release/next
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
+            --json number --jq '.[0].number // empty')"
+          if test -z "$pr_number"; then
+            gh pr create --base main --head "$RELEASE_BRANCH" \
+              --title "chore(release): prepare $RELEASE_TAG" \
+              --body-file "$RUNNER_TEMP/release-pr.md"
+          else
+            gh pr edit "$pr_number" \
+              --title "chore(release): prepare $RELEASE_TAG" \
+              --body-file "$RUNNER_TEMP/release-pr.md"
+          fi

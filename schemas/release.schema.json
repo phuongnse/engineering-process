@@ -7,7 +7,7 @@
   "required": ["schemaVersion", "previousVersion", "version", "classification", "compatibility", "schemaImpact", "migration"],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [1, 2]},
+    "schemaVersion": {"enum": [1, 2, 3]},
     "previousVersion": {"$ref": "#/$defs/version"},
     "version": {"$ref": "#/$defs/version"},
     "classification": {"enum": ["patch", "minor", "major"]},
@@ -45,7 +45,8 @@
           "uniqueItems": true,
           "items": {"type": "string", "minLength": 1, "maxLength": 200}
         },
-        "receiptAsset": {"type": ["string", "null"], "minLength": 1, "maxLength": 200}
+        "receiptAsset": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+        "authorizationAsset": {"type": ["string", "null"], "minLength": 1, "maxLength": 200}
       }
     },
     "provenance": {
@@ -53,7 +54,7 @@
       "additionalProperties": false,
       "required": ["mode", "statement", "lifecycleReceipt"],
       "properties": {
-        "mode": {"enum": ["bootstrap-history", "governed"]},
+        "mode": {"enum": ["bootstrap-history", "bootstrap-authority", "governed"]},
         "statement": {"type": "string", "minLength": 1, "maxLength": 1000},
         "lifecycleReceipt": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/receipt"}]}
       }
@@ -93,7 +94,20 @@
     },
     {
       "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
-      "then": {"required": ["identity", "provenance", "changes"]}
+      "then": {
+        "required": ["identity", "provenance", "changes"],
+        "properties": {
+          "identity": {"not": {"required": ["authorizationAsset"]}},
+          "provenance": {"properties": {"mode": {"enum": ["bootstrap-history", "governed"]}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["identity", "provenance", "changes"],
+        "properties": {"identity": {"required": ["authorizationAsset"]}}
+      }
     },
     {
       "if": {"properties": {"classification": {"const": "patch"}}, "required": ["classification"]},

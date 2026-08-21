@@ -76,9 +76,13 @@ and exported receipt remain as durable provenance.
 ## Release boundary
 
 Lifecycle completion proves engineering readiness only. It does not authorize a
-version bump, tag, merge, publication, consumer lock update, or deployment. Those
-actions follow `RELEASING.md` and require their own explicit authority.
+version bump, tag, publication, consumer lock update, or deployment. Public-impact
+changes contribute release fragments, and automation materializes them on a separate
+Release PR. Merge of that independently reviewed exact Release PR is the sole
+publication authorization; all tag, draft, build, verification, GitHub Release, and
+PyPI operations after merge are deterministic automation defined by `RELEASING.md`.
 At that boundary, `release.json` adds a machine-validated SemVer and compatibility
 specification; the publication gate binds it to the exact latest public predecessor,
-canonical GitHub title/tag/package/runtime/artifact identity, exported N-1 receipt,
+canonical GitHub title/tag/package/runtime/artifact identity, reviewed-head and
+merge-tree equivalence, exported N-1 receipt or one-time bootstrap authorization,
 source checkpoint, and `main` ancestry.

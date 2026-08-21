@@ -1,13 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/evidence-receipt.schema.json",
-  "title": "Portable completed-lifecycle evidence receipt",
+  "title": "Portable completed-lifecycle evidence bundle",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "kind", "process", "project", "changeId", "cycle", "checkpoint", "comparisonBase", "state", "artifacts"],
   "properties": {
     "schemaVersion": {"const": 1},
-    "kind": {"const": "engineering-process-lifecycle-receipt"},
+    "kind": {
+      "enum": [
+        "engineering-process-lifecycle-receipt",
+        "engineering-process-bootstrap-authorization"
+      ]
+    },
     "process": {
       "type": "object",
       "additionalProperties": false,

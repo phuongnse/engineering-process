@@ -16,6 +16,29 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_release_pr_review_keeps_write_authority_out_of_head_code(self):
+        candidate = (
+            PROCESS_ROOT / ".github" / "workflows" / "release-candidate.yml"
+        ).read_text(encoding="utf-8")
+        approval = (
+            PROCESS_ROOT / ".github" / "workflows" / "release-approval.yml"
+        ).read_text(encoding="utf-8")
+        generator = (
+            PROCESS_ROOT / ".github" / "workflows" / "release-pr.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("contents: read", candidate)
+        self.assertNotIn("contents: write", candidate)
+        self.assertIn("github.event.pull_request.head.repo.full_name", candidate)
+        self.assertIn("workflow_run:", approval)
+        self.assertIn("github.event.workflow_run.head_sha", approval)
+        self.assertIn("independent-review-$PR_NUMBER-$HEAD_SHA", approval)
+        self.assertIn("48a644b081ea9d098796432750f892e2e3f44614", approval)
+        self.assertIn("release-authorization", approval)
+        self.assertIn("statuses: write", approval)
+        self.assertIn("release-changes/*.json", generator)
+        self.assertIn("--force-with-lease", generator)
+
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
         renovate = json.loads(
             (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
@@ -40,6 +63,8 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertTrue(authority_rule["enabled"])
         self.assertFalse(authority_rule["automerge"])
+        self.assertEqual(["at any time"], authority_rule["schedule"])
+        self.assertEqual(100, authority_rule["prPriority"])
         self.assertEqual(
             ["requirements/process.in", "requirements/process.txt"],
             authority_rule["matchFileNames"],
@@ -79,10 +104,18 @@ class SelfHostingTests(unittest.TestCase):
         publish = (
             PROCESS_ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("workflow_dispatch:", prepare)
+        release = (
+            PROCESS_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_call:", prepare)
+        self.assertNotIn("workflow_dispatch:", prepare)
         self.assertIn("isDraft", prepare)
         self.assertIn("gh release upload", prepare)
         self.assertIn("expected-release-assets.txt", prepare)
+        self.assertIn("pull_request_target:", release)
+        self.assertIn("automation/release/next", release)
+        self.assertIn("publication authorize-release", release)
+        self.assertIn("gh release edit", release)
         self.assertIn("release:\n    types: [published]", publish)
         self.assertNotIn("gh release upload", publish)
         self.assertGreaterEqual(publish.count("gh release verify"), 2)
@@ -280,7 +313,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn(
             'process-authority/bin/processctl" evidence validate', workflow
         )
-        self.assertNotIn("bootstrap validator", workflow)
+        self.assertIn("evidence validate-bootstrap", workflow)
+        self.assertIn("evidence_args+=(--authorization", workflow)
         self.assertNotIn("authority_version=", workflow)
         self.assertIn("pip install --require-hashes", workflow)
         self.assertIn("engineering_process/requirements-release.txt", workflow)

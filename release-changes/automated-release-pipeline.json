@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "automated-release-pipeline",
+  "type": "capability",
+  "surfaces": [
+    "publication",
+    "workflow"
+  ],
+  "rationale": "Generate a reviewed Release PR and deterministically publish its immutable tag, release assets, PyPI distributions, and adoption candidates after merge.",
+  "schemaImpact": "additive",
+  "migration": null
+}

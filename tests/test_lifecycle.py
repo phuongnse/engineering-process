@@ -18,9 +18,11 @@ from engineering_process.contracts import (
 )
 from engineering_process.evidence import (
     _canonical_digest,
+    export_bootstrap_authorization,
     export_receipt,
     prune_completed_run,
     validate_receipt,
+    validate_bootstrap_authorization,
 )
 from engineering_process.lifecycle import (
     _change_lock,
@@ -377,6 +379,15 @@ class LifecycleTests(unittest.TestCase):
             exported = export_receipt(root, "change-1", receipt_path)
             self.assertEqual("change-1", exported["changeId"])
             self.assertEqual(exported, validate_receipt(receipt_path))
+            bootstrap_path = inputs / "bootstrap-authorization.json"
+            bootstrap = export_bootstrap_authorization(
+                root, "change-1", bootstrap_path
+            )
+            self.assertEqual(
+                bootstrap, validate_bootstrap_authorization(bootstrap_path)
+            )
+            with self.assertRaisesRegex(ContractError, "unsupported"):
+                validate_receipt(bootstrap_path)
             tampered_path = inputs / "tampered-receipt.json"
             tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
             contract_entry = tampered["artifacts"]["contract"]

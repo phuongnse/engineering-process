@@ -21,23 +21,38 @@ An incompatible release requires migration guidance and owner sign-off. A releas
 with no distributable public change does not advance the package version. Multiple
 changes in one release do not create multiple increments.
 
-Derive the candidate before editing any version surface:
+Every feature or fix with distributable public impact owns one bounded
+`release-changes/<id>.json` fragment. The fragment records the public change type,
+surfaces, schema impact, rationale, and any required breaking migration. Change owners
+classify behavior in their reviewed feature PR; they never edit a package version.
+
+Preview the derivation without editing a version surface:
 
 ~~~text
 processctl publication plan-version --previous-version 0.1.1 \
   --change-type capability --change-type fix --json
 ~~~
 
-`processctl contract validate --kind release release.json` independently derives the
-same result from `release.json.changes` and rejects a mismatched classification,
-compatibility statement, increment, or schema impact. Publication additionally
-requires the declared previous version to be the latest reachable final SemVer tag.
+After fragments reach `main`, `processctl publication prepare-release` aggregates the
+bounded ordered set into one generated Release PR. It independently derives the same
+result and updates `release.json`, `pyproject.toml`, `engineering_process.VERSION`,
+artifact names, evidence names, and generated release lifecycle inputs together.
+`processctl contract validate --kind release release.json` rejects a mismatched
+classification, compatibility statement, increment, or schema impact. Publication
+additionally requires the declared previous version to be the latest reachable final
+SemVer tag.
 
-Development commits do not change package versions. Only a separately reviewed
-release checkpoint updates all identity surfaces together: `release.json`,
-`pyproject.toml`, `engineering_process.VERSION`, tag, release title, wheel, sdist,
-receipt, and attestation names. A published immutable or PyPI version is never
-reused; a failed published release is corrected under a newly derived version.
+Development commits do not change package versions. Only the separately reviewed
+generated Release PR updates all identity surfaces together. Its merge is the sole
+publication authorization; every post-merge action is deterministic automation. A
+published immutable or PyPI version is never reused, and a failed published release is
+corrected under a newly derived version.
+
+The transition from recorded `bootstrap-history` to the first public lifecycle
+authority uses release schema 3 mode `bootstrap-authority` exactly once. Its separately
+typed authorization bundle is not a lifecycle receipt. Self-adoption must pin that
+public version before another release can be prepared; every later release is
+`governed` by a receipt from its public N-1 authority.
 
 ## Serialized-contract versions
 
@@ -124,8 +139,13 @@ falling back to a partial proposal.
 ## Responsibility
 
 - Change owners classify public behavior; they do not choose a version number.
-- The release owner freezes scope and records the exact ordered change set.
-- `processctl` derives and validates classification, compatibility, and identity.
+- Release PR automation freezes the exact ordered fragment set and materializes every
+  derived identity surface without writing protected `main` directly.
+- `processctl` derives and validates classification, compatibility, identity, reviewed
+  tree equivalence, and authorization evidence.
 - Renovate generates complete draft adoption candidates without merge authority.
-- Independent review verifies the classification and migration evidence.
-- The repository owner alone authorizes release and adoption merges.
+- Independent review verifies the exact Release PR classification, migration,
+  verification, and evidence checkpoint.
+- The repository owner authorizes publication by merging the Release PR and separately
+  authorizes each self-adoption merge. Consumer owners retain their adoption merge
+  policy.

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "managed-process-adoption",
+  "type": "capability",
+  "surfaces": [
+    "adoption",
+    "renovate",
+    "self-hosting"
+  ],
+  "rationale": "Generate one complete hash-locked, rollback-safe process adoption candidate with managed assets and consumer-owned target-version migration.",
+  "schemaImpact": "additive",
+  "migration": null
+}

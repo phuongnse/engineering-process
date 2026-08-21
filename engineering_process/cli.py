@@ -22,6 +22,7 @@ from .contracts import (
     validate_process_lock,
     validate_project,
     validate_release,
+    validate_release_change,
     validate_review,
 )
 from .distribution import distribution_digest
@@ -33,7 +34,13 @@ from .environment import (
     require_environment_profile,
     setup_environment,
 )
-from .evidence import export_receipt, prune_completed_run, validate_receipt
+from .evidence import (
+    export_bootstrap_authorization,
+    export_receipt,
+    prune_completed_run,
+    validate_bootstrap_authorization,
+    validate_receipt,
+)
 from .impact import plan_profile
 from .lifecycle import (
     begin_implementation,
@@ -54,6 +61,7 @@ from .publication import (
     validate_pull_request,
 )
 from .release import validate_release_checkpoint
+from .release_candidate import prepare_release_candidate, render_release_pull_request
 from .skills import validate_skills
 from .syncing import (
     default_process_root,
@@ -237,6 +245,7 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "change": validate_change,
         "plan": validate_plan,
         "release": validate_release,
+        "release-change": validate_release_change,
         "review": validate_review,
     }
     validators[args.kind](document, str(args.path))
@@ -493,9 +502,37 @@ def command_evidence_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_evidence_export_bootstrap(args: argparse.Namespace) -> int:
+    details = export_bootstrap_authorization(
+        args.project_root, args.change_id, args.output
+    )
+    _emit(
+        args,
+        _result(
+            "evidence export-bootstrap",
+            output=str(args.output.resolve()),
+            **details,
+        ),
+    )
+    return 0
+
+
 def command_evidence_validate(args: argparse.Namespace) -> int:
     details = validate_receipt(args.receipt)
     _emit(args, _result("evidence validate", receipt=str(args.receipt.resolve()), **details))
+    return 0
+
+
+def command_evidence_validate_bootstrap(args: argparse.Namespace) -> int:
+    details = validate_bootstrap_authorization(args.authorization)
+    _emit(
+        args,
+        _result(
+            "evidence validate-bootstrap",
+            authorization=str(args.authorization.resolve()),
+            **details,
+        ),
+    )
     return 0
 
 
@@ -793,6 +830,35 @@ def command_publication_plan_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_publication_prepare_release(args: argparse.Namespace) -> int:
+    details = prepare_release_candidate(
+        args.project_root,
+        changes_dir=args.changes_dir,
+    )
+    _emit(args, _result("publication prepare-release", **details))
+    return 0
+
+
+def command_publication_release_pr_body(args: argparse.Namespace) -> int:
+    body = render_release_pull_request(
+        args.project_root,
+        approved=args.state == "approved",
+    )
+    try:
+        args.output.write_text(body, encoding="utf-8")
+    except OSError as error:
+        raise ContractError(f"{args.output}: cannot write Release PR body: {error}") from error
+    _emit(
+        args,
+        _result(
+            "publication release-pr-body",
+            output=str(args.output.resolve()),
+            releaseState=args.state,
+        ),
+    )
+    return 0
+
+
 def command_publication_validate_release(args: argparse.Namespace) -> int:
     details = validate_release_checkpoint(
         args.project_root,
@@ -801,8 +867,26 @@ def command_publication_validate_release(args: argparse.Namespace) -> int:
         commit=args.commit,
         main_ref=args.main_ref,
         receipt_path=args.receipt,
+        authorization_path=args.authorization,
+        reviewed_commit=args.reviewed_commit,
     )
     _emit(args, _result("publication validate-release", **details))
+    return 0
+
+
+def command_publication_authorize_release(args: argparse.Namespace) -> int:
+    details = validate_release_checkpoint(
+        args.project_root,
+        tag=args.tag,
+        release_name=args.release_name,
+        commit=args.commit,
+        main_ref=args.main_ref,
+        receipt_path=args.receipt,
+        authorization_path=args.authorization,
+        reviewed_commit=args.reviewed_commit,
+        require_tag=False,
+    )
+    _emit(args, _result("publication authorize-release", **details))
     return 0
 
 
@@ -812,6 +896,7 @@ def command_publication_validate_artifacts(args: argparse.Namespace) -> int:
         args.artifacts,
         args.attestation,
         receipt_path=args.receipt,
+        authorization_path=args.authorization,
         checkpoint=args.commit,
     )
     _emit(args, _result("publication validate-artifacts", attestation=details))
@@ -968,7 +1053,14 @@ def build_parser() -> argparse.ArgumentParser:
     contract_validate = contract_commands.add_parser("validate")
     contract_validate.add_argument(
         "--kind",
-        choices=("adoption-migration", "change", "plan", "release", "review"),
+        choices=(
+            "adoption-migration",
+            "change",
+            "plan",
+            "release",
+            "release-change",
+            "review",
+        ),
         required=True,
     )
     contract_validate.add_argument("path", type=Path)
@@ -1011,12 +1103,32 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_export.add_argument("--output", type=Path, required=True)
     _add_json(evidence_export)
     evidence_export.set_defaults(handler=command_evidence_export)
+    evidence_export_bootstrap = evidence_commands.add_parser(
+        "export-bootstrap",
+        help="Export a completed lifecycle as one bootstrap authorization bundle",
+    )
+    _add_project_root(evidence_export_bootstrap)
+    evidence_export_bootstrap.add_argument("--change-id", required=True)
+    evidence_export_bootstrap.add_argument("--output", type=Path, required=True)
+    _add_json(evidence_export_bootstrap)
+    evidence_export_bootstrap.set_defaults(
+        handler=command_evidence_export_bootstrap
+    )
     evidence_validate = evidence_commands.add_parser(
         "validate", help="Validate an exported lifecycle receipt"
     )
     evidence_validate.add_argument("receipt", type=Path)
     _add_json(evidence_validate)
     evidence_validate.set_defaults(handler=command_evidence_validate)
+    evidence_validate_bootstrap = evidence_commands.add_parser(
+        "validate-bootstrap",
+        help="Validate a one-time bootstrap authorization bundle",
+    )
+    evidence_validate_bootstrap.add_argument("authorization", type=Path)
+    _add_json(evidence_validate_bootstrap)
+    evidence_validate_bootstrap.set_defaults(
+        handler=command_evidence_validate_bootstrap
+    )
     evidence_prune = evidence_commands.add_parser(
         "prune", help="Validate a receipt before pruning a completed local run"
     )
@@ -1161,6 +1273,31 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(publication_version)
     publication_version.set_defaults(handler=command_publication_plan_version)
 
+    publication_prepare = publication_commands.add_parser(
+        "prepare-release",
+        help="Materialize one deterministic Release PR candidate from change fragments",
+    )
+    _add_project_root(publication_prepare)
+    publication_prepare.add_argument(
+        "--changes-dir",
+        type=Path,
+        help="Release change directory; defaults to <project-root>/release-changes",
+    )
+    _add_json(publication_prepare)
+    publication_prepare.set_defaults(handler=command_publication_prepare_release)
+
+    publication_body = publication_commands.add_parser(
+        "release-pr-body",
+        help="Render the managed draft or approved Release PR body",
+    )
+    _add_project_root(publication_body)
+    publication_body.add_argument(
+        "--state", choices=("draft", "approved"), required=True
+    )
+    publication_body.add_argument("--output", type=Path, required=True)
+    _add_json(publication_body)
+    publication_body.set_defaults(handler=command_publication_release_pr_body)
+
     publication_release = publication_commands.add_parser(
         "validate-release",
         help="Validate a release contract, immutable tag, and main ancestry",
@@ -1171,8 +1308,25 @@ def build_parser() -> argparse.ArgumentParser:
     publication_release.add_argument("--commit", required=True)
     publication_release.add_argument("--main-ref", default="origin/main")
     publication_release.add_argument("--receipt", type=Path)
+    publication_release.add_argument("--authorization", type=Path)
+    publication_release.add_argument("--reviewed-commit")
     _add_json(publication_release)
     publication_release.set_defaults(handler=command_publication_validate_release)
+
+    publication_authorize = publication_commands.add_parser(
+        "authorize-release",
+        help="Validate reviewed release evidence and merge identity before tag creation",
+    )
+    _add_project_root(publication_authorize)
+    publication_authorize.add_argument("--tag", required=True)
+    publication_authorize.add_argument("--release-name", required=True)
+    publication_authorize.add_argument("--commit", required=True)
+    publication_authorize.add_argument("--main-ref", default="origin/main")
+    publication_authorize.add_argument("--receipt", type=Path)
+    publication_authorize.add_argument("--authorization", type=Path)
+    publication_authorize.add_argument("--reviewed-commit", required=True)
+    _add_json(publication_authorize)
+    publication_authorize.set_defaults(handler=command_publication_authorize_release)
 
     publication_artifacts = publication_commands.add_parser(
         "validate-artifacts",
@@ -1182,6 +1336,7 @@ def build_parser() -> argparse.ArgumentParser:
     publication_artifacts.add_argument("--artifacts", type=_root, required=True)
     publication_artifacts.add_argument("--attestation", type=Path, required=True)
     publication_artifacts.add_argument("--receipt", type=Path)
+    publication_artifacts.add_argument("--authorization", type=Path)
     publication_artifacts.add_argument("--commit", required=True)
     _add_json(publication_artifacts)
     publication_artifacts.set_defaults(
