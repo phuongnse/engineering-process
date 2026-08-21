@@ -8,9 +8,7 @@ on:
       - ".github/workflows/release-pr.yml"
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: engineering-process-release-pr
@@ -22,10 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Create short-lived Release PR token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+          permission-contents: write
+          permission-metadata: read
+          permission-pull-requests: write
+          permission-workflows: write
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -86,7 +98,7 @@ jobs:
       - name: Create or refresh the Release PR
         id: pull-request
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASE_BRANCH: automation/release/next
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
@@ -105,20 +117,3 @@ jobs:
             --json number --jq '.[0].number // empty')"
           test -n "$pr_number"
           printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
-
-      - name: Dispatch exact-head release validation
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_BRANCH: automation/release/next
-          PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}
-          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
-        run: |
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.ref)" = "$RELEASE_BRANCH"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$HEAD_SHA"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .base.ref)" = main
-          gh workflow run release-candidate.yml --ref "$RELEASE_BRANCH" \
-            -f release_pr_number="$PR_NUMBER" \
-            -f release_head_sha="$HEAD_SHA"
-          gh workflow run ci.yml --ref "$RELEASE_BRANCH" \
-            -f release_pr_number="$PR_NUMBER" \
-            -f release_head_sha="$HEAD_SHA"

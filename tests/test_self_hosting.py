@@ -48,9 +48,16 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('".github/workflows/release-pr.yml"', generator)
         self.assertIn("gh pr create --draft", generator)
         self.assertIn("--force-with-lease", generator)
-        self.assertIn("actions: write", generator)
-        self.assertIn('gh workflow run release-candidate.yml --ref "$RELEASE_BRANCH"', generator)
-        self.assertIn('gh workflow run ci.yml --ref "$RELEASE_BRANCH"', generator)
+        self.assertIn("actions/create-github-app-token@", generator)
+        self.assertIn("RENOVATE_APP_CLIENT_ID", generator)
+        self.assertIn("RENOVATE_APP_PRIVATE_KEY", generator)
+        self.assertIn("permission-workflows: write", generator)
+        self.assertIn("token: ${{ steps.app-token.outputs.token }}", generator)
+        self.assertIn("GH_TOKEN: ${{ steps.app-token.outputs.token }}", generator)
+        self.assertNotIn('gh workflow run release-candidate.yml', generator)
+        self.assertNotIn('gh workflow run ci.yml', generator)
+        self.assertIn("github.event_name == 'pull_request'", ci)
+        self.assertIn("github.event.pull_request.head.ref == 'automation/release/next'", ci)
         self.assertIn(
             'gh workflow run release-approval.yml --repo "$GITHUB_REPOSITORY" --ref main',
             ci,
