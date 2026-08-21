@@ -1,3 +1,5 @@
+import base64
+import json
 import subprocess
 import tempfile
 import unittest
@@ -96,6 +98,57 @@ class PublicationTests(unittest.TestCase):
             ),
         )
 
+    def test_draft_renovate_pr_accepts_only_bounded_debug_metadata(self):
+        payload = base64.b64encode(
+            json.dumps(
+                {
+                    "createdInVer": "44.37.1",
+                    "updatedInVer": "44.37.1",
+                    "targetBranch": "main",
+                    "labels": [],
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).decode("ascii")
+        body = pr_body("pending") + f"\n<!--renovate-debug:{payload}-->\n"
+
+        self.assertEqual(
+            [],
+            validate_pull_request(
+                title="chore(deps): update actions/checkout action to v7",
+                body=body,
+                branch="automation/renovate/actions-checkout-7.x",
+                state="draft",
+            ),
+        )
+
+    def test_renovate_metadata_does_not_allow_arbitrary_html_or_contracts(self):
+        valid = {
+            "createdInVer": "44.37.1",
+            "updatedInVer": "44.37.1",
+            "targetBranch": "main",
+            "labels": [],
+        }
+        unexpected = {**valid, "extra": "not-allowed"}
+        encoded = base64.b64encode(
+            json.dumps(unexpected, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        bodies = (
+            pr_body("pending") + "\n<div>hidden policy</div>\n",
+            pr_body("pending") + "\n<!--renovate-debug:not-base64-->\n",
+            pr_body("pending") + f"\n<!--renovate-debug:{encoded}-->\n",
+        )
+
+        for body in bodies:
+            with self.subTest(body=body[-100:]):
+                self.assertTrue(
+                    validate_pull_request(
+                        title="chore(deps): update actions/checkout action to v7",
+                        body=body,
+                        branch="automation/renovate/actions-checkout-7.x",
+                        state="draft",
+                    )
+                )
     def test_project_extensions_cannot_redefine_common_policy(self):
         duplicate_section = pr_body() + (
             "\n## Independent review\n\nIndependent review is not required here.\n"

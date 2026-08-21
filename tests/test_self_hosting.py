@@ -154,6 +154,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("steps.release-pr.outputs.release_sha", release)
         self.assertIn("publication authorize-release", release)
         self.assertIn("gh release edit", release)
+        for workflow in (release, prepare, publish):
+            self.assertIn(".release-controller", workflow)
+            self.assertIn("github.workflow_sha", workflow)
+        self.assertIn('--project-root "$GITHUB_WORKSPACE"', release)
         self.assertIn("release:\n    types: [published]", publish)
         self.assertNotIn("gh release upload", publish)
         self.assertGreaterEqual(publish.count("gh release verify"), 2)
@@ -200,6 +204,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("reviewed_pr_number: ${{ inputs.release_pr_number }}", workflow)
         self.assertIn("reviewed_head_sha: ${{ inputs.release_head_sha }}", workflow)
+        self.assertIn(
+            "if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
+            workflow,
+        )
         self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
         self.assertIn("PR_BODY_PATH: ${{ steps.release.outputs.body_path }}", workflow)
         self.assertIn("verification/generate_ci_evidence.py", workflow)
@@ -348,13 +356,15 @@ class SelfHostingTests(unittest.TestCase):
         self.assertEqual(VERSION, pyproject["project"]["version"])
         self.assertEqual(VERSION, release["version"])
 
-    def test_publish_fails_closed_at_the_n_minus_one_and_hash_boundaries(self):
+    def test_publish_fails_closed_at_controller_and_hash_boundaries(self):
         workflow = (
             PROCESS_ROOT / ".github" / "workflows" / "publish.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn(
-            'process-authority/bin/processctl" evidence validate', workflow
+        self.assertIn("github.workflow_sha", workflow)
+        self.assertIn(".release-controller/processctl.py", workflow)
+        self.assertGreaterEqual(
+            workflow.count('"${controller[@]}" evidence validate'), 2
         )
         self.assertIn("evidence validate-bootstrap", workflow)
         self.assertIn("evidence_args+=(--authorization", workflow)
