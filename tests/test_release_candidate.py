@@ -205,6 +205,24 @@ class ReleaseCandidateTests(unittest.TestCase):
                 plan["contractDigest"],
             )
 
+    def test_materialization_preserves_crlf_runtime_version_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_project(root)
+            self.write_change(root)
+            runtime_path = root / "engineering_process" / "__init__.py"
+            runtime_path.write_bytes(b'VERSION = "0.1.1"\r\n')
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "test: use CRLF runtime source"],
+                cwd=root,
+                check=True,
+            )
+
+            prepare_release_candidate(root)
+
+            self.assertEqual(b'VERSION = "0.2.0"\r\n', runtime_path.read_bytes())
+
     def test_requires_self_adoption_before_the_release_after_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

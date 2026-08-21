@@ -158,10 +158,13 @@ def _replace_runtime_version(
     except UnicodeDecodeError as error:
         raise ContractError("runtime version source must be UTF-8") from error
     pattern = re.compile(
-        rf'(?m)^(?P<prefix>{re.escape(variable)}[ \t]*=[ \t]*)"{re.escape(previous)}"(?P<suffix>[ \t]*)$'
+        rf'(?m)^(?P<prefix>{re.escape(variable)}[ \t]*=[ \t]*)"{re.escape(previous)}"(?P<suffix>[ \t]*)(?P<carriage_return>\r?)$'
     )
     updated, count = pattern.subn(
-        lambda match: f'{match.group("prefix")}"{version}"{match.group("suffix")}',
+        lambda match: (
+            f'{match.group("prefix")}"{version}"{match.group("suffix")}'
+            f'{match.group("carriage_return")}'
+        ),
         text,
     )
     if count != 1:
