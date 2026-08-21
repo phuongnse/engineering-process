@@ -167,3 +167,27 @@ jobs:
           retention-days: 90
           compression-level: 9
           include-hidden-files: false
+
+  release-authorization:
+    name: Dispatch exact release authorization
+    needs: [independent-review, verify]
+    if: github.event_name == 'workflow_dispatch' && success()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch base-controlled authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
+          RELEASE_HEAD_SHA: ${{ inputs.release_head_sha }}
+        run: |
+          printf '%s' "$RELEASE_PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$RELEASE_HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          test "$RELEASE_HEAD_SHA" = "$GITHUB_SHA"
+          gh workflow run release-approval.yml --ref main \
+            -f ci_run_id="$GITHUB_RUN_ID" \
+            -f release_pr_number="$RELEASE_PR_NUMBER" \
+            -f release_head_sha="$RELEASE_HEAD_SHA"
