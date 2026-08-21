@@ -8,6 +8,7 @@ on:
       - ".github/workflows/release-pr.yml"
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -59,6 +60,7 @@ jobs:
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Commit the generated candidate
+        id: candidate
         env:
           RELEASE_BRANCH: automation/release/next
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
@@ -79,8 +81,10 @@ jobs:
           else
             git push --set-upstream origin "HEAD:refs/heads/$RELEASE_BRANCH"
           fi
+          printf 'head_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create or refresh the Release PR
+        id: pull-request
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_BRANCH: automation/release/next
@@ -97,3 +101,24 @@ jobs:
               --title "chore(release): prepare $RELEASE_TAG" \
               --body-file "$RUNNER_TEMP/release-pr.md"
           fi
+          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
+            --json number --jq '.[0].number // empty')"
+          test -n "$pr_number"
+          printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch exact-head release validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: automation/release/next
+          PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.ref)" = "$RELEASE_BRANCH"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$HEAD_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .base.ref)" = main
+          gh workflow run release-candidate.yml --ref "$RELEASE_BRANCH" \
+            -f release_pr_number="$PR_NUMBER" \
+            -f release_head_sha="$HEAD_SHA"
+          gh workflow run ci.yml --ref "$RELEASE_BRANCH" \
+            -f release_pr_number="$PR_NUMBER" \
+            -f release_head_sha="$HEAD_SHA"
