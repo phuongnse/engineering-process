@@ -370,6 +370,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn(".release-controller/processctl.py", workflow)
         self.assertIn("process-authority/bin/python", workflow)
         self.assertGreaterEqual(
+            workflow.count('git fetch --no-tags origin "$reviewed_sha"'), 2
+        )
+        self.assertGreaterEqual(
             workflow.count('"${controller[@]}" evidence validate'), 2
         )
         self.assertIn("evidence validate-bootstrap", workflow)

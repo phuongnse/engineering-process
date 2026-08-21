@@ -109,6 +109,11 @@ jobs:
               "$EVIDENCE_PATH" --json
             evidence_args+=(--authorization "$EVIDENCE_PATH")
           fi
+          reviewed_sha="$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["checkpoint"])' "$EVIDENCE_PATH")"
+          printf '%s' "$reviewed_sha" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags origin "$reviewed_sha"
+          test "$(git rev-parse FETCH_HEAD)" = "$reviewed_sha"
+          git cat-file -e "$reviewed_sha^{commit}"
           "${controller[@]}" publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \
@@ -239,6 +244,11 @@ jobs:
               "$EVIDENCE_PATH" --json
             evidence_args+=(--authorization "$EVIDENCE_PATH")
           fi
+          reviewed_sha="$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["checkpoint"])' "$EVIDENCE_PATH")"
+          printf '%s' "$reviewed_sha" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags origin "$reviewed_sha"
+          test "$(git rev-parse FETCH_HEAD)" = "$reviewed_sha"
+          git cat-file -e "$reviewed_sha^{commit}"
           "${controller[@]}" publication validate-release \
             --project-root . \
             --tag "$GITHUB_REF_NAME" \

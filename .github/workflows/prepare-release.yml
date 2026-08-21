@@ -88,6 +88,11 @@ jobs:
               evidence validate-bootstrap \
               "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" --json
           fi
+          reviewed_sha="$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["checkpoint"])' "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET")"
+          printf '%s' "$reviewed_sha" | grep -Eq '^[0-9a-f]{40}$'
+          git fetch --no-tags origin "$reviewed_sha"
+          test "$(git rev-parse FETCH_HEAD)" = "$reviewed_sha"
+          git cat-file -e "$reviewed_sha^{commit}"
           printf 'CHECKPOINT=%s\n' "$(git rev-parse --verify 'HEAD^{commit}')" \
             >> "$GITHUB_ENV"
 
