@@ -99,11 +99,26 @@ jobs:
           RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/release-assets/distributions"
+          download_asset() {
+            local tag="$1" pattern="$2" directory="$3" attempt
+            mkdir -p "$directory"
+            for attempt in 1 2 3 4; do
+              if gh release download "$tag" \
+                --pattern "$pattern" --dir "$directory"; then
+                return 0
+              fi
+              rm -f "$directory/$pattern"
+              if test "$attempt" -eq 4; then
+                return 1
+              fi
+              sleep "$((attempt * 2))"
+            done
+          }
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
-          gh release download "$RELEASE_TAG" \
-            --pattern "$EVIDENCE_ASSET" --dir "$RUNNER_TEMP/release-assets"
-          gh release download "$RELEASE_TAG" \
-            --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
+          download_asset "$RELEASE_TAG" "$EVIDENCE_ASSET" \
+            "$RUNNER_TEMP/release-assets"
+          download_asset "$RELEASE_TAG" "$attestation_asset" \
+            "$RUNNER_TEMP/release-assets"
           python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
             > "$RUNNER_TEMP/release-assets/artifact-names.txt"
           {
@@ -111,8 +126,8 @@ jobs:
             cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
           } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
           while IFS= read -r artifact; do
-            gh release download "$RELEASE_TAG" \
-              --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
+            download_asset "$RELEASE_TAG" "$artifact" \
+              "$RUNNER_TEMP/release-assets/distributions"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           printf 'EVIDENCE_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
@@ -250,11 +265,26 @@ jobs:
           RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/release-assets/distributions"
+          download_asset() {
+            local tag="$1" pattern="$2" directory="$3" attempt
+            mkdir -p "$directory"
+            for attempt in 1 2 3 4; do
+              if gh release download "$tag" \
+                --pattern "$pattern" --dir "$directory"; then
+                return 0
+              fi
+              rm -f "$directory/$pattern"
+              if test "$attempt" -eq 4; then
+                return 1
+              fi
+              sleep "$((attempt * 2))"
+            done
+          }
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
-          gh release download "$RELEASE_TAG" \
-            --pattern "$EVIDENCE_ASSET" --dir "$RUNNER_TEMP/release-assets"
-          gh release download "$RELEASE_TAG" \
-            --pattern "$attestation_asset" --dir "$RUNNER_TEMP/release-assets"
+          download_asset "$RELEASE_TAG" "$EVIDENCE_ASSET" \
+            "$RUNNER_TEMP/release-assets"
+          download_asset "$RELEASE_TAG" "$attestation_asset" \
+            "$RUNNER_TEMP/release-assets"
           python -c 'import json; print("\n".join(json.load(open("release.json", encoding="utf-8"))["identity"]["artifacts"]))' \
             > "$RUNNER_TEMP/release-assets/artifact-names.txt"
           {
@@ -262,8 +292,8 @@ jobs:
             cat "$RUNNER_TEMP/release-assets/artifact-names.txt"
           } | LC_ALL=C sort > "$RUNNER_TEMP/release-assets/expected-release-assets.txt"
           while IFS= read -r artifact; do
-            gh release download "$RELEASE_TAG" \
-              --pattern "$artifact" --dir "$RUNNER_TEMP/release-assets/distributions"
+            download_asset "$RELEASE_TAG" "$artifact" \
+              "$RUNNER_TEMP/release-assets/distributions"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           printf 'EVIDENCE_PATH=%s\n' \
             "$RUNNER_TEMP/release-assets/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
