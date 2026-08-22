@@ -44,6 +44,31 @@ def document(files: dict[str, tuple[int, str]] = EXPECTED) -> dict[str, object]:
     }
 
 
+def simple_document(
+    files: dict[str, tuple[int, str]] = EXPECTED,
+) -> dict[str, object]:
+    return {
+        "files": [
+            {"filename": name, "hashes": {"sha256": digest}}
+            for name, (_size, digest) in files.items()
+        ],
+        "meta": {"api-version": "1.4"},
+        "name": PACKAGE,
+    }
+
+
+def exact_opener(
+    files: dict[str, tuple[int, str]] = EXPECTED,
+    simple_files: dict[str, tuple[int, str]] = EXPECTED,
+):
+    def open_request(request, **_kwargs):
+        if "/simple/" in request.full_url:
+            return Response(simple_document(simple_files))
+        return Response(document(files))
+
+    return open_request
+
+
 class PyPIPublicationTests(unittest.TestCase):
     def test_missing_version_requires_publication(self):
         def missing(request, *, timeout):
@@ -69,7 +94,7 @@ class PyPIPublicationTests(unittest.TestCase):
             PACKAGE,
             VERSION,
             EXPECTED,
-            opener=lambda *_args, **_kwargs: Response(document()),
+            opener=exact_opener(),
         )
 
         self.assertEqual("published", result["status"])
@@ -85,7 +110,7 @@ class PyPIPublicationTests(unittest.TestCase):
                 PACKAGE,
                 VERSION,
                 EXPECTED,
-                opener=lambda *_args, **_kwargs: Response(document(partial)),
+                opener=exact_opener(partial),
             )
 
     def test_conflicting_hash_fails_closed(self):
@@ -97,8 +122,22 @@ class PyPIPublicationTests(unittest.TestCase):
                 PACKAGE,
                 VERSION,
                 EXPECTED,
-                opener=lambda *_args, **_kwargs: Response(document(conflicting)),
+                opener=exact_opener(conflicting),
             )
+
+    def test_version_json_waits_for_simple_api_propagation(self):
+        partial = dict(EXPECTED)
+        partial.pop("engineering_process-0.2.0.tar.gz")
+
+        result = inspect_pypi_publication(
+            PACKAGE,
+            VERSION,
+            EXPECTED,
+            opener=exact_opener(simple_files=partial),
+        )
+
+        self.assertEqual("propagating", result["status"])
+        self.assertFalse(result["publishRequired"])
 
     def test_oversized_response_is_rejected_before_read(self):
         response = Response(document())

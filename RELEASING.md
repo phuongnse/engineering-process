@@ -114,7 +114,8 @@ The workflow then performs this deterministic state machine:
    attestation, and the installed wheel in both the no-OIDC build job and the gated
    PyPI job. It accepts an existing PyPI version only when the complete filename,
    size, and SHA-256 set is identical; an absent version uploads wheel and sdist with
-   PyPI attestations through OIDC and waits for the exact registry state.
+   PyPI attestations through OIDC and waits for both the exact version JSON and the
+   Simple API file hashes used by pip consumers before dispatching adoption.
 7. After exact PyPI verification, a short-lived GitHub App token sends one bounded
    `engineering-process-published` event to `renovate-ops`. The event starts the
    allowlisted production adoption scan; no release polling schedule participates.
