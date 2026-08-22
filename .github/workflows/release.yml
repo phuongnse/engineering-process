@@ -32,6 +32,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       publish_required: ${{ steps.draft.outputs.publish_required }}
+      release_sha: ${{ steps.release-pr.outputs.release_sha }}
       tag: ${{ steps.identity.outputs.tag }}
     steps:
       - name: Resolve the exact merged Release PR
@@ -256,3 +257,76 @@ jobs:
           test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
           test "$(gh release view "$TAG" --json name --jq .name)" = "$TAG"
           gh release edit "$TAG" --draft=false
+
+  dispatch-pypi:
+    name: Dispatch exact PyPI publication
+    needs: [authorize, prepare, publish]
+    if: >-
+      always() &&
+      needs.authorize.result == 'success' &&
+      ((needs.authorize.outputs.publish_required == 'true' &&
+      needs.prepare.result == 'success' &&
+      needs.publish.result == 'success') ||
+      (needs.authorize.outputs.publish_required == 'false' &&
+      needs.prepare.result == 'skipped' &&
+      needs.publish.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.authorize.outputs.tag }}
+
+      - name: Resolve exact publication event identity
+        id: identity
+        env:
+          EXPECTED_CHECKPOINT: ${{ needs.authorize.outputs.release_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+        run: |
+          test "$(git rev-parse --verify 'HEAD^{commit}')" = "$EXPECTED_CHECKPOINT"
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
+          gh release verify "$RELEASE_TAG"
+          version="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["version"])')"
+          test "$RELEASE_TAG" = "v$version"
+          attestation="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
+          digest="$(gh release view "$RELEASE_TAG" --json assets --jq ".assets[] | select(.name == \"$attestation\") | .digest")"
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          {
+            printf 'attestation_digest=%s\n' "$digest"
+            printf 'version=%s\n' "$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create short-lived publication event token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+          permission-contents: write
+          permission-metadata: read
+
+      - name: Dispatch authenticated publication event
+        env:
+          ATTESTATION_DIGEST: ${{ steps.identity.outputs.attestation_digest }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_SHA: ${{ needs.authorize.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          jq -n \
+            --arg attestationDigest "$ATTESTATION_DIGEST" \
+            --arg commit "$RELEASE_SHA" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg tag "$RELEASE_TAG" \
+            --arg version "$VERSION" \
+            '{event_type: "engineering-process-release-ready", client_payload: {attestationDigest: $attestationDigest, commit: $commit, repository: $repository, tag: $tag, version: $version}}' \
+            > "$RUNNER_TEMP/publication-event.json"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/dispatches" \
+            --input "$RUNNER_TEMP/publication-event.json"
