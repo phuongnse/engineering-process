@@ -6,9 +6,10 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
-import tempfile
+import threading
 import time
 
 
@@ -16,6 +17,9 @@ PUBLIC_INDEX = "https://pypi.org/simple"
 MAX_LOCK_BYTES = 1_000_000
 MAX_OUTPUT_BYTES = 1_000_000
 ATTEMPT_TIMEOUT_SECONDS = 300
+ATTEMPT_POLL_SECONDS = 0.05
+TERMINATION_TIMEOUT_SECONDS = 5.0
+READ_CHUNK_BYTES = 64 * 1024
 BACKOFF_SECONDS = (10, 20, 40, 80, 160)
 PIN_PATTERN = re.compile(
     r"(?m)^engineering-process=="
@@ -34,6 +38,31 @@ class Attempt:
     stderr: bytes
     timed_out: bool = False
     output_exceeded: bool = False
+    descendants_terminated: bool = False
+
+
+class _BoundedOutput:
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._lock = threading.Lock()
+        self._parts: dict[str, bytearray] = {
+            "stdout": bytearray(),
+            "stderr": bytearray(),
+        }
+        self.exceeded = threading.Event()
+
+    def add(self, stream: str, content: bytes) -> None:
+        with self._lock:
+            current = sum(len(part) for part in self._parts.values())
+            remaining = max(0, self._limit - current)
+            if remaining:
+                self._parts[stream].extend(content[:remaining])
+            if len(content) > remaining:
+                self.exceeded.set()
+
+    def value(self, stream: str) -> bytes:
+        with self._lock:
+            return bytes(self._parts[stream])
 
 
 AttemptRunner = Callable[[Sequence[str], Path, dict[str, str]], Attempt]
@@ -122,43 +151,195 @@ def pip_command(
     )
 
 
+def _drain(
+    stream: object,
+    label: str,
+    capture: _BoundedOutput,
+) -> None:
+    try:
+        while chunk := stream.read(READ_CHUNK_BYTES):  # type: ignore[attr-defined]
+            capture.add(label, chunk)
+    finally:
+        stream.close()  # type: ignore[attr-defined]
+
+
+def _process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_group(process_group: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _process_group_exists(process_group):
+            return True
+        time.sleep(0.02)
+    return not _process_group_exists(process_group)
+
+
+def _terminate_posix_group(process_group: int) -> bool:
+    if not _process_group_exists(process_group):
+        return False
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except PermissionError as error:
+        if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+            return True
+        raise InstallError(
+            "pip process group could not be signaled during bounded termination"
+        ) from error
+    if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+        return True
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except PermissionError as error:
+        if _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+            return True
+        raise InstallError(
+            "pip process group could not be killed during bounded termination"
+        ) from error
+    if not _wait_for_process_group(process_group, TERMINATION_TIMEOUT_SECONDS):
+        raise InstallError("pip process group survived bounded termination")
+    return True
+
+
+def _terminate_tree(process: subprocess.Popen[bytes]) -> bool:
+    if os.name == "nt":
+        if process.poll() is not None:
+            return False
+        process.terminate()
+        try:
+            process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+        return True
+
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as error:
+                raise InstallError(
+                    "pip root process survived bounded termination"
+                ) from error
+    return _terminate_posix_group(process.pid)
+
+
+def _windows_wrapped_command(command: Sequence[str]) -> list[str]:
+    supplied = Path(command[0])
+    if not supplied.is_absolute() or supplied.suffix.casefold() != ".exe":
+        raise InstallError("Windows pip commands require an absolute .exe path")
+    try:
+        application = supplied.resolve(strict=True)
+    except OSError as error:
+        raise InstallError("Windows Python executable is unavailable") from error
+    helper = (
+        Path(__file__).resolve().parent.parent
+        / "templates"
+        / "adopt-process-windows-job.py"
+    )
+    if helper.is_symlink() or not helper.is_file():
+        raise InstallError("Windows Job Object helper is unavailable")
+    return [
+        sys.executable,
+        "-I",
+        str(helper),
+        "--application",
+        str(application),
+        "--",
+        *command,
+    ]
+
+
 def _run_attempt(
     command: Sequence[str], working_directory: Path, environment: dict[str, str]
 ) -> Attempt:
-    with tempfile.TemporaryDirectory(prefix="process-runtime-install-") as directory:
-        output_root = Path(directory)
-        stdout_path = output_root / "stdout"
-        stderr_path = output_root / "stderr"
-        try:
-            with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
-                result = subprocess.run(
-                    list(command),
-                    cwd=working_directory,
-                    env=environment,
-                    stdin=subprocess.DEVNULL,
-                    stdout=stdout,
-                    stderr=stderr,
-                    check=False,
-                    timeout=ATTEMPT_TIMEOUT_SECONDS,
-                )
-        except subprocess.TimeoutExpired:
-            return Attempt(-1, b"", b"", timed_out=True)
-        except OSError as error:
-            raise InstallError(f"cannot execute pip: {error}") from error
-        stdout_size = stdout_path.stat().st_size
-        stderr_size = stderr_path.stat().st_size
-        if stdout_size + stderr_size > MAX_OUTPUT_BYTES:
-            return Attempt(
-                result.returncode,
-                b"",
-                b"",
-                output_exceeded=True,
-            )
-        return Attempt(
-            result.returncode,
-            stdout_path.read_bytes(),
-            stderr_path.read_bytes(),
-        )
+    capture = _BoundedOutput(MAX_OUTPUT_BYTES)
+    executable = _windows_wrapped_command(command) if os.name == "nt" else list(command)
+    options: dict[str, object] = {
+        "cwd": working_directory,
+        "env": environment,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+    }
+    if os.name == "nt":
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        options["start_new_session"] = True
+    try:
+        process = subprocess.Popen(executable, **options)
+    except OSError as error:
+        raise InstallError(f"cannot execute pip: {error}") from error
+    assert process.stdout is not None
+    assert process.stderr is not None
+    stdout_thread = threading.Thread(
+        target=_drain,
+        args=(process.stdout, "stdout", capture),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_drain,
+        args=(process.stderr, "stderr", capture),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+    deadline = time.monotonic() + ATTEMPT_TIMEOUT_SECONDS
+    timed_out = False
+    output_exceeded = False
+    try:
+        while process.poll() is None:
+            if capture.exceeded.is_set():
+                output_exceeded = True
+                _terminate_tree(process)
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _terminate_tree(process)
+                break
+            try:
+                process.wait(timeout=min(ATTEMPT_POLL_SECONDS, remaining))
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        _terminate_tree(process)
+        raise
+    descendants_terminated = _terminate_tree(process)
+    stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+    stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+    if stdout_thread.is_alive() or stderr_thread.is_alive():
+        _terminate_tree(process)
+        raise InstallError("pip output readers did not terminate")
+    return Attempt(
+        process.returncode if process.returncode is not None else -1,
+        capture.value("stdout"),
+        capture.value("stderr"),
+        timed_out=timed_out,
+        output_exceeded=output_exceeded or capture.exceeded.is_set(),
+        descendants_terminated=descendants_terminated,
+    )
 
 
 def retryable_exact_version_absence(attempt: Attempt, version: str) -> bool:
@@ -217,6 +398,10 @@ def install_process_runtime(
         if attempt.output_exceeded:
             raise InstallError(
                 f"pip attempt output exceeded {MAX_OUTPUT_BYTES} bytes"
+            )
+        if attempt.descendants_terminated:
+            raise InstallError(
+                "pip attempt left descendant processes; they were terminated"
             )
         if attempt.returncode == 0:
             return

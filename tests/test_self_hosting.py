@@ -16,6 +16,36 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_public_install_action_uses_immutable_checkout_source_and_safe_inputs(self):
+        action = (PROCESS_ROOT / "action.yml").read_text(encoding="utf-8")
+        ci = (
+            PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("using: composite", action)
+        self.assertIn("shell: python", action)
+        self.assertIn("${{ github.action_path }}", action)
+        self.assertIn('action_root / "verification" / "install_process_runtime.py"', action)
+        self.assertIn('sys.argv = arguments', action)
+        self.assertNotIn("curl ", action)
+        self.assertNotIn("wget ", action)
+        self.assertNotIn("shell: bash", action)
+        self.assertNotIn("shell: pwsh", action)
+
+        self.assertIn("Smoke test shared install action", ci)
+        self.assertIn("process-action-smoke/Scripts/python.exe", ci)
+        self.assertIn("process-action-smoke/bin/python", ci)
+        self.assertIn("Verify shared install action authority", ci)
+        create = ci.index("Create exact public N-1 release qualification environment")
+        install = ci.index("Install exact public N-1 release qualification authority")
+        dependencies = ci.index("Install release qualification dependencies")
+        self.assertLess(create, install)
+        self.assertLess(install, dependencies)
+        install_block = ci[install:dependencies]
+        self.assertIn("uses: ./", install_block)
+        self.assertIn("requirements-lock: requirements/process.txt", install_block)
+        self.assertNotIn("python verification/install_process_runtime.py", ci)
+
     def test_release_pr_review_keeps_write_authority_out_of_head_code(self):
         candidate = (
             PROCESS_ROOT / ".github" / "workflows" / "release-candidate.yml"
@@ -321,10 +351,10 @@ class SelfHostingTests(unittest.TestCase):
             'python -m venv "$RUNNER_TEMP/release-qualification-authority"',
             workflow,
         )
-        self.assertIn("verification/install_process_runtime.py", workflow)
-        self.assertIn("--requirements-lock requirements/process.txt", workflow)
+        self.assertIn("uses: ./", workflow)
+        self.assertIn("requirements-lock: requirements/process.txt", workflow)
         self.assertIn(
-            '--python "$RUNNER_TEMP/release-qualification-authority/bin/python"',
+            "python-executable: ${{ runner.temp }}/release-qualification-authority/bin/python",
             workflow,
         )
         self.assertIn("verification/qualify_release_lifecycle.py", workflow)

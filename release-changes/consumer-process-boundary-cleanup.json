@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "consumer-process-boundary-cleanup",
+  "type": "capability",
+  "surfaces": [
+    "ci-bootstrap",
+    "workflow"
+  ],
+  "rationale": "Provide one immutable producer-owned CI installation action so consumers can remove copied process algorithms without weakening exact hash locks or bounded registry propagation recovery.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

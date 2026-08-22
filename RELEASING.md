@@ -8,6 +8,12 @@ Connect, and Renovate discovery for self and consumer adoption PRs.
 Feature PR merge is not publication authorization. It contributes one bounded release
 change fragment; only the separately reviewed Release PR merge authorizes publication.
 
+The repository-root GitHub Action is published by the same immutable tag and commit
+as the Python artifacts. It has no floating release channel or separately mutable
+payload. Consumer workflows pin the full release commit and keep the corresponding
+tag only as an annotation; their Python package pin and action update are grouped in
+one reviewed adoption candidate after the initial clean cutover.
+
 ## One-time repository controls
 
 Configure these controls before enabling the workflows:
@@ -171,6 +177,14 @@ adoption runner contract then creates or updates the self-adoption draft and eve
 opted-in consumer draft. Event delivery is at least once and Renovate is idempotent;
 there is no scheduled production poll. Those PRs contain the full lock graph, managed
 assets, and any consumer-owned target-version migration.
+
+The first release containing the shared CI install action is followed by one bounded
+cleanup PR per existing consumer: pin the action's full release commit, replace local
+installer invocation, and delete the copied installer and its algorithm unit tests in
+the same checkpoint. Later releases update the action and Python identities together
+through Renovate. Managed adoption runners remain byte-verified distribution
+snapshots because they bootstrap the target authority inside Renovate; they are not
+consumer-owned implementations and are not replaced by an unpinned network command.
 
 The Renovate host must allow only the literal managed runner command. For self-hosted
 Renovate, configure the administrator-owned `allowedCommands` value, never repository

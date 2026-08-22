@@ -98,6 +98,20 @@ Release, self-adoption, and consumer adoption are separate changes:
    checkpoint. Merge completes adoption; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the adoption checkpoint.
 
+The repository-root GitHub Action and Python package are two surfaces of the same
+governed release checkpoint. A consumer invocation pins the action by the release
+commit's full object id and keeps the `v<SemVer>` annotation; Renovate groups that
+GitHub Action identity with the direct Python authority update. The action does not
+select the package version. It installs only the consumer's complete hash lock, so
+the process lock, Python artifacts, managed assets, action source, and reviewed tag
+remain independently checkable parts of one release identity.
+
+Consumer repositories do not own copies of reusable installation or publication
+algorithms. They retain declarative process/project locks, exact project commands,
+and managed bootstrap snapshots required before a target version is installed. A
+clean-cutover PR may delete an obsolete local helper only after it pins an immutable
+public action checkpoint; no compatibility shim or dual execution path is retained.
+
 Renovate PRs are generated adoption candidates, not trusted adoption evidence.
 Automerge is forbidden for process-authority updates. A PR that changes only a
 requirement pin, omits generated hashes or managed assets, or requires a post-merge
