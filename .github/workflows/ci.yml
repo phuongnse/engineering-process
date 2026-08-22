@@ -105,8 +105,10 @@ jobs:
           github.head_ref != 'automation/release/next'
         run: |
           python -m venv "$RUNNER_TEMP/release-qualification-authority"
-          "$RUNNER_TEMP/release-qualification-authority/bin/python" -m pip install \
-            --require-hashes -r requirements/process.txt
+          python verification/install_process_runtime.py \
+            --project-root . \
+            --requirements-lock requirements/process.txt \
+            --python "$RUNNER_TEMP/release-qualification-authority/bin/python"
           "$RUNNER_TEMP/release-qualification-authority/bin/python" -m pip install \
             -r engineering_process/requirements-runtime.txt \
             -r engineering_process/requirements-dev.txt \
