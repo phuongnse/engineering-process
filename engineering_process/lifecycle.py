@@ -624,10 +624,45 @@ def _begin_implementation_unlocked(
     kind: str,
 ) -> dict[str, Any]:
     state = load_state(project_root, change_id)
-    _require_phase(state, "planned", "implementing", "changes-requested")
     _contract(project_root, state)
     _plan(project_root, state)
     actor = _actor(actor_id, context_id, kind)
+    if state["phase"] == "verified":
+        source = source_state(project_root)
+        checkpoints = {item["checkpoint"] for item in state["verification"]}
+        fingerprints = {
+            item["workspaceFingerprint"] for item in state["verification"]
+        }
+        current = (
+            source["dirty"] is False
+            and source["checkpoint"] is not None
+            and source["fingerprint"] is not None
+            and checkpoints == {source["checkpoint"]}
+            and fingerprints == {source["fingerprint"]}
+        )
+        if current:
+            raise ContractError(
+                "current verified change must enter independent review before "
+                "another implementation cycle"
+            )
+        previous_cycle = state["cycle"]
+        previous_verification = list(state["verification"])
+        state["cycle"] += 1
+        state["implementationActors"] = []
+        state["verification"] = []
+        state["reviewAssignment"] = None
+        state["review"] = None
+        _event(
+            state,
+            "verification-invalidated",
+            actor,
+            cycle=state["cycle"],
+            previousCycle=previous_cycle,
+            previousVerification=previous_verification,
+            reason="source-changed-after-verification",
+        )
+    else:
+        _require_phase(state, "planned", "implementing", "changes-requested")
     if state["phase"] == "changes-requested":
         state["cycle"] += 1
         state["implementationActors"] = []

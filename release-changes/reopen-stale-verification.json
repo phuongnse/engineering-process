@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "reopen-stale-verification",
+  "type": "fix",
+  "surfaces": [
+    "lifecycle"
+  ],
+  "rationale": "Allow a verified change invalidated by later remote evidence or a source correction to begin a new implementation cycle while preserving prior evidence and still forbidding current verified work from bypassing independent review.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

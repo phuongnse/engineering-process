@@ -101,6 +101,26 @@ attribute files are rejected by existing managed-tree ownership and content chec
 External Git overrides that alter a checkout still fail byte-exact distribution
 attestation. A consumer never authors or maintains process skills locally.
 
+CI installs the pinned authority through the repository-root
+`phuongnse/engineering-process` action from the same governed release. Consumers pin
+the action with the release commit's full object id and retain the human-readable
+`v<SemVer>` annotation; floating tags and copied installer implementations are not
+supported. The action reads the consumer-owned `requirements/process.txt` and changes
+no version or source decision: it preserves the complete hash lock, public PyPI,
+binary-only policy, sanitized pip environment, exact-version-only propagation retry,
+bounded output and time, and cross-platform descendant cleanup. The action source is
+resolved only from `github.action_path`, so an untrusted consumer checkout cannot
+replace the installer.
+
+Project-owned CI workflows remain local because they select the project's commands
+and evidence. Reusable installation and publication grammar belong to this
+distribution; product, architecture, dependency, documentation, and acceptance
+checks remain with the consumer. The managed `.process/adopt-process.py` and Windows
+Job Object sidecar are intentional bootstrap snapshots, not consumer implementations:
+Renovate must install and verify a target authority before that target exists in the
+checkout, and `processctl sync --check` compares those bytes with the pinned
+distribution.
+
 For an existing consumer, a published version is adopted through one Renovate draft.
 The managed runner installs the target authority from the complete hash lock outside
 the checkout and atomically updates the process lock and managed assets. If the
@@ -351,6 +371,13 @@ processctl change verify --change-id issue-123 --profile review \
   --actor worker --context worker-session --actor-kind agent
 ~~~
 
+If later remote evidence or a source correction invalidates that verified checkpoint
+before review, commit the correction and run `change implement` again. The CLI
+preserves the earlier evidence, records `verification-invalidated`, increments the
+cycle, and requires every profile again. It accepts this transition only when the
+recorded verification is actually stale; a current verified checkpoint cannot use it
+to bypass independent review.
+
 After the phase becomes `verified`, a separate reviewer context registers its
 assignment:
 
@@ -469,6 +496,11 @@ authenticates who produced it.
   draft contains the new lock, managed contracts, skill snapshots, and any
   target-version consumer-owned project migration; after CI and fresh-context
   independent review, merge is the end of adoption.
+- The repository-root GitHub Action is the shared CI bootstrap surface. Consumers pin
+  its full governed release commit, while the exact Python authority remains selected
+  exclusively by their hash-locked `requirements/process.txt`. The action invokes the
+  producer-owned installer from its immutable action checkout and never downloads or
+  executes helper source from the consumer branch.
 - Versioned JSON schemas define change, plan, verification, review, lifecycle,
   completion-related artifacts, release-change fragments, and the release
   classification contract. The generated Release PR gate binds that contract to the

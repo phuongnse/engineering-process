@@ -1,9 +1,11 @@
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from verification import install_process_runtime as installer
 from verification.install_process_runtime import (
     Attempt,
     BACKOFF_SECONDS,
@@ -179,6 +181,54 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
                         link,
                         runner=lambda *_arguments: Attempt(0, b"", b""),
                     )
+
+    def test_real_runner_bounds_output_and_terminates_on_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(installer, "MAX_OUTPUT_BYTES", 1024):
+                attempt = installer._run_attempt(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import sys; sys.stdout.buffer.write(b'x' * 100000); sys.stdout.flush()",
+                    ],
+                    root,
+                    os.environ.copy(),
+                )
+            self.assertTrue(attempt.output_exceeded)
+            self.assertLessEqual(len(attempt.stdout) + len(attempt.stderr), 1024)
+
+            with (
+                patch.object(installer, "ATTEMPT_TIMEOUT_SECONDS", 0.1),
+                patch.object(installer, "TERMINATION_TIMEOUT_SECONDS", 1.0),
+            ):
+                started = installer.time.monotonic()
+                attempt = installer._run_attempt(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    root,
+                    os.environ.copy(),
+                )
+                elapsed = installer.time.monotonic() - started
+            self.assertTrue(attempt.timed_out)
+            self.assertLess(elapsed, 3.0)
+
+    @unittest.skipIf(os.name == "nt", "Windows descendants are covered by Job Object tests")
+    def test_real_runner_terminates_descendants_left_by_successful_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            attempt = installer._run_attempt(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import subprocess, sys; "
+                        "subprocess.Popen([sys.executable, '-c', "
+                        "'import time; time.sleep(30)'])"
+                    ),
+                ],
+                Path(directory),
+                os.environ.copy(),
+            )
+        self.assertTrue(attempt.descendants_terminated)
 
 
 if __name__ == "__main__":
