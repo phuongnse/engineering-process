@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from engineering_process.contracts import ContractError, validate_plan, validate_release
+from engineering_process.contracts import (
+    ContractError,
+    validate_change,
+    validate_plan,
+    validate_release,
+)
 from engineering_process.publication import validate_pull_request
 from engineering_process.release_candidate import (
     prepare_release_candidate,
@@ -210,8 +215,35 @@ class ReleaseCandidateTests(unittest.TestCase):
             plan = json.loads(
                 (root / ".release" / "plan.json").read_text(encoding="utf-8")
             )
+            validate_change(change)
             validate_plan(plan)
             self.assertEqual("release-0-2-0", change["id"])
+            self.assertEqual(3, change["schemaVersion"])
+            self.assertEqual(2, plan["schemaVersion"])
+            assessments = change["quality"]["assessments"]
+            self.assertEqual(
+                [
+                    "compatibility",
+                    "correctness",
+                    "maintainability",
+                    "observability",
+                    "operability",
+                    "performance",
+                    "privacy",
+                    "reliability",
+                    "security",
+                    "supply-chain",
+                ],
+                [assessment["dimension"] for assessment in assessments],
+            )
+            self.assertEqual(
+                {"performance", "privacy"},
+                {
+                    assessment["dimension"]
+                    for assessment in assessments
+                    if assessment["status"] == "not-applicable"
+                },
+            )
             contract_bytes = (root / ".release" / "change.json").read_bytes()
             self.assertEqual(
                 "sha256:" + hashlib.sha256(contract_bytes).hexdigest(),
