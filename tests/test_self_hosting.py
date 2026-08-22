@@ -48,6 +48,29 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("f22b05f7813d5868f2a728f203a59afa5d6f18d2", approval)
         self.assertIn("release-authorization", approval)
         self.assertIn("statuses: write", approval)
+        self.assertIn("Create short-lived Release PR stage token", approval)
+        self.assertIn("id: pr-stage-token", approval)
+        self.assertIn("permission-metadata: read", approval)
+        self.assertIn("permission-pull-requests: write", approval)
+        self.assertIn("${{ vars.RENOVATE_APP_CLIENT_ID }}", approval)
+        self.assertIn("${{ secrets.RENOVATE_APP_PRIVATE_KEY }}", approval)
+        self.assertLess(
+            approval.index("Preserve release authorization evidence"),
+            approval.index("Create short-lived Release PR stage token"),
+        )
+        publish_block = approval.split(
+            "      - name: Publish the verified Release PR authorization", 1
+        )[1].split("      - name: Mark the verified Release PR ready", 1)[0]
+        ready_block = approval.split(
+            "      - name: Mark the verified Release PR ready", 1
+        )[1].split("      - name: Fail the release authorization status", 1)[0]
+        self.assertIn("GH_TOKEN: ${{ github.token }}", publish_block)
+        self.assertNotIn("gh pr ready", publish_block)
+        self.assertIn(
+            "GH_TOKEN: ${{ steps.pr-stage-token.outputs.token }}", ready_block
+        )
+        self.assertNotIn("GH_TOKEN: ${{ github.token }}", ready_block)
+        self.assertIn('gh pr ready "$PR_NUMBER"', ready_block)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".process/process.lock"', generator)
         self.assertIn('"requirements/process.in"', generator)
