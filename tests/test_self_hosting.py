@@ -82,9 +82,10 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIn('-f ci_run_id="$GITHUB_RUN_ID"', ci)
         self.assertIn('if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then', ci)
-        self.assertIn("python .process/adopt-process.py", ci)
+        self.assertIn("python templates/adopt-process.py", ci)
         self.assertIn("--check", ci)
         self.assertNotIn("processctl adoption check", ci)
+        self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):

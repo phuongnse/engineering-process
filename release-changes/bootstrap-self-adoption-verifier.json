@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "bootstrap-self-adoption-verifier",
+  "type": "fix",
+  "surfaces": [
+    "adoption",
+    "self-hosting",
+    "workflow"
+  ],
+  "rationale": "Verify bootstrap self-adoption with the target-aware producer template so the exact installed public authority performs the check even when the managed N-1 runner predates check-only mode.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}
