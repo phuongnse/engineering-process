@@ -85,7 +85,7 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.release_head_sha || github.event.pull_request.head.sha || github.sha }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
 

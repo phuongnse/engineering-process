@@ -61,13 +61,13 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.release_head_sha || github.event.pull_request.head.sha }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         if: >-
           github.event_name == 'workflow_dispatch' ||
           (github.event.pull_request.head.ref == 'automation/release/next' &&
           github.event.pull_request.head.repo.full_name == github.repository)
         with:
-          python-version: "3.14"
+          python-version: "3.14.7"
 
       - name: Install the exact public N-1 authority and project dependencies
         if: >-
