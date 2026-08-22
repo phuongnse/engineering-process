@@ -96,6 +96,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertFalse(renovate["automerge"])
         self.assertTrue(renovate["draftPR"])
         self.assertEqual("automation/renovate/", renovate["branchPrefix"])
+        self.assertEqual("==7.6.1", renovate["constraints"]["pipTools"])
         self.assertEqual(
             [],
             validate_pull_request(
@@ -398,6 +399,22 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIsNotNone(source_match)
         self.assertEqual(lock["process"]["version"], source_match.group("version"))
+
+    def test_process_requirements_lock_covers_supported_binary_runtimes(self):
+        requirements_path = PROCESS_ROOT / "requirements" / "process.txt"
+        requirements = requirements_path.read_text(encoding="utf-8")
+
+        self.assertLess(requirements_path.stat().st_size, 1_000_000)
+        self.assertGreaterEqual(requirements.count("--hash=sha256:"), 100)
+        for digest in (
+            "09f3e5287f94f17b709dc9a9e70865855feee835c861613be144218ce4ca82cc",
+            "7322ec6cc9fba9d49ab888bb82d67ac5625627aa168f0165139b17018df3fb8a",
+            "8d3469c91dd92ee41b7c95280edbd975ef1ba9195086686623a1c6e8935ce965",
+            "a81758ed242b861b72e778ba34d41366441a2e10b16b472784c88da2dea7e2dd",
+            "ac777001cdfc28b72477d93c8564bb7583081ea8fb45cdca3d568e0a4f87183c",
+            "d721e53758b2cca74990185eb0671dd466d7a388a1a45d0c6f4c13cef41a68ac",
+        ):
+            self.assertIn(f"--hash=sha256:{digest}", requirements)
 
     def test_adoption_runner_sources_remain_managed(self):
         managed = PROCESS_ROOT / ".process" / "adopt-process.py"
