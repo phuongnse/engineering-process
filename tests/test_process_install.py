@@ -53,7 +53,7 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
         self.assertIn("--require-hashes", command)
         self.assertIn("--no-cache-dir", command)
         self.assertEqual(PUBLIC_INDEX, command[command.index("--index-url") + 1])
-        self.assertEqual(str(lock), command[-1])
+        self.assertEqual(str(lock.resolve()), command[-1])
         self.assertNotIn(index_name, environment)
         self.assertNotIn(extra_index_name, environment)
         self.assertNotIn("PYTHONPATH", environment)
