@@ -163,7 +163,13 @@ class SelfHostingTests(unittest.TestCase):
             self.assertIn(".release-controller", workflow)
             self.assertIn("github.workflow_sha", workflow)
         self.assertIn('--project-root "$GITHUB_WORKSPACE"', release)
-        self.assertIn("release:\n    types: [published]", publish)
+        self.assertIn("repository_dispatch:", publish)
+        self.assertIn("types: [engineering-process-release-ready]", publish)
+        self.assertNotIn("release:\n    types: [published]", publish)
+        self.assertNotIn("workflow_call:", publish)
+        self.assertIn("engineering-process-release-ready", release)
+        self.assertIn('"repos/$GITHUB_REPOSITORY/dispatches"', release)
+        self.assertIn("needs.authorize.outputs.publish_required == 'false'", release)
         self.assertNotIn("gh release upload", publish)
         self.assertGreaterEqual(publish.count("gh release verify"), 2)
         self.assertGreaterEqual(publish.count("gh release verify-asset"), 2)
@@ -171,12 +177,19 @@ class SelfHostingTests(unittest.TestCase):
         self.assertGreaterEqual(publish.count("expected-release-assets.txt"), 4)
         self.assertGreaterEqual(publish.count("actual-release-assets.txt"), 4)
         self.assertGreaterEqual(
-            publish.count("gh release view \"$GITHUB_REF_NAME\" --json assets"),
+            publish.count("gh release view \"$RELEASE_TAG\" --json assets"),
             2,
         )
         self.assertIn(
             "Revalidate immutable release immediately before publication", publish
         )
+        self.assertIn("check_pypi_publication.py", publish)
+        self.assertIn("validate_publish_event.py", publish)
+        self.assertIn("--require-published", publish)
+        self.assertNotIn("skip-existing", publish)
+        self.assertIn("engineering-process-published", publish)
+        self.assertIn("repos/phuongnse/renovate-ops/dispatches", publish)
+        self.assertIn("repositories: renovate-ops", publish)
 
     def test_prepare_release_leaves_distribution_output_creation_to_verifier(self):
         prepare = (
