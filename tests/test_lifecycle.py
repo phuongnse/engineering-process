@@ -617,6 +617,57 @@ class LifecycleTests(unittest.TestCase):
                     ),
                 )
 
+    def test_review_eligibility_reason_mapping_is_complete(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'1' * 64}"
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+        cases = {
+            "dirty": (
+                {"dirty": True},
+                {checkpoint},
+                {fingerprint},
+                ["working-tree-dirty"],
+            ),
+            "checkpoint-missing": (
+                {"checkpoint": None},
+                {checkpoint},
+                {fingerprint},
+                ["checkpoint-missing"],
+            ),
+            "fingerprint-missing": (
+                {"fingerprint": None},
+                {checkpoint},
+                {fingerprint},
+                ["workspace-fingerprint-missing"],
+            ),
+            "checkpoint-mismatch": (
+                {},
+                {"b" * 40},
+                {fingerprint},
+                ["verification-checkpoint-mismatch"],
+            ),
+            "fingerprint-mismatch": (
+                {},
+                {checkpoint},
+                {f"sha256:{'2' * 64}"},
+                ["verification-fingerprint-mismatch"],
+            ),
+        }
+        for name, (updates, checkpoints, fingerprints, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(
+                    expected,
+                    lifecycle_module._review_eligibility_issues(
+                        {**source, **updates},
+                        checkpoints,
+                        fingerprints,
+                    ),
+                )
+
     @unittest.skipUnless(
         sys.platform == "win32", "Windows lifecycle repetition evidence"
     )
@@ -818,7 +869,10 @@ class LifecycleTests(unittest.TestCase):
             self.prepare_verified_change(root, inputs)
             (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(ContractError, "stale"):
+            with self.assertRaisesRegex(
+                ContractError,
+                "working-tree-dirty, verification-fingerprint-mismatch",
+            ):
                 start_review(
                     root,
                     "change-1",
@@ -829,6 +883,22 @@ class LifecycleTests(unittest.TestCase):
                     attested_by="test-host",
                     evidence="The test host created an isolated context",
                 )
+
+            state = load_state(root, "change-1")
+            rejected = [
+                event
+                for event in state["history"]
+                if event["event"] == "review-start-rejected"
+            ]
+            self.assertEqual(
+                ["working-tree-dirty", "verification-fingerprint-mismatch"],
+                rejected[-1]["eligibilityIssues"],
+            )
+            self.assertTrue(rejected[-1]["sourceWorkingTreeDirty"])
+            self.assertEqual(
+                sorted({item["checkpoint"] for item in state["verification"]}),
+                rejected[-1]["verificationCheckpoints"],
+            )
 
     def test_review_context_cannot_be_reused_across_changes(self):
         with tempfile.TemporaryDirectory() as directory:

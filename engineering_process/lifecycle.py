@@ -659,6 +659,25 @@ def _verification_eligibility_issues(report: dict[str, Any]) -> list[str]:
     return issues
 
 
+def _review_eligibility_issues(
+    source: dict[str, Any],
+    checkpoints: set[str],
+    fingerprints: set[str],
+) -> list[str]:
+    issues: list[str] = []
+    if source["dirty"] is not False:
+        issues.append("working-tree-dirty")
+    if source["checkpoint"] is None:
+        issues.append("checkpoint-missing")
+    elif checkpoints != {source["checkpoint"]}:
+        issues.append("verification-checkpoint-mismatch")
+    if source["fingerprint"] is None:
+        issues.append("workspace-fingerprint-missing")
+    elif fingerprints != {source["fingerprint"]}:
+        issues.append("verification-fingerprint-mismatch")
+    return issues
+
+
 def _verify_change_unlocked(
     project_root: Path,
     project: Project,
@@ -789,14 +808,29 @@ def _start_review_unlocked(
     source = source_state(project_root)
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
-    if (
-        source["dirty"] is not False
-        or source["checkpoint"] is None
-        or source["fingerprint"] is None
-        or checkpoints != {source["checkpoint"]}
-        or fingerprints != {source["fingerprint"]}
-    ):
-        raise ContractError("review cannot start because verification evidence is stale")
+    eligibility_issues = _review_eligibility_issues(
+        source,
+        checkpoints,
+        fingerprints,
+    )
+    if eligibility_issues:
+        _event(
+            state,
+            "review-start-rejected",
+            reviewer,
+            cycle=state["cycle"],
+            eligibilityIssues=eligibility_issues,
+            sourceCheckpoint=source["checkpoint"],
+            sourceWorkingTreeDirty=source["dirty"],
+            sourceWorkspaceFingerprint=source["fingerprint"],
+            verificationCheckpoints=sorted(checkpoints),
+            verificationWorkspaceFingerprints=sorted(fingerprints),
+        )
+        _save_state(project_root, state)
+        raise ContractError(
+            "review cannot start because verification evidence is stale: "
+            + ", ".join(eligibility_issues)
+        )
     assignment = {
         "changeId": change_id,
         "cycle": state["cycle"],
