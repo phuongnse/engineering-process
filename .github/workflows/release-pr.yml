@@ -6,6 +6,10 @@ on:
     paths:
       - "release-changes/*.json"
       - ".github/workflows/release-pr.yml"
+      - ".process/process.lock"
+      - "requirements/process.in"
+      - "requirements/process.txt"
+      - "verification/classify_release_preparation.py"
 
 permissions:
   contents: read
@@ -90,8 +94,22 @@ jobs:
         if: steps.applicability.outputs.pending == 'true'
         id: release
         run: |
+          set +e
           python processctl.py publication prepare-release --json \
             > "$RUNNER_TEMP/release-candidate.json"
+          prepare_status="$?"
+          set -e
+          if test "$prepare_status" -ne 0; then
+            if python verification/classify_release_preparation.py \
+              "$RUNNER_TEMP/release-candidate.json"; then
+              cat "$RUNNER_TEMP/release-candidate.json"
+              echo 'deferred=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            cat "$RUNNER_TEMP/release-candidate.json" >&2
+            exit "$prepare_status"
+          fi
+          echo 'deferred=false' >> "$GITHUB_OUTPUT"
           python processctl.py publication release-pr-body \
             --state draft --output "$RUNNER_TEMP/release-pr.md" --json
           version="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["version"])')"
@@ -99,8 +117,50 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Refresh stale self-adoption through verified publication
+        if: >-
+          steps.applicability.outputs.pending == 'true' &&
+          steps.release.outputs.deferred == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          version="$(jq -r .version release.json)"
+          package="$(jq -r .identity.package release.json)"
+          tag="$(jq -r .identity.tag release.json)"
+          test "$tag" = "v$version"
+          test "$(jq -r .identity.releaseName release.json)" = "$tag"
+          commit="$(git rev-parse --verify "$tag^{commit}")"
+          printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'
+          git merge-base --is-ancestor "$commit" "$GITHUB_SHA"
+          test "$(gh release view "$tag" --json tagName --jq .tagName)" = "$tag"
+          test "$(gh release view "$tag" --json name --jq .name)" = "$tag"
+          test "$(gh release view "$tag" --json isDraft --jq .isDraft)" = false
+          test "$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)" = false
+          gh release verify "$tag"
+          attestation="$package-$tag-artifacts.json"
+          mapfile -t digests < <(
+            gh release view "$tag" --json assets \
+              --jq ".assets[] | select(.name == \"$attestation\") | .digest"
+          )
+          test "${#digests[@]}" -eq 1
+          digest="${digests[0]}"
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          jq -n \
+            --arg attestationDigest "$digest" \
+            --arg commit "$commit" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg tag "$tag" \
+            --arg version "$version" \
+            '{event_type: "engineering-process-release-ready", client_payload: {attestationDigest: $attestationDigest, commit: $commit, repository: $repository, tag: $tag, version: $version}}' \
+            > "$RUNNER_TEMP/publication-refresh-event.json"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/dispatches" \
+            --input "$RUNNER_TEMP/publication-refresh-event.json"
+
       - name: Commit the generated candidate
-        if: steps.applicability.outputs.pending == 'true'
+        if: >-
+          steps.applicability.outputs.pending == 'true' &&
+          steps.release.outputs.deferred != 'true'
         id: candidate
         env:
           RELEASE_BRANCH: automation/release/next
@@ -125,7 +185,9 @@ jobs:
           printf 'head_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create or refresh the Release PR
-        if: steps.applicability.outputs.pending == 'true'
+        if: >-
+          steps.applicability.outputs.pending == 'true' &&
+          steps.release.outputs.deferred != 'true'
         id: pull-request
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
