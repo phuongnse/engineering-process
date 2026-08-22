@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -9,7 +10,12 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from engineering_process.contracts import ContractError, read_json, validate_review
+from engineering_process.contracts import (
+    ContractError,
+    read_json,
+    validate_change,
+    validate_review,
+)
 from engineering_process.lifecycle import load_state
 
 TRUSTED_VERIFIER_REPOSITORY = "phuongnse/renovate-ops"
@@ -17,7 +23,9 @@ TRUSTED_VERIFIER_SHA = "f22b05f7813d5868f2a728f203a59afa5d6f18d2"
 
 
 def approved_review_from_assignment(
-    assignment: dict[str, object], independent_evidence: dict[str, object]
+    assignment: dict[str, object],
+    independent_evidence: dict[str, object],
+    contract: dict[str, object] | None = None,
 ) -> dict[str, object]:
     required = {
         "changeId",
@@ -47,8 +55,44 @@ def approved_review_from_assignment(
             raise ContractError(
                 f"independent verification evidence has invalid {key}"
             )
+    schema_version = 2
+    quality: dict[str, object] | None = None
+    if contract is not None:
+        validate_change(contract, "registered release contract")
+        if contract["id"] != assignment["changeId"]:
+            raise ContractError(
+                "registered release contract does not match the review assignment"
+            )
+        schema_version = int(contract["schemaVersion"])
+        if schema_version == 3:
+            assessments = []
+            for accepted in contract["quality"]["assessments"]:
+                dimension = accepted["dimension"]
+                applicable = accepted["status"] == "applicable"
+                assessments.append(
+                    {
+                        "dimension": dimension,
+                        "status": (
+                            "verified" if applicable else "not-applicable-confirmed"
+                        ),
+                        "criteria": accepted["criteria"],
+                        "evidence": (
+                            "The independent verifier passed the exact assigned "
+                            f"checkpoint; review confirms the {dimension} acceptance "
+                            "criteria."
+                            if applicable
+                            else "Independent review confirms the contract's "
+                            f"{dimension} not-applicable rationale: "
+                            f"{accepted['rationale']}"
+                        ),
+                    }
+                )
+            quality = {
+                "standard": contract["quality"]["standard"],
+                "assessments": assessments,
+            }
     report = {
-        "schemaVersion": 2,
+        "schemaVersion": schema_version,
         "changeId": assignment["changeId"],
         "cycle": assignment["cycle"],
         "checkpoint": assignment["checkpoint"],
@@ -59,8 +103,41 @@ def approved_review_from_assignment(
         "verdict": "approved",
         "findings": [],
     }
+    if quality is not None:
+        report["quality"] = quality
     validate_review(report, "generated release review")
     return report
+
+
+def _assignment_contract(
+    project_root: Path, assignment: dict[str, object]
+) -> dict[str, object]:
+    reference = assignment.get("contract")
+    if not isinstance(reference, dict):
+        raise ContractError("release review assignment contract is missing")
+    if set(reference) != {"digest", "path"}:
+        raise ContractError("release review assignment contract reference is invalid")
+    relative_path = reference.get("path")
+    expected_digest = reference.get("digest")
+    if not isinstance(relative_path, str) or not isinstance(expected_digest, str):
+        raise ContractError("release review assignment contract reference is invalid")
+    root = project_root.resolve(strict=True)
+    try:
+        contract_path = (root / relative_path).resolve(strict=True)
+        contract_path.relative_to(root)
+        contract_bytes = contract_path.read_bytes()
+    except (OSError, ValueError) as error:
+        raise ContractError(
+            f"cannot read registered release contract: {error}"
+        ) from error
+    actual_digest = f"sha256:{hashlib.sha256(contract_bytes).hexdigest()}"
+    if actual_digest != expected_digest:
+        raise ContractError("registered release contract digest does not match assignment")
+    contract = read_json(contract_path)
+    if not isinstance(contract, dict):
+        raise ContractError("registered release contract must be an object")
+    validate_change(contract, "registered release contract")
+    return contract
 
 
 def prepare_review(
@@ -79,7 +156,10 @@ def prepare_review(
     independent_evidence = read_json(independent_evidence_path)
     if not isinstance(independent_evidence, dict):
         raise ContractError("independent verification evidence must be an object")
-    report = approved_review_from_assignment(assignment, independent_evidence)
+    contract = _assignment_contract(project_root, assignment)
+    report = approved_review_from_assignment(
+        assignment, independent_evidence, contract
+    )
     if output.exists():
         raise ContractError(f"{output}: refusing to replace existing review report")
     try:
