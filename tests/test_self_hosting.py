@@ -178,6 +178,34 @@ class SelfHostingTests(unittest.TestCase):
             "Revalidate immutable release immediately before publication", publish
         )
 
+    def test_prepare_release_leaves_distribution_output_creation_to_verifier(self):
+        prepare = (
+            PROCESS_ROOT / ".github" / "workflows" / "prepare-release.yml"
+        ).read_text(encoding="utf-8")
+        publish = (
+            PROCESS_ROOT / ".github" / "workflows" / "publish.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('mkdir -p "$RUNNER_TEMP/draft-assets"', prepare)
+        self.assertNotIn(
+            'mkdir -p "$RUNNER_TEMP/draft-assets/distributions"', prepare
+        )
+        self.assertIn(
+            '--output "$RUNNER_TEMP/draft-assets/distributions"', prepare
+        )
+        self.assertIn(
+            "python .release-controller/verification/verify_distribution.py",
+            prepare,
+        )
+        self.assertIn('--project-root "$GITHUB_WORKSPACE"', prepare)
+        for workflow in (prepare, publish):
+            self.assertIn(
+                ".release-controller/verification/verify_installed_distribution.py",
+                workflow,
+            )
+            self.assertIn('--source-root "$GITHUB_WORKSPACE"', workflow)
+            self.assertNotIn("python -m unittest discover", workflow)
+
     def test_producer_environment_binds_the_exact_build_backend(self):
         project = json.loads(
             (PROCESS_ROOT / ".process" / "project.json").read_text(encoding="utf-8")
@@ -262,6 +290,36 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("usage: verify_distribution.py", result.stdout)
+        self.assertIn("--project-root PROJECT_ROOT", result.stdout)
+
+    def test_installed_distribution_verifier_rejects_source_imports(self):
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(PROCESS_ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(
+                        PROCESS_ROOT
+                        / "verification"
+                        / "verify_installed_distribution.py"
+                    ),
+                    "--source-root",
+                    str(PROCESS_ROOT),
+                ],
+                cwd=directory,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+
+        self.assertEqual(1, result.returncode, result.stdout)
+        self.assertIn(
+            "installed engineering_process resolves inside source checkout",
+            result.stderr,
+        )
 
     def test_managed_and_distribution_skill_trees_are_separate(self):
         managed = PROCESS_ROOT / ".agents" / "skills"

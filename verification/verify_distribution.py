@@ -13,6 +13,7 @@ from engineering_process.distribution_verify import verify_distribution
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--receipt", type=Path)
     parser.add_argument("--authorization", type=Path)
@@ -21,7 +22,7 @@ if __name__ == "__main__":
     print(
         json.dumps(
             verify_distribution(
-                PROJECT_ROOT,
+                arguments.project_root,
                 output_root=arguments.output,
                 receipt_path=arguments.receipt,
                 authorization_path=arguments.authorization,

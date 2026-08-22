@@ -129,7 +129,7 @@ jobs:
         env:
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
-          mkdir -p "$RUNNER_TEMP/draft-assets/distributions"
+          mkdir -p "$RUNNER_TEMP/draft-assets"
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
           evidence_args=()
           if test "$MODE" = governed; then
@@ -137,7 +137,8 @@ jobs:
           else
             evidence_args+=(--authorization "$EVIDENCE_PATH")
           fi
-          python verification/verify_distribution.py \
+          python .release-controller/verification/verify_distribution.py \
+            --project-root "$GITHUB_WORKSPACE" \
             --output "$RUNNER_TEMP/draft-assets/distributions" \
             "${evidence_args[@]}" \
             --attestation "$RUNNER_TEMP/draft-assets/$attestation_asset"
@@ -152,7 +153,9 @@ jobs:
           cd "$RUNNER_TEMP"
           processctl digest
           processctl skills validate
-          python -m unittest discover -s "$GITHUB_WORKSPACE/tests" -p 'test_*.py'
+          python \
+            "$GITHUB_WORKSPACE/.release-controller/verification/verify_installed_distribution.py" \
+            --source-root "$GITHUB_WORKSPACE"
 
       - name: Attach verified artifacts and attestation to the draft
         env:

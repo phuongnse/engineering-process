@@ -136,7 +136,9 @@ jobs:
           cd "$RUNNER_TEMP"
           processctl digest
           processctl skills validate
-          python -m unittest discover -s "$GITHUB_WORKSPACE/tests" -p 'test_*.py'
+          python \
+            "$GITHUB_WORKSPACE/.release-controller/verification/verify_installed_distribution.py" \
+            --source-root "$GITHUB_WORKSPACE"
 
   pypi:
     name: Publish to PyPI
