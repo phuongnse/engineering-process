@@ -49,7 +49,7 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
 
         self.assertEqual(1, len(calls))
         command, cwd, environment = calls[0]
-        self.assertEqual(root, cwd)
+        self.assertEqual(root.resolve(), cwd)
         self.assertIn("--require-hashes", command)
         self.assertIn("--no-cache-dir", command)
         self.assertEqual(PUBLIC_INDEX, command[command.index("--index-url") + 1])
