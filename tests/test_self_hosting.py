@@ -321,7 +321,12 @@ class SelfHostingTests(unittest.TestCase):
             'python -m venv "$RUNNER_TEMP/release-qualification-authority"',
             workflow,
         )
-        self.assertIn("--require-hashes -r requirements/process.txt", workflow)
+        self.assertIn("verification/install_process_runtime.py", workflow)
+        self.assertIn("--requirements-lock requirements/process.txt", workflow)
+        self.assertIn(
+            '--python "$RUNNER_TEMP/release-qualification-authority/bin/python"',
+            workflow,
+        )
         self.assertIn("verification/qualify_release_lifecycle.py", workflow)
         self.assertIn(
             '--processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"',
