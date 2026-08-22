@@ -6,8 +6,8 @@
 #
 --only-binary :all:
 
-engineering-process==0.1.1 \
-    --hash=sha256:3211775274a05569e006daae7e026f34295df9da2b2244f464f08aee00352f4f
+engineering-process==0.2.0 \
+    --hash=sha256:200589a56b977e552c3969c2aa0227d536fb1c92a3b877327af697d3fa3db7b3
     # via -r requirements/process.in
 markdown-it-py==4.2.0 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a

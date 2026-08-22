@@ -12,15 +12,23 @@ specific checkpoint without changing the reviewed source.
 
 ## Workflow
 
-1. Accept the review only in a reviewer actor and isolated context that did not
-   implement the current cycle. Use the host's isolated-review mechanism or a
-   separate human reviewer; if separation cannot be attested, report blocked.
+1. Accept the review only in a reviewer actor and a fresh isolated context that did
+   not implement the current cycle and did not perform an earlier review assignment
+   in the project. The context must not inherit implementation or prior-review
+   conversation. Use the host's isolated-review mechanism or a separate human
+   reviewer; if separation cannot be attested, report blocked. A stable reviewer
+   actor or role may be reused, but renaming a retained context is not isolation.
 2. Register the assignment with processctl change review start. Confirm its
    checkpoint, comparison base, contract, plan, and required verification reports
    refer to the same immutable source.
 3. Read the diff and only the project-owned contracts needed to evaluate affected
-   behavior and trust boundaries.
+   behavior and trust boundaries. Reconcile every `production-v1` assessment,
+   including security, privacy, reliability, performance, observability, operability,
+   compatibility, maintainability, correctness, and supply-chain integrity.
 4. Record actionable findings with severity, exact location, evidence, and status.
+   Record one structured quality assessment per accepted contract dimension; a
+   requested change marks at least one applicable dimension failed, while approval
+   requires every applicable dimension verified and every N/A rationale confirmed.
    Separate defects from questions, optional improvements, and unsupported claims.
    Resolved, deferred, and false-positive findings require resolution evidence.
    Deferred remains unresolved and completion-blocking unless a future process
@@ -42,6 +50,9 @@ specific checkpoint without changing the reviewed source.
 - A reviewer must not intentionally mutate the checkpoint under review.
 - The reviewer actor id and context id must both be independent from every
   implementation actor and context recorded for the current cycle.
+- The reviewer context id must be unique across review assignments for the project,
+  and the attester must bind it to a genuinely fresh context rather than a renamed
+  retained conversation.
 
 ## Output
 
