@@ -166,6 +166,54 @@ def _pypi_document(
     return document
 
 
+def _simple_document(
+    package: str,
+    *,
+    opener: Callable[..., object],
+) -> dict[str, object]:
+    url = f"https://pypi.org/simple/{quote(package, safe='')}/"
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.pypi.simple.v1+json",
+            "User-Agent": "engineering-process-release-verifier/1",
+        },
+    )
+    try:
+        response = opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
+    except HTTPError as error:
+        raise ContractError(f"PyPI Simple API returned HTTP {error.code}") from error
+    except (OSError, URLError) as error:
+        raise ContractError(f"cannot query PyPI Simple API: {error}") from error
+    try:
+        with response:
+            status = getattr(response, "status", None)
+            if status != 200:
+                raise ContractError(f"PyPI Simple API returned HTTP {status}")
+            length_header = response.headers.get("Content-Length")
+            if length_header is not None:
+                try:
+                    declared_length = int(length_header)
+                except ValueError as error:
+                    raise ContractError(
+                        "PyPI Simple API returned an invalid Content-Length"
+                    ) from error
+                if declared_length > MAX_PYPI_RESPONSE_BYTES:
+                    raise ContractError("PyPI Simple API response exceeds the size limit")
+            content = response.read(MAX_PYPI_RESPONSE_BYTES + 1)
+    except OSError as error:
+        raise ContractError(f"cannot read PyPI Simple API response: {error}") from error
+    if len(content) > MAX_PYPI_RESPONSE_BYTES:
+        raise ContractError("PyPI Simple API response exceeds the size limit")
+    try:
+        document = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"PyPI Simple API returned invalid JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise ContractError("PyPI Simple API response must be a JSON object")
+    return document
+
+
 def inspect_pypi_publication(
     package: str,
     version: str,
@@ -212,6 +260,37 @@ def inspect_pypi_publication(
         raise ContractError(
             "PyPI version conflicts with the immutable release artifacts: "
             f"expected {sorted(expected)}, got {sorted(actual)}"
+        )
+    simple = _simple_document(package, opener=opener)
+    simple_files = simple.get("files")
+    if (
+        simple.get("name", "").casefold() != package.casefold()
+        or not isinstance(simple_files, list)
+    ):
+        raise ContractError("PyPI Simple API response does not match the package")
+    visible: dict[str, str] = {}
+    for item in simple_files:
+        if not isinstance(item, dict):
+            raise ContractError("PyPI Simple API contains an invalid file record")
+        name = item.get("filename")
+        if name not in expected:
+            continue
+        hashes = item.get("hashes")
+        digest = hashes.get("sha256") if isinstance(hashes, dict) else None
+        if name in visible or not isinstance(digest, str):
+            raise ContractError("PyPI Simple API contains an invalid file record")
+        visible[name] = digest
+    if set(visible) != set(expected):
+        return {
+            "files": [],
+            "package": package,
+            "publishRequired": False,
+            "status": "propagating",
+            "version": version,
+        }
+    if any(visible[name] != expected[name][1] for name in expected):
+        raise ContractError(
+            "PyPI Simple API conflicts with the immutable release artifacts"
         )
     return {
         "files": [
