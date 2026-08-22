@@ -150,6 +150,13 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('".github/workflows/release.yml"', release)
         self.assertIn('".github/workflows/prepare-release.yml"', release)
         self.assertIn('".github/workflows/publish.yml"', release)
+        for controller in (
+            "check_pypi_publication.py",
+            "validate_publish_event.py",
+            "verify_distribution.py",
+            "verify_installed_distribution.py",
+        ):
+            self.assertIn(f'"verification/{controller}"', release)
         self.assertIn("automation/release/next", release)
         self.assertIn('refs/pull/$PR_NUMBER/head', release)
         self.assertIn("steps.release-pr.outputs.reviewed_sha", release)
