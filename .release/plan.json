@@ -32,8 +32,8 @@
     }
   ],
   "approach": "Validate the generated release contract and every declared surface, build from the exact reviewed tree, and permit publication only after independent approval and merge.",
-  "changeId": "release-0-2-1",
-  "contractDigest": "sha256:620d9712f915115ff9e008949208b9ab1cf8dd4218283b20c580920047974b34",
+  "changeId": "release-0-3-0",
+  "contractDigest": "sha256:9f4fe56afc183c0850a2627d345725b21fb6de45ba2724ec93f048c77c9b9a3c",
   "openDecisions": [],
   "risks": [
     {
