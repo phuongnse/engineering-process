@@ -16,14 +16,97 @@
   "affectedProjects": [
     "engineering-process"
   ],
-  "comparisonBase": "df6e682d1bba1dc1aa82a2f4bbc21afc460c4bd5",
-  "id": "release-0-2-0",
+  "comparisonBase": "7c826539863a8a3d496c5f3c4cc9d18e6e714eaa",
+  "id": "release-0-2-1",
+  "quality": {
+    "assessments": [
+      {
+        "criteria": [
+          "ac-identity"
+        ],
+        "dimension": "compatibility",
+        "rationale": "The release must preserve its declared compatibility and exact identity surfaces.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [
+          "ac-identity",
+          "ac-publication"
+        ],
+        "dimension": "correctness",
+        "rationale": "The derived identity and published bytes must match the reviewed release contract.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [
+          "ac-review"
+        ],
+        "dimension": "maintainability",
+        "rationale": "Independent review verifies the generated contract and deterministic release owner.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [
+          "ac-publication"
+        ],
+        "dimension": "observability",
+        "rationale": "Release evidence and attestations expose the exact publication outcome.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [
+          "ac-publication"
+        ],
+        "dimension": "operability",
+        "rationale": "The reviewed release must publish and recover through the declared automated workflow.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [],
+        "dimension": "performance",
+        "rationale": "Release authorization adds no product runtime or scaling behavior.",
+        "status": "not-applicable"
+      },
+      {
+        "criteria": [],
+        "dimension": "privacy",
+        "rationale": "Release metadata contains no personal or sensitive data processing.",
+        "status": "not-applicable"
+      },
+      {
+        "criteria": [
+          "ac-publication"
+        ],
+        "dimension": "reliability",
+        "rationale": "Immutable assets and exact external-state checks must fail closed and recover deterministically.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [
+          "ac-review"
+        ],
+        "dimension": "security",
+        "rationale": "Independent review and merge remain the only publication authorization boundary.",
+        "status": "applicable"
+      },
+      {
+        "criteria": [
+          "ac-identity",
+          "ac-publication"
+        ],
+        "dimension": "supply-chain",
+        "rationale": "The release binds source, version, artifacts, attestations, and registry bytes.",
+        "status": "applicable"
+      }
+    ],
+    "standard": "production-v1"
+  },
   "requiredProfiles": [
     "development",
     "review"
   ],
   "risk": "high",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "signOff": {
     "evidence": null,
     "required": false,
@@ -35,5 +118,5 @@
     "rationale": "The release contract owns the exact public change set and identity surfaces.",
     "reference": "release.json and VERSIONING.md"
   },
-  "summary": "Authorize and publish engineering-process 0.2.0"
+  "summary": "Authorize and publish engineering-process 0.2.1"
 }

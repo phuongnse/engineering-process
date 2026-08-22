@@ -1,114 +1,106 @@
 {
   "schemaVersion": 3,
-  "previousVersion": "0.1.1",
-  "version": "0.2.0",
-  "classification": "minor",
+  "previousVersion": "0.2.0",
+  "version": "0.2.1",
+  "classification": "patch",
   "compatibility": "backward-compatible",
-  "schemaImpact": "additive",
+  "schemaImpact": "unchanged",
   "migration": null,
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.2.0",
-    "releaseName": "v0.2.0",
+    "tag": "v0.2.1",
+    "releaseName": "v0.2.1",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.2.0-py3-none-any.whl",
-      "engineering_process-0.2.0.tar.gz"
+      "engineering_process-0.2.1-py3-none-any.whl",
+      "engineering_process-0.2.1.tar.gz"
     ],
-    "receiptAsset": null,
-    "authorizationAsset": "engineering-process-v0.2.0-bootstrap-authorization.json"
+    "receiptAsset": "engineering-process-v0.2.1-evidence.json",
+    "authorizationAsset": null
   },
   "provenance": {
-    "mode": "bootstrap-authority",
-    "statement": "A reviewed bootstrap-authority Release PR authorizes the first public lifecycle authority.",
-    "lifecycleReceipt": null
+    "mode": "governed",
+    "statement": "The public N-1 lifecycle receipt and reviewed Release PR authorize this release.",
+    "lifecycleReceipt": {
+      "asset": "engineering-process-v0.2.1-evidence.json",
+      "project": "engineering-process",
+      "changeId": "release-0-2-1",
+      "cycle": 1
+    }
   },
   "changes": [
     {
-      "id": "app-authored-release-pr",
+      "id": "bootstrap-self-adoption-verifier",
       "type": "fix",
-      "surfaces": [
-        "publication",
-        "supply-chain",
-        "workflow"
-      ],
-      "rationale": "Return each refreshed Release PR to draft, create its native required checks with a repository-scoped GitHub App token, and bind authorization dispatch to the event-specific exact head."
-    },
-    {
-      "id": "automated-release-pipeline",
-      "type": "capability",
-      "surfaces": [
-        "publication",
-        "workflow"
-      ],
-      "rationale": "Generate a reviewed Release PR and deterministically publish its immutable tag, release assets, PyPI distributions, and adoption candidates after merge."
-    },
-    {
-      "id": "bounded-source-verification",
-      "type": "fix",
-      "surfaces": [
-        "distribution",
-        "portability",
-        "verification"
-      ],
-      "rationale": "Build from a clean tracked snapshot and bind cross-platform source, dependency, output, timeout, and artifact evidence without generated-state contamination."
-    },
-    {
-      "id": "dispatched-independent-review",
-      "type": "fix",
-      "surfaces": [
-        "evidence",
-        "portability",
-        "verification",
-        "workflow"
-      ],
-      "rationale": "Bind event-dispatched independent review to the exact synthesized pull-request payload and preserve bounded cross-platform process cleanup under transient kernel accounting races."
-    },
-    {
-      "id": "dispatched-release-authorization",
-      "type": "fix",
-      "surfaces": [
-        "evidence",
-        "publication",
-        "workflow"
-      ],
-      "rationale": "Dispatch base-controlled release authorization to the explicit producer repository from successful native or emergency exact-head CI and revalidate its immutable run identity before approval."
-    },
-    {
-      "id": "governed-publication-evidence",
-      "type": "capability",
-      "surfaces": [
-        "evidence",
-        "publication",
-        "release",
-        "supply-chain"
-      ],
-      "rationale": "Export portable completed-lifecycle evidence and cross-check release identity, immutable assets, distribution attestations, main ancestry, and public N-1 authority."
-    },
-    {
-      "id": "managed-process-adoption",
-      "type": "capability",
       "surfaces": [
         "adoption",
-        "renovate",
-        "self-hosting"
+        "self-hosting",
+        "workflow"
       ],
-      "rationale": "Generate one complete hash-locked, rollback-safe process adoption candidate with managed assets and consumer-owned target-version migration."
+      "rationale": "Verify bootstrap self-adoption with the target-aware producer template so the exact installed public authority performs the check even when the managed N-1 runner predates check-only mode."
     },
     {
-      "id": "production-governance",
-      "type": "capability",
+      "id": "portable-process-lock-hashes",
+      "type": "fix",
+      "surfaces": [
+        "adoption",
+        "portability",
+        "supply-chain"
+      ],
+      "rationale": "Regenerate process dependency locks with the complete binary wheel hash set and pin the lock generator so one immutable authority installs on every supported runtime and platform."
+    },
+    {
+      "id": "post-v0-2-release-adoption-hardening",
+      "type": "fix",
+      "surfaces": [
+        "adoption",
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Correct event-driven publication recovery, validate Renovate metadata through a bounded exact contract, require strict consumer outcomes, and verify self-adoption through the public hash-locked authority instead of source under development."
+    },
+    {
+      "id": "release-approval-app-token",
+      "type": "fix",
+      "surfaces": [
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Use the short-lived Release PR owning GitHub App token for the Draft-to-Ready transition after exact lifecycle and receipt authorization, while retaining GITHUB_TOKEN for commit status writes."
+    },
+    {
+      "id": "release-lifecycle-quality-contract",
+      "type": "fix",
       "surfaces": [
         "contracts",
-        "lifecycle",
-        "quality",
-        "verification"
+        "publication",
+        "workflow"
       ],
-      "rationale": "Enforce production quality dimensions, bounded selective impact, current immutable evidence, and independent review throughout the portable lifecycle."
+      "rationale": "Generate new release lifecycle runs with schema-3 production quality assessments and a bounded schema-2 plan so public N-1 authority can validate the Release PR candidate."
+    },
+    {
+      "id": "release-pr-self-adoption-refresh",
+      "type": "fix",
+      "surfaces": [
+        "adoption",
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Defer a new Release PR until the latest public authority is self-adopted, refresh that adoption through the exact verified publication event, and resume release derivation automatically after the adoption merge."
+    },
+    {
+      "id": "release-review-qualification-gate",
+      "type": "fix",
+      "surfaces": [
+        "contracts",
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Derive release review quality from its registered contract and require a disposable complete public N-1 lifecycle rehearsal before source changes can merge."
     }
   ]
 }
