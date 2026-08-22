@@ -500,6 +500,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path("requirements/process.txt"),
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate through the installed hash-locked authority without applying",
+    )
     args = parser.parse_args(argv)
     project_root = Path(os.path.abspath(os.fspath(args.project_root)))
     requirements_source, requirements_root = _requirements_binding(
@@ -566,7 +571,25 @@ def main(argv: list[str] | None = None) -> int:
         target_version = _installed_process_version(
             python, cwd=environment_root
         )
-        if target_version == current_version:
+        if args.check:
+            output = _run(
+                [
+                    str(python),
+                    "-I",
+                    "-c",
+                    "from engineering_process.cli import main; "
+                    "raise SystemExit(main())",
+                    "adoption",
+                    "check",
+                    "--project-root",
+                    str(project_root),
+                    "--requirements-lock",
+                    str(requirements_source),
+                    "--json",
+                ],
+                cwd=environment_root,
+            )
+        elif target_version == current_version:
             output = json.dumps(
                 {
                     "requirementsDigest": requirements_digest,
@@ -615,9 +638,11 @@ def main(argv: list[str] | None = None) -> int:
         if (
             not isinstance(result, dict)
             or result.get("requirementsDigest") != requirements_digest
+            or result.get("version") != target_version
         ):
             raise RuntimeError(
-                "adoption authority did not attest the private requirements snapshot"
+                "adoption authority did not attest the installed version and "
+                "private requirements snapshot"
             )
     sys.stdout.write(output)
     return 0
