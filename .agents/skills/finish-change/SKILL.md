@@ -15,8 +15,9 @@ or deploying implicitly.
 1. Read processctl change status and require the approved phase.
 2. Confirm the current clean checkpoint and workspace fingerprint match the approved
    review and every required verification report.
-3. Confirm every acceptance criterion is covered, every required finding is resolved,
-   required sign-off is current, and project-owned status or evidence is reconciled.
+3. Confirm every acceptance criterion and applicable quality dimension is covered,
+   every required finding is resolved, required sign-off is current, and
+   project-owned status or evidence is reconciled.
 4. Run processctl change finish. Treat any stale artifact, source change, missing
    profile, or identity mismatch as a blocker that returns to the owning phase.
 5. Report completion separately from publication, merge, release, or deployment.

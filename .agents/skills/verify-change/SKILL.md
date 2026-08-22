@@ -23,6 +23,8 @@ change while avoiding unrelated broad verification.
    when a required check is blocked.
 4. Bind evidence to the current repository checkpoint and workspace fingerprint.
    Any relevant edit or source mutation during verification invalidates the evidence.
+   Require bounded correlation and output metadata without copying raw secrets into
+   lifecycle artifacts; exercise cleanup and resource limits affected by the change.
 5. Report failed, timed-out, missing, and blocked checks exactly; never convert them
    into a pass or an implicit deferral.
 

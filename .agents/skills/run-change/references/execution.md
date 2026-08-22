@@ -57,10 +57,14 @@ When progress depends on user-controlled or external state:
 ## Independent review
 
 Review begins only after all baseline and change-required profiles pass on one clean
-immutable checkpoint. The reviewer must be a read-only actor and context unused by
-the current implementation cycle. The agent host or human organization attests that
-identity separation; processctl validates the attestation structure and rejects
-identity reuse or stale evidence.
+immutable checkpoint. The reviewer must be a read-only actor and a fresh context
+unused by the current implementation cycle or an earlier review assignment in the
+project. The context must not inherit implementation or prior-review conversation; a
+new label on retained context is not fresh isolation. The agent host or human
+organization attests that identity separation; processctl validates the attestation
+structure and rejects implementation identity reuse, reviewer-context reuse, or stale
+evidence. A stable reviewer actor or role remains portable and may be reused with a
+genuinely fresh context.
 
 A running or pending reviewer means review pending, not failure or approval. The
 reviewer reads the assignment, diff, contracts, plan, and existing evidence; it runs
