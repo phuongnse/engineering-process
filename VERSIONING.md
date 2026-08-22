@@ -71,6 +71,13 @@ verification manifest and project-adoption migration each follow that rule. Addi
 optional `timeoutSeconds` evidence to verification schema 2 preserves existing
 schema-2 documents and therefore does not advance that artifact's schema version.
 
+Every generator must be qualified against the exact released reader that consumes its
+output. For a lifecycle artifact, validation at creation is insufficient: CI runs the
+generated change, plan, review, completion, and exported evidence through public N-1
+up to the final consuming transition. Review schema and quality mappings derive from
+the registered change contract instead of being maintained as an independent version
+constant.
+
 Package `schemaImpact` is `unchanged`, `additive`, or `breaking` for the combined
 release. Additive schema capability requires at least a capability release; a
 breaking schema requires an incompatible release.
@@ -97,7 +104,9 @@ requirement pin, omits generated hashes or managed assets, or requires a post-me
 step must fail closed.
 
 `requirements/process.in` owns the direct public pin and `requirements/process.txt`
-is its pip-compile hash lock. Renovate's exact allowlisted post-upgrade command runs
+is its pip-compile hash lock. The lock generator is pinned, and the committed lock must
+cover compatible binary artifacts for every supported Python/OS runner rather than
+only the platform that compiled it. Renovate's exact allowlisted post-upgrade command runs
 `.process/adopt-process.py`; that managed runner creates a bounded temporary
 environment outside the checkout, rejects symlink, junction, or reparse input in
 every supplied lock-path component, and makes one stable private snapshot. Component

@@ -232,7 +232,7 @@ def _release_lifecycle_documents(
 ) -> tuple[bytes, bytes]:
     change_id = f"release-{version.replace('.', '-')}"
     contract = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "id": change_id,
         "summary": f"Authorize and publish {project} {version}",
         "source": "Automatically aggregated reviewed release-change fragments",
@@ -259,6 +259,71 @@ def _release_lifecycle_documents(
             },
         ],
         "requiredProfiles": ["development", "review"],
+        "quality": {
+            "standard": "production-v1",
+            "assessments": [
+                {
+                    "dimension": "compatibility",
+                    "status": "applicable",
+                    "rationale": "The release must preserve its declared compatibility and exact identity surfaces.",
+                    "criteria": ["ac-identity"],
+                },
+                {
+                    "dimension": "correctness",
+                    "status": "applicable",
+                    "rationale": "The derived identity and published bytes must match the reviewed release contract.",
+                    "criteria": ["ac-identity", "ac-publication"],
+                },
+                {
+                    "dimension": "maintainability",
+                    "status": "applicable",
+                    "rationale": "Independent review verifies the generated contract and deterministic release owner.",
+                    "criteria": ["ac-review"],
+                },
+                {
+                    "dimension": "observability",
+                    "status": "applicable",
+                    "rationale": "Release evidence and attestations expose the exact publication outcome.",
+                    "criteria": ["ac-publication"],
+                },
+                {
+                    "dimension": "operability",
+                    "status": "applicable",
+                    "rationale": "The reviewed release must publish and recover through the declared automated workflow.",
+                    "criteria": ["ac-publication"],
+                },
+                {
+                    "dimension": "performance",
+                    "status": "not-applicable",
+                    "rationale": "Release authorization adds no product runtime or scaling behavior.",
+                    "criteria": [],
+                },
+                {
+                    "dimension": "privacy",
+                    "status": "not-applicable",
+                    "rationale": "Release metadata contains no personal or sensitive data processing.",
+                    "criteria": [],
+                },
+                {
+                    "dimension": "reliability",
+                    "status": "applicable",
+                    "rationale": "Immutable assets and exact external-state checks must fail closed and recover deterministically.",
+                    "criteria": ["ac-publication"],
+                },
+                {
+                    "dimension": "security",
+                    "status": "applicable",
+                    "rationale": "Independent review and merge remain the only publication authorization boundary.",
+                    "criteria": ["ac-review"],
+                },
+                {
+                    "dimension": "supply-chain",
+                    "status": "applicable",
+                    "rationale": "The release binds source, version, artifacts, attestations, and registry bytes.",
+                    "criteria": ["ac-identity", "ac-publication"],
+                },
+            ],
+        },
         "signOff": {
             "required": False,
             "status": "not-required",
@@ -268,7 +333,7 @@ def _release_lifecycle_documents(
     contract_bytes = _canonical_json_bytes(contract)
     contract_digest = f"sha256:{hashlib.sha256(contract_bytes).hexdigest()}"
     plan = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "changeId": change_id,
         "contractDigest": contract_digest,
         "approach": "Validate the generated release contract and every declared surface, build from the exact reviewed tree, and permit publication only after independent approval and merge.",

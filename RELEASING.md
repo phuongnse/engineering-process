@@ -61,6 +61,27 @@ review before updating that PR.
 `processctl publication plan-version` is available for preview, but the generated
 Release PR is the only version-bearing checkpoint.
 
+## Pre-merge release qualification
+
+Every source PR with pending release fragments must pass one disposable end-to-end
+qualification on the designated Linux/Python job. CI installs the exact public N-1
+authority from `requirements/process.txt` with hashes, clones the immutable source
+checkpoint without credentials, materializes and commits the next release candidate,
+then requires N-1 to complete contract and plan validation, implementation
+registration, both verification profiles, review assignment, review submission,
+finish, evidence export, and evidence validation.
+
+The review report derives its schema, quality dimensions, statuses, and acceptance
+criteria from the registered immutable release contract. A producer test alone is not
+sufficient for a lifecycle schema change: the released consumer must accept every
+generated artifact at the last transition that reads it.
+
+Qualification evidence is synthetic, labelled qualification-only, kept inside the
+deleted temporary clone, and never uploaded or reused. The job has no tag, release,
+package publication, dispatch, PR-write, or production authorization path. The actual
+independent verifier and exact-head authorization still run on the generated Release
+PR. A source PR cannot be treated as release-ready merely because unit tests pass.
+
 ## Release authorization
 
 `release-candidate.yml` always reports a stable required check. For an internal Release
@@ -171,3 +192,27 @@ Adoption PRs never auto-merge by default. Each repository requires its own CI an
 independent review, then explicitly merges the exact candidate. A consumer may opt in
 to continuous adoption through its own repository policy; the publisher never infers
 consumer policy or grants itself consumer merge authority.
+
+## Release reliability invariants
+
+The following rules are regression contracts, not bootstrap exceptions:
+
+- New lifecycle documents use the current schema required by public N-1, while
+  historical readers remain available. Every paired producer/consumer path is tested
+  together through completion before merge.
+- The producer self-adopts the latest public authority before preparing the next
+  version. If self-adoption is stale, automation defers version derivation and
+  redispatches the exact current release through the idempotent publish/adoption path;
+  it does not invent another version or require a manual bridge.
+- The process hash lock is generated with a pinned lock generator and contains hashes
+  for the complete supported Python/OS binary matrix, not only the machine that
+  generated it.
+- Registry readiness means both the PyPI version JSON and Simple API expose the exact
+  expected filenames and hashes. Adoption is not dispatched from an eventually
+  consistent partial view.
+- Remote GitHub asset reads use bounded retry only for the same immutable tag, names,
+  sizes, and hashes. A conflicting byte is never retried into acceptance.
+- The Renovate control plane requires a terminal successful result for every
+  allowlisted repository and rejects artifact errors or partial scans. Event delivery
+  is App-authenticated and idempotent; cron polling and maintainer-run bridge commands
+  are not production dependencies.

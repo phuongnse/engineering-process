@@ -293,6 +293,18 @@ class SelfHostingTests(unittest.TestCase):
             'python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"',
             workflow,
         )
+        self.assertIn("timeout-minutes: 20", workflow)
+        self.assertIn(
+            'python -m venv "$RUNNER_TEMP/release-qualification-authority"',
+            workflow,
+        )
+        self.assertIn("--require-hashes -r requirements/process.txt", workflow)
+        self.assertIn("verification/qualify_release_lifecycle.py", workflow)
+        self.assertIn(
+            '--processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"',
+            workflow,
+        )
+        self.assertIn("github.head_ref != 'automation/release/next'", workflow)
         self.assertNotIn('".[dev]"', workflow)
         self.assertIn('--expected-checkpoint "$CI_CHECKPOINT"', workflow)
         self.assertIn('--comparison-base "$CI_COMPARISON_BASE"', workflow)
