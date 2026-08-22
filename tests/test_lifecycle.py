@@ -300,6 +300,68 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(report["impact"]["baseRef"], "HEAD")
             self.assertEqual(report["impact"]["changedPaths"], [])
 
+    def test_stale_verified_source_can_begin_a_new_implementation_cycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            self.prepare_verified_change(root, inputs)
+
+            (root / "tracked.txt").write_text("remote CI correction\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "fix: address remote verification"],
+                cwd=root,
+                check=True,
+            )
+
+            state = begin_implementation(
+                root,
+                "change-1",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            self.assertEqual("implementing", state["phase"])
+            self.assertEqual(2, state["cycle"])
+            self.assertEqual([], state["verification"])
+            invalidated = [
+                event
+                for event in state["history"]
+                if event["event"] == "verification-invalidated"
+            ]
+            self.assertEqual(1, len(invalidated))
+            self.assertEqual(1, invalidated[0]["previousCycle"])
+            self.assertEqual(
+                "source-changed-after-verification", invalidated[0]["reason"]
+            )
+            self.assertEqual(2, len(invalidated[0]["previousVerification"]))
+
+    def test_current_verified_source_cannot_bypass_independent_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            self.prepare_verified_change(root, inputs)
+
+            with self.assertRaisesRegex(
+                ContractError, "must enter independent review"
+            ):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
     def test_full_lifecycle_requires_independent_review(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

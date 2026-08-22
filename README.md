@@ -371,6 +371,13 @@ processctl change verify --change-id issue-123 --profile review \
   --actor worker --context worker-session --actor-kind agent
 ~~~
 
+If later remote evidence or a source correction invalidates that verified checkpoint
+before review, commit the correction and run `change implement` again. The CLI
+preserves the earlier evidence, records `verification-invalidated`, increments the
+cycle, and requires every profile again. It accepts this transition only when the
+recorded verification is actually stale; a current verified checkpoint cannot use it
+to bypass independent review.
+
 After the phase becomes `verified`, a separate reviewer context registers its
 assignment:
 
