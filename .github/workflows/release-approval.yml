@@ -202,7 +202,19 @@ jobs:
           compression-level: 9
           include-hidden-files: false
 
-      - name: Mark the verified Release PR ready
+      - name: Create short-lived Release PR stage token
+        if: steps.resolve.outputs.already_authorized != 'true'
+        id: pr-stage-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+          permission-metadata: read
+          permission-pull-requests: write
+
+      - name: Publish the verified Release PR authorization
         if: steps.resolve.outputs.already_authorized != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -216,6 +228,13 @@ jobs:
             -f state=success \
             -f context=release-authorization \
             -f description='Exact candidate independently verified; merge authorizes release'
+
+      - name: Mark the verified Release PR ready
+        if: steps.resolve.outputs.already_authorized != 'true'
+        env:
+          GH_TOKEN: ${{ steps.pr-stage-token.outputs.token }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
           if test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .draft)" = true; then
             gh pr ready "$PR_NUMBER"
           fi
