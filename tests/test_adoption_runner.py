@@ -262,7 +262,12 @@ class AdoptionRunnerTests(unittest.TestCase):
                     self.assertEqual(observed_snapshot, [snapshot])
                     self.assertTrue(source.samefile(checkout))
                     self.assertEqual(digest, expected)
-                    return json.dumps({"requirementsDigest": digest})
+                    return json.dumps(
+                        {
+                            "requirementsDigest": digest,
+                            "version": "0.1.1",
+                        }
+                    )
                 return ""
 
             with (
@@ -280,6 +285,61 @@ class AdoptionRunnerTests(unittest.TestCase):
                         ]
                     ),
                 )
+
+    def test_check_uses_installed_authority_even_when_target_is_adopted(self):
+        runner = load_runner()
+        content = b"--only-binary :all:\nengineering-process==0.2.0\n"
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_process_lock(root, "0.2.0")
+            source = root / "requirements" / "process.txt"
+            source.parent.mkdir()
+            source.write_bytes(content)
+            adoption_commands: list[list[str]] = []
+
+            def fake_run(argv, *, cwd):
+                del cwd
+                if any("engineering_process.VERSION" in part for part in argv):
+                    return "0.2.0\n"
+                if "adoption" in argv:
+                    adoption_commands.append(argv)
+                    self.assertIn("check", argv)
+                    self.assertNotIn("apply", argv)
+                    supplied = Path(argv[argv.index("--requirements-lock") + 1])
+                    self.assertTrue(source.samefile(supplied))
+                    return json.dumps(
+                        {
+                            "requirementsDigest": digest,
+                            "status": "passed",
+                            "version": "0.2.0",
+                        }
+                    )
+                return ""
+
+            with (
+                mock.patch.object(runner, "_run", side_effect=fake_run),
+                mock.patch.object(runner.sys.stdout, "write"),
+            ):
+                self.assertEqual(
+                    0,
+                    runner.main(
+                        [
+                            "--project-root",
+                            str(root),
+                            "--requirements-lock",
+                            "requirements/process.txt",
+                            "--check",
+                        ]
+                    ),
+                )
+
+            self.assertEqual(1, len(adoption_commands))
+            self.assertIn("-I", adoption_commands[0])
+            self.assertIn(
+                "from engineering_process.cli import main; raise SystemExit(main())",
+                adoption_commands[0],
+            )
 
     def test_main_noops_when_the_hash_locked_target_is_already_adopted(self):
         runner = load_runner()

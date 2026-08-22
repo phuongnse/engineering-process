@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "post-v0-2-release-adoption-hardening",
+  "type": "fix",
+  "surfaces": [
+    "adoption",
+    "publication",
+    "workflow"
+  ],
+  "rationale": "Correct event-driven publication recovery, validate Renovate metadata through a bounded exact contract, require strict consumer outcomes, and verify self-adoption through the public hash-locked authority instead of source under development.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

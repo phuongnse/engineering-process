@@ -102,9 +102,10 @@ jobs:
           github.event_name == 'pull_request' &&
           startsWith(github.head_ref, 'automation/renovate/engineering-process')
         run: >-
-          processctl adoption check
+          python .process/adopt-process.py
           --project-root .
           --requirements-lock requirements/process.txt
+          --check
 
       - name: Validate publication metadata
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'

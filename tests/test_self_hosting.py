@@ -71,6 +71,9 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIn('-f ci_run_id="$GITHUB_RUN_ID"', ci)
         self.assertIn('if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then', ci)
+        self.assertIn("python .process/adopt-process.py", ci)
+        self.assertIn("--check", ci)
+        self.assertNotIn("processctl adoption check", ci)
         self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
     def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
@@ -384,7 +387,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIsNotNone(source_match)
         self.assertEqual(lock["process"]["version"], source_match.group("version"))
 
-    def test_managed_adoption_runner_matches_packaged_template(self):
+    def test_adoption_runner_sources_remain_managed(self):
         managed = PROCESS_ROOT / ".process" / "adopt-process.py"
         template = PROCESS_ROOT / "templates" / "adopt-process.py"
         managed_windows_helper = (
@@ -395,12 +398,9 @@ class SelfHostingTests(unittest.TestCase):
         )
         windows_helper = PROCESS_ROOT / "engineering_process" / "_windows_job.py"
 
-        self.assertEqual(template.read_bytes(), managed.read_bytes())
-        self.assertTrue(
-            template.read_text(encoding="utf-8").startswith(
-                "# Managed by engineering-process; do not edit.\n"
-            )
-        )
+        marker = "# Managed by engineering-process; do not edit.\n"
+        self.assertTrue(template.read_text(encoding="utf-8").startswith(marker))
+        self.assertTrue(managed.read_text(encoding="utf-8").startswith(marker))
         self.assertEqual(
             windows_helper.read_bytes(), managed_windows_helper.read_bytes()
         )
