@@ -141,11 +141,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertIn('gh pr ready "$PR_NUMBER"', approval)
 
-    def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
+    def test_renovate_reserves_process_adoption_for_the_lifecycle_host(self):
         renovate = json.loads(
             (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
         )
 
+        self.assertTrue(renovate["enabled"])
         self.assertFalse(renovate["automerge"])
         self.assertTrue(renovate["draftPR"])
         self.assertEqual("automation/renovate/", renovate["branchPrefix"])
@@ -153,7 +154,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertEqual(
             [],
             validate_pull_request(
-                title="chore(process): update engineering-process authority",
+                title="chore(deps): update a normal dependency",
                 body=renovate["prBodyTemplate"],
                 branch="automation/renovate/engineering-process-0.x",
                 state="draft",
@@ -164,7 +165,7 @@ class SelfHostingTests(unittest.TestCase):
             for rule in renovate["packageRules"]
             if rule.get("matchPackageNames") == ["engineering-process"]
         )
-        self.assertTrue(authority_rule["enabled"])
+        self.assertFalse(authority_rule["enabled"])
         self.assertFalse(authority_rule["automerge"])
         self.assertEqual(["at any time"], authority_rule["schedule"])
         self.assertEqual(100, authority_rule["prPriority"])
@@ -199,6 +200,11 @@ class SelfHostingTests(unittest.TestCase):
                 "requirements/process.txt",
             }.issubset(task["fileFilters"])
         )
+        ci = (PROCESS_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("automation/process/engineering-process", ci)
+        self.assertNotIn("automation/renovate/engineering-process", ci)
 
     def test_release_assets_are_prepared_before_immutable_publication(self):
         prepare = (
