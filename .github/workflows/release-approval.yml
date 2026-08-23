@@ -1,104 +1,108 @@
-name: Release Authorization
+name: Complete review and publish Release PR
 
 on:
   workflow_dispatch:
     inputs:
-      ci_run_id:
-        description: Successful exact-head CI run to authorize
+      verified_run_id:
+        description: Run containing the exact verified candidate lifecycle
         required: true
         type: string
-      release_pr_number:
-        description: Exact open Release PR number
+      comparison_base:
+        description: Exact protected-main comparison base
         required: true
         type: string
       release_head_sha:
-        description: Exact open Release PR head
+        description: Exact reviewed candidate checkpoint
+        required: true
+        type: string
+      reviewer_actor:
+        description: Consumer-host selected stable reviewer actor
+        required: true
+        type: string
+      reviewer_context:
+        description: Fresh isolated reviewer context
+        required: true
+        type: string
+      reviewer_kind:
+        description: Reviewer kind, agent or human
+        required: true
+        type: string
+      review_method:
+        description: Isolation method
+        required: true
+        type: string
+      attested_by:
+        description: Host or organization attesting reviewer isolation
+        required: true
+        type: string
+      attestation_evidence:
+        description: Bounded evidence for reviewer isolation
+        required: true
+        type: string
+      review_report_base64:
+        description: Base64-encoded exact schema review report
         required: true
         type: string
 
 permissions:
   actions: read
-  checks: read
   contents: read
-  pull-requests: write
-  statuses: write
 
 concurrency:
-  group: release-authorization-${{ inputs.release_head_sha }}
+  group: release-review-${{ inputs.release_head_sha }}
   cancel-in-progress: false
 
 jobs:
-  authorize:
-    name: Bind independent verification to the exact candidate
-    runs-on: ubuntu-latest
+  complete-and-publish:
+    name: Complete lifecycle before publishing source or PR
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Resolve and validate the internal Release PR
-        id: resolve
+      - name: Validate bounded callback identity
         env:
-          GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          BASE_SHA: ${{ inputs.comparison_base }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
-          PR_NUMBER: ${{ inputs.release_pr_number }}
+          REVIEWER_KIND: ${{ inputs.reviewer_kind }}
+          REVIEW_METHOD: ${{ inputs.review_method }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
         run: |
-          printf '%s' "$CI_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
-          printf '%s' "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$VERIFIED_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$BASE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           printf '%s' "$HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
-          for _attempt in $(seq 1 60); do
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" \
-              > "$RUNNER_TEMP/ci-run.json"
-            test "$(jq -r .status "$RUNNER_TEMP/ci-run.json")" != completed || break
-            sleep 2
-          done
-          test "$(jq -r .status "$RUNNER_TEMP/ci-run.json")" = completed
-          test "$(jq -r .conclusion "$RUNNER_TEMP/ci-run.json")" = success
-          ci_event="$(jq -r .event "$RUNNER_TEMP/ci-run.json")"
-          test "$ci_event" = pull_request || test "$ci_event" = workflow_dispatch
-          test "$(jq -r .path "$RUNNER_TEMP/ci-run.json")" = .github/workflows/ci.yml
-          test "$(jq -r .head_branch "$RUNNER_TEMP/ci-run.json")" = automation/release/next
-          test "$(jq -r .head_sha "$RUNNER_TEMP/ci-run.json")" = "$HEAD_SHA"
-          test "$(jq -r .head_repository.full_name "$RUNNER_TEMP/ci-run.json")" = "$GITHUB_REPOSITORY"
-          test -n "$PR_NUMBER"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .state)" = open
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)" = "$HEAD_SHA"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.ref)" = "automation/release/next"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.repo.full_name)" = "$GITHUB_REPOSITORY"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .base.ref)" = main
-          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" \
-            --jq '.statuses | map(select(.context == "release-authorization")) | sort_by(.created_at) | last | .state // empty')"
-          if test "$state" = success; then
-            echo "already_authorized=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "already_authorized=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          test "$REVIEWER_KIND" = agent || test "$REVIEWER_KIND" = human
+          test "$REVIEW_METHOD" = isolated-context || test "$REVIEW_METHOD" = separate-person
 
-      - name: Mark release authorization pending
-        if: steps.resolve.outputs.already_authorized != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ inputs.release_head_sha }}
-        run: >-
-          gh api --method POST
-          "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
-          -f state=pending
-          -f context=release-authorization
-          -f description='Binding independent automated verification'
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: steps.resolve.outputs.already_authorized != 'true'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.release_head_sha }}
+          ref: ${{ inputs.comparison_base }}
+
+      - name: Restore the exact verified candidate and lifecycle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/verified-candidate"
+          gh run download "$VERIFIED_RUN_ID" \
+            --name "verified-release-candidate-$HEAD_SHA" \
+            --dir "$RUNNER_TEMP/verified-candidate"
+          test "$(jq -r .headSha "$RUNNER_TEMP/verified-candidate/candidate.json")" = "$HEAD_SHA"
+          test "$(jq -r .baseSha "$RUNNER_TEMP/verified-candidate/candidate.json")" = "${{ inputs.comparison_base }}"
+          git fetch "$RUNNER_TEMP/verified-candidate/source.bundle" "$HEAD_SHA"
+          git checkout --detach "$HEAD_SHA"
+          change_id="$(jq -r .id .release/change.json)"
+          mkdir -p ".process/runs/$change_id"
+          cp -R "$RUNNER_TEMP/verified-candidate/lifecycle/." ".process/runs/$change_id/"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: steps.resolve.outputs.already_authorized != 'true'
         with:
           python-version: "3.14"
 
-      - name: Install the exact public N-1 authority
-        if: steps.resolve.outputs.already_authorized != 'true'
+      - name: Install the exact public N-1 authority and project dependencies
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
@@ -109,160 +113,110 @@ jobs:
             -r engineering_process/requirements-build.txt
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
 
-      - name: Restore and validate supplemental policy evidence
-        if: steps.resolve.outputs.already_authorized != 'true'
+      - name: Register and submit the consumer-host semantic review
+        id: lifecycle
         env:
-          GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ inputs.ci_run_id }}
-          HEAD_SHA: ${{ inputs.release_head_sha }}
-          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          ATTESTATION_EVIDENCE: ${{ inputs.attestation_evidence }}
+          ATTESTED_BY: ${{ inputs.attested_by }}
+          REPORT_BASE64: ${{ inputs.review_report_base64 }}
+          REVIEWER_ACTOR: ${{ inputs.reviewer_actor }}
+          REVIEWER_CONTEXT: ${{ inputs.reviewer_context }}
+          REVIEWER_KIND: ${{ inputs.reviewer_kind }}
+          REVIEW_METHOD: ${{ inputs.review_method }}
         run: |
-          mkdir -p "$RUNNER_TEMP/policy-verification"
-          gh run download "$CI_RUN_ID" \
-            --name "independent-review-$PR_NUMBER-$HEAD_SHA" \
-            --dir "$RUNNER_TEMP/policy-verification"
-          python -c '
-          import json, os, pathlib
-          report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "policy-verification" / "report.json").read_text(encoding="utf-8"))
-          assert report["status"] == "passed"
-          assert report["governanceMode"] == "single-maintainer"
-          assert report["verificationKind"] == "policy-verification"
-          assert report["repository"] == os.environ["GITHUB_REPOSITORY"]
-          assert report["headSha"] == os.environ["HEAD_SHA"]
-          assert report["verifierRepository"] == "phuongnse/renovate-ops"
-          assert report["verifierSha"] == "f22b05f7813d5868f2a728f203a59afa5d6f18d2"
-          '
-
-      - name: Restore host-produced semantic review
-        if: steps.resolve.outputs.already_authorized != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ inputs.ci_run_id }}
-          HEAD_SHA: ${{ inputs.release_head_sha }}
-          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/semantic-review"
-          gh run download "$CI_RUN_ID" \
-            --name "semantic-review-$PR_NUMBER-$HEAD_SHA" \
-            --dir "$RUNNER_TEMP/semantic-review"
-          test -s "$RUNNER_TEMP/semantic-review/review.json"
-
-      - name: Restore the successful exact-head candidate lifecycle
-        if: steps.resolve.outputs.already_authorized != 'true'
-        id: identity
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ inputs.release_head_sha }}
-        run: |
-          change_id="$(python -c 'import json; print(json.load(open(".release/change.json", encoding="utf-8"))["id"])')"
-          run_id=""
-          for _attempt in $(seq 1 120); do
-            run_id="$(gh run list --workflow release-candidate.yml --commit "$HEAD_SHA" \
-              --status success --limit 20 --json databaseId,headSha \
-              --jq 'map(select(.headSha == env.HEAD_SHA))[0].databaseId // empty')"
-            test -z "$run_id" || break
-            sleep 15
-          done
-          test -n "$run_id"
-          mkdir -p ".process/runs/$change_id"
-          gh run download "$run_id" --name "release-candidate-$HEAD_SHA" \
-            --dir ".process/runs/$change_id"
-          printf 'change_id=%s\n' "$change_id" >> "$GITHUB_OUTPUT"
-          mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
-          evidence_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print(release["identity"]["receiptAsset"] or release["identity"]["authorizationAsset"])')"
-          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
-          printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
-
-      - name: Finalize the independently verified lifecycle
-        if: steps.resolve.outputs.already_authorized != 'true'
-        env:
-          CHANGE_ID: ${{ steps.identity.outputs.change_id }}
-          CONTEXT_ID: release-pr-${{ steps.resolve.outputs.pr_number }}-${{ inputs.release_head_sha }}
-          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-          POLICY_EVIDENCE: ${{ runner.temp }}/policy-verification/report.json
-          SEMANTIC_REVIEW: ${{ runner.temp }}/semantic-review/review.json
-          MODE: ${{ steps.identity.outputs.mode }}
-        run: |
-          processctl change status --change-id "$CHANGE_ID"
-          python verification/prepare_release_review.py \
-            --change-id "$CHANGE_ID" \
-            --policy-evidence "$POLICY_EVIDENCE" \
-            --review-report "$SEMANTIC_REVIEW" \
+          change_id="$(jq -r .id .release/change.json)"
+          processctl change review start \
+            --actor "$REVIEWER_ACTOR" --context "$REVIEWER_CONTEXT" \
+            --actor-kind "$REVIEWER_KIND" --change-id "$change_id" \
+            --method "$REVIEW_METHOD" --attested-by "$ATTESTED_BY" \
+            --attestation-evidence "$ATTESTATION_EVIDENCE"
+          printf '%s' "$REPORT_BASE64" | base64 --decode > "$RUNNER_TEMP/host-review.json"
+          processctl contract validate --kind review "$RUNNER_TEMP/host-review.json"
+          "$RUNNER_TEMP/process-authority/bin/python" verification/prepare_release_review.py \
+            --change-id "$change_id" \
+            --review-report "$RUNNER_TEMP/host-review.json" \
             --output "$RUNNER_TEMP/release-review.json"
           processctl change review submit \
-            --change-id "$CHANGE_ID" --report "$RUNNER_TEMP/release-review.json"
+            --change-id "$change_id" --report "$RUNNER_TEMP/release-review.json"
+          test "$(processctl change status --change-id "$change_id" --json | jq -r .phase)" = approved
           processctl change finish \
-            --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
-            --change-id "$CHANGE_ID"
-          mkdir -p "$RUNNER_TEMP/release-authorization"
-          if test "$MODE" = governed; then
-            processctl evidence export --change-id "$CHANGE_ID" \
-              --output "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
-            processctl evidence validate \
-              "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
-          else
-            python processctl.py evidence export-bootstrap --change-id "$CHANGE_ID" \
-              --output "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
-            python processctl.py evidence validate-bootstrap \
-              "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
-          fi
+            --actor github-release-bot \
+            --context "release-publication-${{ inputs.release_head_sha }}" \
+            --actor-kind agent --change-id "$change_id"
+          printf 'change_id=%s\n' "$change_id" >> "$GITHUB_OUTPUT"
 
-      - name: Preserve release authorization evidence
-        if: steps.resolve.outputs.already_authorized != 'true'
+      - name: Export completed lifecycle evidence
+        id: evidence
+        env:
+          CHANGE_ID: ${{ steps.lifecycle.outputs.change_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/completion"
+          mode="$(jq -r .provenance.mode release.json)"
+          evidence_asset="$(jq -r '.identity.receiptAsset // .identity.authorizationAsset' release.json)"
+          test -n "$evidence_asset"
+          if test "$mode" = governed; then
+            processctl evidence export --change-id "$CHANGE_ID" \
+              --output "$RUNNER_TEMP/completion/$evidence_asset"
+            processctl evidence validate "$RUNNER_TEMP/completion/$evidence_asset"
+          else
+            "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
+              evidence export-bootstrap --change-id "$CHANGE_ID" \
+              --output "$RUNNER_TEMP/completion/$evidence_asset"
+            "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
+              evidence validate-bootstrap "$RUNNER_TEMP/completion/$evidence_asset"
+          fi
+          printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve completion evidence before remote publication
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-authorization-${{ inputs.release_head_sha }}
-          path: ${{ runner.temp }}/release-authorization/${{ steps.identity.outputs.evidence_asset }}
+          name: release-completion-${{ inputs.release_head_sha }}
+          path: ${{ runner.temp }}/completion/${{ steps.evidence.outputs.evidence_asset }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
           compression-level: 9
-          include-hidden-files: false
 
-      - name: Create short-lived Release PR stage token
-        if: steps.resolve.outputs.already_authorized != 'true'
-        id: pr-stage-token
+      - name: Create short-lived source publication token
+        id: publication-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: phuongnse
           repositories: engineering-process
+          permission-contents: write
           permission-metadata: read
           permission-pull-requests: write
 
-      - name: Publish the verified Release PR authorization
-        if: steps.resolve.outputs.already_authorized != 'true'
+      - name: Publish the exact completed source and create the ready PR
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          BASE_SHA: ${{ inputs.comparison_base }}
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
+          RELEASE_BRANCH: automation/release/next
         run: |
-          python processctl.py publication release-pr-body \
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          remote_sha="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
+          test -z "$remote_sha" || test "$remote_sha" = "$HEAD_SHA"
+          version="$(jq -r .version release.json)"
+          title="chore(release): prepare v$version"
+          processctl publication release-pr-body \
             --state approved --output "$RUNNER_TEMP/release-pr.md"
-          gh pr edit "$PR_NUMBER" --body-file "$RUNNER_TEMP/release-pr.md"
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
-            -f state=success \
-            -f context=release-authorization \
-            -f description='Exact candidate independently verified; merge authorizes release'
-
-      - name: Mark the verified Release PR ready
-        if: steps.resolve.outputs.already_authorized != 'true'
-        env:
-          GH_TOKEN: ${{ steps.pr-stage-token.outputs.token }}
-          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
-        run: |
-          if test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .draft)" = true; then
-            gh pr ready "$PR_NUMBER"
+          processctl publication validate-pr \
+            --title "$title" --body-file "$RUNNER_TEMP/release-pr.md" \
+            --branch "$RELEASE_BRANCH" --state ready
+          "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
+            publication validate-source --project-root . \
+            --change-id "${{ steps.lifecycle.outputs.change_id }}" \
+            --commit "$HEAD_SHA" --title "$title" \
+            --branch "$RELEASE_BRANCH" --body-file "$RUNNER_TEMP/release-pr.md"
+          processctl publication validate-range \
+            --project-root . --branch "$RELEASE_BRANCH" \
+            --range "$BASE_SHA..$HEAD_SHA"
+          if test -z "$remote_sha"; then
+            git push origin "$HEAD_SHA:refs/heads/$RELEASE_BRANCH"
           fi
-
-      - name: Fail the release authorization status
-        if: ${{ failure() && steps.resolve.outputs.already_authorized != 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ inputs.release_head_sha }}
-        run: >-
-          gh api --method POST
-          "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
-          -f state=failure
-          -f context=release-authorization
-          -f description='Release authorization evidence failed'
+          existing="$(gh pr list --state open --head "$RELEASE_BRANCH" --json number --jq 'length')"
+          test "$existing" = 0
+          gh pr create --base main --head "$RELEASE_BRANCH" \
+            --title "$title" --body-file "$RUNNER_TEMP/release-pr.md"

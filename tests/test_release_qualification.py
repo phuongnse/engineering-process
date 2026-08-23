@@ -37,6 +37,18 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertEqual("phuongnse/renovate-ops", evidence["verifierRepository"])
         self.assertEqual(40, len(evidence["verifierSha"]))
 
+    def test_qualification_source_cannot_synthesize_semantic_approval(self):
+        source = (
+            Path(__file__).resolve().parent.parent
+            / "verification"
+            / "qualify_release_lifecycle.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("qualification_semantic_review", source)
+        self.assertNotIn('"verdict": "approved"', source)
+        self.assertNotIn('"change",\n                    "review",', source)
+        self.assertIn('lifecycle_status.get("phase") != "verified"', source)
+
     def test_qualification_subprocesses_do_not_receive_secret_environment(self):
         environment = {
             "PATH": "/usr/bin",

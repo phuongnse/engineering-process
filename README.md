@@ -504,6 +504,17 @@ reviewer's exact report. The CLI validates that artifact against the assignment 
 carried findings; the attesting host or human boundary, not local process state,
 authenticates who produced it.
 
+The producer release workflows implement the same host-neutral chain with explicit
+artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle;
+`release-candidate.yml` restores it and runs `change start`, `change plan`,
+`change implement`, and every required `change verify`; the resulting
+`engineering-process-review-required` event names the exact artifact and checkpoint.
+The consumer-selected host chooses an agent or human, registers the assignment in
+its restored lifecycle, and returns the exact report plus attested identity to
+`release-approval.yml`. That workflow repeats the assignment, submits the unchanged
+report, runs `change finish` and `publication validate-source`, and only then pushes
+the branch and creates a ready PR. No workflow invokes merge.
+
 ## Distribution contracts
 
 - `project.json` declares baseline profiles and exact argument-array checks.

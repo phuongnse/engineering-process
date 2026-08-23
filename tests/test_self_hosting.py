@@ -62,14 +62,22 @@ class SelfHostingTests(unittest.TestCase):
 
         self.assertIn("workflow_dispatch:", candidate)
         self.assertNotIn("pull_request:", candidate)
-        self.assertIn("Verify exact pre-PR candidate checkpoint", candidate)
-        self.assertIn("Preserve the exact verified lifecycle", candidate)
+        self.assertIn("Verify exact unpublished checkpoint", candidate)
+        self.assertIn("Preserve the exact verified checkpoint and lifecycle", candidate)
         self.assertNotIn("processctl change review start", candidate)
-        self.assertIn("contents: read", candidate)
-        self.assertNotIn("contents: write", candidate)
-        self.assertIn("--policy-evidence", approval)
+        self.assertNotIn("git push", candidate)
+        self.assertNotIn("gh pr create", candidate)
+        self.assertIn("engineering-process-review-required", candidate)
+        self.assertIn("consumer-selected reviewer host", candidate)
+        self.assertIn("processctl change review start", approval)
         self.assertIn("--review-report", approval)
-        self.assertIn("semantic-review-$PR_NUMBER-$HEAD_SHA", approval)
+        self.assertIn("processctl change finish", approval)
+        self.assertIn("publication validate-source", approval)
+        self.assertLess(
+            approval.index("processctl change finish"), approval.index("git push origin")
+        )
+        self.assertLess(approval.index("git push origin"), approval.index("gh pr create"))
+        self.assertNotIn("gh pr ready", approval)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".process/process.lock"', generator)
         self.assertIn('"requirements/process.in"', generator)
@@ -78,47 +86,28 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('".github/workflows/release-pr.yml"', generator)
         self.assertNotIn("gh pr create", generator)
         self.assertNotIn("gh pr ready", generator)
-        self.assertIn("engineering-process-review-required", generator)
-        self.assertIn("Dispatch the immutable candidate for consumer-host review", generator)
-        self.assertIn("--force-with-lease", generator)
+        self.assertNotIn("git push", generator)
+        self.assertIn("source.bundle", generator)
+        self.assertIn("unpublished-release-candidate", generator)
         self.assertIn("Detect pending release changes", generator)
         self.assertIn("No pending release changes", generator)
-        self.assertIn("actions/create-github-app-token@", generator)
-        self.assertIn("RENOVATE_APP_CLIENT_ID", generator)
-        self.assertIn("RENOVATE_APP_PRIVATE_KEY", generator)
-        self.assertIn("permission-workflows: write", generator)
-        self.assertIn("deferred=true", generator)
-        self.assertIn("steps.release.outputs.deferred == 'true'", generator)
-        self.assertIn("steps.release.outputs.deferred != 'true'", generator)
-        self.assertIn("gh release verify", generator)
-        self.assertIn("git merge-base --is-ancestor", generator)
-        self.assertIn("engineering-process-release-ready", generator)
-        self.assertIn('"repos/$GITHUB_REPOSITORY/dispatches"', generator)
-        self.assertIn("token: ${{ steps.app-token.outputs.token }}", generator)
-        self.assertIn("GH_TOKEN: ${{ steps.app-token.outputs.token }}", generator)
-        self.assertNotIn('gh workflow run release-candidate.yml', generator)
-        self.assertNotIn('gh workflow run ci.yml', generator)
+        self.assertIn('gh workflow run release-candidate.yml', generator)
         self.assertIn("policy-verification:", ci)
-        self.assertIn(
-            'gh workflow run release-approval.yml --repo "$GITHUB_REPOSITORY" --ref main',
-            ci,
-        )
-        self.assertIn('-f ci_run_id="$GITHUB_RUN_ID"', ci)
-        self.assertIn('if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then', ci)
+        self.assertNotIn("release-authorization:", ci)
         self.assertIn("python templates/adopt-process.py", ci)
         self.assertIn("--check", ci)
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
-        self.assertIn("host-produced semantic review", approval)
+        self.assertIn("host-review.json", approval)
 
-    def test_renovate_waits_for_completed_branch_status_before_pr(self):
+    def test_renovate_cannot_publish_process_authority_adoptions(self):
         renovate = json.loads(
             (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
         )
 
         self.assertFalse(renovate["automerge"])
-        self.assertFalse(renovate["draftPR"])
-        self.assertEqual("status-success", renovate["prCreation"])
+        self.assertTrue(renovate["draftPR"])
+        self.assertNotIn("prCreation", renovate)
         self.assertEqual("automation/renovate/", renovate["branchPrefix"])
         self.assertEqual("==7.6.1", renovate["constraints"]["pipTools"])
         self.assertEqual(
@@ -135,7 +124,7 @@ class SelfHostingTests(unittest.TestCase):
             for rule in renovate["packageRules"]
             if rule.get("matchPackageNames") == ["engineering-process"]
         )
-        self.assertTrue(authority_rule["enabled"])
+        self.assertFalse(authority_rule["enabled"])
         self.assertFalse(authority_rule["automerge"])
         self.assertEqual(["at any time"], authority_rule["schedule"])
         self.assertEqual(100, authority_rule["prPriority"])
@@ -294,18 +283,16 @@ class SelfHostingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn(
-            "ref: ${{ inputs.release_head_sha || github.event.pull_request.head.sha || github.sha }}",
+            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
             workflow,
         )
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("reviewed_pr_number: ${{ inputs.release_pr_number }}", workflow)
-        self.assertIn("reviewed_head_sha: ${{ inputs.release_head_sha }}", workflow)
         self.assertIn(
-            "if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
+            "if: github.event_name == 'pull_request'",
             workflow,
         )
         self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", workflow)
-        self.assertIn("PR_BODY_PATH: ${{ steps.release.outputs.body_path }}", workflow)
+        self.assertNotIn("PR_BODY_PATH:", workflow)
         self.assertIn("verification/generate_ci_evidence.py", workflow)
         self.assertIn(
             "python -m pip install -r engineering_process/requirements-runtime.txt "
@@ -333,6 +320,7 @@ class SelfHostingTests(unittest.TestCase):
             '--processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"',
             workflow,
         )
+        self.assertNotIn("release-authorization:", workflow)
         self.assertIn("github.head_ref != 'automation/release/next'", workflow)
         self.assertNotIn('".[dev]"', workflow)
         self.assertIn('--expected-checkpoint "$CI_CHECKPOINT"', workflow)

@@ -15,6 +15,104 @@ MAX_GRAPH_COMMANDS = 32
 MAX_GRAPH_TRANSITIONS = 32
 EXTERNAL_STATES = {"unregistered", "awaiting-human-merge"}
 
+# This is the executable routing contract for the portable lifecycle.  The JSON
+# graph is a packaged, machine-readable projection of this contract, not a second
+# independently editable source of lifecycle truth.
+CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
+    "unregistered": {
+        "ownerSkill": "define-change-contract",
+        "actor": "automation",
+        "commands": ["change start", "contract validate"],
+        "transitions": {
+            "failure": ("unregistered", "define-change-contract"),
+            "success": ("specified", "plan-change"),
+        },
+    },
+    "specified": {
+        "ownerSkill": "plan-change",
+        "actor": "automation",
+        "commands": ["change plan", "contract validate"],
+        "transitions": {
+            "failure": ("specified", "plan-change"),
+            "success": ("planned", "implement-change"),
+        },
+    },
+    "planned": {
+        "ownerSkill": "implement-change",
+        "actor": "automation",
+        "commands": ["change implement"],
+        "transitions": {
+            "failure": ("planned", "implement-change"),
+            "success": ("implementing", "verify-change"),
+        },
+    },
+    "implementing": {
+        "ownerSkill": "verify-change",
+        "actor": "automation",
+        "commands": ["change verify"],
+        "transitions": {
+            "all-required-passed": ("verified", "review-change"),
+            "failure": ("implementing", "implement-change"),
+            "profile-passed": ("implementing", "verify-change"),
+        },
+    },
+    "verified": {
+        "ownerSkill": "review-change",
+        "actor": "automation",
+        "commands": ["change review start"],
+        "transitions": {
+            "failure": ("verified", "review-change"),
+            "reviewer-assigned": ("review-pending", "review-change"),
+        },
+    },
+    "review-pending": {
+        "ownerSkill": "review-change",
+        "actor": "automation",
+        "commands": ["change review submit", "contract validate"],
+        "transitions": {
+            "approved": ("approved", "finish-change"),
+            "changes-requested": ("changes-requested", "implement-change"),
+            "failure": ("review-pending", "review-change"),
+        },
+    },
+    "changes-requested": {
+        "ownerSkill": "implement-change",
+        "actor": "automation",
+        "commands": ["change implement"],
+        "transitions": {
+            "failure": ("changes-requested", "implement-change"),
+            "success": ("implementing", "verify-change"),
+        },
+    },
+    "approved": {
+        "ownerSkill": "finish-change",
+        "actor": "automation",
+        "commands": ["change finish"],
+        "transitions": {
+            "failure": ("approved", "finish-change"),
+            "success": ("completed", "publish-change"),
+        },
+    },
+    "completed": {
+        "ownerSkill": "publish-change",
+        "actor": "automation",
+        "commands": ["publication validate-range", "publication validate-source"],
+        "transitions": {
+            "failure": ("completed", "publish-change"),
+            "published": ("awaiting-human-merge", None),
+        },
+    },
+    "awaiting-human-merge": {
+        "ownerSkill": None,
+        "actor": "human",
+        "commands": [],
+        "transitions": {
+            "merged": (None, None),
+            "not-merged": ("awaiting-human-merge", None),
+        },
+    },
+}
+
 
 def process_graph_path(process_root: Path) -> Path:
     candidates = (
@@ -159,4 +257,25 @@ def load_process_graph(
                 raise ContractError(f"{label}.nextState: unknown state {next_state}")
             if next_skill is not None and next_skill not in core_skills:
                 raise ContractError(f"{label}.nextSkill: must name a mandatory core skill")
+
+    for identifier, expected in CANONICAL_STATE_CONTRACTS.items():
+        state = states[identifier]
+        for field in ("ownerSkill", "actor", "commands"):
+            if state[field] != expected[field]:
+                raise ContractError(
+                    f"{path}.states.{identifier}.{field}: contradicts the canonical "
+                    "lifecycle handoff contract"
+                )
+        actual_transitions = {
+            transition["result"]: (
+                transition["nextState"],
+                transition["nextSkill"],
+            )
+            for transition in state["transitions"]
+        }
+        if actual_transitions != expected["transitions"]:
+            raise ContractError(
+                f"{path}.states.{identifier}.transitions: contradict the canonical "
+                "lifecycle routing contract"
+            )
     return document

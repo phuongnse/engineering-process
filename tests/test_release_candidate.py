@@ -83,6 +83,11 @@ class ReleaseCandidateTests(unittest.TestCase):
                 assignment, independent_evidence, forged
             )
 
+        without_policy_evidence = validated_review_from_assignment(
+            assignment, None, semantic_review
+        )
+        self.assertEqual(semantic_review, without_policy_evidence)
+
     def test_release_review_derives_schema_3_quality_from_registered_contract(self):
         assignment = {
             "changeId": "release-0-2-1",

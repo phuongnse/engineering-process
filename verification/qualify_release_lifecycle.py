@@ -50,41 +50,6 @@ def qualification_evidence(checkpoint: str) -> dict[str, str]:
     }
 
 
-def qualification_semantic_review(
-    assignment: dict[str, object],
-    contract: dict[str, object],
-) -> dict[str, object]:
-    assessments = [
-        {
-            "dimension": item["dimension"],
-            "status": (
-                "verified"
-                if item["status"] == "applicable"
-                else "not-applicable-confirmed"
-            ),
-            "criteria": item["criteria"],
-            "evidence": "Qualification fixture represents a host-produced semantic review.",
-        }
-        for item in contract["quality"]["assessments"]
-    ]
-    return {
-        "schemaVersion": 3,
-        "changeId": assignment["changeId"],
-        "cycle": assignment["cycle"],
-        "checkpoint": assignment["checkpoint"],
-        "workspaceFingerprint": assignment["workspaceFingerprint"],
-        "comparisonBase": assignment["comparisonBase"],
-        "reviewer": assignment["reviewer"],
-        "independence": assignment["independence"],
-        "quality": {
-            "standard": "production-v1",
-            "assessments": assessments,
-        },
-        "verdict": "approved",
-        "findings": [],
-    }
-
-
 def _safe_environment() -> dict[str, str]:
     environment = {
         key: value
@@ -340,132 +305,9 @@ def qualify_release_lifecycle(
                 ),
                 PROFILE_TIMEOUT_SECONDS,
             ),
-            (
-                (
-                    authority_command,
-                    "change",
-                    "review",
-                    "start",
-                    "--actor",
-                    "renovate-ops-independent-reviewer",
-                    "--context",
-                    f"review-{context}",
-                    "--actor-kind",
-                    "agent",
-                    "--change-id",
-                    change_id,
-                    "--method",
-                    "isolated-context",
-                    "--attested-by",
-                    f"renovate-ops-{TRUSTED_VERIFIER_SHA}",
-                    "--attestation-evidence",
-                    f"github://{TRUSTED_VERIFIER_REPOSITORY}/commit/{TRUSTED_VERIFIER_SHA}",
-                ),
-                COMMAND_TIMEOUT_SECONDS,
-            ),
         )
         for command, timeout_seconds in lifecycle_commands:
             _run(command, cwd=candidate, timeout_seconds=timeout_seconds)
-        independent_evidence = qualification_root / "qualification-evidence.json"
-        _write_object(
-            independent_evidence,
-            qualification_evidence(checkpoint),
-            "qualification evidence",
-        )
-        review_report = qualification_root / "release-review.json"
-        assignment = json.loads(
-            (
-                candidate
-                / ".process"
-                / "runs"
-                / change_id
-                / "review-request-1.json"
-            ).read_text(encoding="utf-8")
-        )
-        contract = json.loads(
-            (candidate / ".release" / "change.json").read_text(encoding="utf-8")
-        )
-        host_review = qualification_root / "host-semantic-review.json"
-        _write_object(
-            host_review,
-            qualification_semantic_review(assignment, contract),
-            "host semantic review",
-        )
-        _run(
-            [
-                sys.executable,
-                "verification/prepare_release_review.py",
-                "--project-root",
-                str(candidate),
-                "--change-id",
-                change_id,
-                "--policy-evidence",
-                str(independent_evidence),
-                "--review-report",
-                str(host_review),
-                "--output",
-                str(review_report),
-            ],
-            cwd=candidate,
-        )
-        _run(
-            [
-                authority_command,
-                "change",
-                "review",
-                "submit",
-                "--change-id",
-                change_id,
-                "--report",
-                str(review_report),
-            ],
-            cwd=candidate,
-        )
-        _run(
-            [
-                authority_command,
-                "change",
-                "finish",
-                "--actor",
-                "qualification-release-bot",
-                "--context",
-                context,
-                "--actor-kind",
-                "agent",
-                "--change-id",
-                change_id,
-            ],
-            cwd=candidate,
-        )
-        release = _read_object(candidate / "release.json", "release contract")
-        provenance = release.get("provenance")
-        identity = release.get("identity")
-        if not isinstance(provenance, dict) or not isinstance(identity, dict):
-            raise ContractError("generated release identity is invalid")
-        mode = provenance.get("mode")
-        if mode == "governed":
-            evidence_name = identity.get("receiptAsset")
-            export_command = [authority_command, "evidence", "export"]
-            validate_command = [authority_command, "evidence", "validate"]
-        elif mode == "bootstrap-authority":
-            evidence_name = identity.get("authorizationAsset")
-            export_command = [sys.executable, "processctl.py", "evidence", "export-bootstrap"]
-            validate_command = [
-                sys.executable,
-                "processctl.py",
-                "evidence",
-                "validate-bootstrap",
-            ]
-        else:
-            raise ContractError("generated release provenance mode is not publishable")
-        if not isinstance(evidence_name, str) or not evidence_name:
-            raise ContractError("generated release evidence asset is invalid")
-        exported_evidence = qualification_root / evidence_name
-        _run(
-            [*export_command, "--change-id", change_id, "--output", str(exported_evidence)],
-            cwd=candidate,
-        )
-        _run([*validate_command, str(exported_evidence)], cwd=candidate)
         raw_status = _run(
             [
                 authority_command,
@@ -485,10 +327,12 @@ def qualify_release_lifecycle(
         if (
             not isinstance(lifecycle_status, dict)
             or lifecycle_status.get("status") != "passed"
-            or lifecycle_status.get("phase") != "completed"
+            or lifecycle_status.get("phase") != "verified"
             or lifecycle_status.get("current") is not True
         ):
-            raise ContractError("release qualification lifecycle did not complete")
+            raise ContractError(
+                "release qualification did not stop at the verified reviewer handoff"
+            )
     final_status = _run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=root,
@@ -501,6 +345,8 @@ def qualify_release_lifecycle(
         "sourceCheckpoint": source_checkpoint,
         "candidateCheckpoint": checkpoint,
         "changeId": change_id,
+        "phase": "verified",
+        "nextSkill": "review-change",
         "authority": str(authority),
         "pendingChanges": [path.name for path in changes],
     }

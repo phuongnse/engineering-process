@@ -84,6 +84,44 @@ class ProcessGraphTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "unknown skill"):
                 load_process_graph(root, root / "process_assets" / "skills")
 
+    def test_graph_rejects_contradictory_routes_and_missing_handoffs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(SKILLS_ROOT, root / "process_assets" / "skills")
+            shutil.copy2(PROCESS_ROOT / "bundles.json", root / "bundles.json")
+            graph = json.loads(
+                (PROCESS_ROOT / "process-graph.json").read_text(encoding="utf-8")
+            )
+            pending = next(
+                state for state in graph["states"] if state["id"] == "review-pending"
+            )
+            approved = next(
+                transition
+                for transition in pending["transitions"]
+                if transition["result"] == "approved"
+            )
+            approved["nextState"] = "completed"
+            approved["nextSkill"] = "publish-change"
+            (root / "process-graph.json").write_text(
+                json.dumps(graph), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ContractError, "canonical lifecycle routing"):
+                load_process_graph(root, root / "process_assets" / "skills")
+
+            graph = json.loads(
+                (PROCESS_ROOT / "process-graph.json").read_text(encoding="utf-8")
+            )
+            pending = next(
+                state for state in graph["states"] if state["id"] == "review-pending"
+            )
+            pending["commands"] = ["contract validate"]
+            (root / "process-graph.json").write_text(
+                json.dumps(graph), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "canonical lifecycle handoff"):
+                load_process_graph(root, root / "process_assets" / "skills")
+
 
 if __name__ == "__main__":
     unittest.main()

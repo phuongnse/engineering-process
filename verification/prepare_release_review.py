@@ -24,7 +24,7 @@ TRUSTED_VERIFIER_SHA = "f22b05f7813d5868f2a728f203a59afa5d6f18d2"
 
 def validated_review_from_assignment(
     assignment: dict[str, object],
-    policy_evidence: dict[str, object],
+    policy_evidence: dict[str, object] | None,
     review_report: dict[str, object],
     contract: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -42,20 +42,21 @@ def validated_review_from_assignment(
         raise ContractError(
             "release review assignment is missing: " + ", ".join(missing)
         )
-    expected_evidence = {
-        "status": "passed",
-        "governanceMode": "single-maintainer",
-        "verificationKind": "policy-verification",
-        "repository": "phuongnse/engineering-process",
-        "headSha": assignment["checkpoint"],
-        "verifierRepository": TRUSTED_VERIFIER_REPOSITORY,
-        "verifierSha": TRUSTED_VERIFIER_SHA,
-    }
-    for key, expected in expected_evidence.items():
-        if policy_evidence.get(key) != expected:
-            raise ContractError(
-                f"supplemental policy evidence has invalid {key}"
-            )
+    if policy_evidence is not None:
+        expected_evidence = {
+            "status": "passed",
+            "governanceMode": "single-maintainer",
+            "verificationKind": "policy-verification",
+            "repository": "phuongnse/engineering-process",
+            "headSha": assignment["checkpoint"],
+            "verifierRepository": TRUSTED_VERIFIER_REPOSITORY,
+            "verifierSha": TRUSTED_VERIFIER_SHA,
+        }
+        for key, expected in expected_evidence.items():
+            if policy_evidence.get(key) != expected:
+                raise ContractError(
+                    f"supplemental policy evidence has invalid {key}"
+                )
     validate_review(review_report, "host-produced semantic review")
     for field in (
         "changeId",
@@ -137,7 +138,7 @@ def _assignment_contract(
 def prepare_review(
     project_root: Path,
     change_id: str,
-    policy_evidence_path: Path,
+    policy_evidence_path: Path | None,
     review_report_path: Path,
     output: Path,
 ) -> dict[str, object]:
@@ -148,9 +149,11 @@ def prepare_review(
     assignment = read_json(assignment_path)
     if not isinstance(assignment, dict):
         raise ContractError("release review assignment must be an object")
-    policy_evidence = read_json(policy_evidence_path)
-    if not isinstance(policy_evidence, dict):
-        raise ContractError("supplemental policy evidence must be an object")
+    policy_evidence = None
+    if policy_evidence_path is not None:
+        policy_evidence = read_json(policy_evidence_path)
+        if not isinstance(policy_evidence, dict):
+            raise ContractError("supplemental policy evidence must be an object")
     review_report = read_json(review_report_path)
     if not isinstance(review_report, dict):
         raise ContractError("host-produced semantic review must be an object")
@@ -175,7 +178,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--change-id", required=True)
-    parser.add_argument("--policy-evidence", type=Path, required=True)
+    parser.add_argument("--policy-evidence", type=Path)
     parser.add_argument("--review-report", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
