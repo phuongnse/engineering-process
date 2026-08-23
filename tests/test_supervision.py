@@ -4,11 +4,12 @@ import sys
 import tempfile
 import unittest
 import subprocess
+from unittest.mock import Mock, patch
 
 from engineering_process._supervisor_posix import PosixProcessSupervisor
 from engineering_process._supervisor_windows import resolve_windows_application
 from engineering_process.helper_launch import isolated_helper_command
-from engineering_process.supervision import process_supervisor
+from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
 class ProcessSupervisionTests(unittest.TestCase):
@@ -32,6 +33,66 @@ class ProcessSupervisionTests(unittest.TestCase):
             environment=os.environ,
         )
         self.assertEqual(Path(sys.executable).resolve(), application)
+
+    def test_posix_finalization_returns_immediately_without_descendants(self):
+        process = Mock(pid=123)
+        supervisor = PosixProcessSupervisor()
+        with (
+            patch(
+                "engineering_process._supervisor_posix._process_group_exists",
+                return_value=False,
+            ),
+            patch("engineering_process._supervisor_posix._wait_for_process_group") as wait,
+            patch("engineering_process._supervisor_posix._terminate_group") as terminate,
+        ):
+            outcome = supervisor.finalize(process, grace_seconds=1)
+
+        self.assertEqual(CleanupOutcome(bounded=True), outcome)
+        wait.assert_not_called()
+        terminate.assert_not_called()
+
+    def test_posix_finalization_allows_bounded_natural_drain(self):
+        process = Mock(pid=123)
+        supervisor = PosixProcessSupervisor()
+        with (
+            patch(
+                "engineering_process._supervisor_posix._process_group_exists",
+                return_value=True,
+            ),
+            patch(
+                "engineering_process._supervisor_posix._wait_for_process_group",
+                return_value=True,
+            ) as wait,
+            patch("engineering_process._supervisor_posix._terminate_group") as terminate,
+        ):
+            outcome = supervisor.finalize(process, grace_seconds=1)
+
+        self.assertEqual(CleanupOutcome(bounded=True), outcome)
+        wait.assert_called_once_with(123, 0.25)
+        terminate.assert_not_called()
+
+    def test_posix_finalization_rejects_descendant_after_natural_drain_bound(self):
+        process = Mock(pid=123)
+        supervisor = PosixProcessSupervisor()
+        expected = CleanupOutcome(bounded=True, descendants_found=True)
+        with (
+            patch(
+                "engineering_process._supervisor_posix._process_group_exists",
+                return_value=True,
+            ),
+            patch(
+                "engineering_process._supervisor_posix._wait_for_process_group",
+                return_value=False,
+            ),
+            patch(
+                "engineering_process._supervisor_posix._terminate_group",
+                return_value=expected,
+            ) as terminate,
+        ):
+            outcome = supervisor.finalize(process, grace_seconds=1)
+
+        self.assertEqual(expected, outcome)
+        terminate.assert_called_once_with(123, 1)
 
     @unittest.skipUnless(os.name == "posix", "POSIX executable permission semantics")
     def test_posix_relative_path_entries_are_resolved_from_command_working_directory(self):

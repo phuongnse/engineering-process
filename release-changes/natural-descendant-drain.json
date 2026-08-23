@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "natural-descendant-drain",
+  "type": "fix",
+  "surfaces": [
+    "execution",
+    "supervision"
+  ],
+  "rationale": "Allow short, bounded child-process shutdown to drain naturally on POSIX just as it already does under the Windows Job Object, while persistent descendants remain terminated and completion-blocking.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

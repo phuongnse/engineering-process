@@ -14,6 +14,9 @@ import subprocess
 from typing import Mapping, Protocol
 
 
+NATURAL_DRAIN_GRACE_MILLISECONDS = 250
+
+
 @dataclass(frozen=True)
 class CleanupOutcome:
     """Result of a bounded process-tree cleanup operation."""

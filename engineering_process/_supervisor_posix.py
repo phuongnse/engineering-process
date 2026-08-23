@@ -9,7 +9,7 @@ import subprocess
 import time
 from typing import Mapping
 
-from .supervision import CleanupOutcome
+from .supervision import CleanupOutcome, NATURAL_DRAIN_GRACE_MILLISECONDS
 
 
 def _process_group_exists(process_group: int) -> bool:
@@ -156,7 +156,20 @@ class PosixProcessSupervisor:
         grace_seconds: float,
     ) -> CleanupOutcome:
         # The group id remains valid while any descendant from the owned session is
-        # alive, even after the original process has exited.
+        # alive, even after the original process has exited. Give descendants that
+        # were synchronously asked to stop one short bounded interval to disappear
+        # naturally before classifying them as abandoned background work.
+        if not _process_group_exists(process.pid):
+            return CleanupOutcome(bounded=True)
+        natural_drain_seconds = min(
+            grace_seconds,
+            NATURAL_DRAIN_GRACE_MILLISECONDS / 1000,
+        )
+        if natural_drain_seconds > 0 and _wait_for_process_group(
+            process.pid,
+            natural_drain_seconds,
+        ):
+            return CleanupOutcome(bounded=True)
         return _terminate_group(process.pid, grace_seconds)
 
 

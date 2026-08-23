@@ -59,6 +59,24 @@ its schema-2 profile reports. The remote artifact id and service-computed digest
 preserved with review evidence. These reports supplement the public N-1 lifecycle
 authority; code under verification never promotes itself to lifecycle authority.
 
+## Failure to invariant
+
+A validated command, gate, release, adoption, or external-integration failure must
+preserve exact bounded evidence and classify its owner before corrective mutation as
+project-local, shared-process, operations-or-external, or missing product or
+authorization input. Dependent candidates stay blocked. Shared defects are corrected
+in the producer rather than wrapped or duplicated by consumers; project behavior
+remains project-owned unless a portable class is proven.
+
+Every correction proves valid behavior and the corresponding fail-closed class at the
+lowest reliable owner boundary. Shared corrections additionally require producer
+profiles and reproduction at affected consumer boundaries before release. A transient
+operations/external recovery is allowed only with unchanged source and configuration;
+attempts are bounded, idempotent, diagnostic-preserving, and stop on deterministic
+failure. Source, branch, version, credentials, and controls are never changed merely
+to cause another attempt. Independent review treats violation of these ownership and
+evidence boundaries as completion-blocking.
+
 ## Resource and generated-state policy
 
 Every operation over repository-controlled or remote input has explicit limits for

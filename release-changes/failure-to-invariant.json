@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "failure-to-invariant",
+  "type": "capability",
+  "surfaces": [
+    "governance",
+    "skills"
+  ],
+  "rationale": "Require future failures to preserve evidence, classify the correct owner, repair a reusable invariant, prove valid and fail-closed behavior, and obtain affected-consumer proof before shared release.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

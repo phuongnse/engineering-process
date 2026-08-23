@@ -10,6 +10,27 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SkillTests(unittest.TestCase):
+    def test_failure_to_invariant_protocol_is_distribution_owned(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        execution = (skills / "run-change" / "references" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+        run_change = (skills / "run-change" / "SKILL.md").read_text(encoding="utf-8")
+        evolve = (skills / "evolve-process" / "SKILL.md").read_text(encoding="utf-8")
+        review = (skills / "review-change" / "SKILL.md").read_text(encoding="utf-8")
+        production = (PROCESS_ROOT / "PRODUCTION_STANDARD.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Failure-to-invariant protocol", execution)
+        self.assertIn("`project-local`, `shared-process`", execution)
+        self.assertIn("A shared-process defect must be fixed in", execution)
+        self.assertIn("valid\n   behavior", execution)
+        self.assertIn("bounded, idempotent", execution)
+        self.assertIn("failure-to-invariant protocol", run_change)
+        self.assertIn("keep the consumer candidate blocked", evolve)
+        self.assertIn("real\n   affected-consumer reproduction", evolve)
+        self.assertIn("Treat owner mismatch", review)
+        self.assertIn("## Failure to invariant", production)
+
     def test_repository_skills_are_portable(self):
         self.assertEqual(
             validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []

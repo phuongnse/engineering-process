@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process import _windows_job
+from engineering_process.supervision import NATURAL_DRAIN_GRACE_MILLISECONDS
 
 
 class NativeCall:
@@ -153,6 +154,12 @@ class FakeKernel32:
 
 
 class WindowsJobTests(unittest.TestCase):
+    def test_natural_drain_uses_the_portable_supervision_bound(self):
+        self.assertEqual(
+            NATURAL_DRAIN_GRACE_MILLISECONDS,
+            _windows_job.NATURAL_DRAIN_GRACE_MILLISECONDS,
+        )
+
     def test_target_is_assigned_atomically_during_process_creation(self):
         kernel32 = FakeKernel32()
 

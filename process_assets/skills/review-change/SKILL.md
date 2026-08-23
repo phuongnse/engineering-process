@@ -33,6 +33,9 @@ specific checkpoint without changing the reviewed source.
    Resolved, deferred, and false-positive findings require resolution evidence.
    Deferred remains unresolved and completion-blocking unless a future process
    contract introduces an explicit owner-approved exception.
+   Treat owner mismatch, consumer workaround for a shared defect, evidence-free rerun,
+   missing valid/fail-closed regression proof, or missing affected-consumer proof for
+   a shared correction as required completion-blocking findings.
 5. Request changes when any required finding remains open or deferred. Approve only
    when required outcomes and evidence are complete for the reviewed checkpoint.
 6. Validate the report with processctl contract validate --kind review, then submit
