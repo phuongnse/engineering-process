@@ -124,7 +124,7 @@ jobs:
       - name: Validate complete self-adoption candidate
         if: >-
           github.event_name == 'pull_request' &&
-          startsWith(github.head_ref, 'automation/renovate/engineering-process')
+          startsWith(github.head_ref, 'automation/process/engineering-process')
         run: >-
           python templates/adopt-process.py
           --project-root .
