@@ -31,10 +31,14 @@ semantics shared by every project.
 3. Apply the nearest AGENTS.md and domain skill inside each phase. Project policy may
    add stronger gates but cannot remove lifecycle phases, baseline profiles,
    independent review, evidence freshness, or finding closure.
-4. After a valid finding, preserve the reviewed checkpoint, begin the next
+4. When a command, gate, release, adoption, or external integration fails, apply the
+   failure-to-invariant protocol in the required execution reference before any
+   corrective mutation. Keep dependent candidates blocked until the owning boundary
+   and required proof are explicit.
+5. After a valid finding, preserve the reviewed checkpoint, begin the next
    implementation cycle, resolve the finding, and repeat every invalidated profile
    and independent review.
-5. Report the processctl phase, cycle, current evidence, blockers, and next owner.
+6. Report the processctl phase, cycle, current evidence, blockers, and next owner.
    Never call a task complete from prose alone.
 
 ## Hard gates

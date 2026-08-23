@@ -54,6 +54,37 @@ When progress depends on user-controlled or external state:
 5. Report `Blocker`, `Evidence`, `Boundary`, `User action or decision needed`, and
    `Safe next step after confirmation`.
 
+## Failure-to-invariant protocol
+
+Apply this protocol before corrective mutation whenever a command, gate, release,
+adoption, or external integration produces a validated failure:
+
+1. Preserve the smallest reliable reproducer, exact command/event, immutable source
+   identity, environment, exit status, bounded output, and available service evidence.
+   Do not use an evidence-free rerun as diagnosis.
+2. Classify the owning boundary as `project-local`, `shared-process`,
+   `operations-or-external`, or `missing-product-or-authorization-input`. State the
+   evidence that excludes the other boundaries before selecting a fix.
+3. Keep every dependent candidate blocked. A shared-process defect must be fixed in
+   the shared producer; do not add a consumer-owned wrapper, duplicate algorithm,
+   alternate authority, relaxed control, or environment substitution to keep moving.
+   A project-local behavior remains in the project owner and must not be promoted to
+   portable core without evidence of a reusable class.
+4. Add regression evidence at the lowest reliable owner boundary for both the valid
+   behavior and the corresponding persistent, invalid, timeout, or interruption case
+   that must remain fail closed.
+5. For a shared correction, require producer profiles and a reproduction at every
+   affected consumer boundary before release authorization. Consumer proof supplements
+   producer evidence; neither substitutes for the other.
+6. Treat operations or external propagation as transient only when source and
+   configuration are already proven unchanged. Recovery must be bounded, idempotent,
+   preserve per-attempt diagnostics, and stop on a deterministic failure. Do not
+   change source, branch, version, credentials, or controls merely to cause another
+   attempt.
+7. Reopen or create the owning change lifecycle when scope moves across a boundary,
+   then repeat invalidated verification and independent review on one exact final
+   checkpoint. Record the reusable invariant, not just the incident chronology.
+
 ## Independent review
 
 Review begins only after all baseline and change-required profiles pass on one clean
