@@ -114,6 +114,18 @@ fingerprint, with no open required finding. Missing, stale, indirect, or blocked
 evidence remains incomplete. processctl completion is an engineering result, not
 publication or release authorization.
 
+## Publication and merge chain
+
+The canonical chain is implementation and focused correction, every required profile,
+independent semantic agent or human review of the clean checkpoint, finding resolution
+with complete re-verification and fresh review, completion, then review-object
+publication from that exact checkpoint. Static policy checks supplement but never
+replace semantic review. No branch or pull/merge review object is created earlier.
+
+After completion, standing consumer policy may automate branch push and review-object
+creation. Provider draft/ready state is non-normative. Automation stops after creating
+the completed candidate; only the configured human owner authorizes merge.
+
 ## Process improvement
 
 Classify a validated defect or finding as local behavior, reusable process semantics,

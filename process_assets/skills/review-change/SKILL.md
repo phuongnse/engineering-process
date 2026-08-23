@@ -18,6 +18,8 @@ specific checkpoint without changing the reviewed source.
    conversation. Use the host's isolated-review mechanism or a separate human
    reviewer; if separation cannot be attested, report blocked. A stable reviewer
    actor or role may be reused, but renaming a retained context is not isolation.
+   The consumer host chooses the agent, model, person, and spawn mechanism; portable
+   process owns only the isolation, attestation, assignment, report, and evidence contract.
 2. Register the assignment with processctl change review start. Confirm its
    checkpoint, comparison base, contract, plan, and required verification reports
    refer to the same immutable source.
@@ -51,6 +53,8 @@ specific checkpoint without changing the reviewed source.
 - Do not approve stale, indirect, missing, or blocked evidence.
 - Do not treat review prose as more authoritative than project contracts.
 - A reviewer must not intentionally mutate the checkpoint under review.
+- Static lint, policy, secret, pin, configuration, or CI checks are supplemental
+  verification and cannot issue a semantic review verdict.
 - The reviewer actor id and context id must both be independent from every
   implementation actor and context recorded for the current cycle.
 - The reviewer context id must be unique across review assignments for the project,

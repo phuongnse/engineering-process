@@ -7,6 +7,7 @@
       "finish-change",
       "implement-change",
       "plan-change",
+      "publish-change",
       "review-change",
       "run-change",
       "verify-change"
@@ -36,9 +37,6 @@
     ],
     "docs": [
       "maintain-docs"
-    ],
-    "publication": [
-      "publish-change"
     ],
     "cross-repo": [
       "cross-repo-change"

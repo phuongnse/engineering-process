@@ -33,7 +33,7 @@ class ReleaseQualificationTests(unittest.TestCase):
         evidence = qualification_evidence("a" * 40)
 
         self.assertEqual("a" * 40, evidence["headSha"])
-        self.assertEqual("independent-automated", evidence["verificationKind"])
+        self.assertEqual("policy-verification", evidence["verificationKind"])
         self.assertEqual("phuongnse/renovate-ops", evidence["verifierRepository"])
         self.assertEqual(40, len(evidence["verifierSha"]))
 

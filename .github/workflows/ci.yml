@@ -22,8 +22,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  independent-review:
-    name: independent-review
+  policy-verification:
+    name: policy-verification
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
@@ -235,7 +235,7 @@ jobs:
 
   release-authorization:
     name: Dispatch exact release authorization
-    needs: [independent-review, verify]
+    needs: [policy-verification, verify]
     if: >-
       success() &&
       (github.event_name == 'workflow_dispatch' ||

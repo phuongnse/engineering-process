@@ -39,6 +39,18 @@ class SchemaTests(unittest.TestCase):
                 )
                 jsonschema.Draft202012Validator(schema).validate(example)
 
+    def test_process_graph_matches_its_schema(self):
+        graph = json.loads(
+            (PROCESS_ROOT / "process-graph.json").read_text(encoding="utf-8")
+        )
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "process-graph.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        jsonschema.Draft202012Validator(schema).validate(graph)
+
     def test_plan_cardinality_bounds_are_versioned(self):
         schema = json.loads(
             (PROCESS_ROOT / "schemas" / "plan.schema.json").read_text(

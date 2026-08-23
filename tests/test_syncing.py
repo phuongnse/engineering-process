@@ -36,6 +36,7 @@ CORE_SKILLS = (
     "finish-change",
     "implement-change",
     "plan-change",
+    "publish-change",
     "review-change",
     "run-change",
     "verify-change",

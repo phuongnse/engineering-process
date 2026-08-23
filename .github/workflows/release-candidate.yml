@@ -1,79 +1,44 @@
 name: Release Candidate
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
-      release_pr_number:
-        description: Exact Release PR number created by the Release PR workflow
-        required: true
-        type: string
       release_head_sha:
-        description: Exact Release PR head created by the Release PR workflow
+        description: Exact candidate branch head prepared before PR creation
         required: true
         type: string
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: release-candidate-${{ inputs.release_head_sha || github.event.pull_request.head.sha || github.sha }}
+  group: release-candidate-${{ inputs.release_head_sha }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    name: Verify exact Release PR candidate
+    name: Verify exact pre-PR candidate checkpoint
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - name: Resolve the dispatched Release PR
-        if: github.event_name == 'workflow_dispatch'
+      - name: Resolve the dispatched pre-PR candidate
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           RELEASE_HEAD_SHA: ${{ inputs.release_head_sha }}
         run: |
           printf '%s' "$RELEASE_HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
           test "$RELEASE_HEAD_SHA" = "$GITHUB_SHA"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR_NUMBER" --jq .state)" = open
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR_NUMBER" --jq .base.ref)" = main
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR_NUMBER" --jq .head.ref)" = automation/release/next
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR_NUMBER" --jq .head.repo.full_name)" = "$GITHUB_REPOSITORY"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR_NUMBER" --jq .head.sha)" = "$RELEASE_HEAD_SHA"
-
-      - name: Record non-release applicability
-        if: >-
-          github.event_name == 'pull_request' &&
-          (github.event.pull_request.head.ref != 'automation/release/next' ||
-          github.event.pull_request.head.repo.full_name != github.repository)
-        run: echo "Release candidate verification is not applicable to this pull request."
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          (github.event.pull_request.head.ref == 'automation/release/next' &&
-          github.event.pull_request.head.repo.full_name == github.repository)
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.release_head_sha || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.release_head_sha }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          (github.event.pull_request.head.ref == 'automation/release/next' &&
-          github.event.pull_request.head.repo.full_name == github.repository)
         with:
           python-version: "3.14"
 
       - name: Install the exact public N-1 authority and project dependencies
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          (github.event.pull_request.head.ref == 'automation/release/next' &&
-          github.event.pull_request.head.repo.full_name == github.repository)
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
@@ -85,23 +50,15 @@ jobs:
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
 
       - name: Resolve the generated lifecycle identity
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          (github.event.pull_request.head.ref == 'automation/release/next' &&
-          github.event.pull_request.head.repo.full_name == github.repository)
         id: identity
         run: |
           change_id="$(python -c 'import json; print(json.load(open(".release/change.json", encoding="utf-8"))["id"])')"
           printf 'change_id=%s\n' "$change_id" >> "$GITHUB_OUTPUT"
 
       - name: Verify and bind the immutable candidate under N-1
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          (github.event.pull_request.head.ref == 'automation/release/next' &&
-          github.event.pull_request.head.repo.full_name == github.repository)
         env:
           CHANGE_ID: ${{ steps.identity.outputs.change_id }}
-          CONTEXT_ID: release-pr-${{ inputs.release_pr_number || github.event.pull_request.number }}-${{ inputs.release_head_sha || github.event.pull_request.head.sha }}
+          CONTEXT_ID: release-candidate-${{ inputs.release_head_sha }}
         run: |
           processctl doctor
           processctl contract validate --kind change .release/change.json
@@ -121,20 +78,11 @@ jobs:
           processctl change verify \
             --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
             --change-id "$CHANGE_ID" --profile review
-          processctl change review start \
-            --actor renovate-ops-independent-reviewer --context "review-$CONTEXT_ID" --actor-kind agent \
-            --change-id "$CHANGE_ID" --method isolated-context \
-            --attested-by renovate-ops-f22b05f7813d5868f2a728f203a59afa5d6f18d2 \
-            --attestation-evidence "github://phuongnse/renovate-ops/commit/f22b05f7813d5868f2a728f203a59afa5d6f18d2"
 
-      - name: Preserve the exact review-pending lifecycle
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          (github.event.pull_request.head.ref == 'automation/release/next' &&
-          github.event.pull_request.head.repo.full_name == github.repository)
+      - name: Preserve the exact verified lifecycle for the consumer host
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-candidate-${{ inputs.release_head_sha || github.event.pull_request.head.sha }}
+          name: release-candidate-${{ inputs.release_head_sha }}
           path: .process/runs/${{ steps.identity.outputs.change_id }}
           if-no-files-found: error
           retention-days: 30

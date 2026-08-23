@@ -11,6 +11,7 @@ from engineering_process.publication import (
     validate_branch,
     validate_commit_range,
     validate_commit_subject,
+    validate_completed_publication,
     validate_pr_title,
     validate_pull_request,
 )
@@ -49,6 +50,74 @@ Separate reviewer approved checkpoint abc123.
 
 
 class PublicationTests(unittest.TestCase):
+    def test_completed_publication_binds_exact_lifecycle_checkpoint(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        lifecycle = {
+            "phase": "completed",
+            "completion": {"path": "completion.json"},
+            "current": True,
+            "pendingFindings": [],
+            "verification": [
+                {
+                    "checkpoint": checkpoint,
+                    "workspaceFingerprint": fingerprint,
+                }
+            ],
+        }
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+
+        self.assertEqual(
+            [],
+            validate_completed_publication(
+                title="feat(process): standardize publication",
+                body=pr_body(),
+                branch="feat/standardize-publication",
+                commit=checkpoint,
+                lifecycle=lifecycle,
+                source=source,
+            ),
+        )
+
+    def test_publication_rejects_verified_or_stale_source(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        lifecycle = {
+            "phase": "verified",
+            "completion": None,
+            "current": True,
+            "pendingFindings": [],
+            "verification": [
+                {
+                    "checkpoint": checkpoint,
+                    "workspaceFingerprint": fingerprint,
+                }
+            ],
+        }
+        source = {
+            "dirty": True,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+
+        issues = validate_completed_publication(
+            title="feat(process): standardize publication",
+            body=pr_body("pending"),
+            branch="feat/standardize-publication",
+            commit="c" * 40,
+            lifecycle=lifecycle,
+            source=source,
+        )
+
+        self.assertTrue(any("completed lifecycle" in issue for issue in issues))
+        self.assertTrue(any("clean working tree" in issue for issue in issues))
+        self.assertTrue(any("current source checkpoint" in issue for issue in issues))
+        self.assertTrue(any("not ready for publication" in issue for issue in issues))
+
     def test_accepts_manual_and_generic_automation_branches(self):
         self.assertEqual([], validate_branch("feat/add-workspace"))
         self.assertEqual([], validate_branch("automation/renovate/runtime-packages"))

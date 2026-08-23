@@ -88,15 +88,18 @@ Release, self-adoption, and consumer adoption are separate changes:
 
 1. Release N governs and verifies the source of N+1.
 2. N+1 is published as an immutable release and its public hashes are verified.
-3. Renovate updates the direct input pin, regenerates the complete hash-locked
-   dependency graph, and runs the managed adoption runner before it creates one
-   draft PR containing the process lock and every selected managed asset.
-4. CI validates dependency integrity and the fully materialized adoption. Each
+3. Renovate or another consumer-owned automation prepares the complete candidate
+   branch without creating a PR, updates the direct pin, regenerates the hash-locked
+   dependency graph, and runs the managed adoption runner.
+4. Required profiles validate the immutable candidate. The consumer-selected host
+   supplies an independent semantic agent or human review; findings repeat candidate
+   generation and full verification until lifecycle completion. Each
    platform/runtime job publishes a bounded supplemental evidence bundle bound to the
    source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
-   The adoption owner then obtains independent review and explicitly merges that same
-   checkpoint. Merge completes adoption; there is no post-merge synchronization.
-5. N+1 governs only changes that begin after the adoption checkpoint.
+   Only after completion may automation create the PR containing the process lock and
+   every selected managed asset. The consumer owner explicitly merges that exact
+   checkpoint; there is no post-merge synchronization.
+5. N+1 governs only changes that begin after the merged adoption checkpoint.
 
 The repository-root GitHub Action and Python package are two surfaces of the same
 governed release checkpoint. A consumer invocation pins the action by the release
@@ -112,7 +115,8 @@ and managed bootstrap snapshots required before a target version is installed. A
 clean-cutover PR may delete an obsolete local helper only after it pins an immutable
 public action checkpoint; no compatibility shim or dual execution path is retained.
 
-Renovate PRs are generated adoption candidates, not trusted adoption evidence.
+Renovate branches are generated adoption candidates, not trusted adoption evidence.
+PR creation is blocked until the candidate has current completion evidence.
 Automerge is forbidden for process-authority updates. A PR that changes only a
 requirement pin, omits generated hashes or managed assets, or requires a post-merge
 step must fail closed.

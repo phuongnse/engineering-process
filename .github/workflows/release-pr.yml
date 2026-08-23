@@ -59,19 +59,6 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Return an existing Release PR to draft
-        if: steps.applicability.outputs.pending == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RELEASE_BRANCH: automation/release/next
-        run: |
-          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          if test -n "$pr_number" && \
-            test "$(gh pr view "$pr_number" --json isDraft --jq .isDraft)" = false; then
-            gh pr ready "$pr_number" --undo
-          fi
-
       - name: Install exact candidate dependencies
         if: steps.applicability.outputs.pending == 'true'
         run: >-
@@ -110,8 +97,6 @@ jobs:
             exit "$prepare_status"
           fi
           echo 'deferred=false' >> "$GITHUB_OUTPUT"
-          python processctl.py publication release-pr-body \
-            --state draft --output "$RUNNER_TEMP/release-pr.md" --json
           version="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["version"])')"
           tag="v$version"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
@@ -184,28 +169,24 @@ jobs:
           fi
           printf 'head_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Create or refresh the Release PR
+      - name: Dispatch the immutable candidate for consumer-host review
         if: >-
           steps.applicability.outputs.pending == 'true' &&
           steps.release.outputs.deferred != 'true'
-        id: pull-request
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASE_BRANCH: automation/release/next
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
-          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          if test -z "$pr_number"; then
-            gh pr create --draft --base main --head "$RELEASE_BRANCH" \
-              --title "chore(release): prepare $RELEASE_TAG" \
-              --body-file "$RUNNER_TEMP/release-pr.md"
-          else
-            gh pr edit "$pr_number" \
-              --title "chore(release): prepare $RELEASE_TAG" \
-              --body-file "$RUNNER_TEMP/release-pr.md"
-          fi
-          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          test -n "$pr_number"
-          printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
+          change_id="$(jq -r .id .release/change.json)"
+          test -n "$change_id"
+          jq -n \
+            --arg branch "$RELEASE_BRANCH" \
+            --arg changeId "$change_id" \
+            --arg commit "$RELEASE_HEAD_SHA" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{event_type: "engineering-process-review-required", client_payload: {branch: $branch, changeId: $changeId, commit: $commit, repository: $repository}}' \
+            > "$RUNNER_TEMP/review-required-event.json"
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/dispatches" \
+            --input "$RUNNER_TEMP/review-required-event.json"

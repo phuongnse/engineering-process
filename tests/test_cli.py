@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from engineering_process.cli import main
 from engineering_process.contracts import read_json, validate_process_lock
@@ -42,6 +43,80 @@ class CliTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_routes_completed_source_publication_validation(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        lifecycle = {
+            "phase": "completed",
+            "completion": {"path": "completion.json"},
+            "current": True,
+            "pendingFindings": [],
+            "verification": [
+                {
+                    "checkpoint": checkpoint,
+                    "workspaceFingerprint": fingerprint,
+                }
+            ],
+        }
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            body = Path(directory) / "pr.md"
+            body.write_text(
+                "<!-- engineering-process:pr-description:start -->\n"
+                "## Summary\n\nSummary.\n\n"
+                "## Contract and scope\n\nContract.\n\n"
+                "## Impact and risk\n\nRisk.\n\n"
+                "## Verification\n\nVerified.\n\n"
+                "## Independent review\n\nReviewed.\n\n"
+                "## Requirements and rules followed\n\n"
+                "- [x] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: satisfied]\n"
+                "- [x] **Verification evidence** — required current profiles pass on the published checkpoint. [status: satisfied]\n"
+                "- [x] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: satisfied]\n"
+                "<!-- engineering-process:pr-description:end -->\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with (
+                mock.patch(
+                    "engineering_process.cli.lifecycle_status",
+                    return_value=lifecycle,
+                ),
+                mock.patch(
+                    "engineering_process.cli.source_state",
+                    return_value=source,
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                result = main(
+                    [
+                        "publication",
+                        "validate-source",
+                        "--project-root",
+                        directory,
+                        "--change-id",
+                        "change-1",
+                        "--commit",
+                        checkpoint,
+                        "--title",
+                        "feat(process): standardize publication",
+                        "--branch",
+                        "feat/standardize-publication",
+                        "--body-file",
+                        str(body),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            "publication validate-source",
+            json.loads(stdout.getvalue())["command"],
+        )
 
     def test_validates_project_adoption_migration_contract(self):
         stdout = io.StringIO()
@@ -131,6 +206,7 @@ class CliTests(unittest.TestCase):
                     "finish-change",
                     "implement-change",
                     "plan-change",
+                    "publish-change",
                     "review-change",
                     "run-change",
                     "verify-change",

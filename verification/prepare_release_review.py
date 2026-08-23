@@ -22,9 +22,10 @@ TRUSTED_VERIFIER_REPOSITORY = "phuongnse/renovate-ops"
 TRUSTED_VERIFIER_SHA = "f22b05f7813d5868f2a728f203a59afa5d6f18d2"
 
 
-def approved_review_from_assignment(
+def validated_review_from_assignment(
     assignment: dict[str, object],
-    independent_evidence: dict[str, object],
+    policy_evidence: dict[str, object],
+    review_report: dict[str, object],
     contract: dict[str, object] | None = None,
 ) -> dict[str, object]:
     required = {
@@ -44,69 +45,62 @@ def approved_review_from_assignment(
     expected_evidence = {
         "status": "passed",
         "governanceMode": "single-maintainer",
-        "verificationKind": "independent-automated",
+        "verificationKind": "policy-verification",
         "repository": "phuongnse/engineering-process",
         "headSha": assignment["checkpoint"],
         "verifierRepository": TRUSTED_VERIFIER_REPOSITORY,
         "verifierSha": TRUSTED_VERIFIER_SHA,
     }
     for key, expected in expected_evidence.items():
-        if independent_evidence.get(key) != expected:
+        if policy_evidence.get(key) != expected:
             raise ContractError(
-                f"independent verification evidence has invalid {key}"
+                f"supplemental policy evidence has invalid {key}"
             )
-    schema_version = 2
-    quality: dict[str, object] | None = None
+    validate_review(review_report, "host-produced semantic review")
+    for field in (
+        "changeId",
+        "cycle",
+        "checkpoint",
+        "workspaceFingerprint",
+        "comparisonBase",
+        "reviewer",
+        "independence",
+    ):
+        if review_report.get(field) != assignment[field]:
+            raise ContractError(
+                f"host-produced semantic review {field} does not match assignment"
+            )
     if contract is not None:
         validate_change(contract, "registered release contract")
         if contract["id"] != assignment["changeId"]:
             raise ContractError(
                 "registered release contract does not match the review assignment"
             )
-        schema_version = int(contract["schemaVersion"])
-        if schema_version == 3:
-            assessments = []
-            for accepted in contract["quality"]["assessments"]:
-                dimension = accepted["dimension"]
-                applicable = accepted["status"] == "applicable"
-                assessments.append(
-                    {
-                        "dimension": dimension,
-                        "status": (
-                            "verified" if applicable else "not-applicable-confirmed"
-                        ),
-                        "criteria": accepted["criteria"],
-                        "evidence": (
-                            "The independent verifier passed the exact assigned "
-                            f"checkpoint; review confirms the {dimension} acceptance "
-                            "criteria."
-                            if applicable
-                            else "Independent review confirms the contract's "
-                            f"{dimension} not-applicable rationale: "
-                            f"{accepted['rationale']}"
-                        ),
-                    }
-                )
-            quality = {
-                "standard": contract["quality"]["standard"],
-                "assessments": assessments,
+        required_schema = 3 if contract["schemaVersion"] == 3 else 2
+        if review_report.get("schemaVersion") != required_schema:
+            raise ContractError(
+                f"host-produced semantic review must use schemaVersion {required_schema}"
+            )
+        if required_schema == 3:
+            accepted = {
+                item["dimension"]: item
+                for item in contract["quality"]["assessments"]
             }
-    report = {
-        "schemaVersion": schema_version,
-        "changeId": assignment["changeId"],
-        "cycle": assignment["cycle"],
-        "checkpoint": assignment["checkpoint"],
-        "workspaceFingerprint": assignment["workspaceFingerprint"],
-        "comparisonBase": assignment["comparisonBase"],
-        "reviewer": assignment["reviewer"],
-        "independence": assignment["independence"],
-        "verdict": "approved",
-        "findings": [],
-    }
-    if quality is not None:
-        report["quality"] = quality
-    validate_review(report, "generated release review")
-    return report
+            reviewed = {
+                item["dimension"]: item
+                for item in review_report["quality"]["assessments"]
+            }
+            if set(accepted) != set(reviewed):
+                raise ContractError(
+                    "host-produced semantic review quality dimensions do not match contract"
+                )
+            for dimension, assessment in accepted.items():
+                if reviewed[dimension]["criteria"] != assessment["criteria"]:
+                    raise ContractError(
+                        "host-produced semantic review criteria do not match contract "
+                        f"for {dimension}"
+                    )
+    return dict(review_report)
 
 
 def _assignment_contract(
@@ -143,7 +137,8 @@ def _assignment_contract(
 def prepare_review(
     project_root: Path,
     change_id: str,
-    independent_evidence_path: Path,
+    policy_evidence_path: Path,
+    review_report_path: Path,
     output: Path,
 ) -> dict[str, object]:
     state = load_state(project_root.resolve(strict=True), change_id)
@@ -153,12 +148,15 @@ def prepare_review(
     assignment = read_json(assignment_path)
     if not isinstance(assignment, dict):
         raise ContractError("release review assignment must be an object")
-    independent_evidence = read_json(independent_evidence_path)
-    if not isinstance(independent_evidence, dict):
-        raise ContractError("independent verification evidence must be an object")
+    policy_evidence = read_json(policy_evidence_path)
+    if not isinstance(policy_evidence, dict):
+        raise ContractError("supplemental policy evidence must be an object")
+    review_report = read_json(review_report_path)
+    if not isinstance(review_report, dict):
+        raise ContractError("host-produced semantic review must be an object")
     contract = _assignment_contract(project_root, assignment)
-    report = approved_review_from_assignment(
-        assignment, independent_evidence, contract
+    report = validated_review_from_assignment(
+        assignment, policy_evidence, review_report, contract
     )
     if output.exists():
         raise ContractError(f"{output}: refusing to replace existing review report")
@@ -177,14 +175,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--change-id", required=True)
-    parser.add_argument("--independent-evidence", type=Path, required=True)
+    parser.add_argument("--policy-evidence", type=Path, required=True)
+    parser.add_argument("--review-report", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     try:
         result = prepare_review(
             arguments.project_root,
             arguments.change_id,
-            arguments.independent_evidence,
+            arguments.policy_evidence,
+            arguments.review_report,
             arguments.output,
         )
     except ContractError as error:

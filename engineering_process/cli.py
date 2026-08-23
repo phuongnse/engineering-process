@@ -53,13 +53,15 @@ from .lifecycle import (
     submit_review,
     verify_change,
 )
-from .runner import run_profile
+from .runner import run_profile, source_state
 from .publication import (
     validate_branch,
     validate_commit_range,
     validate_commit_subject,
+    validate_completed_publication,
     validate_pull_request,
 )
+from .process_graph import load_process_graph, process_root_from_skills
 from .release import validate_release_checkpoint
 from .release_candidate import prepare_release_candidate, render_release_pull_request
 from .skills import validate_skills
@@ -450,6 +452,10 @@ def command_change_status(args: argparse.Namespace) -> int:
 
 def command_skills_validate(args: argparse.Namespace) -> int:
     issues = validate_skills(args.root)
+    try:
+        load_process_graph(process_root_from_skills(args.root), args.root)
+    except ContractError as error:
+        issues.extend(str(error).splitlines())
     value = _result(
         "skills validate",
         status="failed" if issues else "passed",
@@ -790,14 +796,17 @@ def command_publication_validate_range(args: argparse.Namespace) -> int:
     )
 
 
-def command_publication_validate_pr(args: argparse.Namespace) -> int:
+def _publication_body(args: argparse.Namespace) -> str:
     if args.body_file is not None:
         try:
-            body = args.body_file.read_text(encoding="utf-8")
+            return args.body_file.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as error:
             raise ContractError(f"{args.body_file}: cannot read PR body: {error}") from error
-    else:
-        body = os.environ.get("PR_BODY", "")
+    return os.environ.get("PR_BODY", "")
+
+
+def command_publication_validate_pr(args: argparse.Namespace) -> int:
+    body = _publication_body(args)
     issues = validate_pull_request(
         title=args.title,
         body=body,
@@ -810,6 +819,28 @@ def command_publication_validate_pr(args: argparse.Namespace) -> int:
         issues,
         branch=args.branch,
         state=args.state,
+        title=args.title,
+    )
+
+
+def command_publication_validate_source(args: argparse.Namespace) -> int:
+    lifecycle = lifecycle_status(args.project_root, args.change_id)
+    issues = validate_completed_publication(
+        title=args.title,
+        body=_publication_body(args),
+        branch=args.branch,
+        commit=args.commit,
+        lifecycle=lifecycle,
+        source=source_state(args.project_root),
+    )
+    return _publication_result(
+        args,
+        "publication validate-source",
+        issues,
+        branch=args.branch,
+        changeId=args.change_id,
+        commit=args.commit,
+        phase=lifecycle["phase"],
         title=args.title,
     )
 
@@ -1258,6 +1289,19 @@ def build_parser() -> argparse.ArgumentParser:
     publication_pr.add_argument("--body-file", type=Path)
     _add_json(publication_pr)
     publication_pr.set_defaults(handler=command_publication_validate_pr)
+
+    publication_source = publication_commands.add_parser(
+        "validate-source",
+        help="Validate source publication against a current completed lifecycle",
+    )
+    _add_project_root(publication_source)
+    publication_source.add_argument("--change-id", required=True)
+    publication_source.add_argument("--commit", required=True)
+    publication_source.add_argument("--title", required=True)
+    publication_source.add_argument("--branch", required=True)
+    publication_source.add_argument("--body-file", type=Path)
+    _add_json(publication_source)
+    publication_source.set_defaults(handler=command_publication_validate_source)
 
     publication_version = publication_commands.add_parser(
         "plan-version",

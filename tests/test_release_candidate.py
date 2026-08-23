@@ -17,7 +17,7 @@ from engineering_process.release_candidate import (
     prepare_release_candidate,
     render_release_pull_request,
 )
-from verification.prepare_release_review import approved_review_from_assignment
+from verification.prepare_release_review import validated_review_from_assignment
 
 
 class ReleaseCandidateTests(unittest.TestCase):
@@ -42,14 +42,28 @@ class ReleaseCandidateTests(unittest.TestCase):
         independent_evidence = {
             "status": "passed",
             "governanceMode": "single-maintainer",
-            "verificationKind": "independent-automated",
+            "verificationKind": "policy-verification",
             "repository": "phuongnse/engineering-process",
             "headSha": "a" * 40,
             "verifierRepository": "phuongnse/renovate-ops",
             "verifierSha": "f22b05f7813d5868f2a728f203a59afa5d6f18d2",
         }
 
-        report = approved_review_from_assignment(assignment, independent_evidence)
+        semantic_review = {
+            "schemaVersion": 2,
+            "changeId": assignment["changeId"],
+            "cycle": assignment["cycle"],
+            "checkpoint": assignment["checkpoint"],
+            "workspaceFingerprint": assignment["workspaceFingerprint"],
+            "comparisonBase": assignment["comparisonBase"],
+            "reviewer": assignment["reviewer"],
+            "independence": assignment["independence"],
+            "verdict": "approved",
+            "findings": [],
+        }
+        report = validated_review_from_assignment(
+            assignment, independent_evidence, semantic_review
+        )
 
         self.assertEqual(2, report["schemaVersion"])
         self.assertNotIn("quality", report)
@@ -59,7 +73,15 @@ class ReleaseCandidateTests(unittest.TestCase):
 
         invalid_evidence = dict(independent_evidence, verifierSha="b" * 40)
         with self.assertRaisesRegex(ContractError, "invalid verifierSha"):
-            approved_review_from_assignment(assignment, invalid_evidence)
+            validated_review_from_assignment(
+                assignment, invalid_evidence, semantic_review
+            )
+
+        forged = dict(semantic_review, checkpoint="b" * 40)
+        with self.assertRaisesRegex(ContractError, "checkpoint does not match"):
+            validated_review_from_assignment(
+                assignment, independent_evidence, forged
+            )
 
     def test_release_review_derives_schema_3_quality_from_registered_contract(self):
         assignment = {
@@ -82,7 +104,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         independent_evidence = {
             "status": "passed",
             "governanceMode": "single-maintainer",
-            "verificationKind": "independent-automated",
+            "verificationKind": "policy-verification",
             "repository": "phuongnse/engineering-process",
             "headSha": "a" * 40,
             "verifierRepository": "phuongnse/renovate-ops",
@@ -144,8 +166,37 @@ class ReleaseCandidateTests(unittest.TestCase):
             },
         }
 
-        report = approved_review_from_assignment(
-            assignment, independent_evidence, contract
+        assessments = [
+            {
+                "dimension": item["dimension"],
+                "status": (
+                    "verified"
+                    if item["status"] == "applicable"
+                    else "not-applicable-confirmed"
+                ),
+                "criteria": item["criteria"],
+                "evidence": "A host-selected semantic reviewer assessed this dimension.",
+            }
+            for item in contract["quality"]["assessments"]
+        ]
+        semantic_review = {
+            "schemaVersion": 3,
+            "changeId": assignment["changeId"],
+            "cycle": assignment["cycle"],
+            "checkpoint": assignment["checkpoint"],
+            "workspaceFingerprint": assignment["workspaceFingerprint"],
+            "comparisonBase": assignment["comparisonBase"],
+            "reviewer": assignment["reviewer"],
+            "independence": assignment["independence"],
+            "quality": {
+                "standard": "production-v1",
+                "assessments": assessments,
+            },
+            "verdict": "approved",
+            "findings": [],
+        }
+        report = validated_review_from_assignment(
+            assignment, independent_evidence, semantic_review, contract
         )
 
         self.assertEqual(3, report["schemaVersion"])
@@ -177,9 +228,10 @@ class ReleaseCandidateTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ContractError, "does not match"):
-            approved_review_from_assignment(
+            validated_review_from_assignment(
                 assignment,
                 independent_evidence,
+                semantic_review,
                 dict(contract, id="release-0-2-2"),
             )
 

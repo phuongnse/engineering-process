@@ -109,7 +109,7 @@ jobs:
             -r engineering_process/requirements-build.txt
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
 
-      - name: Restore and validate independent verification evidence
+      - name: Restore and validate supplemental policy evidence
         if: steps.resolve.outputs.already_authorized != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,21 +117,35 @@ jobs:
           HEAD_SHA: ${{ inputs.release_head_sha }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
         run: |
-          mkdir -p "$RUNNER_TEMP/independent-review"
+          mkdir -p "$RUNNER_TEMP/policy-verification"
           gh run download "$CI_RUN_ID" \
             --name "independent-review-$PR_NUMBER-$HEAD_SHA" \
-            --dir "$RUNNER_TEMP/independent-review"
+            --dir "$RUNNER_TEMP/policy-verification"
           python -c '
           import json, os, pathlib
-          report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "independent-review" / "report.json").read_text(encoding="utf-8"))
+          report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "policy-verification" / "report.json").read_text(encoding="utf-8"))
           assert report["status"] == "passed"
           assert report["governanceMode"] == "single-maintainer"
-          assert report["verificationKind"] == "independent-automated"
+          assert report["verificationKind"] == "policy-verification"
           assert report["repository"] == os.environ["GITHUB_REPOSITORY"]
           assert report["headSha"] == os.environ["HEAD_SHA"]
           assert report["verifierRepository"] == "phuongnse/renovate-ops"
           assert report["verifierSha"] == "f22b05f7813d5868f2a728f203a59afa5d6f18d2"
           '
+
+      - name: Restore host-produced semantic review
+        if: steps.resolve.outputs.already_authorized != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/semantic-review"
+          gh run download "$CI_RUN_ID" \
+            --name "semantic-review-$PR_NUMBER-$HEAD_SHA" \
+            --dir "$RUNNER_TEMP/semantic-review"
+          test -s "$RUNNER_TEMP/semantic-review/review.json"
 
       - name: Restore the successful exact-head candidate lifecycle
         if: steps.resolve.outputs.already_authorized != 'true'
@@ -165,13 +179,15 @@ jobs:
           CHANGE_ID: ${{ steps.identity.outputs.change_id }}
           CONTEXT_ID: release-pr-${{ steps.resolve.outputs.pr_number }}-${{ inputs.release_head_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-          INDEPENDENT_EVIDENCE: ${{ runner.temp }}/independent-review/report.json
+          POLICY_EVIDENCE: ${{ runner.temp }}/policy-verification/report.json
+          SEMANTIC_REVIEW: ${{ runner.temp }}/semantic-review/review.json
           MODE: ${{ steps.identity.outputs.mode }}
         run: |
           processctl change status --change-id "$CHANGE_ID"
           python verification/prepare_release_review.py \
             --change-id "$CHANGE_ID" \
-            --independent-evidence "$INDEPENDENT_EVIDENCE" \
+            --policy-evidence "$POLICY_EVIDENCE" \
+            --review-report "$SEMANTIC_REVIEW" \
             --output "$RUNNER_TEMP/release-review.json"
           processctl change review submit \
             --change-id "$CHANGE_ID" --report "$RUNNER_TEMP/release-review.json"

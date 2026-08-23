@@ -46,7 +46,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("requirements-lock: requirements/process.txt", install_block)
         self.assertNotIn("python verification/install_process_runtime.py", ci)
 
-    def test_release_pr_review_keeps_write_authority_out_of_head_code(self):
+    def test_release_candidate_is_reviewed_before_pr_publication(self):
         candidate = (
             PROCESS_ROOT / ".github" / "workflows" / "release-candidate.yml"
         ).read_text(encoding="utf-8")
@@ -60,54 +60,26 @@ class SelfHostingTests(unittest.TestCase):
             PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
         ).read_text(encoding="utf-8")
 
+        self.assertIn("workflow_dispatch:", candidate)
+        self.assertNotIn("pull_request:", candidate)
+        self.assertIn("Verify exact pre-PR candidate checkpoint", candidate)
+        self.assertIn("Preserve the exact verified lifecycle", candidate)
+        self.assertNotIn("processctl change review start", candidate)
         self.assertIn("contents: read", candidate)
         self.assertNotIn("contents: write", candidate)
-        self.assertIn("github.event.pull_request.head.repo.full_name", candidate)
-        self.assertIn("workflow_dispatch:", approval)
-        self.assertNotIn("workflow_run:", approval)
-        self.assertIn("ci_run_id:", approval)
-        self.assertIn("release_pr_number:", approval)
-        self.assertIn("release_head_sha:", approval)
-        self.assertIn("actions/runs/$CI_RUN_ID", approval)
-        self.assertIn(
-            'test "$ci_event" = pull_request || test "$ci_event" = workflow_dispatch',
-            approval,
-        )
-        self.assertIn('test "$(jq -r .path "$RUNNER_TEMP/ci-run.json")" = .github/workflows/ci.yml', approval)
-        self.assertIn("independent-review-$PR_NUMBER-$HEAD_SHA", approval)
-        self.assertIn("f22b05f7813d5868f2a728f203a59afa5d6f18d2", approval)
-        self.assertIn("release-authorization", approval)
-        self.assertIn("statuses: write", approval)
-        self.assertIn("Create short-lived Release PR stage token", approval)
-        self.assertIn("id: pr-stage-token", approval)
-        self.assertIn("permission-metadata: read", approval)
-        self.assertIn("permission-pull-requests: write", approval)
-        self.assertIn("${{ vars.RENOVATE_APP_CLIENT_ID }}", approval)
-        self.assertIn("${{ secrets.RENOVATE_APP_PRIVATE_KEY }}", approval)
-        self.assertLess(
-            approval.index("Preserve release authorization evidence"),
-            approval.index("Create short-lived Release PR stage token"),
-        )
-        publish_block = approval.split(
-            "      - name: Publish the verified Release PR authorization", 1
-        )[1].split("      - name: Mark the verified Release PR ready", 1)[0]
-        ready_block = approval.split(
-            "      - name: Mark the verified Release PR ready", 1
-        )[1].split("      - name: Fail the release authorization status", 1)[0]
-        self.assertIn("GH_TOKEN: ${{ github.token }}", publish_block)
-        self.assertNotIn("gh pr ready", publish_block)
-        self.assertIn(
-            "GH_TOKEN: ${{ steps.pr-stage-token.outputs.token }}", ready_block
-        )
-        self.assertNotIn("GH_TOKEN: ${{ github.token }}", ready_block)
-        self.assertIn('gh pr ready "$PR_NUMBER"', ready_block)
+        self.assertIn("--policy-evidence", approval)
+        self.assertIn("--review-report", approval)
+        self.assertIn("semantic-review-$PR_NUMBER-$HEAD_SHA", approval)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".process/process.lock"', generator)
         self.assertIn('"requirements/process.in"', generator)
         self.assertIn('"requirements/process.txt"', generator)
         self.assertIn("verification/classify_release_preparation.py", generator)
         self.assertIn('".github/workflows/release-pr.yml"', generator)
-        self.assertIn("gh pr create --draft", generator)
+        self.assertNotIn("gh pr create", generator)
+        self.assertNotIn("gh pr ready", generator)
+        self.assertIn("engineering-process-review-required", generator)
+        self.assertIn("Dispatch the immutable candidate for consumer-host review", generator)
         self.assertIn("--force-with-lease", generator)
         self.assertIn("Detect pending release changes", generator)
         self.assertIn("No pending release changes", generator)
@@ -124,11 +96,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('"repos/$GITHUB_REPOSITORY/dispatches"', generator)
         self.assertIn("token: ${{ steps.app-token.outputs.token }}", generator)
         self.assertIn("GH_TOKEN: ${{ steps.app-token.outputs.token }}", generator)
-        self.assertIn('gh pr ready "$pr_number" --undo', generator)
         self.assertNotIn('gh workflow run release-candidate.yml', generator)
         self.assertNotIn('gh workflow run ci.yml', generator)
-        self.assertIn("github.event_name == 'pull_request'", ci)
-        self.assertIn("github.event.pull_request.head.ref == 'automation/release/next'", ci)
+        self.assertIn("policy-verification:", ci)
         self.assertIn(
             'gh workflow run release-approval.yml --repo "$GITHUB_REPOSITORY" --ref main',
             ci,
@@ -139,15 +109,16 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("--check", ci)
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
-        self.assertIn('gh pr ready "$PR_NUMBER"', approval)
+        self.assertIn("host-produced semantic review", approval)
 
-    def test_renovate_generates_complete_draft_adoption_without_merge_authority(self):
+    def test_renovate_waits_for_completed_branch_status_before_pr(self):
         renovate = json.loads(
             (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
         )
 
         self.assertFalse(renovate["automerge"])
-        self.assertTrue(renovate["draftPR"])
+        self.assertFalse(renovate["draftPR"])
+        self.assertEqual("status-success", renovate["prCreation"])
         self.assertEqual("automation/renovate/", renovate["branchPrefix"])
         self.assertEqual("==7.6.1", renovate["constraints"]["pipTools"])
         self.assertEqual(

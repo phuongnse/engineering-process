@@ -333,7 +333,8 @@ component closure, check routing, and evidence remain distribution-owned.
 
 Select capability bundles from `bundles.json`: every consumer starts with `core`,
 then adds only capabilities it actually owns. For example, a web product commonly
-adds `delivery`, `product`, `api`, `frontend`, `docs`, and `publication`. Add
+adds `delivery`, `product`, `api`, `frontend`, and `docs`. Publication from a
+completed checkpoint is part of the mandatory core chain. Add
 `cross-repo` only when independently versioned repositories participate in one
 public-contract change. Re-run `project init ... --replace` with the intended bundle
 set when deliberately changing the pin; version remains unchanged during an
@@ -351,6 +352,12 @@ cannot remove or weaken the shared minimum. The same contract governs this repos
 through its public N-1 self-hosting boundary.
 Agents enter non-trivial delivery through the synchronized `run-change` skill; phase
 skills are internal owners, not a workflow each project must reconnect.
+
+`process-graph.json` is the machine-readable owner for that chain. It binds every
+phase to one owner skill, permitted `processctl` commands, success/failure outcomes,
+next phase/skill, and the final human merge boundary. Distribution validation rejects
+missing skills, non-core chain owners, nonexistent commands, unknown phases, and
+broken handoffs; prose skills explain the graph but do not replace it.
 
 ## Canonical lifecycle
 
@@ -415,6 +422,14 @@ pending findings before any transition is allowed.
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately authorized project workflows.
 
+The canonical publication order is stricter than a PR-first workflow: implementation
+and every required profile pass on a clean checkpoint; a consumer-selected independent
+agent or human semantically reviews that checkpoint; findings repeat implementation,
+complete verification, and fresh review until approved; `change finish` records
+completion; only then may automation push and create the PR. Static policy/secret/pin
+checks supplement this review and cannot generate a semantic verdict. The configured
+human owner alone merges.
+
 Completed local evidence can be moved across machines or attached to a release as a
 bounded receipt. Export and validate it before any explicit prune:
 
@@ -445,6 +460,10 @@ processctl publication validate-range --project-root . \
   --branch feat/short-description --range origin/main..HEAD
 processctl publication validate-pr --title "feat(scope): describe the change" \
   --branch feat/short-description --state draft --body-file pr.md
+processctl publication validate-source --project-root . \
+  --change-id issue-123 --commit <completed-checkpoint> \
+  --title "feat(scope): describe the change" \
+  --branch feat/short-description --body-file pr.md
 processctl contract validate --kind release release.json
 processctl publication validate-release --project-root . \
   --tag v0.2.0 --release-name v0.2.0 \
@@ -464,6 +483,10 @@ an extension item. These checks prevent structural shadowing; independent review
 remains responsible for the semantic truth of project-specific evidence.
 Raw HTML is outside the supported grammar for both managed `AGENTS.md` contracts and
 pull-request descriptions; use visible CommonMark instead.
+
+`validate-pr` remains a metadata-compatibility command. `validate-source` is the
+canonical publication gate and requires current completion evidence for the exact
+commit, regardless of provider draft/ready presentation.
 
 ## Trust boundary
 

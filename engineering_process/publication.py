@@ -475,6 +475,53 @@ def validate_pull_request(
     ]
 
 
+def validate_completed_publication(
+    *,
+    title: str,
+    body: str,
+    branch: str,
+    commit: str,
+    lifecycle: dict[str, object],
+    source: dict[str, object],
+) -> list[str]:
+    issues = [
+        *validate_branch(branch),
+        *validate_pr_title(title),
+        *validate_pr_body(body, allow_pending=False),
+    ]
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        issues.append("Publication commit must be a full lowercase Git SHA")
+    if source.get("dirty") is not False:
+        issues.append("Publication source must have a clean working tree")
+    if source.get("checkpoint") != commit:
+        issues.append("Publication commit does not match the current source checkpoint")
+    if source.get("fingerprint") is None:
+        issues.append("Publication source workspace fingerprint is unavailable")
+    if lifecycle.get("phase") != "completed" or lifecycle.get("completion") is None:
+        issues.append("Source publication requires a completed lifecycle")
+    if lifecycle.get("current") is not True:
+        issues.append("Source publication requires current lifecycle evidence")
+    if lifecycle.get("pendingFindings") != []:
+        issues.append("Source publication requires every finding to be resolved")
+    verification = lifecycle.get("verification")
+    if not isinstance(verification, list) or not verification:
+        issues.append("Source publication requires verification evidence")
+    else:
+        checkpoints = {
+            item.get("checkpoint") for item in verification if isinstance(item, dict)
+        }
+        fingerprints = {
+            item.get("workspaceFingerprint")
+            for item in verification
+            if isinstance(item, dict)
+        }
+        if checkpoints != {commit} or fingerprints != {source.get("fingerprint")}:
+            issues.append(
+                "Source publication verification does not match the current checkpoint"
+            )
+    return issues
+
+
 def commit_subjects(project_root: Path, range_spec: str) -> list[tuple[str, str]]:
     if GIT_RANGE_RE.fullmatch(range_spec) is None:
         raise ContractError(f"invalid Git revision or range: {range_spec}")

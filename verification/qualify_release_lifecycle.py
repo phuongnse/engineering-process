@@ -42,11 +42,46 @@ def qualification_evidence(checkpoint: str) -> dict[str, str]:
     return {
         "status": "passed",
         "governanceMode": "single-maintainer",
-        "verificationKind": "independent-automated",
+        "verificationKind": "policy-verification",
         "repository": "phuongnse/engineering-process",
         "headSha": checkpoint,
         "verifierRepository": TRUSTED_VERIFIER_REPOSITORY,
         "verifierSha": TRUSTED_VERIFIER_SHA,
+    }
+
+
+def qualification_semantic_review(
+    assignment: dict[str, object],
+    contract: dict[str, object],
+) -> dict[str, object]:
+    assessments = [
+        {
+            "dimension": item["dimension"],
+            "status": (
+                "verified"
+                if item["status"] == "applicable"
+                else "not-applicable-confirmed"
+            ),
+            "criteria": item["criteria"],
+            "evidence": "Qualification fixture represents a host-produced semantic review.",
+        }
+        for item in contract["quality"]["assessments"]
+    ]
+    return {
+        "schemaVersion": 3,
+        "changeId": assignment["changeId"],
+        "cycle": assignment["cycle"],
+        "checkpoint": assignment["checkpoint"],
+        "workspaceFingerprint": assignment["workspaceFingerprint"],
+        "comparisonBase": assignment["comparisonBase"],
+        "reviewer": assignment["reviewer"],
+        "independence": assignment["independence"],
+        "quality": {
+            "standard": "production-v1",
+            "assessments": assessments,
+        },
+        "verdict": "approved",
+        "findings": [],
     }
 
 
@@ -338,6 +373,24 @@ def qualify_release_lifecycle(
             "qualification evidence",
         )
         review_report = qualification_root / "release-review.json"
+        assignment = json.loads(
+            (
+                candidate
+                / ".process"
+                / "runs"
+                / change_id
+                / "review-request-1.json"
+            ).read_text(encoding="utf-8")
+        )
+        contract = json.loads(
+            (candidate / ".release" / "change.json").read_text(encoding="utf-8")
+        )
+        host_review = qualification_root / "host-semantic-review.json"
+        _write_object(
+            host_review,
+            qualification_semantic_review(assignment, contract),
+            "host semantic review",
+        )
         _run(
             [
                 sys.executable,
@@ -346,8 +399,10 @@ def qualify_release_lifecycle(
                 str(candidate),
                 "--change-id",
                 change_id,
-                "--independent-evidence",
+                "--policy-evidence",
                 str(independent_evidence),
+                "--review-report",
+                str(host_review),
                 "--output",
                 str(review_report),
             ],
