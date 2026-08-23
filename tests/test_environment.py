@@ -101,6 +101,40 @@ def project_document(*, setup: bool = True, dependency: bool = False):
 
 
 class EnvironmentTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
+    def test_successful_command_allows_short_natural_descendant_drain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child_started = root / "child.started"
+            child_code = (
+                "from pathlib import Path; import sys, time; "
+                "Path(sys.argv[1]).write_text('started'); time.sleep(0.08)"
+            )
+            parent_code = (
+                "import subprocess, sys, time; from pathlib import Path; "
+                "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]]); "
+                "marker=Path(sys.argv[2]); deadline=time.monotonic()+5; "
+                "\nwhile not marker.exists() and time.monotonic() < deadline: time.sleep(0.01)\n"
+                "raise SystemExit(0 if marker.exists() else 2)"
+            )
+
+            report = execute_command(
+                root,
+                identifier="natural-drain",
+                run=(
+                    sys.executable,
+                    "-c",
+                    parent_code,
+                    child_code,
+                    str(child_started),
+                ),
+                timeout_seconds=10,
+                working_directory=".",
+            )
+
+        self.assertEqual("passed", report["status"])
+        self.assertEqual(0, report["exitCode"])
+
     def test_managed_command_binding_preserves_logical_evidence_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
