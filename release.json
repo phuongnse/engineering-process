@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "previousVersion": "0.2.1",
-  "version": "0.3.0",
+  "previousVersion": "0.3.0",
+  "version": "0.4.0",
   "classification": "minor",
   "compatibility": "backward-compatible",
   "schemaImpact": "unchanged",
@@ -9,46 +9,47 @@
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.3.0",
-    "releaseName": "v0.3.0",
+    "tag": "v0.4.0",
+    "releaseName": "v0.4.0",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.3.0-py3-none-any.whl",
-      "engineering_process-0.3.0.tar.gz"
+      "engineering_process-0.4.0-py3-none-any.whl",
+      "engineering_process-0.4.0.tar.gz"
     ],
-    "receiptAsset": "engineering-process-v0.3.0-evidence.json",
+    "receiptAsset": "engineering-process-v0.4.0-evidence.json",
     "authorizationAsset": null
   },
   "provenance": {
     "mode": "governed",
     "statement": "The public N-1 lifecycle receipt and reviewed Release PR authorize this release.",
     "lifecycleReceipt": {
-      "asset": "engineering-process-v0.3.0-evidence.json",
+      "asset": "engineering-process-v0.4.0-evidence.json",
       "project": "engineering-process",
-      "changeId": "release-0-3-0",
+      "changeId": "release-0-4-0",
       "cycle": 1
     }
   },
   "changes": [
     {
-      "id": "consumer-process-boundary-cleanup",
+      "id": "failure-to-invariant",
       "type": "capability",
       "surfaces": [
-        "ci-bootstrap",
-        "workflow"
+        "governance",
+        "skills"
       ],
-      "rationale": "Provide one immutable producer-owned CI installation action so consumers can remove copied process algorithms without weakening exact hash locks or bounded registry propagation recovery."
+      "rationale": "Require future failures to preserve evidence, classify the correct owner, repair a reusable invariant, prove valid and fail-closed behavior, and obtain affected-consumer proof before shared release."
     },
     {
-      "id": "reopen-stale-verification",
+      "id": "natural-descendant-drain",
       "type": "fix",
       "surfaces": [
-        "lifecycle"
+        "execution",
+        "supervision"
       ],
-      "rationale": "Allow a verified change invalidated by later remote evidence or a source correction to begin a new implementation cycle while preserving prior evidence and still forbidding current verified work from bypassing independent review."
+      "rationale": "Allow short, bounded child-process shutdown to drain naturally on POSIX just as it already does under the Windows Job Object, while persistent descendants remain terminated and completion-blocking."
     }
   ]
 }
