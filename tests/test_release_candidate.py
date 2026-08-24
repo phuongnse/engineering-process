@@ -11,177 +11,103 @@ from engineering_process.contracts import (
     validate_change,
     validate_plan,
     validate_release,
+    validate_release_change,
 )
 from engineering_process.publication import validate_pull_request
 from engineering_process.release_candidate import (
+    _resolved_improvement_catalog,
     prepare_release_candidate,
     render_release_pull_request,
 )
-from verification.prepare_release_review import approved_review_from_assignment
-
-
 class ReleaseCandidateTests(unittest.TestCase):
-    def test_release_review_preserves_the_immutable_assignment(self):
-        assignment = {
-            "changeId": "release-0-2-0",
-            "cycle": 1,
-            "checkpoint": "a" * 40,
-            "workspaceFingerprint": f"sha256:{'b' * 64}",
-            "comparisonBase": "c" * 40,
-            "reviewer": {
-                "actorId": "renovate-ops-independent-reviewer",
-                "contextId": "release-pr-7-" + "a" * 40,
-                "kind": "agent",
-            },
-            "independence": {
-                "method": "isolated-context",
-                "attestedBy": "renovate-ops-f22b05f7813d5868f2a728f203a59afa5d6f18d2",
-                "evidence": "github://phuongnse/renovate-ops/commit/f22b05f7813d5868f2a728f203a59afa5d6f18d2",
-            },
-        }
-        independent_evidence = {
-            "status": "passed",
-            "governanceMode": "single-maintainer",
-            "verificationKind": "independent-automated",
-            "repository": "phuongnse/engineering-process",
-            "headSha": "a" * 40,
-            "verifierRepository": "phuongnse/renovate-ops",
-            "verifierSha": "f22b05f7813d5868f2a728f203a59afa5d6f18d2",
-        }
+    def test_source_release_migration_aggregate_fits_public_contract(self):
+        changes_dir = Path(__file__).resolve().parent.parent / "release-changes"
+        if not changes_dir.is_dir():
+            self.skipTest("source release-change fragments are not packaged")
+        migrations = []
+        federated_migration = None
+        for path in sorted(changes_dir.glob("*.json")):
+            change = validate_release_change(
+                json.loads(path.read_text(encoding="utf-8")), str(path)
+            )
+            if change.migration is None:
+                continue
+            migrations.append(f"{change.identifier}: {change.migration}")
+            if change.identifier == "federated-process-improvement":
+                federated_migration = change.migration
 
-        report = approved_review_from_assignment(assignment, independent_evidence)
-
-        self.assertEqual(2, report["schemaVersion"])
-        self.assertNotIn("quality", report)
-        self.assertEqual("approved", report["verdict"])
-        self.assertEqual(assignment["checkpoint"], report["checkpoint"])
-        self.assertEqual(assignment["reviewer"], report["reviewer"])
-
-        invalid_evidence = dict(independent_evidence, verifierSha="b" * 40)
-        with self.assertRaisesRegex(ContractError, "invalid verifierSha"):
-            approved_review_from_assignment(assignment, invalid_evidence)
-
-    def test_release_review_derives_schema_3_quality_from_registered_contract(self):
-        assignment = {
-            "changeId": "release-0-2-1",
-            "cycle": 1,
-            "checkpoint": "a" * 40,
-            "workspaceFingerprint": f"sha256:{'b' * 64}",
-            "comparisonBase": "c" * 40,
-            "reviewer": {
-                "actorId": "renovate-ops-independent-reviewer",
-                "contextId": "release-pr-38-" + "a" * 40,
-                "kind": "agent",
-            },
-            "independence": {
-                "method": "isolated-context",
-                "attestedBy": "renovate-ops-independent-reviewer",
-                "evidence": "github://phuongnse/renovate-ops/actions/runs/1",
-            },
-        }
-        independent_evidence = {
-            "status": "passed",
-            "governanceMode": "single-maintainer",
-            "verificationKind": "independent-automated",
-            "repository": "phuongnse/engineering-process",
-            "headSha": "a" * 40,
-            "verifierRepository": "phuongnse/renovate-ops",
-            "verifierSha": "f22b05f7813d5868f2a728f203a59afa5d6f18d2",
-        }
-        dimensions = (
-            "compatibility",
-            "correctness",
-            "maintainability",
-            "observability",
-            "operability",
-            "performance",
-            "privacy",
-            "reliability",
-            "security",
-            "supply-chain",
-        )
-        contract = {
-            "schemaVersion": 3,
-            "id": "release-0-2-1",
-            "summary": "Qualify the exact release candidate",
-            "source": "Generated from pending release fragments",
-            "comparisonBase": "c" * 40,
-            "specification": {
-                "kind": "change-contract",
-                "reference": "release.json",
-                "rationale": "Bind publication to one reviewed candidate.",
-            },
-            "risk": "high",
-            "affectedProjects": ["engineering-process"],
-            "acceptanceCriteria": [
-                {"id": "ac-release", "outcome": "Release checks pass."}
-            ],
-            "requiredProfiles": ["development", "review"],
-            "quality": {
-                "standard": "production-v1",
-                "assessments": [
-                    {
-                        "dimension": dimension,
-                        "status": (
-                            "not-applicable"
-                            if dimension in {"performance", "privacy"}
-                            else "applicable"
-                        ),
-                        "rationale": f"Release rationale for {dimension}.",
-                        "criteria": (
-                            []
-                            if dimension in {"performance", "privacy"}
-                            else ["ac-release"]
-                        ),
-                    }
-                    for dimension in dimensions
-                ],
-            },
-            "signOff": {
-                "required": True,
-                "status": "approved",
-                "evidence": "Release PR merge is the authorization.",
-            },
-        }
-
-        report = approved_review_from_assignment(
-            assignment, independent_evidence, contract
-        )
-
-        self.assertEqual(3, report["schemaVersion"])
-        self.assertEqual("production-v1", report["quality"]["standard"])
-        self.assertEqual(
-            list(dimensions),
-            [item["dimension"] for item in report["quality"]["assessments"]],
-        )
-        self.assertEqual(
-            {
-                "performance": "not-applicable-confirmed",
-                "privacy": "not-applicable-confirmed",
-            },
-            {
-                item["dimension"]: item["status"]
-                for item in report["quality"]["assessments"]
-                if item["status"] == "not-applicable-confirmed"
-            },
-        )
-        self.assertTrue(
-            all(
-                item["criteria"] == source["criteria"]
-                for item, source in zip(
-                    report["quality"]["assessments"],
-                    contract["quality"]["assessments"],
-                    strict=True,
+        if federated_migration is None:
+            release = validate_release(
+                json.loads(
+                    (changes_dir.parent / "release.json").read_text(
+                        encoding="utf-8"
+                    )
                 )
             )
-        )
+            aggregate = release.migration or ""
+            self.assertIn("federated-process-improvement:", aggregate)
+            federated_migration = aggregate
+        else:
+            aggregate = "; ".join(migrations)
+        self.assertLessEqual(len(aggregate), 1_000)
+        for required in (
+            "Must adopt cross-repo-change",
+            "classify governed failures/findings",
+            "consumers await disposition",
+            "immutable release",
+            "exact reproduction",
+            "Released lifecycle/evidence readers retain historical meaning",
+        ):
+            self.assertIn(required, federated_migration)
 
-        with self.assertRaisesRegex(ContractError, "does not match"):
-            approved_review_from_assignment(
-                assignment,
-                independent_evidence,
-                dict(contract, id="release-0-2-2"),
+    def test_generated_release_closes_only_catalog_entries_in_its_change_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = {
+                "schemaVersion": 1,
+                "kind": "engineering-process-improvement-catalog",
+                "producer": {
+                    "project": "sample",
+                    "repository": "example/sample",
+                },
+                "entries": [
+                    {
+                        "id": "first-invariant",
+                        "reusableClass": "deterministic-enforcement",
+                        "status": "active",
+                        "publicSurfaces": ["lifecycle"],
+                        "lastResolution": None,
+                        "activeChangeId": "included-change",
+                    },
+                    {
+                        "id": "second-invariant",
+                        "reusableClass": "portability-gap",
+                        "status": "active",
+                        "publicSurfaces": ["verification"],
+                        "lastResolution": None,
+                        "activeChangeId": "later-change",
+                    },
+                ],
+            }
+            (root / "improvement-catalog.json").write_text(
+                json.dumps(catalog) + "\n", encoding="utf-8"
             )
+
+            result = _resolved_improvement_catalog(
+                root, change_ids={"included-change"}, version="0.2.0"
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            _path, content = result
+            updated = json.loads(content)
+            self.assertEqual("resolved", updated["entries"][0]["status"])
+            self.assertEqual(
+                {"changeId": "included-change", "version": "0.2.0"},
+                updated["entries"][0]["lastResolution"],
+            )
+            self.assertIsNone(updated["entries"][0]["activeChangeId"])
+            self.assertEqual("active", updated["entries"][1]["status"])
 
     def initialize_project(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)

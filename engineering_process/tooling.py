@@ -7,7 +7,6 @@ import platform
 import posixpath
 import stat
 import struct
-import subprocess
 import tarfile
 import tempfile
 import time
@@ -20,11 +19,14 @@ from urllib.parse import urljoin, urlsplit
 import zipfile
 
 from . import VERSION
+from .bounded_process import run_bounded_process
 from .contracts import ContractError, ManagedTool, ManagedToolArtifact
+from .diagnostics import classify_diagnostics, diagnostic_failure_message
 from .helper_launch import isolated_helper_command
 
 
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30
+DOWNLOAD_WORKER_OUTPUT_LIMIT = 64_000
 MARKER_NAME = ".engineering-process-tool.json"
 USER_AGENT = f"engineering-process/{VERSION}"
 
@@ -414,20 +416,47 @@ def download_artifact(
         "timeoutSeconds": remaining,
         "url": artifact.url,
     }
+    input_bytes = json.dumps(
+        payload, ensure_ascii=True, separators=(",", ":")
+    ).encode("ascii")
     try:
-        result = subprocess.run(
+        result = run_bounded_process(
             isolated_helper_command("engineering_process._download_worker"),
-            check=False,
-            input=json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode(
-                "ascii"
-            ),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=remaining,
+            working_directory=destination.parent,
+            environment=os.environ.copy(),
+            timeout_seconds=remaining,
+            max_stream_bytes=DOWNLOAD_WORKER_OUTPUT_LIMIT,
+            max_total_bytes=DOWNLOAD_WORKER_OUTPUT_LIMIT,
+            input_bytes=input_bytes,
         )
-    except subprocess.TimeoutExpired as error:
+    except (OSError, ValueError) as error:
         destination.unlink(missing_ok=True)
-        raise ContractError("managed tool installation exceeded its timeout") from error
+        raise ContractError(f"managed tool download could not start: {error}") from error
+    if result.timed_out:
+        destination.unlink(missing_ok=True)
+        raise ContractError("managed tool installation exceeded its timeout")
+    if result.output_exceeded:
+        destination.unlink(missing_ok=True)
+        raise ContractError("managed tool download worker output exceeded its limit")
+    if result.descendants_found or result.cleanup_error is not None:
+        destination.unlink(missing_ok=True)
+        raise ContractError(
+            result.cleanup_error
+            or "managed tool download worker left descendant processes"
+        )
+    if result.input_error and result.returncode == 0:
+        destination.unlink(missing_ok=True)
+        raise ContractError("managed tool download worker did not consume its input")
+    diagnostics = classify_diagnostics(
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+    diagnostic_error = diagnostic_failure_message(
+        diagnostics, subject="managed tool download worker"
+    )
+    if diagnostic_error is not None:
+        destination.unlink(missing_ok=True)
+        raise ContractError(diagnostic_error)
     if result.returncode != 0:
         destination.unlink(missing_ok=True)
         detail = result.stderr[:4096].decode("utf-8", errors="replace").strip()

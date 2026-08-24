@@ -20,7 +20,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "enum": [1, 2]
+      "enum": [1, 2, 3]
     },
     "project": {
       "type": "string"
@@ -245,6 +245,9 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "diagnostics": {
+            "$ref": "#/$defs/diagnostics"
+          },
           "outputTruncated": {
             "type": "boolean"
           },
@@ -265,6 +268,70 @@
       }
     }
   },
+  "$defs": {
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "status",
+        "count",
+        "matches",
+        "matchesTruncated"
+      ],
+      "properties": {
+        "policy": {"const": "forbid-warning-error"},
+        "status": {"enum": ["clean", "failed"]},
+        "count": {"type": "integer", "minimum": 0},
+        "matches": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "stream", "line", "lineSha256"],
+            "properties": {
+              "severity": {"enum": ["warning", "error"]},
+              "stream": {"enum": ["stdout", "stderr"]},
+              "line": {"type": "integer", "minimum": 1},
+              "lineSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "matchesTruncated": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"status": {"const": "clean"}},
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "count": {"const": 0},
+              "matches": {"maxItems": 0},
+              "matchesTruncated": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"status": {"const": "failed"}},
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "count": {"minimum": 1},
+              "matches": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    }
+  },
   "allOf": [
     {
       "if": {
@@ -273,13 +340,46 @@
       },
       "then": {
         "properties": {
-          "checks": {"minItems": 1}
+          "checks": {
+            "minItems": 1,
+            "items": {"not": {"required": ["diagnostics"]}}
+          }
         }
       }
     },
     {
       "if": {
         "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["impact"],
+        "properties": {
+          "checks": {
+            "maxItems": 256,
+            "items": {
+              "not": {"required": ["diagnostics"]},
+              "properties": {
+                "command": {"maxItems": 256}
+              },
+              "required": [
+                "impactSha256",
+                "impactIntegrity",
+                "stdoutBytes",
+                "stderrBytes",
+                "stdoutSha256",
+                "stderrSha256",
+                "outputTruncated",
+                "streamOutputTruncated"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 3}},
         "required": ["schemaVersion"]
       },
       "then": {
@@ -298,6 +398,7 @@
                 "stderrBytes",
                 "stdoutSha256",
                 "stderrSha256",
+                "diagnostics",
                 "outputTruncated",
                 "streamOutputTruncated"
               ]

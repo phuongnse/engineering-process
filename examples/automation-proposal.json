@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-controlled-automation-proposal",
+  "status": "passed",
+  "repository": "example/project",
+  "proposalKind": "dependency-update",
+  "automationOwner": "renovate",
+  "branch": "automation/renovate/update-example",
+  "targetBranch": "main",
+  "baseSha": "1111111111111111111111111111111111111111",
+  "headSha": "2222222222222222222222222222222222222222",
+  "title": "chore(deps): update example dependency",
+  "bodySha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "changedPaths": [
+    "package-lock.json",
+    "package.json"
+  ],
+  "optIn": {
+    "path": ".process/automation-proposals.json",
+    "sha256": "sha256:e249c6028af471d7aa1208d9e400b9db5154377b991150bdab7d5991d6d5fc9b",
+    "document": {
+      "schemaVersion": 1,
+      "kind": "engineering-process-automation-proposal-policy",
+      "enabled": true,
+      "targetBranch": "main",
+      "branchPrefix": "automation/renovate/",
+      "completionCheck": "lifecycle-completion",
+      "allowedAutomationOwners": [
+        "renovate"
+      ],
+      "allowedProposalKinds": [
+        "dependency-update"
+      ],
+      "requiredControls": {
+        "automerge": false,
+        "scripts": false,
+        "plugins": false,
+        "shellExecution": false,
+        "privilegedCi": false,
+        "writeCapableChecks": false,
+        "processAuthorityChanges": false,
+        "workflowChanges": false,
+        "releaseChanges": false,
+        "deploymentChanges": false,
+        "securityPolicyChanges": false,
+        "trustRootChanges": false,
+        "upToDateBeforeMerge": true,
+        "humanMergeRequired": true
+      }
+    }
+  },
+  "verifier": {
+    "repository": "example/policy-verifier",
+    "commit": "4444444444444444444444444444444444444444"
+  },
+  "observedControls": {
+    "automerge": false,
+    "scripts": false,
+    "plugins": false,
+    "shellExecution": false,
+    "privilegedCi": false,
+    "writeCapableChecks": false,
+    "processAuthorityChanges": false,
+    "workflowChanges": false,
+    "releaseChanges": false,
+    "deploymentChanges": false,
+    "securityPolicyChanges": false,
+    "trustRootChanges": false,
+    "upToDateBeforeMerge": true,
+    "humanMergeRequired": true
+  }
+}

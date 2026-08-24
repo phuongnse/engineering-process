@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .contracts import ContractError
+from .diagnostics import classify_diagnostics, diagnostic_failure_message
 from .supervision import process_supervisor
 
 
@@ -188,6 +189,17 @@ def run_git(
         raise ContractError(f"{label}: Git did not report an exit code")
     if input_capture["error"] is not None and process.returncode == 0:
         raise ContractError(f"{label}: could not write bounded Git input")
+    diagnostics = classify_diagnostics(
+        # Git stdout is a typed data/protocol channel for callers such as
+        # cat-file --batch; Git diagnostics are emitted on stderr.
+        stdout=b"",
+        stderr=bytes(stderr_capture["data"]),
+    )
+    diagnostic_error = diagnostic_failure_message(
+        diagnostics, subject=f"{label}: Git"
+    )
+    if diagnostic_error is not None:
+        raise ContractError(diagnostic_error)
     return GitResult(
         returncode=process.returncode,
         stdout=bytes(stdout_capture["data"]),

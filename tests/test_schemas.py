@@ -18,7 +18,14 @@ class SchemaTests(unittest.TestCase):
     def test_packaged_examples_match_their_schemas(self):
         mappings = {
             "adoption-migration": "adoption-migration",
+            "automation-proposal-policy": "automation-proposal-policy",
+            "automation-proposal": "automation-proposal",
             "change": "change",
+            "improvement-catalog": "improvement-catalog",
+            "improvement-disposition": "improvement-disposition",
+            "improvement-reproduction": "improvement-reproduction",
+            "improvement-resolution": "improvement-resolution",
+            "improvement-signal": "improvement-signal",
             "plan": "plan",
             "project": "project",
             "release": "release",
@@ -38,6 +45,18 @@ class SchemaTests(unittest.TestCase):
                     )
                 )
                 jsonschema.Draft202012Validator(schema).validate(example)
+
+    def test_process_graph_matches_its_schema(self):
+        graph = json.loads(
+            (PROCESS_ROOT / "process-graph.json").read_text(encoding="utf-8")
+        )
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "process-graph.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        jsonschema.Draft202012Validator(schema).validate(graph)
 
     def test_plan_cardinality_bounds_are_versioned(self):
         schema = json.loads(

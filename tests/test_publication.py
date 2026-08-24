@@ -1,18 +1,30 @@
 import base64
+import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
+from engineering_process.contracts import (
+    ContractError,
+    canonical_json_digest,
+    validate_automation_proposal,
+)
 from engineering_process.publication import (
     PR_DESCRIPTION_END,
     PR_DESCRIPTION_START,
     validate_branch,
     validate_commit_range,
     validate_commit_subject,
+    validate_completed_publication,
+    validate_controlled_automation_proposal,
+    validate_controlled_automation_proposal_completion,
     validate_pr_title,
     validate_pull_request,
+    validate_evidence_publication,
 )
 
 
@@ -49,6 +61,556 @@ Separate reviewer approved checkpoint abc123.
 
 
 class PublicationTests(unittest.TestCase):
+    def controlled_proposal_fixture(self, root: Path, *, status: str = "pending"):
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "process-test@example.invalid"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Process Test"], cwd=root, check=True
+        )
+        example = json.loads(
+            (
+                Path(__file__).resolve().parent.parent
+                / "examples"
+                / "automation-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        policy = example["optIn"]["document"]
+        policy_path = root / ".process" / "automation-proposals.json"
+        policy_path.parent.mkdir()
+        policy_path.write_text(
+            json.dumps(policy, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (root / "package.json").write_text('{"dependencies":{"sample":"1.0.0"}}\n')
+        (root / "package-lock.json").write_text('{"sample":"1.0.0"}\n')
+        (root / "SECURITY.md").write_text("protected policy\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "chore: initialize proposal fixture"],
+            cwd=root,
+            check=True,
+        )
+        base_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+        subprocess.run(
+            ["git", "switch", "-qc", "automation/renovate/update-example"],
+            cwd=root,
+            check=True,
+        )
+        (root / "package.json").write_text('{"dependencies":{"sample":"2.0.0"}}\n')
+        (root / "package-lock.json").write_text('{"sample":"2.0.0"}\n')
+        subprocess.run(["git", "add", "package.json", "package-lock.json"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "chore(deps): update sample dependency"],
+            cwd=root,
+            check=True,
+        )
+        head_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+        body = pr_body(status)
+        title = "chore(deps): update example dependency"
+        example.update(
+            {
+                "baseSha": base_sha,
+                "headSha": head_sha,
+                "title": title,
+                "bodySha256": "sha256:"
+                + hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            }
+        )
+        example["optIn"]["sha256"] = canonical_json_digest(policy)
+        return validate_automation_proposal(example), body, title, head_sha
+
+    def test_controlled_proposal_is_untrusted_but_exactly_policy_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.controlled_proposal_fixture(root)
+            source = {
+                "dirty": False,
+                "checkpoint": head_sha,
+                "fingerprint": f"sha256:{'a' * 64}",
+            }
+
+            self.assertEqual(
+                [],
+                validate_controlled_automation_proposal(
+                    root,
+                    repository="example/project",
+                    title=title,
+                    body=body,
+                    branch="automation/renovate/update-example",
+                    target_branch="main",
+                    base_commit=proposal.base_sha,
+                    state="draft",
+                    commit=head_sha,
+                    verifier_repository="example/policy-verifier",
+                    verifier_commit="4" * 40,
+                    proposal=proposal,
+                    source=source,
+                ),
+            )
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch="automation/renovate/update-example",
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository="example/different-verifier",
+                verifier_commit="4" * 40,
+                proposal=proposal,
+                source=source,
+            )
+
+            self.assertTrue(any("verifier repository" in issue for issue in issues))
+
+            policy_path = root / ".process" / "automation-proposals.json"
+            policy_path.write_text(
+                policy_path.read_text(encoding="utf-8") + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", ".process/automation-proposals.json"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "chore: mutate proposal policy"],
+                cwd=root,
+                check=True,
+            )
+            protected_head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            protected = replace(
+                proposal,
+                head_sha=protected_head,
+                changed_paths=(
+                    ".process/automation-proposals.json",
+                    "package-lock.json",
+                    "package.json",
+                ),
+            )
+            protected_issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch="automation/renovate/update-example",
+                target_branch="main",
+                base_commit=protected.base_sha,
+                state="draft",
+                commit=protected_head,
+                verifier_repository="example/policy-verifier",
+                verifier_commit="4" * 40,
+                proposal=protected,
+                source={
+                    "dirty": False,
+                    "checkpoint": protected_head,
+                    "fingerprint": f"sha256:{'a' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("cannot change process" in issue for issue in protected_issues)
+            )
+
+    def test_controlled_proposal_rejects_stale_actual_protected_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.controlled_proposal_fixture(root)
+            subprocess.run(["git", "switch", "-q", "main"], cwd=root, check=True)
+            (root / "README.md").write_text("base advanced\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "docs: advance protected base"],
+                cwd=root,
+                check=True,
+            )
+            actual_base = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            subprocess.run(
+                ["git", "switch", "-q", "automation/renovate/update-example"],
+                cwd=root,
+                check=True,
+            )
+
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch="automation/renovate/update-example",
+                target_branch="main",
+                base_commit=actual_base,
+                state="draft",
+                commit=head_sha,
+                verifier_repository="example/policy-verifier",
+                verifier_commit="4" * 40,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'a' * 64}",
+                },
+            )
+
+            self.assertTrue(any("base SHA" in issue for issue in issues))
+
+    def test_controlled_proposal_checks_both_sides_of_protected_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, _head_sha = self.controlled_proposal_fixture(root)
+            subprocess.run(
+                ["git", "mv", "SECURITY.md", "SECURITY-old.md"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "chore: rename protected policy"],
+                cwd=root,
+                check=True,
+            )
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            renamed = replace(
+                proposal,
+                head_sha=head_sha,
+                changed_paths=(
+                    "SECURITY-old.md",
+                    "SECURITY.md",
+                    "package-lock.json",
+                    "package.json",
+                ),
+            )
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch="automation/renovate/update-example",
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository="example/policy-verifier",
+                verifier_commit="4" * 40,
+                proposal=renamed,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'a' * 64}",
+                },
+            )
+
+            self.assertTrue(any("SECURITY.md" in issue for issue in issues))
+
+    @unittest.skipIf(os.name == "nt", "Git symlink type changes require POSIX")
+    def test_controlled_proposal_checks_protected_git_type_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, _head_sha = self.controlled_proposal_fixture(root)
+            security = root / "SECURITY.md"
+            security.unlink()
+            security.symlink_to("package.json")
+            subprocess.run(["git", "add", "SECURITY.md"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "chore: change protected policy type"],
+                cwd=root,
+                check=True,
+            )
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            type_changed = replace(
+                proposal,
+                head_sha=head_sha,
+                changed_paths=(
+                    "SECURITY.md",
+                    "package-lock.json",
+                    "package.json",
+                ),
+            )
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch="automation/renovate/update-example",
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository="example/policy-verifier",
+                verifier_commit="4" * 40,
+                proposal=type_changed,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'a' * 64}",
+                },
+            )
+
+            self.assertTrue(any("SECURITY.md" in issue for issue in issues))
+
+    def test_controlled_proposal_requires_opt_in_from_the_exact_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.controlled_proposal_fixture(root)
+            subprocess.run(
+                ["git", "rm", "-q", ".process/automation-proposals.json"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "chore: remove proposal policy"],
+                cwd=root,
+                check=True,
+            )
+            base_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            (root / "package.json").write_text(
+                '{"dependencies":{"sample":"3.0.0"}}\n'
+            )
+            (root / "package-lock.json").write_text('{"sample":"3.0.0"}\n')
+            subprocess.run(
+                ["git", "add", "package.json", "package-lock.json"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "chore(deps): update sample again"],
+                cwd=root,
+                check=True,
+            )
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            proposal = replace(
+                proposal,
+                base_sha=base_sha,
+                head_sha=head_sha,
+            )
+            with self.assertRaisesRegex(ContractError, "opt-in policy on the base"):
+                validate_controlled_automation_proposal(
+                    root,
+                    repository="example/project",
+                    title=title,
+                    body=body,
+                    branch="automation/renovate/update-example",
+                    target_branch="main",
+                    base_commit=proposal.base_sha,
+                    state="draft",
+                    commit=head_sha,
+                    verifier_repository="example/policy-verifier",
+                    verifier_commit="4" * 40,
+                    proposal=proposal,
+                    source={
+                        "dirty": False,
+                        "checkpoint": head_sha,
+                        "fingerprint": f"sha256:{'a' * 64}",
+                    },
+                )
+
+    def test_controlled_proposal_completion_requires_exact_ready_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.controlled_proposal_fixture(
+                root, status="satisfied"
+            )
+            fingerprint = f"sha256:{'a' * 64}"
+            source = {
+                "dirty": False,
+                "checkpoint": head_sha,
+                "fingerprint": fingerprint,
+            }
+            receipt = {
+                "project": "sample-project",
+                "checkpoint": head_sha,
+                "comparisonBase": proposal.base_sha,
+                "workspaceFingerprint": fingerprint,
+            }
+            arguments = {
+                "repository": "example/project",
+                "project": "sample-project",
+                "title": title,
+                "body": body,
+                "branch": "automation/renovate/update-example",
+                "target_branch": "main",
+                "base_commit": proposal.base_sha,
+                "commit": head_sha,
+                "verifier_repository": "example/policy-verifier",
+                "verifier_commit": "4" * 40,
+                "proposal": proposal,
+                "source": source,
+            }
+
+            self.assertEqual(
+                [],
+                validate_controlled_automation_proposal_completion(
+                    root,
+                    evidence=receipt,
+                    **arguments,
+                ),
+            )
+            pending_body = pr_body("pending")
+            pending = replace(
+                proposal,
+                body_sha256="sha256:"
+                + hashlib.sha256(pending_body.encode("utf-8")).hexdigest(),
+            )
+            pending_issues = validate_controlled_automation_proposal_completion(
+                root,
+                evidence=receipt,
+                **{
+                    **arguments,
+                    "body": pending_body,
+                    "proposal": pending,
+                },
+            )
+            self.assertTrue(
+                any("not ready for publication" in issue for issue in pending_issues)
+            )
+            receipt["checkpoint"] = "f" * 40
+            issues = validate_controlled_automation_proposal_completion(
+                root,
+                evidence=receipt,
+                **arguments,
+            )
+
+            self.assertTrue(
+                any("publication commit" in issue.lower() for issue in issues)
+            )
+            receipt["checkpoint"] = head_sha
+            receipt["comparisonBase"] = "f" * 40
+            issues = validate_controlled_automation_proposal_completion(
+                root,
+                evidence=receipt,
+                **arguments,
+            )
+            self.assertTrue(
+                any("comparison base" in issue.lower() for issue in issues)
+            )
+
+    def test_completed_publication_binds_exact_lifecycle_checkpoint(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        lifecycle = {
+            "phase": "completed",
+            "completion": {"path": "completion.json"},
+            "current": True,
+            "pendingFindings": [],
+            "verification": [
+                {
+                    "checkpoint": checkpoint,
+                    "workspaceFingerprint": fingerprint,
+                }
+            ],
+        }
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+
+        self.assertEqual(
+            [],
+            validate_completed_publication(
+                title="feat(process): standardize publication",
+                body=pr_body(),
+                branch="feat/standardize-publication",
+                commit=checkpoint,
+                lifecycle=lifecycle,
+                source=source,
+            ),
+        )
+
+    def test_publication_rejects_verified_or_stale_source(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        lifecycle = {
+            "phase": "verified",
+            "completion": None,
+            "current": True,
+            "pendingFindings": [],
+            "verification": [
+                {
+                    "checkpoint": checkpoint,
+                    "workspaceFingerprint": fingerprint,
+                }
+            ],
+        }
+        source = {
+            "dirty": True,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+
+        issues = validate_completed_publication(
+            title="feat(process): standardize publication",
+            body=pr_body("pending"),
+            branch="feat/standardize-publication",
+            commit="c" * 40,
+            lifecycle=lifecycle,
+            source=source,
+        )
+
+        self.assertTrue(any("completed lifecycle" in issue for issue in issues))
+        self.assertTrue(any("clean working tree" in issue for issue in issues))
+        self.assertTrue(any("current source checkpoint" in issue for issue in issues))
+        self.assertTrue(any("not ready for publication" in issue for issue in issues))
+
+    def test_receipt_publication_binds_project_checkpoint_and_workspace(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        receipt = {
+            "project": "sample",
+            "checkpoint": checkpoint,
+            "workspaceFingerprint": fingerprint,
+        }
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+
+        self.assertEqual(
+            [],
+            validate_evidence_publication(
+                title="feat(process): standardize publication",
+                body=pr_body(),
+                branch="feat/standardize-publication",
+                commit=checkpoint,
+                project="sample",
+                evidence=receipt,
+                source=source,
+            ),
+        )
+
+        issues = validate_evidence_publication(
+            title="feat(process): standardize publication",
+            body=pr_body(),
+            branch="feat/standardize-publication",
+            commit=checkpoint,
+            project="other",
+            evidence=dict(receipt, workspaceFingerprint=f"sha256:{'c' * 64}"),
+            source=source,
+        )
+        self.assertTrue(any("publication project" in issue for issue in issues))
+        self.assertTrue(any("publication workspace" in issue for issue in issues))
+
     def test_accepts_manual_and_generic_automation_branches(self):
         self.assertEqual([], validate_branch("feat/add-workspace"))
         self.assertEqual([], validate_branch("automation/renovate/runtime-packages"))

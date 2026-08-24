@@ -13,13 +13,7 @@
         "id": "unit-and-contract-tests",
         "run": [
           "python",
-          "-m",
-          "unittest",
-          "discover",
-          "-s",
-          "tests",
-          "-p",
-          "test_*.py"
+          "verification/run_test_suite.py"
         ],
         "timeoutSeconds": 1800
       }

@@ -93,18 +93,20 @@
       ]
     },
     {
-      "id": "evolve-single-systemic-escape",
+      "id": "evolve-consumer-triggered-recurrence",
       "skill": "evolve-process",
-      "prompt": "One critical authorization escape proves that every generated mutation endpoint lacks the same deterministic policy check.",
+      "prompt": "A consumer verification failure matches an invariant the process producer previously marked resolved. The consumer cannot safely continue and the producer has not yet triaged the new evidence.",
       "mustInclude": [
-        "reusable defect-class classification",
-        "deterministic enforcement owner",
-        "regression case",
-        "version impact"
+        "improvement-required classification",
+        "consumer remains blocked",
+        "untrusted improvement signal",
+        "producer-owned recurrence disposition",
+        "immutable release and consumer reproduction"
       ],
       "mustNotInclude": [
-        "repetition required before action",
-        "incident history added as permanent ceremony"
+        "consumer-owned producer fix",
+        "signal treated as release authority",
+        "another narrow local workaround"
       ]
     },
     {

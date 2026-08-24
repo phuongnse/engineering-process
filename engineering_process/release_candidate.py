@@ -17,6 +17,7 @@ from .contracts import (
     derive_release_version,
     read_json,
     validate_process_lock,
+    validate_improvement_catalog,
     validate_release,
     validate_release_change,
 )
@@ -222,6 +223,35 @@ def _remove_runtime_bytecode(runtime_path: Path) -> None:
                 Path(entry.path).unlink()
     except OSError as error:
         raise ContractError(f"cannot invalidate runtime bytecode cache: {error}") from error
+
+
+def _resolved_improvement_catalog(
+    project_root: Path,
+    *,
+    change_ids: set[str],
+    version: str,
+) -> tuple[Path, bytes] | None:
+    path = project_root / "improvement-catalog.json"
+    if not path.is_file():
+        return None
+    document = read_json(path)
+    validate_improvement_catalog(document, str(path))
+    changed = False
+    for entry in document["entries"]:
+        active_change_id = entry["activeChangeId"]
+        if entry["status"] != "active" or active_change_id not in change_ids:
+            continue
+        entry["status"] = "resolved"
+        entry["lastResolution"] = {
+            "changeId": active_change_id,
+            "version": version,
+        }
+        entry["activeChangeId"] = None
+        changed = True
+    if not changed:
+        return None
+    validate_improvement_catalog(document, "generated improvement catalog")
+    return path, _canonical_json_bytes(document)
 
 
 def _release_lifecycle_documents(
@@ -534,6 +564,14 @@ def prepare_release_candidate(
         project_root / ".release" / "change.json": lifecycle_contract,
         project_root / ".release" / "plan.json": lifecycle_plan,
     }
+    catalog_output = _resolved_improvement_catalog(
+        project_root,
+        change_ids={change.identifier for _path, change in entries},
+        version=version,
+    )
+    if catalog_output is not None:
+        catalog_path, catalog_bytes = catalog_output
+        outputs[catalog_path] = catalog_bytes
     _remove_runtime_bytecode(runtime_path)
     for path, data in outputs.items():
         _atomic_replace(path, data)

@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from engineering_process.diagnostics import classify_diagnostics
+
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
@@ -28,6 +30,61 @@ def load_runner():
 
 
 class AdoptionRunnerTests(unittest.TestCase):
+    def test_windows_status_protocol_is_canonical_and_typed(self):
+        runner = load_runner()
+        clean = runner._decode_windows_status(
+            b'{"cleanupError":null,"descendantsFound":true,"schemaVersion":1}\n'
+        )
+        malformed = (
+            b'{"cleanupError":null,"descendantsFound":false,'
+            b'"schemaVersion":true}\n'
+        )
+
+        self.assertTrue(clean.descendants_found)
+        self.assertIsNone(clean.error)
+        self.assertIn("fields are invalid", runner._decode_windows_status(malformed).error)
+        self.assertIn("missing or oversized", runner._decode_windows_status(b"").error)
+
+    def test_windows_wrapper_command_requires_private_status_handle(self):
+        source = (
+            PROCESS_ROOT / "templates" / "adopt-process.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"--status-handle"', source)
+        self.assertIn('startup.lpAttributeList = {"handle_list": [status_handle]}', source)
+        self.assertIn("_read_windows_status", source)
+
+    def test_bootstrap_classifier_matches_shared_policy_and_fails_exit_zero(self):
+        runner = load_runner()
+        cases = (
+            b"WARN: regex validation may be inaccurate\n",
+            b"npm warn rebuild script policy is incomplete\n",
+            b"ValidationError: invalid evidence\n",
+            b'{"severity":"error","message":"invalid"}\n',
+            b"::warning file=app.py,line=1::unsafe fallback\n",
+            b"::error title=Validation::configuration rejected\n",
+        )
+        for output in cases:
+            with self.subTest(output=output):
+                shared = classify_diagnostics(stdout=output, stderr=b"")
+                bootstrap = runner._diagnostic_failure(output, b"")
+                self.assertEqual("failed", shared["status"])
+                self.assertIsNotNone(bootstrap)
+
+        secret = "WARNING: secret-shaped=value"
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(
+                RuntimeError, "forbidden warning/error diagnostics"
+            ) as raised,
+        ):
+            runner._run(
+                [sys.executable, "-c", f"print({secret!r})"],
+                cwd=Path(directory),
+            )
+
+        self.assertNotIn("secret-shaped", str(raised.exception))
+
     def write_process_lock(self, root: Path, version: str = "0.1.0") -> None:
         path = root / ".process" / "process.lock"
         path.parent.mkdir()

@@ -64,6 +64,10 @@ ADOPTION_SCRIPT_NAMES = (
 )
 
 
+def _write_utf8_lf(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
 def _has_adoption_runner_marker(content: bytes) -> bool:
     marker = ADOPTION_RUNNER_MARKER.encode("utf-8")
     return content.startswith(marker + b"\n") or content.startswith(
@@ -488,7 +492,7 @@ def _sync_agents(project_root: Path, process_root: Path) -> None:
         raise ContractError(f"{target}: cannot read agent contract: {error}") from error
     updated = merge_managed_agents(current, source)
     if current != updated:
-        target.write_text(updated, encoding="utf-8")
+        _write_utf8_lf(target, updated)
 
 
 def _pull_request_template_issues(
@@ -532,7 +536,7 @@ def _sync_pull_request_template(project_root: Path, process_root: Path) -> None:
     updated = merge_managed_pull_request_template(current, source)
     if current != updated:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(updated, encoding="utf-8")
+        _write_utf8_lf(target, updated)
 
 
 def _git_attributes_issues(project_root: Path) -> list[str]:
@@ -560,7 +564,7 @@ def _sync_git_attributes(project_root: Path) -> None:
         raise ContractError(f"{target}: refusing to overwrite unmanaged Git attributes")
     if current is None or managed_attributes_issues(current):
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(canonical_attributes_block(), encoding="utf-8")
+        _write_utf8_lf(target, canonical_attributes_block())
 
 
 def synchronized_state(
@@ -684,7 +688,8 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
         for skill in lock.skills:
             target = staged_skills / skill
             shutil.copytree(source_root / skill, target)
-            (target / MARKER_NAME).write_text(
+            _write_utf8_lf(
+                target / MARKER_NAME,
                 json.dumps(
                     _marker(lock, skill),
                     ensure_ascii=False,
@@ -692,7 +697,6 @@ def sync_skills(project_root: Path, process_root: Path, *, check: bool) -> list[
                     sort_keys=True,
                 )
                 + "\n",
-                encoding="utf-8",
             )
 
         moved: list[Path] = []

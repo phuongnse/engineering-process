@@ -3,7 +3,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import engineering_process.bootstrap as bootstrap_module
 from engineering_process.bootstrap import (
     AGENTS_END,
     AGENTS_START,
@@ -133,6 +135,50 @@ class BootstrapTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
             self.assertEqual(pr_template.count(PR_DESCRIPTION_START), 1)
             self.assertEqual(pr_template.count(PR_DESCRIPTION_END), 1)
+
+    def test_every_bootstrap_managed_text_writer_is_explicit_utf8_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            manifest = self.write_manifest(root)
+            managed_paths = {
+                root / ".process" / "project.json",
+                root / ".process" / "process.lock",
+                root / "AGENTS.md",
+                root / ".github" / "PULL_REQUEST_TEMPLATE.md",
+                root / ".gitignore",
+                root / ".agents" / ".gitattributes",
+            }
+            original_write_utf8_lf = bootstrap_module._write_utf8_lf
+            managed_calls: list[Path] = []
+
+            def record_write_utf8_lf(path: Path, content: str) -> None:
+                if path in managed_paths:
+                    managed_calls.append(path)
+                original_write_utf8_lf(path, content)
+
+            with mock.patch.object(
+                bootstrap_module,
+                "_write_utf8_lf",
+                side_effect=record_write_utf8_lf,
+            ):
+                initialize_project(
+                    root,
+                    PROCESS_ROOT,
+                    manifest_path=manifest,
+                    requested_bundles=["core"],
+                    replace=False,
+                )
+
+            self.assertEqual(
+                managed_paths,
+                {path for path in managed_paths if path.is_file()},
+            )
+            self.assertEqual(len(managed_paths), len(managed_calls))
+            self.assertEqual(managed_paths, set(managed_calls))
+            for path in managed_paths:
+                content = path.read_bytes()
+                self.assertNotIn(b"\r\n", content)
+                self.assertTrue(content.endswith(b"\n"))
 
     def test_refuses_to_guess_how_to_merge_an_unmanaged_pr_template(self):
         with tempfile.TemporaryDirectory() as directory:

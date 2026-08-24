@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-improvement-disposition",
+  "createdAt": "2026-08-24T01:00:00Z",
+  "signalSha256": "sha256:8c275d5878254215bb5631c0b13ac7e28405b232db07fea4c044f16597a92bb9",
+  "catalogSha256": "sha256:4a651fb9fc4e2fa211ddabfa9a2d2b70a5d6adaa8d60f82215e091f9b63a5853",
+  "catalogStatus": "resolved",
+  "producer": {
+    "project": "engineering-process",
+    "repository": "example/engineering-process",
+    "checkpoint": "9999999999999999999999999999999999999999",
+    "process": {
+      "version": "0.4.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "decision": "accepted",
+  "ownerBoundary": "shared-process",
+  "reusableClass": "deterministic-enforcement",
+  "canonicalInvariantId": "single-windows-helper-protocol",
+  "recurrence": "recurrence",
+  "linkedChangeId": "close-helper-protocol-recurrence",
+  "rationaleSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "exception": null,
+  "requiredProof": {
+    "producerLifecycle": true,
+    "immutableRelease": true,
+    "consumerReproduction": true
+  },
+  "controls": {
+    "grantsImplementation": false,
+    "grantsMerge": false,
+    "grantsRelease": false,
+    "grantsAdoption": false
+  }
+}

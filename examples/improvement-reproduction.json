@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-improvement-reproduction",
+  "completedAt": "2026-08-24T03:00:00Z",
+  "signalSha256": "sha256:8c275d5878254215bb5631c0b13ac7e28405b232db07fea4c044f16597a92bb9",
+  "dispositionSha256": "sha256:5b614cbed433a426d35373214414f493b83a381f550c73a23f3cd5ab7d2bf716",
+  "resolutionSha256": "sha256:dadbcde1b565192da80843ca5310fbe970486b7a282448b0a2026bfe4fc098b3",
+  "canonicalInvariantId": "single-windows-helper-protocol",
+  "consumer": {
+    "project": "sample-consumer",
+    "repository": "example/sample-consumer",
+    "checkpoint": "3456789abcdef0123456789abcdef0123456789a",
+    "workspaceFingerprint": "sha256:456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123",
+    "process": {
+      "version": "0.6.0",
+      "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  },
+  "release": {
+    "repository": "example/engineering-process",
+    "version": "0.6.0",
+    "tag": "v0.6.0",
+    "releaseName": "v0.6.0",
+    "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "artifactSetSha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "evidence": {
+    "kind": "lifecycle-receipt",
+    "status": "passed",
+    "artifactSha256": "sha256:56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234",
+    "artifactBytes": 8192,
+    "changeId": "adopt-process-release",
+    "cycle": 1,
+    "profiles": [
+      "development",
+      "review"
+    ],
+    "reference": "https://example.invalid/runs/456"
+  }
+}

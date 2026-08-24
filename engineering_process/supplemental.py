@@ -107,6 +107,7 @@ def _check_summaries(report: dict[str, Any]) -> list[dict[str, Any]]:
             "stderrSha256",
             "outputTruncated",
             "streamOutputTruncated",
+            "diagnostics",
         )
         if any(name not in check for name in required):
             raise ContractError(
@@ -250,9 +251,9 @@ def build_supplemental_verification(
             profile_name,
             base_ref=comparison_base,
         )
-        if report.get("schemaVersion") != 2:
+        if report.get("schemaVersion") != 3:
             raise ContractError(
-                "supplemental verification requires schema 2 reports"
+                "supplemental verification requires schema 3 reports"
             )
         if (
             report.get("checkpoint") != expected_checkpoint
@@ -282,7 +283,7 @@ def build_supplemental_verification(
                 "path": filename,
                 "bytes": len(serialized),
                 "sha256": f"sha256:{hashlib.sha256(serialized).hexdigest()}",
-                "schemaVersion": 2,
+                "schemaVersion": 3,
                 "profile": profile_name,
                 "status": report["status"],
                 "checkpoint": report["checkpoint"],
@@ -301,7 +302,7 @@ def build_supplemental_verification(
             "supplemental verification workspace changed between profiles"
         )
     manifest = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "kind": "engineering-process-supplemental-verification",
         "status": (
             "passed"

@@ -17,6 +17,9 @@ class SkillTests(unittest.TestCase):
         )
         run_change = (skills / "run-change" / "SKILL.md").read_text(encoding="utf-8")
         evolve = (skills / "evolve-process" / "SKILL.md").read_text(encoding="utf-8")
+        cross_repo = (skills / "cross-repo-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
         review = (skills / "review-change" / "SKILL.md").read_text(encoding="utf-8")
         production = (PROCESS_ROOT / "PRODUCTION_STANDARD.md").read_text(encoding="utf-8")
 
@@ -28,6 +31,10 @@ class SkillTests(unittest.TestCase):
         self.assertIn("failure-to-invariant protocol", run_change)
         self.assertIn("keep the consumer candidate blocked", evolve)
         self.assertIn("real\n   affected-consumer reproduction", evolve)
+        self.assertIn("mandatory `improvement-required` phase", evolve)
+        self.assertIn("In `improvement-pending`", cross_repo)
+        self.assertIn("improvement-required", run_change)
+        self.assertIn("immutable\nrelease resolution", execution)
         self.assertIn("Treat owner mismatch", review)
         self.assertIn("## Failure to invariant", production)
 
@@ -35,6 +42,24 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(
             validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []
         )
+
+    def test_controlled_proposals_remain_untrusted_until_exact_completion(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        execution = (skills / "run-change" / "references" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+        publish = (skills / "publish-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (execution, publish):
+            normalized = text.lower().replace("-", " ")
+            self.assertIn("controlled automation proposal", normalized)
+            self.assertIn("validate-proposal-completion", text)
+            self.assertIn("exact head", normalized)
+            self.assertIn("automerge", text)
+            self.assertIn("process-authority", text)
+        self.assertIn("Missing or disabled base policy fails closed", execution)
 
     def test_digest_changes_with_instruction_content(self):
         with tempfile.TemporaryDirectory() as directory:

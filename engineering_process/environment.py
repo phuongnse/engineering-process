@@ -21,6 +21,7 @@ from .contracts import (
     ProjectEnvironment,
     SetupAction,
 )
+from .diagnostics import classify_diagnostics, diagnostic_failure_message
 from .tooling import (
     ManagedCommandBinding,
     install_managed_tool,
@@ -109,6 +110,11 @@ def _drain_output(
     try:
         while chunk := stream.read(8192):
             capture["sha256"].update(chunk)
+            diagnostic_remaining = (
+                COMMAND_OUTPUT_STREAM_LIMIT - len(capture["diagnosticData"])
+            )
+            if diagnostic_remaining > 0:
+                capture["diagnosticData"].extend(chunk[:diagnostic_remaining])
             with budget["lock"]:
                 capture["bytes"] += len(chunk)
                 budget["bytes"] += len(chunk)
@@ -225,6 +231,7 @@ def execute_command(
             "stderrBytes": 0,
             "stdoutSha256": hashlib.sha256(b"").hexdigest(),
             "stderrSha256": hashlib.sha256(b"").hexdigest(),
+            "diagnostics": classify_diagnostics(stdout=b"", stderr=b""),
             "outputTruncated": False,
             "streamOutputTruncated": False,
             "pathEntries": [str(path) for path in path_entries],
@@ -238,6 +245,7 @@ def execute_command(
         "sha256": hashlib.sha256(),
         "mirroredBytes": 0,
         "mirrorTruncated": False,
+        "diagnosticData": bytearray(),
     }
     stderr_capture: dict[str, Any] = {
         "data": bytearray(),
@@ -246,6 +254,7 @@ def execute_command(
         "sha256": hashlib.sha256(),
         "mirroredBytes": 0,
         "mirrorTruncated": False,
+        "diagnosticData": bytearray(),
     }
     for capture in (stdout_capture, stderr_capture):
         capture["limitExceeded"] = False
@@ -349,6 +358,18 @@ def execute_command(
                 thread.join(timeout=1)
     stdout = bytes(stdout_capture["data"]).decode("utf-8", errors="replace")
     stderr = bytes(stderr_capture["data"]).decode("utf-8", errors="replace")
+    diagnostics = classify_diagnostics(
+        stdout=bytes(stdout_capture["diagnosticData"]),
+        stderr=bytes(stderr_capture["diagnosticData"]),
+    )
+    diagnostic_error = diagnostic_failure_message(diagnostics)
+    if diagnostic_error is not None:
+        status = "failed"
+        error_message = (
+            f"{error_message}; {diagnostic_error}"
+            if error_message is not None
+            else diagnostic_error
+        )
     result: dict[str, Any] = {
         "id": identifier,
         "status": status,
@@ -364,6 +385,7 @@ def execute_command(
         "stderrBytes": stderr_capture["bytes"],
         "stdoutSha256": stdout_capture["sha256"].hexdigest(),
         "stderrSha256": stderr_capture["sha256"].hexdigest(),
+        "diagnostics": diagnostics,
         "outputTruncated": bool(
             stdout_capture["truncated"] or stderr_capture["truncated"]
         ),

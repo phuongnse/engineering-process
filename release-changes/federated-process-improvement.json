@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "federated-process-improvement",
+  "type": "breaking",
+  "surfaces": [
+    "cli",
+    "governance",
+    "lifecycle",
+    "schema",
+    "skills"
+  ],
+  "rationale": "Make evolve-process the mandatory owner of improvement-required, route shared consumer cases through improvement-pending, add a transport-neutral signal/disposition/resolution/reproduction chain and producer recurrence catalog, and block verification, completion, and publication until the applicable local or federated proof is explicit.",
+  "schemaImpact": "additive",
+  "migration": "Must adopt cross-repo-change; classify governed failures/findings; consumers await disposition, immutable release, exact reproduction. Released lifecycle/evidence readers retain historical meaning."
+}

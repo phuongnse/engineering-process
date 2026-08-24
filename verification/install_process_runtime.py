@@ -13,6 +13,16 @@ import threading
 import time
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from engineering_process.diagnostics import (
+    classify_diagnostics,
+    diagnostic_failure_message,
+)
+from engineering_process.bounded_process import run_bounded_process
+
+
 PUBLIC_INDEX = "https://pypi.org/simple"
 MAX_LOCK_BYTES = 1_000_000
 MAX_OUTPUT_BYTES = 1_000_000
@@ -245,37 +255,36 @@ def _terminate_tree(process: subprocess.Popen[bytes]) -> bool:
     return _terminate_posix_group(process.pid)
 
 
-def _windows_wrapped_command(command: Sequence[str]) -> list[str]:
-    supplied = Path(command[0])
-    if not supplied.is_absolute() or supplied.suffix.casefold() != ".exe":
-        raise InstallError("Windows pip commands require an absolute .exe path")
-    try:
-        application = supplied.resolve(strict=True)
-    except OSError as error:
-        raise InstallError("Windows Python executable is unavailable") from error
-    helper = (
-        Path(__file__).resolve().parent.parent
-        / "templates"
-        / "adopt-process-windows-job.py"
-    )
-    if helper.is_symlink() or not helper.is_file():
-        raise InstallError("Windows Job Object helper is unavailable")
-    return [
-        sys.executable,
-        "-I",
-        str(helper),
-        "--application",
-        str(application),
-        "--",
-        *command,
-    ]
-
-
 def _run_attempt(
     command: Sequence[str], working_directory: Path, environment: dict[str, str]
 ) -> Attempt:
+    if os.name == "nt":
+        try:
+            result = run_bounded_process(
+                command,
+                working_directory=working_directory,
+                environment=environment,
+                timeout_seconds=ATTEMPT_TIMEOUT_SECONDS,
+                max_stream_bytes=MAX_OUTPUT_BYTES,
+                max_total_bytes=MAX_OUTPUT_BYTES,
+            )
+        except (OSError, ValueError) as error:
+            raise InstallError(f"cannot execute bounded Windows pip: {error}") from error
+        if result.cleanup_error is not None:
+            raise InstallError(f"Windows pip cleanup failed: {result.cleanup_error}")
+        if result.input_error:
+            raise InstallError("Windows pip reported an unexpected input failure")
+        return Attempt(
+            result.returncode if result.returncode is not None else -1,
+            result.stdout,
+            result.stderr,
+            timed_out=result.timed_out,
+            output_exceeded=result.output_exceeded,
+            descendants_terminated=result.descendants_found,
+        )
+
     capture = _BoundedOutput(MAX_OUTPUT_BYTES)
-    executable = _windows_wrapped_command(command) if os.name == "nt" else list(command)
+    executable = list(command)
     options: dict[str, object] = {
         "cwd": working_directory,
         "env": environment,
@@ -283,10 +292,7 @@ def _run_attempt(
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
     }
-    if os.name == "nt":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        options["start_new_session"] = True
+    options["start_new_session"] = True
     try:
         process = subprocess.Popen(executable, **options)
     except OSError as error:
@@ -404,6 +410,15 @@ def install_process_runtime(
                 "pip attempt left descendant processes; they were terminated"
             )
         if attempt.returncode == 0:
+            diagnostics = classify_diagnostics(
+                stdout=attempt.stdout,
+                stderr=attempt.stderr,
+            )
+            diagnostic_error = diagnostic_failure_message(
+                diagnostics, subject="pip install"
+            )
+            if diagnostic_error is not None:
+                raise InstallError(diagnostic_error)
             return
         if not retryable_exact_version_absence(attempt, version):
             raise InstallError(

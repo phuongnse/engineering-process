@@ -66,10 +66,21 @@ versions never advance merely because the other one changed.
 - A new schema version retains the released reader, documents migration, and adds
   compatibility regressions before it becomes the default example.
 
-A newly introduced artifact starts at `schemaVersion: 1`. The supplemental
-verification manifest and project-adoption migration each follow that rule. Adding
-optional `timeoutSeconds` evidence to verification schema 2 preserves existing
-schema-2 documents and therefore does not advance that artifact's schema version.
+A newly introduced artifact starts at `schemaVersion: 1`. The project-adoption
+migration follows that rule. Adding optional `timeoutSeconds` evidence to
+verification schema 2 preserved existing schema-2 documents and therefore did not
+advance that artifact's schema version.
+
+Requiring diagnostic classification changes what a passing command and its evidence
+mean. Current generators therefore emit verification schema 3, where every check
+requires a redacted diagnostic summary, and supplemental-verification schema 2,
+where every embedded check summary binds that new evidence and every report is schema
+3. Verification schema 1/schema 2 and supplemental schema 1 remain readable with
+their released meaning; they are historical evidence, not alternate current
+generation formats. Consumers upgrading to this authority must correct warnings and
+errors in their canonical commands and update integrations that generate current
+verification or supplemental documents to the new majors. They must not add
+suppression or translate new reports back into an older shape.
 
 Every generator must be qualified against the exact released reader that consumes its
 output. For a lifecycle artifact, validation at creation is insufficient: CI runs the
@@ -82,21 +93,67 @@ Package `schemaImpact` is `unchanged`, `additive`, or `breaking` for the combine
 release. Additive schema capability requires at least a capability release; a
 breaking schema requires an incompatible release.
 
+## Controlled dependency-proposal capability
+
+The strict default remains completion before any branch or PR publication. A consumer
+may adopt the additive controlled automation-proposal capability through a separate,
+completed configuration change on protected main. Its base-owned policy and immutable
+verifier bind one untrusted dependency proposal to exact repository, base/head, paths,
+metadata, controls, and verifier identity. Proposal creation is not lifecycle evidence
+or authority. The adapter supplies the actual protected-base commit independently from
+the provider event so the report cannot select a stale policy object. Automerge,
+scripts, plugins, shell execution, privileged/write-capable
+proposal checks, and process-authority, workflow, release, deployment, security-policy,
+or trust-root changes remain excluded.
+
+Branch protection requires the canonical `lifecycle-completion` check, which is absent
+for every new proposal SHA. The provider adapter may create it only after
+`publication validate-proposal-completion` validates the same proposal policy and an
+external completion receipt for the exact clean head. Human merge remains mandatory.
+Branch protection also requires the proposal to be current with the exact validated
+base, so a base advance forces a new head and invalidates the old completion check.
+The producer capability must be released immutably before a consumer pins and enables
+it; no consumer may depend on the producer working tree.
+
+## Federated process-improvement capability
+
+Improvement signals, dispositions, resolutions, reproductions, and the producer
+catalog are independent schema-1 artifacts. Their introduction is additive schema
+surface, while automatically blocking corrective lifecycle progress until a validated
+failure has an explicit disposition changes lifecycle semantics. Before 1.0 this is a
+breaking package change and therefore requires a minor release plus migration guidance.
+
+Older lifecycle, completion, receipt, verification, and supplemental documents keep
+their released meaning. Improvement references are additive to historical state and
+completion readers; current generation emits them only when a failure or finding has
+created a case. Consumers pinned to older authorities do not gain the new behavior
+until a separately completed adoption pins an immutable release.
+
+Producer completion does not create an improvement resolution. Resolution additionally
+binds the immutable public release, and shared aggregate closure additionally binds a
+consumer reproduction after adoption. A read-only pre-release consumer candidate is
+supplemental compatibility evidence only and cannot be committed as an unreleased
+dependency.
+
 ## Release and adoption boundary
 
 Release, self-adoption, and consumer adoption are separate changes:
 
 1. Release N governs and verifies the source of N+1.
 2. N+1 is published as an immutable release and its public hashes are verified.
-3. Renovate updates the direct input pin, regenerates the complete hash-locked
-   dependency graph, and runs the managed adoption runner before it creates one
-   draft PR containing the process lock and every selected managed asset.
-4. CI validates dependency integrity and the fully materialized adoption. Each
+3. Consumer-owned automation prepares an unpublished local candidate artifact,
+   updates the direct pin, regenerates the hash-locked dependency graph, and runs the
+   managed adoption runner. Renovate must not publish a process-authority branch or
+   PR because its normal PR-first execution cannot satisfy this lifecycle boundary.
+4. Required profiles validate the immutable candidate. The consumer-selected host
+   supplies an independent semantic agent or human review; findings repeat candidate
+   generation and full verification until lifecycle completion. Each
    platform/runtime job publishes a bounded supplemental evidence bundle bound to the
    source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
-   The adoption owner then obtains independent review and explicitly merges that same
-   checkpoint. Merge completes adoption; there is no post-merge synchronization.
-5. N+1 governs only changes that begin after the adoption checkpoint.
+   Only after completion may automation push the candidate branch and create the PR
+   containing the process lock and every selected managed asset. The consumer owner
+   explicitly merges that exact checkpoint; there is no post-merge synchronization.
+5. N+1 governs only changes that begin after the merged adoption checkpoint.
 
 The repository-root GitHub Action and Python package are two surfaces of the same
 governed release checkpoint. A consumer invocation pins the action by the release
@@ -112,7 +169,9 @@ and managed bootstrap snapshots required before a target version is installed. A
 clean-cutover PR may delete an obsolete local helper only after it pins an immutable
 public action checkpoint; no compatibility shim or dual execution path is retained.
 
-Renovate PRs are generated adoption candidates, not trusted adoption evidence.
+Process-authority adoption candidates are not controlled dependency proposals and
+cannot use that exception. PR creation is blocked until the adoption candidate has
+current completion evidence.
 Automerge is forbidden for process-authority updates. A PR that changes only a
 requirement pin, omits generated hashes or managed assets, or requires a post-merge
 step must fail closed.
@@ -166,7 +225,8 @@ falling back to a partial proposal.
   derived identity surface without writing protected `main` directly.
 - `processctl` derives and validates classification, compatibility, identity, reviewed
   tree equivalence, and authorization evidence.
-- Renovate generates complete draft adoption candidates without merge authority.
+- Consumer automation may prepare complete unpublished adoption candidates without
+  merge authority; the lifecycle host publishes them only after completion.
 - Independent review verifies the exact Release PR classification, migration,
   verification, and evidence checkpoint.
 - The repository owner authorizes publication by merging the Release PR and separately

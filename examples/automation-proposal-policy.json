@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-automation-proposal-policy",
+  "enabled": true,
+  "targetBranch": "main",
+  "branchPrefix": "automation/renovate/",
+  "completionCheck": "lifecycle-completion",
+  "allowedAutomationOwners": [
+    "renovate"
+  ],
+  "allowedProposalKinds": [
+    "dependency-update"
+  ],
+  "requiredControls": {
+    "automerge": false,
+    "scripts": false,
+    "plugins": false,
+    "shellExecution": false,
+    "privilegedCi": false,
+    "writeCapableChecks": false,
+    "processAuthorityChanges": false,
+    "workflowChanges": false,
+    "releaseChanges": false,
+    "deploymentChanges": false,
+    "securityPolicyChanges": false,
+    "trustRootChanges": false,
+    "upToDateBeforeMerge": true,
+    "humanMergeRequired": true
+  }
+}

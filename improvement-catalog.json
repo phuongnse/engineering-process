@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-improvement-catalog",
+  "producer": {
+    "project": "engineering-process",
+    "repository": "phuongnse/engineering-process"
+  },
+  "entries": [
+    {
+      "id": "deterministic-cross-platform-test-environment",
+      "reusableClass": "portability-gap",
+      "status": "active",
+      "publicSurfaces": [
+        "cross-platform-tests",
+        "verification-evidence"
+      ],
+      "lastResolution": null,
+      "activeChangeId": "fix-windows-verification-boundary"
+    },
+    {
+      "id": "failure-to-invariant-disposition-enforcement",
+      "reusableClass": "deterministic-enforcement",
+      "status": "active",
+      "publicSurfaces": [
+        "governance",
+        "lifecycle",
+        "skills"
+      ],
+      "lastResolution": {
+        "changeId": "failure-to-invariant",
+        "version": "0.4.0"
+      },
+      "activeChangeId": "federated-process-improvement"
+    },
+    {
+      "id": "producer-improvement-route-completeness",
+      "reusableClass": "deterministic-enforcement",
+      "status": "active",
+      "publicSurfaces": [
+        "catalog",
+        "lifecycle"
+      ],
+      "lastResolution": null,
+      "activeChangeId": "federated-process-improvement"
+    },
+    {
+      "id": "single-windows-helper-protocol",
+      "reusableClass": "deterministic-enforcement",
+      "status": "active",
+      "publicSurfaces": [
+        "command-execution",
+        "windows-supervision"
+      ],
+      "lastResolution": null,
+      "activeChangeId": "fix-windows-verification-boundary"
+    }
+  ]
+}

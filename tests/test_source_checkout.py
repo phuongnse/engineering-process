@@ -1,3 +1,4 @@
+import io
 import subprocess
 import tempfile
 import time
@@ -9,6 +10,7 @@ from engineering_process.contracts import ContractError
 from engineering_process.distribution_verify import _copy_tracked_snapshot
 from engineering_process.git import GIT_STDIN_LIMIT, remaining_seconds, run_git
 from engineering_process.runner import source_state
+from engineering_process.supervision import CleanupOutcome
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -74,6 +76,66 @@ def _path_chunks(paths: list[PurePosixPath]) -> list[list[PurePosixPath]]:
 
 
 class SourceCheckoutTests(unittest.TestCase):
+    def test_exit_zero_git_diagnostic_fails_closed_without_raw_text(self):
+        process = mock.Mock()
+        process.stdout = io.BytesIO(b"")
+        process.stderr = io.BytesIO(b"WARNING: secret-shaped=value\n")
+        process.returncode = 0
+        process.wait.return_value = 0
+        process.poll.return_value = 0
+        supervisor = mock.Mock()
+        supervisor.spawn.return_value = process
+        supervisor.finalize.return_value = CleanupOutcome(bounded=True)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch(
+                "engineering_process.git.process_supervisor",
+                return_value=supervisor,
+            ),
+            self.assertRaisesRegex(
+                ContractError, "Git emitted forbidden warning/error diagnostics"
+            ) as raised,
+        ):
+            run_git(
+                Path(directory),
+                ["status"],
+                label="diagnostic Git",
+                timeout_seconds=5,
+                max_stdout_bytes=1_024,
+            )
+
+        self.assertNotIn("secret-shaped", str(raised.exception))
+
+    def test_git_stdout_protocol_payload_is_not_classified_as_diagnostic(self):
+        process = mock.Mock()
+        process.stdout = io.BytesIO(b"ValidationError: tracked source payload\n")
+        process.stderr = io.BytesIO(b"")
+        process.returncode = 0
+        process.wait.return_value = 0
+        process.poll.return_value = 0
+        supervisor = mock.Mock()
+        supervisor.spawn.return_value = process
+        supervisor.finalize.return_value = CleanupOutcome(bounded=True)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch(
+                "engineering_process.git.process_supervisor",
+                return_value=supervisor,
+            ),
+        ):
+            result = run_git(
+                Path(directory),
+                ["cat-file", "--batch"],
+                label="Git protocol payload",
+                timeout_seconds=5,
+                max_stdout_bytes=1_024,
+            )
+
+        self.assertEqual(0, result.returncode)
+        self.assertIn(b"ValidationError", result.stdout)
+
     def test_git_input_is_bounded_before_process_start(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

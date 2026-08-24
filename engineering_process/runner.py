@@ -315,6 +315,7 @@ def _run_check(
         "stderrBytes",
         "stdoutSha256",
         "stderrSha256",
+        "diagnostics",
     }
     result = {key: value for key, value in execution.items() if key in allowed}
     result["timeoutSeconds"] = check.timeout_seconds
@@ -363,7 +364,7 @@ def run_profile(
         else "failed"
     )
     report = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "project": project.identifier,
         "profile": profile,
         "checkpoint": source_before["checkpoint"],

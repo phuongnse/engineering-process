@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 from pathlib import Path
 
-from .contracts import ContractError
-from .git import run_git
+from .contracts import (
+    AutomationProposal,
+    ContractError,
+    MAX_AUTOMATION_PROPOSAL_PATHS,
+    MAX_JSON_BYTES,
+    canonical_json_digest,
+)
+from .git import portable_git_path, run_git
 from .markdown import (
     COMMENT_RE,
     contains_raw_html,
@@ -18,6 +25,25 @@ from .markdown import (
 
 
 CONVENTIONAL_SUBJECT_MAX_LENGTH = 72
+MAX_PULL_REQUEST_BODY_BYTES = 65_536
+MAX_PROPOSAL_CHANGED_PATH_BYTES = 600_000
+PROTECTED_AUTOMATION_PROPOSAL_PATHS = {
+    ".github/CODEOWNERS",
+    "AGENTS.md",
+    "CODEOWNERS",
+    "RELEASING.md",
+    "SECURITY.md",
+    "release.json",
+    "requirements/process.in",
+    "requirements/process.txt",
+}
+PROTECTED_AUTOMATION_PROPOSAL_PREFIXES = (
+    ".agents/",
+    ".github/workflows/",
+    ".process/",
+    ".release/",
+    "release-changes/",
+)
 CONVENTIONAL_SUBJECT_RE = re.compile(
     r"^[a-z]+(?:\([a-z0-9-]+\))?!?: \S(?:.*\S)?$"
 )
@@ -473,6 +499,318 @@ def validate_pull_request(
         *validate_pr_title(title),
         *validate_pr_body(body, allow_pending=allow_pending),
     ]
+
+
+def validate_completed_publication(
+    *,
+    title: str,
+    body: str,
+    branch: str,
+    commit: str,
+    lifecycle: dict[str, object],
+    source: dict[str, object],
+) -> list[str]:
+    issues = [
+        *validate_branch(branch),
+        *validate_pr_title(title),
+        *validate_pr_body(body, allow_pending=False),
+    ]
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        issues.append("Publication commit must be a full lowercase Git SHA")
+    if source.get("dirty") is not False:
+        issues.append("Publication source must have a clean working tree")
+    if source.get("checkpoint") != commit:
+        issues.append("Publication commit does not match the current source checkpoint")
+    if source.get("fingerprint") is None:
+        issues.append("Publication source workspace fingerprint is unavailable")
+    if lifecycle.get("phase") != "completed" or lifecycle.get("completion") is None:
+        issues.append("Source publication requires a completed lifecycle")
+    if lifecycle.get("current") is not True:
+        issues.append("Source publication requires current lifecycle evidence")
+    if lifecycle.get("pendingFindings") != []:
+        issues.append("Source publication requires every finding to be resolved")
+    verification = lifecycle.get("verification")
+    if not isinstance(verification, list) or not verification:
+        issues.append("Source publication requires verification evidence")
+    else:
+        checkpoints = {
+            item.get("checkpoint") for item in verification if isinstance(item, dict)
+        }
+        fingerprints = {
+            item.get("workspaceFingerprint")
+            for item in verification
+            if isinstance(item, dict)
+        }
+        if checkpoints != {commit} or fingerprints != {source.get("fingerprint")}:
+            issues.append(
+                "Source publication verification does not match the current checkpoint"
+            )
+    return issues
+
+
+def validate_evidence_publication(
+    *,
+    title: str,
+    body: str,
+    branch: str,
+    commit: str,
+    project: str,
+    evidence: dict[str, object],
+    source: dict[str, object],
+) -> list[str]:
+    issues = [
+        *validate_branch(branch),
+        *validate_pr_title(title),
+        *validate_pr_body(body, allow_pending=False),
+    ]
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        issues.append("Publication commit must be a full lowercase Git SHA")
+    if source.get("dirty") is not False:
+        issues.append("Publication source must have a clean working tree")
+    if source.get("checkpoint") != commit:
+        issues.append("Publication commit does not match the current source checkpoint")
+    if source.get("fingerprint") is None:
+        issues.append("Publication source workspace fingerprint is unavailable")
+    if evidence.get("project") != project:
+        issues.append("Completion evidence does not identify the publication project")
+    if evidence.get("checkpoint") != commit:
+        issues.append("Completion evidence does not match the publication commit")
+    if evidence.get("workspaceFingerprint") != source.get("fingerprint"):
+        issues.append("Completion evidence does not match the publication workspace")
+    return issues
+
+
+def _proposal_changed_paths(
+    project_root: Path, *, base_sha: str, head_sha: str
+) -> tuple[str, ...]:
+    result = run_git(
+        project_root,
+        [
+            "diff",
+            "--name-status",
+            "-z",
+            "--find-renames",
+            "--diff-filter=ACMRDT",
+            f"{base_sha}...{head_sha}",
+            "--",
+        ],
+        label="inspect controlled automation proposal paths",
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_PROPOSAL_CHANGED_PATH_BYTES,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ContractError(
+            "cannot inspect controlled automation proposal paths"
+            + (f": {detail}" if detail else "")
+        )
+    records = result.stdout.split(b"\0")
+    if records and records[-1] == b"":
+        records.pop()
+    paths: set[str] = set()
+    index = 0
+    while index < len(records):
+        try:
+            status = records[index].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ContractError(
+                "controlled automation proposal status must be ASCII"
+            ) from error
+        index += 1
+        if re.fullmatch(r"(?:[ADMT]|[CR][0-9]{1,3})", status) is None:
+            raise ContractError(
+                f"controlled automation proposal has unsupported Git status: {status}"
+            )
+        path_count = 2 if status.startswith(("C", "R")) else 1
+        if index + path_count > len(records):
+            raise ContractError(
+                "controlled automation proposal Git status record is truncated"
+            )
+        for encoded_path in records[index : index + path_count]:
+            paths.add(
+                portable_git_path(
+                    encoded_path,
+                    label="controlled automation proposal changed path",
+                )
+            )
+        index += path_count
+    ordered_paths = tuple(sorted(paths))
+    if not ordered_paths or len(ordered_paths) > MAX_AUTOMATION_PROPOSAL_PATHS:
+        raise ContractError(
+            "controlled automation proposal must contain between 1 and "
+            f"{MAX_AUTOMATION_PROPOSAL_PATHS} changed paths"
+        )
+    return ordered_paths
+
+
+def _proposal_base_policy(
+    project_root: Path, *, base_sha: str, policy_path: str
+) -> dict[str, object]:
+    result = run_git(
+        project_root,
+        ["show", f"{base_sha}:{policy_path}"],
+        label="read controlled automation proposal opt-in policy",
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_JSON_BYTES,
+    )
+    if result.returncode != 0:
+        raise ContractError(
+            "controlled automation proposals require an opt-in policy on the base"
+        )
+    try:
+        document = json.loads(result.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(
+            "base automation-proposal opt-in policy must be valid UTF-8 JSON"
+        ) from error
+    if not isinstance(document, dict):
+        raise ContractError("base automation-proposal opt-in policy must be an object")
+    return document
+
+
+def validate_controlled_automation_proposal(
+    project_root: Path,
+    *,
+    repository: str,
+    title: str,
+    body: str,
+    branch: str,
+    target_branch: str,
+    base_commit: str,
+    state: str,
+    commit: str,
+    verifier_repository: str,
+    verifier_commit: str,
+    proposal: AutomationProposal,
+    source: dict[str, object],
+) -> list[str]:
+    issues = validate_pull_request(
+        title=title,
+        body=body,
+        branch=branch,
+        state=state,
+    )
+    if len(body.encode("utf-8")) > MAX_PULL_REQUEST_BODY_BYTES:
+        issues.append(
+            f"Automation proposal body exceeds {MAX_PULL_REQUEST_BODY_BYTES} bytes"
+        )
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        issues.append("Automation proposal commit must be a full lowercase Git SHA")
+    if re.fullmatch(r"[0-9a-f]{40}", base_commit) is None:
+        issues.append("Automation proposal base must be a full lowercase Git SHA")
+    if source.get("dirty") is not False:
+        issues.append("Automation proposal source must have a clean working tree")
+    if source.get("checkpoint") != commit:
+        issues.append("Automation proposal commit does not match the current source")
+    if source.get("fingerprint") is None:
+        issues.append("Automation proposal source fingerprint is unavailable")
+    expected_body_sha256 = "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+    exact_fields = {
+        "repository": (proposal.repository, repository),
+        "title": (proposal.title, title),
+        "body SHA-256": (proposal.body_sha256, expected_body_sha256),
+        "branch": (proposal.branch, branch),
+        "target branch": (proposal.target_branch, target_branch),
+        "base SHA": (proposal.base_sha, base_commit),
+        "head SHA": (proposal.head_sha, commit),
+        "verifier repository": (
+            proposal.verifier_repository,
+            verifier_repository,
+        ),
+        "verifier commit": (proposal.verifier_commit, verifier_commit),
+    }
+    for label, (actual, expected) in exact_fields.items():
+        if actual != expected:
+            issues.append(f"Automation proposal {label} does not match policy evidence")
+    if proposal.base_sha == proposal.head_sha:
+        issues.append("Automation proposal base and head must differ")
+    if branch == target_branch:
+        issues.append("Automation proposal branch must differ from its target")
+
+    changed_paths = _proposal_changed_paths(
+        project_root,
+        base_sha=base_commit,
+        head_sha=proposal.head_sha,
+    )
+    if changed_paths != proposal.changed_paths:
+        issues.append("Automation proposal changed paths do not match policy evidence")
+    protected_paths = [
+        path
+        for path in changed_paths
+        if path in PROTECTED_AUTOMATION_PROPOSAL_PATHS
+        or path.startswith(PROTECTED_AUTOMATION_PROPOSAL_PREFIXES)
+    ]
+    if protected_paths:
+        issues.append(
+            "Controlled automation proposals cannot change process, workflow, "
+            "release, security-policy, or trust-root paths: "
+            + protected_paths[0]
+            + (
+                f" (+{len(protected_paths) - 1} more)"
+                if len(protected_paths) > 1
+                else ""
+            )
+        )
+    base_policy = _proposal_base_policy(
+        project_root,
+        base_sha=base_commit,
+        policy_path=proposal.opt_in_path,
+    )
+    if canonical_json_digest(base_policy) != proposal.opt_in_sha256:
+        issues.append("Automation proposal base opt-in digest does not match evidence")
+    if base_policy != proposal.opt_in_document:
+        issues.append("Automation proposal base opt-in document does not match evidence")
+    return issues
+
+
+def validate_controlled_automation_proposal_completion(
+    project_root: Path,
+    *,
+    repository: str,
+    project: str,
+    title: str,
+    body: str,
+    branch: str,
+    target_branch: str,
+    base_commit: str,
+    commit: str,
+    verifier_repository: str,
+    verifier_commit: str,
+    proposal: AutomationProposal,
+    evidence: dict[str, object],
+    source: dict[str, object],
+) -> list[str]:
+    issues = validate_controlled_automation_proposal(
+        project_root,
+        repository=repository,
+        title=title,
+        body=body,
+        branch=branch,
+        target_branch=target_branch,
+        base_commit=base_commit,
+        state="ready",
+        commit=commit,
+        verifier_repository=verifier_repository,
+        verifier_commit=verifier_commit,
+        proposal=proposal,
+        source=source,
+    )
+    issues.extend(
+        validate_evidence_publication(
+            title=title,
+            body=body,
+            branch=branch,
+            commit=commit,
+            project=project,
+            evidence=evidence,
+            source=source,
+        )
+    )
+    if evidence.get("comparisonBase") != base_commit:
+        issues.append(
+            "Completion evidence comparison base does not match automation proposal"
+        )
+    return issues
 
 
 def commit_subjects(project_root: Path, range_spec: str) -> list[tuple[str, str]]:

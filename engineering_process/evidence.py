@@ -408,6 +408,8 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
         "project": receipt["project"],
         "cycle": receipt["cycle"],
         "checkpoint": checkpoint,
+        "comparisonBase": receipt["comparisonBase"],
+        "workspaceFingerprint": fingerprint,
         "processVersion": process["version"],
         "processDigest": process["digest"],
         "stateCanonicalDigest": state_entry["canonicalDigest"],

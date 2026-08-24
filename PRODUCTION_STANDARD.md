@@ -46,18 +46,30 @@ Environment probe regular expressions evaluate a bounded view whose CRLF and CR 
 boundaries are canonicalized to LF. Captured output, byte counts, truncation state,
 and digests retain the original bytes so portability does not weaken evidence.
 
+Process-owned finite commands pass only when execution is otherwise successful and
+the complete admitted stdout and stderr streams are free of classified warning and
+error diagnostics. The distribution owns one bounded, non-configurable classifier;
+an exit code of zero cannot override a diagnostic failure. Projects correct the
+diagnostic at its owning boundary rather than suppressing output, changing the
+canonical command, or installing a consumer wrapper. Durable reports record only the
+policy, severity, stream, line number, bounded count, truncation state, and line
+SHA-256. They never copy the diagnostic line into lifecycle evidence.
+
 Missing, stale, truncated beyond a declared policy, blocked, or unverifiable evidence
 never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares
 that evidence one-for-one with the change contract before approval.
 
 Remote matrix claims require one bounded supplemental bundle per platform/runtime.
-The schema-1 manifest binds the exact source and workflow checkpoints, automation
-actor/context, run identity and URL, platform/runtime identity, selected impact,
-configured timeouts, output byte counts/digests, truncation state, and the hashes of
-its schema-2 profile reports. The remote artifact id and service-computed digest are
-preserved with review evidence. These reports supplement the public N-1 lifecycle
-authority; code under verification never promotes itself to lifecycle authority.
+The current schema-2 manifest binds the exact source and workflow checkpoints,
+automation actor/context, run identity and URL, platform/runtime identity, selected
+impact, configured timeouts, output byte counts/digests, diagnostic summaries,
+truncation state, and the hashes of its schema-3 profile reports. Historical
+supplemental schema-1 manifests and verification schema-1/schema-2 reports retain
+their released reader semantics. The remote artifact id and service-computed digest
+are preserved with review evidence. These reports supplement the public N-1
+lifecycle authority; code under verification never promotes itself to lifecycle
+authority.
 
 ## Failure to invariant
 
@@ -67,6 +79,14 @@ project-local, shared-process, operations-or-external, or missing product or
 authorization input. Dependent candidates stay blocked. Shared defects are corrected
 in the producer rather than wrapped or duplicated by consumers; project behavior
 remains project-owned unless a portable class is proven.
+
+Every governed verification failure and unresolved review finding has a structured
+improvement disposition before corrective progress. A shared consumer case exports a
+bounded untrusted signal and remains incomplete until a producer disposition,
+completed-lifecycle and immutable-release resolution, and exact consumer reproduction
+all validate. A failure assigned to an already resolved catalog invariant is a
+recurrence and requires producer-owned process evolution or an explicit owner-approved
+exception. See `PROCESS_IMPROVEMENT.md`.
 
 Every correction proves valid behavior and the corresponding fail-closed class at the
 lowest reliable owner boundary. Shared corrections additionally require producer

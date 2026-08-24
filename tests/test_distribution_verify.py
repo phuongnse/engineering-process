@@ -6,11 +6,13 @@ import unittest
 import warnings
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from engineering_process.contracts import ContractError
 from engineering_process.git import portable_git_path
 from engineering_process.distribution_verify import (
+    REQUIRED_SUFFIXES,
     _tracked_paths,
     _validate_archive_members,
     _validate_archives,
@@ -21,6 +23,48 @@ from engineering_process.distribution_verify import (
 
 
 class DistributionVerificationTests(unittest.TestCase):
+    def test_isolated_build_restores_byte_compilation_inside_temporary_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch(
+                    "engineering_process.distribution_verify._head_checkpoint",
+                    return_value="a" * 40,
+                ),
+                patch(
+                    "engineering_process.distribution_verify._checkout_generated_state",
+                    return_value=[],
+                ),
+                patch(
+                    "engineering_process.distribution_verify.run_git",
+                    return_value=SimpleNamespace(returncode=0, stdout=b""),
+                ),
+                patch(
+                    "engineering_process.distribution_verify._copy_tracked_snapshot"
+                ),
+                patch(
+                    "engineering_process.distribution_verify.read_json",
+                    return_value={},
+                ),
+                patch(
+                    "engineering_process.distribution_verify.validate_release",
+                    return_value=SimpleNamespace(artifacts=("artifact.whl",)),
+                ),
+                patch(
+                    "engineering_process.distribution_verify.execute_command",
+                    return_value={"status": "passed", "exitCode": 0},
+                ) as execute,
+                patch(
+                    "engineering_process.distribution_verify._validate_archives"
+                ),
+            ):
+                verify_distribution(root)
+
+        self.assertEqual(
+            {"PYTHONDONTWRITEBYTECODE": None},
+            execute.call_args.kwargs["environment_overrides"],
+        )
+
     def test_portable_path_validator_rejects_windows_hostile_names(self):
         for name in ("AUX.txt", "trailing. ", "control\x01.txt"):
             with self.subTest(name=name), self.assertRaisesRegex(
@@ -46,17 +90,7 @@ class DistributionVerificationTests(unittest.TestCase):
 
     def test_archive_contract_requires_release_and_production_assets(self):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
-        members = [
-            "engineering_process-0.1.1.data/data/share/engineering-process/PRODUCTION_STANDARD.md",
-            "engineering_process/requirements-release.txt",
-            "engineering_process-0.1.1.data/data/share/engineering-process/release.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/adoption-migration.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/change.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/evidence-receipt.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release-change.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/supplemental-verification.schema.json",
-        ]
+        members = sorted(REQUIRED_SUFFIXES)
 
         _validate_archive_members(wheel, members)
 
@@ -69,17 +103,7 @@ class DistributionVerificationTests(unittest.TestCase):
             _validate_archive_members(wheel, [".process/runs/change/state.json"])
 
     def test_archive_contract_rejects_windows_hostile_member_names(self):
-        required = [
-            "PRODUCTION_STANDARD.md",
-            "engineering_process/requirements-release.txt",
-            "release.json",
-            "schemas/adoption-migration.schema.json",
-            "schemas/change.schema.json",
-            "schemas/evidence-receipt.schema.json",
-            "schemas/release-change.schema.json",
-            "schemas/release.schema.json",
-            "schemas/supplemental-verification.schema.json",
-        ]
+        required = sorted(REQUIRED_SUFFIXES)
         cases = (
             (
                 Path("engineering_process-0.1.1-py3-none-any.whl"),
@@ -111,17 +135,7 @@ class DistributionVerificationTests(unittest.TestCase):
     def test_wheel_expansion_and_duplicate_names_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "engineering_process-0.1.1-py3-none-any.whl"
-            required = [
-                "PRODUCTION_STANDARD.md",
-                "engineering_process/requirements-release.txt",
-                "release.json",
-                "schemas/adoption-migration.schema.json",
-                "schemas/change.schema.json",
-                "schemas/evidence-receipt.schema.json",
-                "schemas/release-change.schema.json",
-                "schemas/release.schema.json",
-                "schemas/supplemental-verification.schema.json",
-            ]
+            required = sorted(REQUIRED_SUFFIXES)
             with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 for name in required:
                     archive.writestr(name, b"ok")
