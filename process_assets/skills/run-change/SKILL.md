@@ -58,8 +58,8 @@ semantics shared by every project.
   `improvement-required` or `improvement-pending`.
 - Do not publish before completion. Standing project policy may authorize automatic
   commit, push, branch/PR creation, and exact-head merge after completion.
-- Treat a valid standing policy or explicit durable owner directive as authorization
-  for its declared release, deployment, adoption, and ephemeral-cleanup operations;
+- Treat a valid standing policy as authorization for its declared release,
+  deployment, adoption, and ephemeral-cleanup operations;
   do not request redundant per-action confirmation.
 - Escalate only when a required capability or authority is unavailable, bounded
   recovery is exhausted, or a material product/security decision is missing.
