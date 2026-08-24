@@ -18,9 +18,10 @@ Apply these semantics throughout every change lifecycle.
 
 ## Standing gated automation
 
-A valid project-owned standing automation policy, or an explicit durable owner
-directive with the same scope, is continuing authorization for its declared routine
-operations. After each owning gate passes, continue commit, push, review-object,
+A valid project-owned standing automation policy is continuing authorization for its
+declared routine operations. An owner directive may authorize a completed change that
+installs the policy but never substitutes for missing or invalid policy. After each
+owning gate passes, continue commit, push, review-object,
 exact-head merge, release, publication, deployment, adoption, and ephemeral cleanup
 without requesting per-action confirmation. Policy never waives lifecycle order,
 independent review, current evidence, exact head/base, required checks, branch

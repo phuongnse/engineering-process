@@ -438,9 +438,9 @@ pending findings before any transition is allowed.
 
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately gated project workflows. A valid `.process/automation.json`
-or an explicit durable owner directive may provide standing authorization, so the
-host continues each operation automatically after its owning gate instead of asking
-for repeated confirmation.
+provides standing authorization, so the host continues each operation automatically
+after its owning gate instead of asking for repeated confirmation. An owner directive
+may authorize installing that policy but never substitutes for a missing policy.
 
 When new evidence exposes multiple materially valid directions or would change
 accepted scope, owner, trust boundary, authority, compatibility, rollout, or

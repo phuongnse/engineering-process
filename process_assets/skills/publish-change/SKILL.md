@@ -1,6 +1,6 @@
 ---
 name: publish-change
-description: Publish and merge a completed, independently reviewed checkpoint through standing project automation policy, then continue authorized release, deployment, adoption, and cleanup operations. Use after lifecycle completion when policy or a durable owner directive authorizes automation.
+description: Publish and merge a completed, independently reviewed checkpoint through standing project automation policy, then continue authorized release, deployment, adoption, and cleanup operations. Use after lifecycle completion when a valid project policy authorizes automation.
 ---
 
 # Publish a Change
@@ -54,8 +54,8 @@ without duplicating implementation, verification, or review.
 
 ## Hard gates
 
-- Never infer authorization when neither a valid standing policy nor an explicit
-  durable owner directive exists.
+- Never infer automation authority from owner intent alone; the valid standing policy
+  must exist on the project boundary before automated publication or merge.
 - Do not publish source with stale evidence or unresolved required findings.
 - Do not publish through `improvement-required` or `improvement-pending`, and do not
   represent producer completion as release resolution or consumer reproduction.

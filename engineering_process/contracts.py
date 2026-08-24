@@ -1891,7 +1891,7 @@ def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
         path=path,
     )
     schema_version = policy["schemaVersion"]
-    if schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
+    if type(schema_version) is not int or schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
         raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     if policy["kind"] != "engineering-process-automation-proposal-policy":
         raise ContractError(f"{path}.kind: invalid policy kind")
@@ -1962,7 +1962,7 @@ def validate_automation_policy(
         optional={"$schema"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
+    if type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1:
         raise ContractError(f"{path}.schemaVersion: must be 1")
     if value["kind"] != "engineering-process-standing-automation-policy":
         raise ContractError(f"{path}.kind: invalid standing automation policy kind")
@@ -2039,7 +2039,7 @@ def validate_automation_proposal(
         path=path,
     )
     schema_version = value["schemaVersion"]
-    if schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
+    if type(schema_version) is not int or schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
         raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     if value["kind"] != "engineering-process-controlled-automation-proposal":
         raise ContractError(f"{path}.kind: invalid proposal evidence kind")

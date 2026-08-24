@@ -85,7 +85,9 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
             "headRefName": "automation/release/next",
             "headRefOid": expected_head,
             "isDraft": False,
+            "mergedAt": None,
             "number": 42,
+            "state": "OPEN",
             "title": "chore(release): prepare v0.5.0",
         }
 
@@ -114,6 +116,43 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
             ),
         )
 
+        merged = {
+            **existing,
+            "mergedAt": "2026-08-24T13:00:00Z",
+            "state": "MERGED",
+        }
+        self.assertEqual(
+            "merged",
+            reconcile_completed_release(
+                open_pull_requests=[merged],
+                remote_head_sha="",
+                expected_head_sha=expected_head,
+                expected_base="main",
+                expected_branch="automation/release/next",
+                expected_title=existing["title"],
+                expected_body=body,
+            ),
+        )
+
+        historical = {
+            **merged,
+            "body": "older release\n",
+            "headRefOid": "c" * 40,
+            "title": "chore(release): prepare v0.4.0",
+        }
+        self.assertEqual(
+            "publish-and-create",
+            reconcile_completed_release(
+                open_pull_requests=[historical],
+                remote_head_sha="",
+                expected_head_sha=expected_head,
+                expected_base="main",
+                expected_branch="automation/release/next",
+                expected_title=existing["title"],
+                expected_body=body,
+            ),
+        )
+
     def test_duplicate_callback_fails_closed_on_existing_publication_mismatch(self):
         expected_head = "b" * 40
         existing = {
@@ -122,7 +161,9 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
             "headRefName": "automation/release/next",
             "headRefOid": expected_head,
             "isDraft": False,
+            "mergedAt": None,
             "number": 42,
+            "state": "OPEN",
             "title": "chore(release): prepare v0.5.0",
         }
         with self.assertRaisesRegex(ContractError, "body"):

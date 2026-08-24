@@ -109,7 +109,10 @@ or trust-root changes remain excluded.
 Branch protection requires the canonical `lifecycle-completion` check, which is absent
 for every new proposal SHA. The provider adapter may create it only after
 `publication validate-proposal-completion` validates the same proposal policy and an
-external completion receipt for the exact clean head. Human merge remains mandatory.
+external completion receipt for the exact clean head. Schema-1 policy preserves the
+historical mandatory human merge. Schema 2 instead requires the protected base's valid
+standing automation policy and permits exact-head merge only after the completion
+check and every protected-branch gate pass.
 Branch protection also requires the proposal to be current with the exact validated
 base, so a base advance forces a new head and invalidates the old completion check.
 The producer capability must be released immutably before a consumer pins and enables

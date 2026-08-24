@@ -176,6 +176,15 @@ class ProjectContractTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_automation_policy(policy)
 
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy["schemaVersion"] = True
+        with self.assertRaisesRegex(ContractError, "schemaVersion: must be 1"):
+            validate_automation_policy(policy)
+
     def test_automation_proposal_policy_is_an_explicit_strict_opt_in(self):
         policy = json.loads(
             (
@@ -220,6 +229,11 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(1, validated.schema_version)
         self.assertTrue(validated.human_merge_required)
+
+        proposal["schemaVersion"] = True
+        proposal["optIn"]["document"]["schemaVersion"] = True
+        with self.assertRaisesRegex(ContractError, "schemaVersion: must be 1 or 2"):
+            validate_automation_proposal(proposal)
 
     def test_automation_proposal_bounds_and_canonicalizes_changed_paths(self):
         document = json.loads(

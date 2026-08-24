@@ -57,40 +57,79 @@ def reconcile_completed_release(
         raise ContractError("expected Release PR body must be bounded and non-empty")
     if not isinstance(open_pull_requests, list):
         raise ContractError("open Release PR state must be a JSON array")
-    if len(open_pull_requests) > 1:
-        raise ContractError("multiple open Release PRs cannot be reconciled")
-    if not open_pull_requests:
+    if len(open_pull_requests) > 20:
+        raise ContractError("Release PR history exceeds the bounded reconciliation set")
+    records: list[dict[str, object]] = []
+    for pull_request in open_pull_requests:
+        if not isinstance(pull_request, dict):
+            raise ContractError("Release PR state contains an invalid record")
+        records.append(pull_request)
+    matching_branch = [
+        pull_request
+        for pull_request in records
+        if pull_request.get("baseRefName") == expected_base
+        and pull_request.get("headRefName") == expected_branch
+    ]
+    current = [
+        pull_request
+        for pull_request in matching_branch
+        if pull_request.get("headRefOid") == expected_head_sha
+    ]
+    if len(current) > 1:
+        raise ContractError("multiple Release PRs identify the exact completed head")
+    if current:
+        pull_request = current[0]
+        expected = {
+            "baseRefName": expected_base,
+            "body": expected_body,
+            "headRefName": expected_branch,
+            "headRefOid": expected_head_sha,
+            "isDraft": False,
+            "title": expected_title,
+        }
+        mismatches = [
+            field
+            for field, value in expected.items()
+            if pull_request.get(field) != value
+        ]
+        number = pull_request.get("number")
+        if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+            mismatches.append("number")
+        state = pull_request.get("state")
+        if state == "OPEN":
+            if remote_head_sha != expected_head_sha:
+                mismatches.append("remoteHeadSha")
+        elif state == "MERGED":
+            merged_at = pull_request.get("mergedAt")
+            if not isinstance(merged_at, str) or not merged_at:
+                mismatches.append("mergedAt")
+        else:
+            mismatches.append("state")
+        if mismatches:
+            raise ContractError(
+                "existing Release PR does not match the exact completed publication: "
+                + ", ".join(sorted(set(mismatches)))
+            )
+        return "existing" if state == "OPEN" else "merged"
+
+    conflicting_open = [
+        pull_request
+        for pull_request in matching_branch
+        if pull_request.get("state") == "OPEN"
+    ]
+    if conflicting_open:
+        raise ContractError("open Release PR does not match the completed head")
+    if not records or not matching_branch:
         if not remote_head_sha:
             return "publish-and-create"
         if remote_head_sha == expected_head_sha:
             return "create"
         raise ContractError("existing release branch does not match the completed head")
-
-    pull_request = open_pull_requests[0]
-    if not isinstance(pull_request, dict):
-        raise ContractError("open Release PR state contains an invalid record")
-    expected = {
-        "baseRefName": expected_base,
-        "body": expected_body,
-        "headRefName": expected_branch,
-        "headRefOid": expected_head_sha,
-        "isDraft": False,
-        "title": expected_title,
-    }
-    mismatches = [
-        field for field, value in expected.items() if pull_request.get(field) != value
-    ]
-    number = pull_request.get("number")
-    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
-        mismatches.append("number")
-    if remote_head_sha != expected_head_sha:
-        mismatches.append("remoteHeadSha")
-    if mismatches:
-        raise ContractError(
-            "existing Release PR does not match the exact completed publication: "
-            + ", ".join(sorted(set(mismatches)))
-        )
-    return "existing"
+    if not remote_head_sha:
+        return "publish-and-create"
+    if remote_head_sha == expected_head_sha:
+        return "create"
+    raise ContractError("existing release branch does not match the completed head")
 
 
 def main() -> int:
