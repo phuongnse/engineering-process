@@ -26,19 +26,22 @@ Configure these controls before enabling the workflows:
 3. Create the `pypi` environment and restrict deployments to protected `main`, the
    base-controlled recovery authority that independently revalidates the immutable
    release tag and every artifact before requesting OIDC. Do not add a separate
-   required deployment approval: the protected Release PR merge is the sole release
-   authorization.
+   required deployment approval: the protected, exact-head Release PR merge is the
+   sole release authorization and may be performed by standing gated automation.
 4. Allow GitHub Actions to request the workflow-declared write permissions and to
-   create pull requests. The release bot never uses approval authority.
-5. Protect `main` and require the complete CI matrix, the `release-authorization`
-   commit status for Release PRs, current branch state, and an approving independent
-   review. Dismiss stale approvals when the head changes.
+   create pull requests. Enable repository auto-merge; the standing policy selects
+   protected squash merge. The release bot never bypasses branch protection.
+5. Protect `main` and require the complete CI matrix, immutable policy verification,
+   current branch state, exact head, and conversation resolution. Semantic independent
+   review and completion occur before the Release PR is published; a changed head has
+   no inherited authorization.
 6. Permit only the repository release workflow to create `refs/tags/v*`; block tag
    deletion, update, and force-push. The selected protected merge method must produce
    the identical reviewed Git tree; authorization binds both the reviewed head and
    resulting release commit without assuming a particular commit ancestry shape.
-7. Keep `automation/release/next` bot-owned. Humans review and merge its PR but never
-   push release content directly to protected `main`.
+7. Keep `automation/release/next` bot-owned. The standing policy enables exact-head
+   protected auto-merge after all required checks; humans never push release content
+   directly to protected `main`.
 
 ## Release change fragments
 
@@ -102,13 +105,14 @@ The Release PR initially carries pending managed statuses. After CI succeeds,
 inputs dispatched by the completed CI run. It validates the exact PR head, downloads the read-only external
 verification report, requires the pinned verifier repository and commit, restores the
 exact successful candidate lifecycle, submits the approved agent report, completes it,
-and exports its evidence. It then marks the managed checklist satisfied and sets
-`release-authorization` on that exact SHA. No separate human review is manufactured;
-the explicit merge by the sole maintainer is the human authorization.
+and exports its evidence. It then marks the managed checklist satisfied, creates or
+reconciles the exact PR, and enables protected exact-head squash auto-merge using the
+short-lived App token. Independent semantic review is never manufactured or replaced.
 
-Merging that ready Release PR is the only publication authorization. No maintainer
-runs a release command, creates a tag, creates a GitHub Release, uploads an asset, or
-approves a second deployment gate after merge.
+Merging that ready Release PR is the only publication authorization. Standing policy
+removes the per-release maintainer merge step; branch protection remains the merge
+gate. No maintainer runs a release command, creates a tag, creates a GitHub Release,
+uploads an asset, or approves a second deployment gate after merge.
 
 ## Automated publication
 
@@ -202,10 +206,11 @@ For Mend-hosted Renovate, command execution requires a host-side allowlisting gr
 confirm the effective `allowedCommands` entry in Renovate logs. Without that grant,
 the package-only update is incomplete and must not be merged.
 
-Adoption PRs never auto-merge by default. Each repository requires its own CI and
-independent review, then explicitly merges the exact candidate. A consumer may opt in
-to continuous adoption through its own repository policy; the publisher never infers
-consumer policy or grants itself consumer merge authority.
+Adoption proposals never provider-automerge before completion. Each repository
+requires its own CI and independent review. A consumer with a valid standing policy
+then merges the exact completed candidate automatically; without that policy it
+remains blocked. The publisher never infers consumer policy or grants itself consumer
+merge authority.
 
 ## Release reliability invariants
 

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "engineering-process-automation-proposal-policy",
   "enabled": true,
   "targetBranch": "main",
@@ -25,6 +25,6 @@
     "securityPolicyChanges": false,
     "trustRootChanges": false,
     "upToDateBeforeMerge": true,
-    "humanMergeRequired": true
+    "humanMergeRequired": false
   }
 }

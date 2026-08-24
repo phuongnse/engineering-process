@@ -70,10 +70,9 @@ CORE_QUALITY_DIMENSIONS = (
     "security",
     "supply-chain",
 )
-AUTOMATION_PROPOSAL_CONTROLS = {
+AUTOMATION_PROPOSAL_BASE_CONTROLS = {
     "automerge": False,
     "deploymentChanges": False,
-    "humanMergeRequired": True,
     "plugins": False,
     "privilegedCi": False,
     "processAuthorityChanges": False,
@@ -85,6 +84,33 @@ AUTOMATION_PROPOSAL_CONTROLS = {
     "upToDateBeforeMerge": True,
     "workflowChanges": False,
     "writeCapableChecks": False,
+}
+AUTOMATION_PROPOSAL_CONTROLS = {
+    1: {**AUTOMATION_PROPOSAL_BASE_CONTROLS, "humanMergeRequired": True},
+    2: {**AUTOMATION_PROPOSAL_BASE_CONTROLS, "humanMergeRequired": False},
+}
+STANDING_AUTOMATION_ACTIONS = (
+    "adopt",
+    "commit",
+    "deploy",
+    "ephemeral-cleanup",
+    "merge",
+    "publish",
+    "push",
+    "release",
+    "review-object",
+)
+STANDING_AUTOMATION_ESCALATION_REASONS = (
+    "bounded-recovery-exhausted",
+    "capability-unavailable",
+    "decision-required",
+)
+STANDING_AUTOMATION_MERGE_GATES = {
+    "requireCompletedLifecycle": True,
+    "requireCurrentBase": True,
+    "requireExactHead": True,
+    "requireIndependentReview": True,
+    "requireRequiredChecks": True,
 }
 IMPROVEMENT_OWNER_BOUNDARIES = {
     "missing-product-or-authorization-input",
@@ -311,6 +337,7 @@ class ReleaseChange:
 
 @dataclass(frozen=True)
 class AutomationProposal:
+    schema_version: int
     repository: str
     proposal_kind: str
     automation_owner: str
@@ -325,6 +352,7 @@ class AutomationProposal:
     opt_in_sha256: str
     opt_in_document: dict[str, Any]
     completion_check: str
+    human_merge_required: bool
     verifier_repository: str
     verifier_commit: str
 
@@ -1828,14 +1856,17 @@ def validate_release_change(
     )
 
 
-def _automation_proposal_controls(value: Any, path: str) -> dict[str, bool]:
+def _automation_proposal_controls(
+    value: Any, path: str, *, schema_version: int
+) -> dict[str, bool]:
+    expected_controls = AUTOMATION_PROPOSAL_CONTROLS[schema_version]
     controls = _object(value, path)
     _exact_keys(
         controls,
-        required=set(AUTOMATION_PROPOSAL_CONTROLS),
+        required=set(expected_controls),
         path=path,
     )
-    for name, expected in AUTOMATION_PROPOSAL_CONTROLS.items():
+    for name, expected in expected_controls.items():
         if controls[name] is not expected:
             required = "true" if expected else "false"
             raise ContractError(f"{path}.{name}: must be {required}")
@@ -1859,8 +1890,9 @@ def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
         },
         path=path,
     )
-    if policy["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    schema_version = policy["schemaVersion"]
+    if schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     if policy["kind"] != "engineering-process-automation-proposal-policy":
         raise ContractError(f"{path}.kind: invalid policy kind")
     if policy["enabled"] is not True:
@@ -1905,9 +1937,72 @@ def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
             f"{path}.allowedProposalKinds: must contain only dependency-update"
         )
     _automation_proposal_controls(
-        policy["requiredControls"], f"{path}.requiredControls"
+        policy["requiredControls"],
+        f"{path}.requiredControls",
+        schema_version=schema_version,
     )
     return dict(policy)
+
+
+def validate_automation_policy(
+    document: Any, path: str = "automation-policy"
+) -> dict[str, Any]:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "enabled",
+            "confirmationMode",
+            "actions",
+            "merge",
+            "escalationReasons",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["kind"] != "engineering-process-standing-automation-policy":
+        raise ContractError(f"{path}.kind: invalid standing automation policy kind")
+    if value["enabled"] is not True:
+        raise ContractError(f"{path}.enabled: must be true")
+    if value["confirmationMode"] != "exceptions-only":
+        raise ContractError(f"{path}.confirmationMode: must be exceptions-only")
+    actions = _string_list(
+        value["actions"],
+        f"{path}.actions",
+        maximum=len(STANDING_AUTOMATION_ACTIONS),
+        pattern=PROFILE_PATTERN,
+    )
+    if tuple(actions) != STANDING_AUTOMATION_ACTIONS:
+        raise ContractError(
+            f"{path}.actions: must contain the complete sorted standing action set"
+        )
+    merge = _object(value["merge"], f"{path}.merge")
+    _exact_keys(
+        merge,
+        required={"method", *STANDING_AUTOMATION_MERGE_GATES},
+        path=f"{path}.merge",
+    )
+    if merge["method"] not in {"merge", "rebase", "squash"}:
+        raise ContractError(f"{path}.merge.method: invalid merge method")
+    for name, expected in STANDING_AUTOMATION_MERGE_GATES.items():
+        if merge[name] is not expected:
+            raise ContractError(f"{path}.merge.{name}: must be true")
+    reasons = _string_list(
+        value["escalationReasons"],
+        f"{path}.escalationReasons",
+        maximum=len(STANDING_AUTOMATION_ESCALATION_REASONS),
+        pattern=PROFILE_PATTERN,
+    )
+    if tuple(reasons) != STANDING_AUTOMATION_ESCALATION_REASONS:
+        raise ContractError(
+            f"{path}.escalationReasons: must contain only the complete sorted "
+            "exceptions-only reason set"
+        )
+    return dict(value)
 
 
 def validate_automation_proposal_policy(
@@ -1943,8 +2038,9 @@ def validate_automation_proposal(
         optional={"$schema"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    schema_version = value["schemaVersion"]
+    if schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     if value["kind"] != "engineering-process-controlled-automation-proposal":
         raise ContractError(f"{path}.kind: invalid proposal evidence kind")
     if value["status"] != "passed":
@@ -2024,6 +2120,10 @@ def validate_automation_proposal(
     policy = _automation_proposal_policy(
         opt_in["document"], f"{path}.optIn.document"
     )
+    if policy["schemaVersion"] != schema_version:
+        raise ContractError(
+            f"{path}.schemaVersion: must match opt-in policy schemaVersion"
+        )
     if canonical_json_digest(policy) != opt_in_sha256:
         raise ContractError(
             f"{path}.optIn.sha256: does not match the canonical policy document"
@@ -2041,7 +2141,9 @@ def validate_automation_proposal(
     if proposal_kind not in policy["allowedProposalKinds"]:
         raise ContractError(f"{path}.proposalKind: not allowed by opt-in policy")
     observed_controls = _automation_proposal_controls(
-        value["observedControls"], f"{path}.observedControls"
+        value["observedControls"],
+        f"{path}.observedControls",
+        schema_version=schema_version,
     )
     if observed_controls != policy["requiredControls"]:
         raise ContractError(
@@ -2067,6 +2169,7 @@ def validate_automation_proposal(
             f"{path}.verifier.commit: must be a full lowercase Git SHA"
         )
     return AutomationProposal(
+        schema_version=schema_version,
         repository=repository,
         proposal_kind=proposal_kind,
         automation_owner=automation_owner,
@@ -2081,6 +2184,7 @@ def validate_automation_proposal(
         opt_in_sha256=opt_in_sha256,
         opt_in_document=policy,
         completion_check=policy["completionCheck"],
+        human_merge_required=policy["requiredControls"]["humanMergeRequired"],
         verifier_repository=verifier_repository,
         verifier_commit=verifier_commit,
     )

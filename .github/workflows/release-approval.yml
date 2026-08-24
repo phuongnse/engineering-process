@@ -172,7 +172,7 @@ jobs:
           permission-metadata: read
           permission-pull-requests: write
 
-      - name: Publish exact completed source and create ready PR
+      - name: Publish exact completed source and enable protected auto-merge
         env:
           BASE_SHA: ${{ inputs.comparison_base }}
           GH_TOKEN: ${{ steps.publication-token.outputs.token }}
@@ -180,6 +180,9 @@ jobs:
           RELEASE_BRANCH: automation/release/next
         run: |
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          python processctl.py contract validate \
+            --kind automation-policy .process/automation.json
+          test "$(jq -r .merge.method .process/automation.json)" = squash
           remote_sha="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
           version="$(jq -r .version release.json)"
           title="chore(release): prepare v$version"
@@ -195,11 +198,17 @@ jobs:
             --expected-title "$title" \
             --expected-body "$RUNNER_TEMP/release-pr.md")"
           if test "$action" = existing; then
-            exit 0
+            pr_number="$(jq -r '.[0].number' "$RUNNER_TEMP/open-release-prs.json")"
+          else
+            if test "$action" = publish-and-create; then
+              git push origin "$HEAD_SHA:refs/heads/$RELEASE_BRANCH"
+            fi
+            gh pr create --base main --head "$RELEASE_BRANCH" \
+              --title "$title" \
+              --body-file "$RUNNER_TEMP/release-pr.md"
+            pr_number="$(gh pr view "$RELEASE_BRANCH" --json number --jq .number)"
           fi
-          if test "$action" = publish-and-create; then
-            git push origin "$HEAD_SHA:refs/heads/$RELEASE_BRANCH"
-          fi
-          gh pr create --base main --head "$RELEASE_BRANCH" \
-            --title "$title" \
-            --body-file "$RUNNER_TEMP/release-pr.md"
+          printf '%s' "$pr_number" | grep -Eq '^[1-9][0-9]*$'
+          test "$(gh pr view "$pr_number" --json headRefOid --jq .headRefOid)" = "$HEAD_SHA"
+          gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" \
+            --auto --squash --match-head-commit "$HEAD_SHA"

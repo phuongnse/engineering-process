@@ -13,6 +13,7 @@ from .contracts import (
     MAX_AUTOMATION_PROPOSAL_PATHS,
     MAX_JSON_BYTES,
     canonical_json_digest,
+    validate_automation_policy,
 )
 from .git import portable_git_path, run_git
 from .markdown import (
@@ -810,6 +811,21 @@ def validate_controlled_automation_proposal_completion(
         issues.append(
             "Completion evidence comparison base does not match automation proposal"
         )
+    if not proposal.human_merge_required:
+        try:
+            standing_policy = _proposal_base_policy(
+                project_root,
+                base_sha=base_commit,
+                policy_path=".process/automation.json",
+            )
+            validate_automation_policy(
+                standing_policy, "base standing automation policy"
+            )
+        except ContractError as error:
+            issues.append(
+                "Completed automation proposal requires a valid protected-base "
+                f"standing automation policy: {error}"
+            )
     return issues
 
 

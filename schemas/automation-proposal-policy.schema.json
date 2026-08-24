@@ -16,7 +16,7 @@
     "requiredControls"
   ],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "kind": {"const": "engineering-process-automation-proposal-policy"},
     "enabled": {"const": true},
     "targetBranch": {"$ref": "#/$defs/ref"},
@@ -88,8 +88,30 @@
         "securityPolicyChanges": {"const": false},
         "trustRootChanges": {"const": false},
         "upToDateBeforeMerge": {"const": true},
-        "humanMergeRequired": {"const": true}
+        "humanMergeRequired": {"type": "boolean"}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 1}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "requiredControls": {
+            "properties": {"humanMergeRequired": {"const": true}}
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "requiredControls": {
+            "properties": {"humanMergeRequired": {"const": false}}
+          }
+        }
+      }
+    }
+  ]
 }

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "standing-gated-automation",
+  "type": "breaking",
+  "surfaces": [
+    "governance",
+    "publication",
+    "schema",
+    "skills",
+    "workflow"
+  ],
+  "rationale": "Replace the hard-coded human-only merge terminal with project-owned standing authorization for every routine post-gate operation, including exact-head merge, release, deployment, adoption, and ephemeral cleanup; escalation is limited to unavailable capability, exhausted bounded recovery, or a missing material decision.",
+  "schemaImpact": "additive",
+  "migration": "Install and validate .process/automation.json to opt into continuous gated operation. Keep provider automerge disabled for untrusted proposals before completion; emit automation-proposal policy/evidence schema 2 for completed standing-policy merge. Historical schema-1 policies retain human-only meaning. Configure provider auto-merge and exact required checks, or treat missing capability as an explicit escalation."
+}

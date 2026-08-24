@@ -18,6 +18,7 @@ class SchemaTests(unittest.TestCase):
     def test_packaged_examples_match_their_schemas(self):
         mappings = {
             "adoption-migration": "adoption-migration",
+            "automation-policy": "automation-policy",
             "automation-proposal-policy": "automation-proposal-policy",
             "automation-proposal": "automation-proposal",
             "change": "change",
@@ -57,6 +58,38 @@ class SchemaTests(unittest.TestCase):
         )
 
         jsonschema.Draft202012Validator(schema).validate(graph)
+
+    def test_historical_automation_proposal_schema_one_remains_valid(self):
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-proposal-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy["schemaVersion"] = 1
+        policy["requiredControls"]["humanMergeRequired"] = True
+        policy_schema = json.loads(
+            (
+                PROCESS_ROOT
+                / "schemas"
+                / "automation-proposal-policy.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        jsonschema.Draft202012Validator(policy_schema).validate(policy)
+
+        proposal = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-proposal.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        proposal["schemaVersion"] = 1
+        proposal["observedControls"]["humanMergeRequired"] = True
+        proposal["optIn"]["document"] = policy
+        proposal_schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "automation-proposal.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        jsonschema.Draft202012Validator(proposal_schema).validate(proposal)
 
     def test_plan_cardinality_bounds_are_versioned(self):
         schema = json.loads(

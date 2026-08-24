@@ -151,8 +151,9 @@ Release, self-adoption, and consumer adoption are separate changes:
    platform/runtime job publishes a bounded supplemental evidence bundle bound to the
    source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
    Only after completion may automation push the candidate branch and create the PR
-   containing the process lock and every selected managed asset. The consumer owner
-   explicitly merges that exact checkpoint; there is no post-merge synchronization.
+   containing the process lock and every selected managed asset. A valid consumer
+   standing policy may merge that exact checkpoint automatically after required
+   checks; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the merged adoption checkpoint.
 
 The repository-root GitHub Action and Python package are two surfaces of the same
@@ -172,9 +173,10 @@ public action checkpoint; no compatibility shim or dual execution path is retain
 Process-authority adoption candidates are not controlled dependency proposals and
 cannot use that exception. PR creation is blocked until the adoption candidate has
 current completion evidence.
-Automerge is forbidden for process-authority updates. A PR that changes only a
-requirement pin, omits generated hashes or managed assets, or requires a post-merge
-step must fail closed.
+Provider automerge before completion is forbidden for process-authority updates. A
+completed exact adoption candidate may merge automatically only under the consumer's
+standing policy. A PR that changes only a requirement pin, omits generated hashes or
+managed assets, or requires a post-merge step must fail closed.
 
 `requirements/process.in` owns the direct public pin and `requirements/process.txt`
 is its pip-compile hash lock. The lock generator is pinned, and the committed lock must
@@ -225,10 +227,11 @@ falling back to a partial proposal.
   derived identity surface without writing protected `main` directly.
 - `processctl` derives and validates classification, compatibility, identity, reviewed
   tree equivalence, and authorization evidence.
-- Consumer automation may prepare complete unpublished adoption candidates without
-  merge authority; the lifecycle host publishes them only after completion.
+- Consumer automation may prepare complete unpublished adoption candidates before
+  completion; the lifecycle host publishes and, under standing policy, merges them
+  only after exact completion and protected checks.
 - Independent review verifies the exact Release PR classification, migration,
   verification, and evidence checkpoint.
-- The repository owner authorizes publication by merging the Release PR and separately
-  authorizes each self-adoption merge. Consumer owners retain their adoption merge
-  policy.
+- The repository's standing policy authorizes the exact completed Release PR and each
+  completed self-adoption merge. Consumer owners retain and explicitly install their
+  own automation policy; publishers never infer it.

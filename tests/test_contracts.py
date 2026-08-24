@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import unittest
@@ -6,8 +7,10 @@ from pathlib import Path
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
     ContractError,
+    canonical_json_digest,
     derive_release_version,
     validate_adoption_migration,
+    validate_automation_policy,
     validate_automation_proposal,
     validate_automation_proposal_policy,
     validate_change,
@@ -138,6 +141,41 @@ class ProjectContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "canonical policy document"):
             validate_automation_proposal(document)
 
+    def test_standing_automation_policy_requires_complete_gated_authority(self):
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        validated = validate_automation_policy(policy)
+
+        self.assertEqual("exceptions-only", validated["confirmationMode"])
+        self.assertEqual("squash", validated["merge"]["method"])
+        self.assertIn("merge", validated["actions"])
+
+        policy["actions"].remove("merge")
+        with self.assertRaisesRegex(ContractError, "complete sorted standing action"):
+            validate_automation_policy(policy)
+
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy["merge"]["requireIndependentReview"] = False
+        with self.assertRaisesRegex(ContractError, "requireIndependentReview: must be true"):
+            validate_automation_policy(policy)
+
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy["escalationReasons"].append("routine-confirmation")
+        with self.assertRaises(ContractError):
+            validate_automation_policy(policy)
+
     def test_automation_proposal_policy_is_an_explicit_strict_opt_in(self):
         policy = json.loads(
             (
@@ -146,6 +184,7 @@ class ProjectContractTests(unittest.TestCase):
         )
 
         validate_automation_proposal_policy(policy)
+        self.assertFalse(policy["requiredControls"]["humanMergeRequired"])
 
         policy["enabled"] = False
         with self.assertRaisesRegex(ContractError, "enabled: must be true"):
@@ -155,6 +194,32 @@ class ProjectContractTests(unittest.TestCase):
         policy["requiredControls"]["writeCapableChecks"] = True
         with self.assertRaisesRegex(ContractError, "writeCapableChecks: must be false"):
             validate_automation_proposal_policy(policy)
+
+    def test_historical_human_only_proposal_policy_remains_readable(self):
+        policy = json.loads(
+            (
+                PROCESS_ROOT / "examples" / "automation-proposal-policy.json"
+            ).read_text(encoding="utf-8")
+        )
+        policy["schemaVersion"] = 1
+        policy["requiredControls"]["humanMergeRequired"] = True
+
+        validate_automation_proposal_policy(policy)
+
+        proposal = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-proposal.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        proposal["schemaVersion"] = 1
+        proposal["observedControls"]["humanMergeRequired"] = True
+        proposal["optIn"]["document"] = copy.deepcopy(policy)
+        proposal["optIn"]["sha256"] = canonical_json_digest(policy)
+
+        validated = validate_automation_proposal(proposal)
+
+        self.assertEqual(1, validated.schema_version)
+        self.assertTrue(validated.human_merge_required)
 
     def test_automation_proposal_bounds_and_canonicalizes_changed_paths(self):
         document = json.loads(

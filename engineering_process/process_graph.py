@@ -138,16 +138,17 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "transitions": {
             "failure": "evolve-process",
-            "published": None,
+            "published": "publish-change",
         },
     },
-    "awaiting-human-merge": {
-        "ownerSkill": None,
-        "actor": "human",
+    "awaiting-merge": {
+        "ownerSkill": "publish-change",
+        "actor": "automation",
         "commands": [],
         "transitions": {
+            "escalation-required": "publish-change",
+            "merge-blocked": "publish-change",
             "merged": None,
-            "not-merged": None,
         },
     },
 }

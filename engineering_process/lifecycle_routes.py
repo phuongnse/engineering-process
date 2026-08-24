@@ -20,7 +20,7 @@ INTERNAL_PHASES = frozenset(
         "completed",
     }
 )
-EXTERNAL_STATES = frozenset({"unregistered", "awaiting-human-merge"})
+EXTERNAL_STATES = frozenset({"unregistered", "awaiting-merge"})
 
 
 def _routes(
@@ -87,11 +87,12 @@ LIFECYCLE_ROUTE_TARGETS = _routes(
         },
         "completed": {
             "failure": "completed",
-            "published": "awaiting-human-merge",
+            "published": "awaiting-merge",
         },
-        "awaiting-human-merge": {
+        "awaiting-merge": {
+            "escalation-required": "awaiting-merge",
+            "merge-blocked": "awaiting-merge",
             "merged": None,
-            "not-merged": "awaiting-human-merge",
         },
     }
 )

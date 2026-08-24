@@ -61,7 +61,13 @@ Separate reviewer approved checkpoint abc123.
 
 
 class PublicationTests(unittest.TestCase):
-    def controlled_proposal_fixture(self, root: Path, *, status: str = "pending"):
+    def controlled_proposal_fixture(
+        self,
+        root: Path,
+        *,
+        status: str = "pending",
+        standing_policy: bool = True,
+    ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
             ["git", "config", "user.email", "process-test@example.invalid"],
@@ -85,6 +91,19 @@ class PublicationTests(unittest.TestCase):
             json.dumps(policy, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        if standing_policy:
+            automation = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "examples"
+                    / "automation-policy.json"
+                ).read_text(encoding="utf-8")
+            )
+            (root / ".process" / "automation.json").write_text(
+                json.dumps(automation, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
         (root / "package.json").write_text('{"dependencies":{"sample":"1.0.0"}}\n')
         (root / "package-lock.json").write_text('{"sample":"1.0.0"}\n')
         (root / "SECURITY.md").write_text("protected policy\n", encoding="utf-8")
@@ -502,6 +521,45 @@ class PublicationTests(unittest.TestCase):
             )
             self.assertTrue(
                 any("comparison base" in issue.lower() for issue in issues)
+            )
+
+    def test_schema_two_completion_requires_protected_base_standing_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.controlled_proposal_fixture(
+                root,
+                status="satisfied",
+                standing_policy=False,
+            )
+            fingerprint = f"sha256:{'a' * 64}"
+            issues = validate_controlled_automation_proposal_completion(
+                root,
+                repository="example/project",
+                project="sample-project",
+                title=title,
+                body=body,
+                branch="automation/renovate/update-example",
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                commit=head_sha,
+                verifier_repository="example/policy-verifier",
+                verifier_commit="4" * 40,
+                proposal=proposal,
+                evidence={
+                    "project": "sample-project",
+                    "checkpoint": head_sha,
+                    "comparisonBase": proposal.base_sha,
+                    "workspaceFingerprint": fingerprint,
+                },
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": fingerprint,
+                },
+            )
+
+            self.assertTrue(
+                any("standing automation policy" in issue for issue in issues)
             )
 
     def test_completed_publication_binds_exact_lifecycle_checkpoint(self):
