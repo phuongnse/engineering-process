@@ -1,3 +1,4 @@
+import io
 import os
 from pathlib import Path
 import sys
@@ -16,6 +17,26 @@ from verification.install_process_runtime import (
 
 
 class ProcessRuntimeInstallTests(unittest.TestCase):
+    class Capture:
+        def __init__(self):
+            self.buffer = io.BytesIO()
+
+        def write(self, value):
+            return self.buffer.write(value.encode("utf-8"))
+
+        def flush(self):
+            return None
+
+    def setUp(self):
+        self.install_stdout = self.Capture()
+        self.install_stderr = self.Capture()
+        stdout = patch.object(installer.sys, "stdout", self.install_stdout)
+        stderr = patch.object(installer.sys, "stderr", self.install_stderr)
+        stdout.start()
+        stderr.start()
+        self.addCleanup(stdout.stop)
+        self.addCleanup(stderr.stop)
+
     def fixture(self, root: Path) -> Path:
         lock = root / "requirements" / "process.txt"
         lock.parent.mkdir()
@@ -60,6 +81,7 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
         self.assertNotIn(extra_index_name, environment)
         self.assertNotIn("PYTHONPATH", environment)
         self.assertEqual(os.devnull, environment["PIP_CONFIG_FILE"])
+        self.assertIn(b"installed", self.install_stdout.buffer.getvalue())
 
     def test_retries_only_exact_pinned_version_absence(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -90,6 +112,10 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
             )
 
         self.assertEqual([BACKOFF_SECONDS[0]], sleeps)
+        self.assertIn(
+            b"No matching distribution found",
+            self.install_stderr.buffer.getvalue(),
+        )
 
     def test_fails_immediately_for_hash_or_other_deterministic_errors(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -108,6 +134,10 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
                 )
 
         self.assertEqual([], sleeps)
+        self.assertIn(
+            b"PACKAGES DO NOT MATCH THE HASHES",
+            self.install_stderr.buffer.getvalue(),
+        )
 
     def test_bounds_timeout_output_and_eventual_absence(self):
         scenarios = (

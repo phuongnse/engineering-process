@@ -2403,11 +2403,71 @@ def _verification_reference(value: Any, path: str) -> None:
         raise ContractError(f"{path}.checkpoint: invalid commit digest")
 
 
+def _validate_diagnostics(document: Any, path: str) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "policy",
+            "status",
+            "count",
+            "matches",
+            "matchesTruncated",
+        },
+        path=path,
+    )
+    if value["policy"] != "forbid-warning-error":
+        raise ContractError(f"{path}.policy: invalid diagnostic policy")
+    if value["status"] not in {"clean", "failed"}:
+        raise ContractError(f"{path}.status: must be clean or failed")
+    count = value["count"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ContractError(f"{path}.count: must be a non-negative integer")
+    matches = value["matches"]
+    if not isinstance(matches, list) or len(matches) > 8:
+        raise ContractError(f"{path}.matches: must contain at most 8 items")
+    for index, raw_match in enumerate(matches):
+        match_path = f"{path}.matches[{index}]"
+        match = _object(raw_match, match_path)
+        _exact_keys(
+            match,
+            required={"severity", "stream", "line", "lineSha256"},
+            path=match_path,
+        )
+        if match["severity"] not in {"warning", "error"}:
+            raise ContractError(f"{match_path}.severity: invalid severity")
+        if match["stream"] not in {"stdout", "stderr"}:
+            raise ContractError(f"{match_path}.stream: invalid stream")
+        line = match["line"]
+        if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+            raise ContractError(f"{match_path}.line: must be a positive integer")
+        digest = _string(
+            match["lineSha256"], f"{match_path}.lineSha256", max_length=64
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ContractError(f"{match_path}.lineSha256: invalid sha256")
+    truncated = value["matchesTruncated"]
+    if not isinstance(truncated, bool):
+        raise ContractError(f"{path}.matchesTruncated: must be boolean")
+    if count < len(matches):
+        raise ContractError(f"{path}.count: cannot be less than recorded matches")
+    if truncated != (count > len(matches)):
+        raise ContractError(
+            f"{path}.matchesTruncated: does not match diagnostic count"
+        )
+    if value["status"] == "clean" and (
+        count != 0 or matches or truncated
+    ):
+        raise ContractError(f"{path}: clean diagnostics contain findings")
+    if value["status"] == "failed" and (count == 0 or not matches):
+        raise ContractError(f"{path}: failed diagnostics require a recorded finding")
+
+
 def validate_verification(document: Any, path: str = "verification") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2}:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    if schema_version not in {1, 2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
     required = {
         "schemaVersion",
         "project",
@@ -2424,7 +2484,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
     }
     _exact_keys(
         value,
-        required=required | ({"impact"} if schema_version == 2 else set()),
+        required=required | ({"impact"} if schema_version >= 2 else set()),
         optional={"impact"} if schema_version == 1 else set(),
         path=path,
     )
@@ -2459,7 +2519,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         raise ContractError(f"{path}.checks: must be an array")
     if schema_version == 1 and not checks:
         raise ContractError(f"{path}.checks: schema 1 requires at least one check")
-    if schema_version == 2 and len(checks) > MAX_CONTRACT_ITEMS:
+    if schema_version >= 2 and len(checks) > MAX_CONTRACT_ITEMS:
         raise ContractError(f"{path}.checks: exceeds {MAX_CONTRACT_ITEMS} items")
     check_ids: list[str] = []
     for index, raw_check in enumerate(checks):
@@ -2485,9 +2545,12 @@ def validate_verification(document: Any, path: str = "verification") -> None:
             "outputTruncated",
             "streamOutputTruncated",
         }
+        diagnostic_fields = {"diagnostics"}
         _exact_keys(
             check,
-            required=required_check | (evidence_fields if schema_version == 2 else set()),
+            required=required_check
+            | (evidence_fields if schema_version >= 2 else set())
+            | (diagnostic_fields if schema_version == 3 else set()),
             optional={"error", "pathEntries", "timeoutSeconds"}
             | (evidence_fields if schema_version == 1 else set()),
             path=check_path,
@@ -2513,7 +2576,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         command = check["command"]
         if not isinstance(command, list) or not command:
             raise ContractError(f"{check_path}.command: must not be empty")
-        if schema_version == 2 and len(command) > MAX_CONTRACT_ITEMS:
+        if schema_version >= 2 and len(command) > MAX_CONTRACT_ITEMS:
             raise ContractError(
                 f"{check_path}.command: exceeds {MAX_CONTRACT_ITEMS} items"
             )
@@ -2559,16 +2622,24 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         for name in ("outputTruncated", "streamOutputTruncated"):
             if name in check and not isinstance(check[name], bool):
                 raise ContractError(f"{check_path}.{name}: must be boolean")
+        if schema_version == 3:
+            _validate_diagnostics(
+                check["diagnostics"], f"{check_path}.diagnostics"
+            )
         if check["status"] == "passed" and (
             check["exitCode"] != 0
             or check.get("impactIntegrity") == "failed"
+            or (
+                schema_version == 3
+                and check["diagnostics"]["status"] != "clean"
+            )
             or "error" in check
         ):
             raise ContractError(f"{check_path}: passing check has contradictory evidence")
     if len(check_ids) != len(set(check_ids)):
         raise ContractError(f"{path}.checks: duplicate ids are not allowed")
 
-    if schema_version == 2:
+    if schema_version >= 2:
         impact = _object(value["impact"], f"{path}.impact")
         _exact_keys(
             impact,

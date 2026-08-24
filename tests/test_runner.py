@@ -1,3 +1,4 @@
+import io
 import sys
 import subprocess
 import tempfile
@@ -13,6 +14,7 @@ from engineering_process.contracts import (
     ImpactComponent,
     Project,
     ProjectImpact,
+    validate_verification,
 )
 from engineering_process.runner import run_profile
 
@@ -51,16 +53,108 @@ class RunnerTests(unittest.TestCase):
                 },
             )
 
-            report = run_profile(root, project, "development")
+            with patch(
+                "engineering_process.environment.sys.stderr", io.StringIO()
+            ):
+                report = run_profile(root, project, "development")
 
             self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["schemaVersion"], 3)
             self.assertEqual(report["checks"][0]["status"], "passed")
+            self.assertEqual(
+                "clean", report["checks"][0]["diagnostics"]["status"]
+            )
             self.assertEqual(report["checks"][0]["command"][0], sys.executable)
             self.assertEqual(len(report["checks"][0]["commandSha256"]), 64)
             self.assertEqual(report["checks"][0]["timeoutSeconds"], 10)
             self.assertEqual(report["impact"]["mode"], "full-profile")
             self.assertIsNone(report["workspaceFingerprint"])
             self.assertFalse(report["sourceChangedDuringVerification"])
+            validate_verification(report)
+
+            legacy = dict(report)
+            legacy["schemaVersion"] = 2
+            legacy["checks"] = [
+                {
+                    key: value
+                    for key, value in check.items()
+                    if key != "diagnostics"
+                }
+                for check in report["checks"]
+            ]
+            validate_verification(legacy)
+
+    def test_warning_after_evidence_prefix_and_split_across_writes_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            code = (
+                "import sys; "
+                "sys.stdout.write('x' * 20000 + '\\nWA'); sys.stdout.flush(); "
+                "sys.stdout.write('RN: degraded engine\\n')"
+            )
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            identifier="late-warning",
+                            run=(sys.executable, "-c", code),
+                            timeout_seconds=10,
+                            working_directory=".",
+                        ),
+                    )
+                },
+            )
+
+            with patch(
+                "engineering_process.environment.sys.stderr", io.StringIO()
+            ):
+                report = run_profile(root, project, "development")
+
+            self.assertEqual("failed", report["status"])
+            check = report["checks"][0]
+            self.assertEqual(0, check["exitCode"])
+            self.assertEqual("failed", check["diagnostics"]["status"])
+            self.assertEqual(2, check["diagnostics"]["matches"][0]["line"])
+            self.assertNotIn("degraded engine", check["error"])
+            validate_verification(report)
+
+    def test_verification_schema_three_rejects_diagnostic_contradictions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            identifier="pass",
+                            run=(sys.executable, "-c", "raise SystemExit(0)"),
+                            timeout_seconds=10,
+                            working_directory=".",
+                        ),
+                    )
+                },
+            )
+            report = run_profile(Path(directory), project, "development")
+
+            report["checks"][0]["diagnostics"] = {
+                "policy": "forbid-warning-error",
+                "status": "failed",
+                "count": 1,
+                "matches": [
+                    {
+                        "severity": "warning",
+                        "stream": "stdout",
+                        "line": 1,
+                        "lineSha256": "0" * 64,
+                    }
+                ],
+                "matchesTruncated": False,
+            }
+
+            with self.assertRaisesRegex(
+                ContractError, "passing check has contradictory evidence"
+            ):
+                validate_verification(report)
 
     def test_empty_affected_selection_is_passing_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
