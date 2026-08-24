@@ -180,6 +180,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('".github/workflows/publish.yml"', release)
         for controller in (
             "check_pypi_publication.py",
+            "restore_release_evidence.py",
             "select_release_evidence.py",
             "validate_publish_event.py",
             "verify_distribution.py",
@@ -203,37 +204,15 @@ class SelfHostingTests(unittest.TestCase):
         )
         evidence_recovery = release[evidence_start:evidence_end]
         self.assertIn(
-            "python verification/select_release_evidence.py",
+            '"$GITHUB_WORKSPACE/.release-controller/verification/restore_release_evidence.py"',
             evidence_recovery,
         )
-        self.assertIn(
-            'if test "$source" = actions; then',
-            evidence_recovery,
-        )
-        self.assertIn(
-            'test "$source" = published-release-required',
-            evidence_recovery,
-        )
-        self.assertIn('gh release verify "$TAG"', evidence_recovery)
-        self.assertIn(
-            'gh release download "$TAG" --pattern "$EVIDENCE_ASSET"',
-            evidence_recovery,
-        )
-        self.assertLess(
-            evidence_recovery.index("python verification/select_release_evidence.py"),
-            evidence_recovery.index('gh run download "$run_id"'),
-        )
-        self.assertLess(
-            evidence_recovery.index('--release "$RUNNER_TEMP/verified-published-release.json"'),
-            evidence_recovery.index(
-                'gh release download "$TAG" --pattern "$EVIDENCE_ASSET"'
-            ),
-        )
-        self.assertLess(
-            evidence_recovery.index('gh run download "$run_id"'),
-            evidence_recovery.index('gh release verify "$TAG"'),
-        )
-        self.assertIn('test "$(wc -c < "$evidence_path")" -le 8000000', evidence_recovery)
+        self.assertIn('--reviewed-sha "$REVIEWED_SHA"', evidence_recovery)
+        self.assertIn('--evidence-asset "$EVIDENCE_ASSET"', evidence_recovery)
+        self.assertIn('--output "$RUNNER_TEMP/release-completion"', evidence_recovery)
+        self.assertNotIn("python verification/restore_release_evidence.py", evidence_recovery)
+        self.assertNotIn("gh run download", evidence_recovery)
+        self.assertNotIn("gh release download", evidence_recovery)
         self.assertNotIn("gh release create", evidence_recovery)
         self.assertIn("gh release edit", release)
         for workflow in (release, prepare, publish):
