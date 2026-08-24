@@ -44,6 +44,10 @@ MAX_STATUS_ERROR_CHARACTERS = 1024
 class DescendantsFoundError(OSError):
     """The target exited but live descendants required Job Object termination."""
 
+    def __init__(self, message: str, *, target_exit_code: int) -> None:
+        super().__init__(message)
+        self.target_exit_code = target_exit_code
+
 
 def _status_bytes(*, descendants_found: bool, cleanup_error: str | None) -> bytes:
     if cleanup_error is not None:
@@ -464,11 +468,12 @@ def _run(
             "Windows Job Object cleanup failed: "
             + "; ".join(str(error) for error in cleanup_errors)
         )
+    assert exit_code is not None
     if active_processes_before_cleanup:
         raise DescendantsFoundError(
-            "target command left descendant processes; they were terminated"
+            "target command left descendant processes; they were terminated",
+            target_exit_code=exit_code,
         )
-    assert exit_code is not None
     return exit_code
 
 
@@ -520,6 +525,7 @@ def main() -> int:
         try:
             exit_code = _run(application, arguments)
         except DescendantsFoundError as error:
+            exit_code = error.target_exit_code
             descendants_found = True
             display_error = error
         except OSError as error:

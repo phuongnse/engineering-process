@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -201,6 +202,44 @@ class WindowsJobTests(unittest.TestCase):
             len(json.loads(content)["cleanupError"]),
         )
 
+    def test_main_preserves_target_exit_code_when_descendants_are_reported(self):
+        read_fd, write_fd = os.pipe()
+        arguments = [
+            "_windows_job.py",
+            "--status-handle",
+            str(write_fd),
+            "--application",
+            r"C:\Python\python.exe",
+            "--",
+            "python",
+            "-V",
+        ]
+        descendant = _windows_job.DescendantsFoundError(
+            "descendants stopped", target_exit_code=7
+        )
+        try:
+            with (
+                patch.object(_windows_job.os, "name", "nt"),
+                patch.object(_windows_job.sys, "argv", arguments),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "msvcrt": SimpleNamespace(
+                            open_osfhandle=lambda handle, _flags: handle
+                        )
+                    },
+                ),
+                patch.object(_windows_job, "_run", side_effect=descendant),
+                patch.object(_windows_job.sys, "stderr", io.StringIO()),
+            ):
+                exit_code = _windows_job.main()
+            status = os.read(read_fd, _windows_job.MAX_STATUS_BYTES)
+        finally:
+            os.close(read_fd)
+
+        self.assertEqual(7, exit_code)
+        self.assertTrue(json.loads(status)["descendantsFound"])
+
     def test_natural_drain_uses_the_portable_supervision_bound(self):
         self.assertEqual(
             NATURAL_DRAIN_GRACE_MILLISECONDS,
@@ -291,11 +330,12 @@ class WindowsJobTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 _windows_job.DescendantsFoundError,
                 "left descendant processes",
-            ):
+            ) as raised:
                 _windows_job._run(
                     r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
                 )
 
+        self.assertEqual(7, raised.exception.target_exit_code)
         self.assertEqual(1, kernel32.termination_calls)
         self.assertEqual([202, 201, 101], kernel32.closed_handles)
 
