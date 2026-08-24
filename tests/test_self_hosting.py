@@ -193,6 +193,33 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("permission-workflows: write", release)
         self.assertIn("token: ${{ steps.app-token.outputs.token }}", release)
         self.assertIn("publication authorize-release", release)
+        evidence_start = release.index(
+            "- name: Restore exact-head pre-publication completion evidence"
+        )
+        evidence_end = release.index(
+            "- name: Prove reviewed tree, merge commit, release contract, and prior tag",
+            evidence_start,
+        )
+        evidence_recovery = release[evidence_start:evidence_end]
+        self.assertIn('if test -n "$run_id"; then', evidence_recovery)
+        self.assertIn(
+            'test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false',
+            evidence_recovery,
+        )
+        self.assertIn(
+            'test "$(gh release view "$TAG" --json publishedAt --jq .publishedAt)" != null',
+            evidence_recovery,
+        )
+        self.assertIn('gh release verify "$TAG"', evidence_recovery)
+        self.assertIn(
+            'gh release download "$TAG" --pattern "$EVIDENCE_ASSET"',
+            evidence_recovery,
+        )
+        self.assertLess(
+            evidence_recovery.index('gh run download "$run_id"'),
+            evidence_recovery.index('gh release verify "$TAG"'),
+        )
+        self.assertNotIn("gh release create", evidence_recovery)
         self.assertIn("gh release edit", release)
         for workflow in (release, prepare, publish):
             self.assertIn(".release-controller", workflow)

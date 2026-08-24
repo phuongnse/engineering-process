@@ -226,6 +226,10 @@ The following rules are regression contracts, not bootstrap exceptions:
   consistent partial view.
 - Remote GitHub asset reads use bounded retry only for the same immutable tag, names,
   sizes, and hashes. A conflicting byte is never retried into acceptance.
+- Release recovery uses the exact unexpired pre-publication completion artifact when
+  it exists. Only after the declared release is published and GitHub verifies it as
+  immutable may recovery restore the same declared evidence asset from that release;
+  an absent, draft, mutable, mismatched, or incomplete release remains fail-closed.
 - The Renovate control plane requires a terminal successful result for every
   allowlisted repository and rejects artifact errors or partial scans. Event delivery
   is App-authenticated and idempotent; cron polling and maintainer-run bridge commands

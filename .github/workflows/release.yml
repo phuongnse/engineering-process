@@ -137,15 +137,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
+          TAG: ${{ steps.identity.outputs.tag }}
         run: |
           artifact_name="release-completion-$REVIEWED_SHA"
           run_id="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
             -f name="$artifact_name" -f per_page=100 \
             --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | last | .workflow_run.id // empty')"
-          test -n "$run_id"
           mkdir -p "$RUNNER_TEMP/release-completion"
-          gh run download "$run_id" --name "$artifact_name" \
-            --dir "$RUNNER_TEMP/release-completion"
+          if test -n "$run_id"; then
+            echo "Restoring completion evidence from Actions run $run_id."
+            gh run download "$run_id" --name "$artifact_name" \
+              --dir "$RUNNER_TEMP/release-completion"
+          else
+            test "$(gh release view "$TAG" --json tagName --jq .tagName)" = "$TAG"
+            test "$(gh release view "$TAG" --json name --jq .name)" = "$TAG"
+            test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false
+            test "$(gh release view "$TAG" --json publishedAt --jq .publishedAt)" != null
+            gh release verify "$TAG"
+            echo "Restoring completion evidence from immutable published release $TAG."
+            gh release download "$TAG" --pattern "$EVIDENCE_ASSET" \
+              --dir "$RUNNER_TEMP/release-completion"
+          fi
           test -f "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
 
       - name: Prove reviewed tree, merge commit, release contract, and prior tag
