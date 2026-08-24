@@ -630,7 +630,8 @@ registers the assignment, submits the exact report, resolves any finding loop, r
 gzip/base64 evidence to `release-approval.yml`; semantic reports and reviewer selection
 never become workflow inputs. The publication workflow validates the receipt against
 the exact clean source with `publication validate-evidence-source`, and only then
-pushes the branch and creates a ready PR. No workflow invokes merge.
+pushes the branch, creates or reconciles the ready PR, validates the standing policy,
+and enables exact-head protected auto-merge. No workflow bypasses branch protection.
 
 The host callback is deterministic after semantic completion:
 
