@@ -422,6 +422,13 @@ pending findings before any transition is allowed.
 Completion does not imply commit creation, push, merge, release, or deployment.
 Those remain separately authorized project workflows.
 
+When new evidence exposes multiple materially valid directions or would change
+accepted scope, owner, trust boundary, authority, compatibility, rollout, or
+lifecycle order, the coordinator stops dependent mutation and asks the project owner.
+It presents evidence, the invariant, real options, trade-offs, and a recommendation;
+the accepted decision is recorded before work resumes. Bounded implementation details
+already decided by the contract continue autonomously.
+
 The canonical publication order is stricter than a PR-first workflow: implementation
 and every required profile pass on a clean checkpoint; a consumer-selected independent
 agent or human semantically reviews that checkpoint; findings repeat implementation,
@@ -499,6 +506,13 @@ conversation, pass stable identities to `change review start`, and preserve its
 evidence. A stable reviewer actor or role may be reused with a fresh context; merely
 renaming retained context does not satisfy the process.
 
+Self-hosted verifier, signing, release-controller, and process-authority changes use
+the portable authority-rotation rule: the old trust root governs introduction, the
+new root is published under an immutable identity before consumers pin it, cutover is
+proved without a control gap, and retirement happens only after the new boundary is
+active. Provider-specific mechanics may require multiple independently completed
+changes; normal product changes do not inherit that staging automatically.
+
 `change review submit` may be invoked by a coordinator transporting the assigned
 reviewer's exact report. The CLI validates that artifact against the assignment and
 carried findings; the attesting host or human boundary, not local process state,
@@ -509,11 +523,31 @@ artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle
 `release-candidate.yml` restores it and runs `change start`, `change plan`,
 `change implement`, and every required `change verify`; the resulting
 `engineering-process-review-required` event names the exact artifact and checkpoint.
-The consumer-selected host chooses an agent or human, registers the assignment in
-its restored lifecycle, and returns the exact report plus attested identity to
-`release-approval.yml`. That workflow repeats the assignment, submits the unchanged
-report, runs `change finish` and `publication validate-source`, and only then pushes
-the branch and creates a ready PR. No workflow invokes merge.
+The consumer-selected host restores that lifecycle, chooses an agent or human,
+registers the assignment, submits the exact report, resolves any finding loop, runs
+`change finish`, and exports completion evidence. It sends only that bounded
+gzip/base64 evidence to `release-approval.yml`; semantic reports and reviewer selection
+never become workflow inputs. The publication workflow validates the receipt against
+the exact clean source with `publication validate-evidence-source`, and only then
+pushes the branch and creates a ready PR. No workflow invokes merge.
+
+The host callback is deterministic after semantic completion:
+
+~~~text
+processctl evidence export --change-id <change-id> --output completion.json
+processctl evidence encode-completion --evidence completion.json \
+  --evidence-kind receipt --output completion.txt
+gh workflow run release-approval.yml --ref main \
+  -f verified_run_id=<verified-run-id> \
+  -f comparison_base=<base-sha> \
+  -f release_head_sha=<completed-checkpoint> \
+  -f completion_evidence_gzip_base64="$(<completion.txt)"
+~~~
+
+A bootstrap-authority release uses `evidence export-bootstrap` and
+`--evidence-kind bootstrap-authorization`. The adapter rejects oversized or malformed
+transport, a different process identity, base, project, checkpoint, workspace
+fingerprint, source tree, or publication range.
 
 ## Distribution contracts
 

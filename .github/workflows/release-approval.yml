@@ -1,10 +1,10 @@
-name: Complete review and publish Release PR
+name: Publish completed Release PR
 
 on:
   workflow_dispatch:
     inputs:
       verified_run_id:
-        description: Run containing the exact verified candidate lifecycle
+        description: Run containing the exact verified unpublished candidate
         required: true
         type: string
       comparison_base:
@@ -12,35 +12,11 @@ on:
         required: true
         type: string
       release_head_sha:
-        description: Exact reviewed candidate checkpoint
+        description: Exact completed candidate checkpoint
         required: true
         type: string
-      reviewer_actor:
-        description: Consumer-host selected stable reviewer actor
-        required: true
-        type: string
-      reviewer_context:
-        description: Fresh isolated reviewer context
-        required: true
-        type: string
-      reviewer_kind:
-        description: Reviewer kind, agent or human
-        required: true
-        type: string
-      review_method:
-        description: Isolation method
-        required: true
-        type: string
-      attested_by:
-        description: Host or organization attesting reviewer isolation
-        required: true
-        type: string
-      attestation_evidence:
-        description: Bounded evidence for reviewer isolation
-        required: true
-        type: string
-      review_report_base64:
-        description: Base64-encoded exact schema review report
+      completion_evidence_gzip_base64:
+        description: Gzip/base64 external completion evidence from the consumer host
         required: true
         type: string
 
@@ -49,28 +25,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-review-${{ inputs.release_head_sha }}
+  group: release-publication-${{ inputs.release_head_sha }}
   cancel-in-progress: false
 
 jobs:
-  complete-and-publish:
-    name: Complete lifecycle before publishing source or PR
+  publish:
+    name: Validate completion before publishing source or PR
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
-      - name: Validate bounded callback identity
+      - name: Validate bounded publication identity
         env:
           BASE_SHA: ${{ inputs.comparison_base }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
-          REVIEWER_KIND: ${{ inputs.reviewer_kind }}
-          REVIEW_METHOD: ${{ inputs.review_method }}
+          EVIDENCE_BASE64: ${{ inputs.completion_evidence_gzip_base64 }}
           VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
         run: |
           printf '%s' "$VERIFIED_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$BASE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           printf '%s' "$HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
-          test "$REVIEWER_KIND" = agent || test "$REVIEWER_KIND" = human
-          test "$REVIEW_METHOD" = isolated-context || test "$REVIEW_METHOD" = separate-person
+          test -n "$EVIDENCE_BASE64"
+          test "${#EVIDENCE_BASE64}" -le 60000
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +53,7 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.comparison_base }}
 
-      - name: Restore the exact verified candidate and lifecycle
+      - name: Restore the exact unpublished candidate
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
@@ -92,9 +67,6 @@ jobs:
           test "$(jq -r .baseSha "$RUNNER_TEMP/verified-candidate/candidate.json")" = "${{ inputs.comparison_base }}"
           git fetch "$RUNNER_TEMP/verified-candidate/source.bundle" "$HEAD_SHA"
           git checkout --detach "$HEAD_SHA"
-          change_id="$(jq -r .id .release/change.json)"
-          mkdir -p ".process/runs/$change_id"
-          cp -R "$RUNNER_TEMP/verified-candidate/lifecycle/." ".process/runs/$change_id/"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
@@ -102,7 +74,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install the exact public N-1 authority and project dependencies
+      - name: Install exact public authority and candidate dependencies
         run: |
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
@@ -113,61 +85,66 @@ jobs:
             -r engineering_process/requirements-build.txt
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
 
-      - name: Register and submit the consumer-host semantic review
-        id: lifecycle
-        env:
-          ATTESTATION_EVIDENCE: ${{ inputs.attestation_evidence }}
-          ATTESTED_BY: ${{ inputs.attested_by }}
-          REPORT_BASE64: ${{ inputs.review_report_base64 }}
-          REVIEWER_ACTOR: ${{ inputs.reviewer_actor }}
-          REVIEWER_CONTEXT: ${{ inputs.reviewer_context }}
-          REVIEWER_KIND: ${{ inputs.reviewer_kind }}
-          REVIEW_METHOD: ${{ inputs.review_method }}
-        run: |
-          change_id="$(jq -r .id .release/change.json)"
-          processctl change review start \
-            --actor "$REVIEWER_ACTOR" --context "$REVIEWER_CONTEXT" \
-            --actor-kind "$REVIEWER_KIND" --change-id "$change_id" \
-            --method "$REVIEW_METHOD" --attested-by "$ATTESTED_BY" \
-            --attestation-evidence "$ATTESTATION_EVIDENCE"
-          printf '%s' "$REPORT_BASE64" | base64 --decode > "$RUNNER_TEMP/host-review.json"
-          processctl contract validate --kind review "$RUNNER_TEMP/host-review.json"
-          "$RUNNER_TEMP/process-authority/bin/python" verification/prepare_release_review.py \
-            --change-id "$change_id" \
-            --review-report "$RUNNER_TEMP/host-review.json" \
-            --output "$RUNNER_TEMP/release-review.json"
-          processctl change review submit \
-            --change-id "$change_id" --report "$RUNNER_TEMP/release-review.json"
-          test "$(processctl change status --change-id "$change_id" --json | jq -r .phase)" = approved
-          processctl change finish \
-            --actor github-release-bot \
-            --context "release-publication-${{ inputs.release_head_sha }}" \
-            --actor-kind agent --change-id "$change_id"
-          printf 'change_id=%s\n' "$change_id" >> "$GITHUB_OUTPUT"
-
-      - name: Export completed lifecycle evidence
+      - name: Decode and validate host completion evidence
         id: evidence
         env:
-          CHANGE_ID: ${{ steps.lifecycle.outputs.change_id }}
+          BASE_SHA: ${{ inputs.comparison_base }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          EVIDENCE_BASE64: ${{ inputs.completion_evidence_gzip_base64 }}
         run: |
-          mkdir -p "$RUNNER_TEMP/completion"
+          printf '%s' "$EVIDENCE_BASE64" > "$RUNNER_TEMP/completion-evidence.txt"
+          "$RUNNER_TEMP/process-authority/bin/python" \
+            verification/decode_completion_evidence.py \
+            --input "$RUNNER_TEMP/completion-evidence.txt" \
+            --output "$RUNNER_TEMP/completion-evidence.json"
           mode="$(jq -r .provenance.mode release.json)"
-          evidence_asset="$(jq -r '.identity.receiptAsset // .identity.authorizationAsset' release.json)"
-          test -n "$evidence_asset"
           if test "$mode" = governed; then
-            processctl evidence export --change-id "$CHANGE_ID" \
-              --output "$RUNNER_TEMP/completion/$evidence_asset"
-            processctl evidence validate "$RUNNER_TEMP/completion/$evidence_asset"
+            processctl evidence validate "$RUNNER_TEMP/completion-evidence.json" --json \
+              > "$RUNNER_TEMP/completion-summary.json"
+            evidence_kind=receipt
           else
             "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
-              evidence export-bootstrap --change-id "$CHANGE_ID" \
-              --output "$RUNNER_TEMP/completion/$evidence_asset"
-            "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
-              evidence validate-bootstrap "$RUNNER_TEMP/completion/$evidence_asset"
+              evidence validate-bootstrap "$RUNNER_TEMP/completion-evidence.json" --json \
+              > "$RUNNER_TEMP/completion-summary.json"
+            evidence_kind=bootstrap-authorization
           fi
+          change_id="$(jq -r .id .release/change.json)"
+          test "$(jq -r .changeId "$RUNNER_TEMP/completion-summary.json")" = "$change_id"
+          test "$(jq -r .checkpoint "$RUNNER_TEMP/completion-summary.json")" = "$HEAD_SHA"
+          test "$(jq -r .comparisonBase "$RUNNER_TEMP/completion-summary.json")" = "$BASE_SHA"
+          test "$(jq -r .processVersion "$RUNNER_TEMP/completion-summary.json")" = "$(jq -r .process.version .process/process.lock)"
+          test "$(jq -r .processDigest "$RUNNER_TEMP/completion-summary.json")" = "$(jq -r .process.digest .process/process.lock)"
+          evidence_asset="$(jq -r '.identity.receiptAsset // .identity.authorizationAsset' release.json)"
+          test -n "$evidence_asset"
+          mkdir -p "$RUNNER_TEMP/completion"
+          cp "$RUNNER_TEMP/completion-evidence.json" "$RUNNER_TEMP/completion/$evidence_asset"
           printf 'evidence_asset=%s\n' "$evidence_asset" >> "$GITHUB_OUTPUT"
+          printf 'evidence_kind=%s\n' "$evidence_kind" >> "$GITHUB_OUTPUT"
 
-      - name: Preserve completion evidence before remote publication
+      - name: Validate exact completed source and publication metadata
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          RELEASE_BRANCH: automation/release/next
+        run: |
+          version="$(jq -r .version release.json)"
+          title="chore(release): prepare v$version"
+          processctl publication release-pr-body \
+            --state approved --output "$RUNNER_TEMP/release-pr.md"
+          processctl publication validate-pr \
+            --title "$title" --body-file "$RUNNER_TEMP/release-pr.md" \
+            --branch "$RELEASE_BRANCH" --state ready
+          "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
+            publication validate-evidence-source --project-root . \
+            --evidence "$RUNNER_TEMP/completion-evidence.json" \
+            --evidence-kind "${{ steps.evidence.outputs.evidence_kind }}" \
+            --commit "$HEAD_SHA" --title "$title" \
+            --branch "$RELEASE_BRANCH" --body-file "$RUNNER_TEMP/release-pr.md"
+          processctl publication validate-range \
+            --project-root . --branch "$RELEASE_BRANCH" \
+            --range "$BASE_SHA..$HEAD_SHA"
+
+      - name: Preserve completion evidence before source publication
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-completion-${{ inputs.release_head_sha }}
@@ -188,7 +165,7 @@ jobs:
           permission-metadata: read
           permission-pull-requests: write
 
-      - name: Publish the exact completed source and create the ready PR
+      - name: Publish exact completed source and create ready PR
         env:
           BASE_SHA: ${{ inputs.comparison_base }}
           GH_TOKEN: ${{ steps.publication-token.outputs.token }}
@@ -196,27 +173,14 @@ jobs:
           RELEASE_BRANCH: automation/release/next
         run: |
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          existing="$(gh pr list --state open --head "$RELEASE_BRANCH" --json number --jq 'length')"
+          test "$existing" = 0
           remote_sha="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
           test -z "$remote_sha" || test "$remote_sha" = "$HEAD_SHA"
-          version="$(jq -r .version release.json)"
-          title="chore(release): prepare v$version"
-          processctl publication release-pr-body \
-            --state approved --output "$RUNNER_TEMP/release-pr.md"
-          processctl publication validate-pr \
-            --title "$title" --body-file "$RUNNER_TEMP/release-pr.md" \
-            --branch "$RELEASE_BRANCH" --state ready
-          "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
-            publication validate-source --project-root . \
-            --change-id "${{ steps.lifecycle.outputs.change_id }}" \
-            --commit "$HEAD_SHA" --title "$title" \
-            --branch "$RELEASE_BRANCH" --body-file "$RUNNER_TEMP/release-pr.md"
-          processctl publication validate-range \
-            --project-root . --branch "$RELEASE_BRANCH" \
-            --range "$BASE_SHA..$HEAD_SHA"
           if test -z "$remote_sha"; then
             git push origin "$HEAD_SHA:refs/heads/$RELEASE_BRANCH"
           fi
-          existing="$(gh pr list --state open --head "$RELEASE_BRANCH" --json number --jq 'length')"
-          test "$existing" = 0
+          version="$(jq -r .version release.json)"
           gh pr create --base main --head "$RELEASE_BRANCH" \
-            --title "$title" --body-file "$RUNNER_TEMP/release-pr.md"
+            --title "chore(release): prepare v$version" \
+            --body-file "$RUNNER_TEMP/release-pr.md"

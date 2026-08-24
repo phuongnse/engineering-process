@@ -14,10 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from engineering_process.contracts import ContractError
-from verification.prepare_release_review import (
-    TRUSTED_VERIFIER_REPOSITORY,
-    TRUSTED_VERIFIER_SHA,
-)
 
 
 COMMAND_TIMEOUT_SECONDS = 120
@@ -36,18 +32,6 @@ def pending_release_changes(project_root: Path) -> tuple[Path, ...]:
     if not changes_root.is_dir():
         raise ContractError("release qualification requires release-changes/")
     return tuple(sorted(path for path in changes_root.glob("*.json") if path.is_file()))
-
-
-def qualification_evidence(checkpoint: str) -> dict[str, str]:
-    return {
-        "status": "passed",
-        "governanceMode": "single-maintainer",
-        "verificationKind": "policy-verification",
-        "repository": "phuongnse/engineering-process",
-        "headSha": checkpoint,
-        "verifierRepository": TRUSTED_VERIFIER_REPOSITORY,
-        "verifierSha": TRUSTED_VERIFIER_SHA,
-    }
 
 
 def _safe_environment() -> dict[str, str]:

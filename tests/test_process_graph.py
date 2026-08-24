@@ -1,4 +1,5 @@
 import argparse
+import ast
 import json
 import shutil
 import tempfile
@@ -8,6 +9,7 @@ from pathlib import Path
 from engineering_process.cli import build_parser
 from engineering_process.command_catalog import LIFECYCLE_COMMAND_PATHS
 from engineering_process.contracts import ContractError
+from engineering_process.lifecycle_routes import LIFECYCLE_ROUTE_TARGETS
 from engineering_process.process_graph import load_process_graph
 
 
@@ -55,6 +57,38 @@ class ProcessGraphTests(unittest.TestCase):
                 )
             ],
         )
+        for identifier, expected in LIFECYCLE_ROUTE_TARGETS.items():
+            self.assertEqual(
+                dict(expected),
+                {
+                    transition["result"]: transition["nextState"]
+                    for transition in states[identifier]["transitions"]
+                },
+            )
+
+    def test_lifecycle_phase_mutations_use_the_shared_route_contract(self):
+        source = (PROCESS_ROOT / "engineering_process" / "lifecycle.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        direct_setters = set()
+        for function in (
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        ):
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Assign):
+                    continue
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "state"
+                        and isinstance(target.slice, ast.Constant)
+                        and target.slice.value == "phase"
+                    ):
+                        direct_setters.add(function.name)
+
+        self.assertEqual({"_transition_phase"}, direct_setters)
 
     def test_graph_commands_exist_in_the_actual_cli(self):
         available = parser_command_paths(build_parser())

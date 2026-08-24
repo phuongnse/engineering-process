@@ -22,6 +22,9 @@ incident history into permanent ceremony.
    semantics, keep the consumer candidate blocked and remove any provisional consumer
    wrapper or duplicate implementation. Change shared skills only for portable
    semantics. Add CLI or schema enforcement only when deterministic.
+   If root-cause evidence leaves multiple valid owner, trust, compatibility, rollout,
+   or lifecycle corrections, stop and use the run-change owner-decision escalation
+   protocol; do not try alternate process architectures until one is accepted.
 4. Add regression cases at the lowest reliable owner boundary for both valid behavior
    and the fail-closed class. A shared fix also requires producer profiles and a real
    affected-consumer reproduction before release authorization. For skill behavior,
@@ -34,12 +37,21 @@ incident history into permanent ceremony.
    workflow cost.
 7. For an operations or external transient, require bounded idempotent recovery with
    retained per-attempt diagnostics. Never mutate source or version merely to retry.
+8. For a self-hosted authority rotation, let the old immutable authority govern the
+   new authority's introduction, publish the new identity before any consumer pin,
+   prove cutover without a control gap, and retire the old authority only after the
+   new boundary is active. Use separate lifecycle changes when provider mechanics
+   make introduction and cutover separately publishable.
 
 ## Hard gates
 
 - Do not promote an agent-host quirk into the portable core.
 - Do not add a gate without an owner, failure message, and regression proof.
 - Do not break a released schema within its major version.
+- Do not respond to a rejected process direction by autonomously trying another
+  boundary-changing direction.
+- Do not let a new trust root approve its own introduction or pin an authority that
+  is not yet immutable and resolvable by the consumer.
 
 ## Output
 

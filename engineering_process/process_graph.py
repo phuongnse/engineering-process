@@ -6,26 +6,28 @@ from typing import Any
 from .bundles import load_bundles
 from .command_catalog import LIFECYCLE_COMMAND_PATHS
 from .contracts import ContractError, SKILL_PATTERN, read_json
-from .lifecycle import PHASES
+from .lifecycle_routes import (
+    EXTERNAL_STATES,
+    INTERNAL_PHASES,
+    LIFECYCLE_ROUTE_TARGETS,
+)
 from .skills import skill_directories
 
 
 MAX_GRAPH_STATES = 64
 MAX_GRAPH_COMMANDS = 32
 MAX_GRAPH_TRANSITIONS = 32
-EXTERNAL_STATES = {"unregistered", "awaiting-human-merge"}
-
-# This is the executable routing contract for the portable lifecycle.  The JSON
-# graph is a packaged, machine-readable projection of this contract, not a second
-# independently editable source of lifecycle truth.
+# These are the skill, actor, and command handoffs layered onto the executable phase
+# routes in lifecycle_routes.py.  The JSON graph is a packaged projection of both
+# contracts, not a second independently editable lifecycle source.
 CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
     "unregistered": {
         "ownerSkill": "define-change-contract",
         "actor": "automation",
         "commands": ["change start", "contract validate"],
         "transitions": {
-            "failure": ("unregistered", "define-change-contract"),
-            "success": ("specified", "plan-change"),
+            "failure": "define-change-contract",
+            "success": "plan-change",
         },
     },
     "specified": {
@@ -33,8 +35,8 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": ["change plan", "contract validate"],
         "transitions": {
-            "failure": ("specified", "plan-change"),
-            "success": ("planned", "implement-change"),
+            "failure": "plan-change",
+            "success": "implement-change",
         },
     },
     "planned": {
@@ -42,18 +44,19 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": ["change implement"],
         "transitions": {
-            "failure": ("planned", "implement-change"),
-            "success": ("implementing", "verify-change"),
+            "failure": "implement-change",
+            "success": "verify-change",
         },
     },
     "implementing": {
         "ownerSkill": "verify-change",
         "actor": "automation",
-        "commands": ["change verify"],
+        "commands": ["change implement", "change verify"],
         "transitions": {
-            "all-required-passed": ("verified", "review-change"),
-            "failure": ("implementing", "implement-change"),
-            "profile-passed": ("implementing", "verify-change"),
+            "all-required-passed": "review-change",
+            "failure": "implement-change",
+            "implementation-continued": "verify-change",
+            "profile-passed": "verify-change",
         },
     },
     "verified": {
@@ -61,8 +64,9 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": ["change review start"],
         "transitions": {
-            "failure": ("verified", "review-change"),
-            "reviewer-assigned": ("review-pending", "review-change"),
+            "failure": "review-change",
+            "reviewer-assigned": "review-change",
+            "source-changed": "implement-change",
         },
     },
     "review-pending": {
@@ -70,9 +74,9 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": ["change review submit", "contract validate"],
         "transitions": {
-            "approved": ("approved", "finish-change"),
-            "changes-requested": ("changes-requested", "implement-change"),
-            "failure": ("review-pending", "review-change"),
+            "approved": "finish-change",
+            "changes-requested": "implement-change",
+            "failure": "review-change",
         },
     },
     "changes-requested": {
@@ -80,8 +84,8 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": ["change implement"],
         "transitions": {
-            "failure": ("changes-requested", "implement-change"),
-            "success": ("implementing", "verify-change"),
+            "failure": "implement-change",
+            "success": "verify-change",
         },
     },
     "approved": {
@@ -89,17 +93,22 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": ["change finish"],
         "transitions": {
-            "failure": ("approved", "finish-change"),
-            "success": ("completed", "publish-change"),
+            "failure": "finish-change",
+            "success": "publish-change",
         },
     },
     "completed": {
         "ownerSkill": "publish-change",
         "actor": "automation",
-        "commands": ["publication validate-range", "publication validate-source"],
+        "commands": [
+            "evidence encode-completion",
+            "publication validate-evidence-source",
+            "publication validate-range",
+            "publication validate-source",
+        ],
         "transitions": {
-            "failure": ("completed", "publish-change"),
-            "published": ("awaiting-human-merge", None),
+            "failure": "publish-change",
+            "published": None,
         },
     },
     "awaiting-human-merge": {
@@ -107,8 +116,8 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "human",
         "commands": [],
         "transitions": {
-            "merged": (None, None),
-            "not-merged": ("awaiting-human-merge", None),
+            "merged": None,
+            "not-merged": None,
         },
     },
 }
@@ -220,7 +229,7 @@ def load_process_graph(
             raise ContractError(f"{label}.transitions: invalid transition count")
         states[identifier] = state
 
-    expected_states = set(PHASES) | EXTERNAL_STATES
+    expected_states = set(INTERNAL_PHASES) | set(EXTERNAL_STATES)
     if set(states) != expected_states:
         missing = sorted(expected_states - set(states))
         extra = sorted(set(states) - expected_states)
@@ -266,16 +275,22 @@ def load_process_graph(
                     f"{path}.states.{identifier}.{field}: contradicts the canonical "
                     "lifecycle handoff contract"
                 )
-        actual_transitions = {
-            transition["result"]: (
-                transition["nextState"],
-                transition["nextSkill"],
-            )
+        actual_targets = {
+            transition["result"]: transition["nextState"]
             for transition in state["transitions"]
         }
-        if actual_transitions != expected["transitions"]:
+        if actual_targets != dict(LIFECYCLE_ROUTE_TARGETS[identifier]):
             raise ContractError(
                 f"{path}.states.{identifier}.transitions: contradict the canonical "
                 "lifecycle routing contract"
+            )
+        actual_next_skills = {
+            transition["result"]: transition["nextSkill"]
+            for transition in state["transitions"]
+        }
+        if actual_next_skills != expected["transitions"]:
+            raise ContractError(
+                f"{path}.states.{identifier}.transitions: contradict the canonical "
+                "skill handoff contract"
             )
     return document

@@ -134,9 +134,12 @@ jobs:
             --arg base "${{ inputs.comparison_base }}" \
             --arg changeId "$CHANGE_ID" \
             --arg commit "${{ inputs.release_head_sha }}" \
+            --arg maxCompletionEvidenceBytes "60000" \
+            --arg publicationWorkflow "release-approval.yml" \
+            --arg completionEvidenceEncoding "gzip+base64" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg runId "$GITHUB_RUN_ID" \
-            '{event_type: "engineering-process-review-required", client_payload: {artifact: $artifact, comparisonBase: $base, changeId: $changeId, commit: $commit, repository: $repository, verifiedRunId: $runId}}' \
+            '{event_type: "engineering-process-review-required", client_payload: {artifact: $artifact, comparisonBase: $base, changeId: $changeId, commit: $commit, completionEvidenceEncoding: $completionEvidenceEncoding, maxCompletionEvidenceBytes: ($maxCompletionEvidenceBytes | tonumber), publicationWorkflow: $publicationWorkflow, repository: $repository, verifiedRunId: $runId}}' \
             > "$RUNNER_TEMP/review-required-event.json"
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/dispatches" \

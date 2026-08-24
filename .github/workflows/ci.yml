@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: phuongnse/renovate-ops/.github/workflows/independent-review.yml@f22b05f7813d5868f2a728f203a59afa5d6f18d2
+    uses: phuongnse/renovate-ops/.github/workflows/policy-verification.yml@ac8ad2a0893bf820e5ffd5aa6d19bda7bc5667d3
 
   verify:
     runs-on: ${{ matrix.os }}

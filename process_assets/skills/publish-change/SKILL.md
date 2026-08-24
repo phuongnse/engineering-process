@@ -16,7 +16,10 @@ without duplicating implementation, verification, or review.
    version governance, and current lifecycle status. Do not create a branch or review
    object before the local lifecycle is completed.
 2. For source publication, require a current completion record whose checkpoint and
-   workspace fingerprint match the source being published.
+   workspace fingerprint match the source being published. When publication runs on
+   a different machine, require a validated external completion receipt and use
+   `processctl publication validate-evidence-source`; do not recreate or resubmit the
+   semantic review in the publication adapter.
 3. Populate the managed review-object sections with project-specific facts. Run
    `processctl publication validate-source` with the change id and exact completion
    commit, then validate branch and commit range. Provider draft/ready status is

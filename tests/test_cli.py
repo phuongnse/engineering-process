@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from engineering_process.cli import main
@@ -115,6 +116,114 @@ class CliTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual(
             "publication validate-source",
+            json.loads(stdout.getvalue())["command"],
+        )
+
+    def test_routes_external_evidence_source_publication_validation(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        receipt = {
+            "changeId": "change-1",
+            "project": "sample",
+            "checkpoint": checkpoint,
+            "workspaceFingerprint": fingerprint,
+            "sha256": f"sha256:{'c' * 64}",
+        }
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            body = Path(directory) / "pr.md"
+            body.write_text(
+                "<!-- engineering-process:pr-description:start -->\n"
+                "## Summary\n\nSummary.\n\n"
+                "## Contract and scope\n\nContract.\n\n"
+                "## Impact and risk\n\nRisk.\n\n"
+                "## Verification\n\nVerified.\n\n"
+                "## Independent review\n\nReviewed.\n\n"
+                "## Requirements and rules followed\n\n"
+                "- [x] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: satisfied]\n"
+                "- [x] **Verification evidence** — required current profiles pass on the published checkpoint. [status: satisfied]\n"
+                "- [x] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: satisfied]\n"
+                "<!-- engineering-process:pr-description:end -->\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+            with (
+                mock.patch("engineering_process.cli.validate_receipt", return_value=receipt),
+                mock.patch(
+                    "engineering_process.cli.validate_project",
+                    return_value=SimpleNamespace(identifier="sample"),
+                ),
+                mock.patch("engineering_process.cli.read_json", return_value={}),
+                mock.patch("engineering_process.cli.source_state", return_value=source),
+                contextlib.redirect_stdout(stdout),
+            ):
+                result = main(
+                    [
+                        "publication",
+                        "validate-evidence-source",
+                        "--project-root",
+                        directory,
+                        "--evidence",
+                        str(Path(directory) / "receipt.json"),
+                        "--evidence-kind",
+                        "receipt",
+                        "--commit",
+                        checkpoint,
+                        "--title",
+                        "feat(process): standardize publication",
+                        "--branch",
+                        "feat/standardize-publication",
+                        "--body-file",
+                        str(body),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            "publication validate-evidence-source",
+            json.loads(stdout.getvalue())["command"],
+        )
+
+    def test_routes_completion_evidence_encoding(self):
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "evidence.json"
+            output = root / "evidence.txt"
+            with (
+                mock.patch(
+                    "engineering_process.cli.encode_completion_evidence",
+                    return_value={
+                        "changeId": "change-1",
+                        "evidenceKind": "receipt",
+                        "encodedBytes": 100,
+                        "output": str(output),
+                    },
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                result = main(
+                    [
+                        "evidence",
+                        "encode-completion",
+                        "--evidence",
+                        str(evidence),
+                        "--evidence-kind",
+                        "receipt",
+                        "--output",
+                        str(output),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            "evidence encode-completion",
             json.loads(stdout.getvalue())["command"],
         )
 

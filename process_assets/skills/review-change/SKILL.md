@@ -38,6 +38,9 @@ specific checkpoint without changing the reviewed source.
    Treat owner mismatch, consumer workaround for a shared defect, evidence-free rerun,
    missing valid/fail-closed regression proof, or missing affected-consumer proof for
    a shared correction as required completion-blocking findings.
+   Also treat an implementation that silently selected an unresolved project-owner
+   decision about scope, authority, trust boundary, compatibility, rollout, or
+   lifecycle order as completion-blocking, even when its tests pass.
 5. Request changes when any required finding remains open or deferred. Approve only
    when required outcomes and evidence are complete for the reviewed checkpoint.
 6. Validate the report with processctl contract validate --kind review, then submit

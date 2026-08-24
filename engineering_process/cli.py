@@ -41,6 +41,10 @@ from .evidence import (
     validate_bootstrap_authorization,
     validate_receipt,
 )
+from .evidence_transport import (
+    COMPLETION_EVIDENCE_KINDS,
+    encode_completion_evidence,
+)
 from .impact import plan_profile
 from .lifecycle import (
     begin_implementation,
@@ -60,6 +64,7 @@ from .publication import (
     validate_commit_subject,
     validate_completed_publication,
     validate_pull_request,
+    validate_evidence_publication,
 )
 from .process_graph import load_process_graph, process_root_from_skills
 from .release import validate_release_checkpoint
@@ -542,6 +547,16 @@ def command_evidence_validate_bootstrap(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_evidence_encode_completion(args: argparse.Namespace) -> int:
+    details = encode_completion_evidence(
+        args.evidence,
+        args.output,
+        kind=args.evidence_kind,
+    )
+    _emit(args, _result("evidence encode-completion", **details))
+    return 0
+
+
 def command_evidence_prune(args: argparse.Namespace) -> int:
     details = prune_completed_run(
         args.project_root,
@@ -845,6 +860,34 @@ def command_publication_validate_source(args: argparse.Namespace) -> int:
     )
 
 
+def command_publication_validate_evidence_source(args: argparse.Namespace) -> int:
+    evidence = (
+        validate_receipt(args.evidence)
+        if args.evidence_kind == "receipt"
+        else validate_bootstrap_authorization(args.evidence)
+    )
+    project_path = args.project_root / ".process" / "project.json"
+    project = validate_project(read_json(project_path), str(project_path))
+    issues = validate_evidence_publication(
+        title=args.title,
+        body=_publication_body(args),
+        branch=args.branch,
+        commit=args.commit,
+        project=project.identifier,
+        evidence=evidence,
+        source=source_state(args.project_root),
+    )
+    return _publication_result(
+        args,
+        "publication validate-evidence-source",
+        issues,
+        branch=args.branch,
+        changeId=evidence["changeId"],
+        commit=args.commit,
+        evidenceKind=args.evidence_kind,
+        evidenceSha256=evidence["sha256"],
+        title=args.title,
+    )
 def command_publication_plan_version(args: argparse.Namespace) -> int:
     plan = derive_release_version(args.previous_version, args.change_type)
     _emit(
@@ -1160,6 +1203,21 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_validate_bootstrap.set_defaults(
         handler=command_evidence_validate_bootstrap
     )
+    evidence_encode_completion = evidence_commands.add_parser(
+        "encode-completion",
+        help="Validate and encode completion evidence for a publication adapter",
+    )
+    evidence_encode_completion.add_argument("--evidence", type=Path, required=True)
+    evidence_encode_completion.add_argument(
+        "--evidence-kind",
+        choices=COMPLETION_EVIDENCE_KINDS,
+        required=True,
+    )
+    evidence_encode_completion.add_argument("--output", type=Path, required=True)
+    _add_json(evidence_encode_completion)
+    evidence_encode_completion.set_defaults(
+        handler=command_evidence_encode_completion
+    )
     evidence_prune = evidence_commands.add_parser(
         "prune", help="Validate a receipt before pruning a completed local run"
     )
@@ -1302,6 +1360,26 @@ def build_parser() -> argparse.ArgumentParser:
     publication_source.add_argument("--body-file", type=Path)
     _add_json(publication_source)
     publication_source.set_defaults(handler=command_publication_validate_source)
+
+    publication_evidence_source = publication_commands.add_parser(
+        "validate-evidence-source",
+        help="Validate source publication against external completion evidence",
+    )
+    _add_project_root(publication_evidence_source)
+    publication_evidence_source.add_argument("--evidence", type=Path, required=True)
+    publication_evidence_source.add_argument(
+        "--evidence-kind",
+        choices=("receipt", "bootstrap-authorization"),
+        required=True,
+    )
+    publication_evidence_source.add_argument("--commit", required=True)
+    publication_evidence_source.add_argument("--title", required=True)
+    publication_evidence_source.add_argument("--branch", required=True)
+    publication_evidence_source.add_argument("--body-file", type=Path)
+    _add_json(publication_evidence_source)
+    publication_evidence_source.set_defaults(
+        handler=command_publication_validate_evidence_source
+    )
 
     publication_version = publication_commands.add_parser(
         "plan-version",

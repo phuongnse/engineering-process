@@ -10,7 +10,6 @@ from engineering_process.contracts import ContractError
 from verification.qualify_release_lifecycle import (
     _safe_environment,
     pending_release_changes,
-    qualification_evidence,
     qualify_release_lifecycle,
 )
 
@@ -28,14 +27,6 @@ class ReleaseQualificationTests(unittest.TestCase):
             result = pending_release_changes(root)
 
             self.assertEqual(["alpha.json", "zeta.json"], [path.name for path in result])
-
-    def test_qualification_evidence_is_explicitly_bound_to_exact_checkpoint(self):
-        evidence = qualification_evidence("a" * 40)
-
-        self.assertEqual("a" * 40, evidence["headSha"])
-        self.assertEqual("policy-verification", evidence["verificationKind"])
-        self.assertEqual("phuongnse/renovate-ops", evidence["verifierRepository"])
-        self.assertEqual(40, len(evidence["verifierSha"]))
 
     def test_qualification_source_cannot_synthesize_semantic_approval(self):
         source = (

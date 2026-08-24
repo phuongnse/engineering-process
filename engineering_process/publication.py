@@ -522,6 +522,38 @@ def validate_completed_publication(
     return issues
 
 
+def validate_evidence_publication(
+    *,
+    title: str,
+    body: str,
+    branch: str,
+    commit: str,
+    project: str,
+    evidence: dict[str, object],
+    source: dict[str, object],
+) -> list[str]:
+    issues = [
+        *validate_branch(branch),
+        *validate_pr_title(title),
+        *validate_pr_body(body, allow_pending=False),
+    ]
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+        issues.append("Publication commit must be a full lowercase Git SHA")
+    if source.get("dirty") is not False:
+        issues.append("Publication source must have a clean working tree")
+    if source.get("checkpoint") != commit:
+        issues.append("Publication commit does not match the current source checkpoint")
+    if source.get("fingerprint") is None:
+        issues.append("Publication source workspace fingerprint is unavailable")
+    if evidence.get("project") != project:
+        issues.append("Completion evidence does not identify the publication project")
+    if evidence.get("checkpoint") != commit:
+        issues.append("Completion evidence does not match the publication commit")
+    if evidence.get("workspaceFingerprint") != source.get("fingerprint"):
+        issues.append("Completion evidence does not match the publication workspace")
+    return issues
+
+
 def commit_subjects(project_root: Path, range_spec: str) -> list[tuple[str, str]]:
     if GIT_RANGE_RE.fullmatch(range_spec) is None:
         raise ContractError(f"invalid Git revision or range: {range_spec}")

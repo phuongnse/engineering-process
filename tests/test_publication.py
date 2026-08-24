@@ -14,6 +14,7 @@ from engineering_process.publication import (
     validate_completed_publication,
     validate_pr_title,
     validate_pull_request,
+    validate_evidence_publication,
 )
 
 
@@ -117,6 +118,45 @@ class PublicationTests(unittest.TestCase):
         self.assertTrue(any("clean working tree" in issue for issue in issues))
         self.assertTrue(any("current source checkpoint" in issue for issue in issues))
         self.assertTrue(any("not ready for publication" in issue for issue in issues))
+
+    def test_receipt_publication_binds_project_checkpoint_and_workspace(self):
+        checkpoint = "a" * 40
+        fingerprint = f"sha256:{'b' * 64}"
+        receipt = {
+            "project": "sample",
+            "checkpoint": checkpoint,
+            "workspaceFingerprint": fingerprint,
+        }
+        source = {
+            "dirty": False,
+            "checkpoint": checkpoint,
+            "fingerprint": fingerprint,
+        }
+
+        self.assertEqual(
+            [],
+            validate_evidence_publication(
+                title="feat(process): standardize publication",
+                body=pr_body(),
+                branch="feat/standardize-publication",
+                commit=checkpoint,
+                project="sample",
+                evidence=receipt,
+                source=source,
+            ),
+        )
+
+        issues = validate_evidence_publication(
+            title="feat(process): standardize publication",
+            body=pr_body(),
+            branch="feat/standardize-publication",
+            commit=checkpoint,
+            project="other",
+            evidence=dict(receipt, workspaceFingerprint=f"sha256:{'c' * 64}"),
+            source=source,
+        )
+        self.assertTrue(any("publication project" in issue for issue in issues))
+        self.assertTrue(any("publication workspace" in issue for issue in issues))
 
     def test_accepts_manual_and_generic_automation_branches(self):
         self.assertEqual([], validate_branch("feat/add-workspace"))

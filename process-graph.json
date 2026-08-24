@@ -36,11 +36,12 @@
       "id": "implementing",
       "ownerSkill": "verify-change",
       "actor": "automation",
-      "commands": ["change verify"],
+      "commands": ["change implement", "change verify"],
       "transitions": [
         {"result": "profile-passed", "nextState": "implementing", "nextSkill": "verify-change"},
         {"result": "all-required-passed", "nextState": "verified", "nextSkill": "review-change"},
-        {"result": "failure", "nextState": "implementing", "nextSkill": "implement-change"}
+        {"result": "failure", "nextState": "implementing", "nextSkill": "implement-change"},
+        {"result": "implementation-continued", "nextState": "implementing", "nextSkill": "verify-change"}
       ]
     },
     {
@@ -50,7 +51,8 @@
       "commands": ["change review start"],
       "transitions": [
         {"result": "reviewer-assigned", "nextState": "review-pending", "nextSkill": "review-change"},
-        {"result": "failure", "nextState": "verified", "nextSkill": "review-change"}
+        {"result": "failure", "nextState": "verified", "nextSkill": "review-change"},
+        {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
       ]
     },
     {
@@ -88,7 +90,7 @@
       "id": "completed",
       "ownerSkill": "publish-change",
       "actor": "automation",
-      "commands": ["publication validate-range", "publication validate-source"],
+      "commands": ["evidence encode-completion", "publication validate-evidence-source", "publication validate-range", "publication validate-source"],
       "transitions": [
         {"result": "published", "nextState": "awaiting-human-merge", "nextSkill": null},
         {"result": "failure", "nextState": "completed", "nextSkill": "publish-change"}

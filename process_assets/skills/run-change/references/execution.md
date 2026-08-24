@@ -54,6 +54,29 @@ When progress depends on user-controlled or external state:
 5. Report `Blocker`, `Evidence`, `Boundary`, `User action or decision needed`, and
    `Safe next step after confirmation`.
 
+## Owner decision and escalation
+
+Do not convert ambiguity into autonomous architecture or process experimentation.
+When new evidence creates more than one materially valid direction, or a choice would
+change accepted scope, owner, trust boundary, authority, compatibility, rollout,
+lifecycle order, or external mutation, stop dependent mutation and:
+
+1. Separate a discoverable implementation detail already inside accepted scope from
+   a project-owner decision. Continue autonomously only for the former.
+2. Preserve the evidence and state the invariant that every valid option must keep.
+3. Present the genuinely valid options, their trade-offs, and one evidence-backed
+   recommendation. Do not manufacture a weak option to make the recommendation look
+   inevitable.
+4. Request an explicit owner decision and record it in the owning contract, plan, or
+   durable project decision before continuing dependent work.
+5. If a failed attempt disproves an assumption and the next direction changes one of
+   these boundaries, return to this protocol instead of trying another architecture,
+   trust path, command, or workflow loop autonomously.
+
+This protocol does not require owner confirmation for bounded implementation choices
+whose behavior and authority are already decided. A question or status request never
+weakens existing safe read-only diagnosis.
+
 ## Failure-to-invariant protocol
 
 Apply this protocol before corrective mutation whenever a command, gate, release,
@@ -125,6 +148,26 @@ replace semantic review. No branch or pull/merge review object is created earlie
 After completion, standing consumer policy may automate branch push and review-object
 creation. Provider draft/ready state is non-normative. Automation stops after creating
 the completed candidate; only the configured human owner authorizes merge.
+
+## Authority rotation
+
+When a change replaces a verifier, signing root, release controller, process
+authority, or other self-hosted trust root, split introduction from cutover whenever
+the new immutable identity cannot exist before publication:
+
+1. The currently trusted authority governs specification, verification, semantic
+   review, completion, and publication of the new authority.
+2. Resolve the new authority from an immutable identity that is publicly available to
+   its consumer; never pin a mutable label or an unmerged/unpublished commit.
+3. Prove the new authority on the exact cutover checkpoint before changing live
+   policy or removing the old authority. Preserve an old-or-new recovery route without
+   creating a gap where neither control applies.
+4. Retire the old authority only after the new identity, caller, and enforcement
+   boundary are active and independently reviewed.
+
+Each separately published stage is its own lifecycle change. Provider-specific
+default-branch, check-context, key-store, or artifact mechanics belong to the project
+adapter and must not become portable lifecycle phases.
 
 ## Process improvement
 

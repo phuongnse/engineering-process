@@ -69,12 +69,18 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("gh pr create", candidate)
         self.assertIn("engineering-process-review-required", candidate)
         self.assertIn("consumer-selected reviewer host", candidate)
-        self.assertIn("processctl change review start", approval)
-        self.assertIn("--review-report", approval)
-        self.assertIn("processctl change finish", approval)
-        self.assertIn("publication validate-source", approval)
+        self.assertIn('publicationWorkflow: $publicationWorkflow', candidate)
+        self.assertIn('completionEvidenceEncoding: $completionEvidenceEncoding', candidate)
+        self.assertNotIn("processctl change review start", approval)
+        self.assertNotIn("--review-report", approval)
+        self.assertNotIn("processctl change finish", approval)
+        self.assertIn("completion_evidence_gzip_base64", approval)
+        self.assertIn("verification/decode_completion_evidence.py", approval)
+        self.assertIn("processctl evidence validate", approval)
+        self.assertIn("publication validate-evidence-source", approval)
         self.assertLess(
-            approval.index("processctl change finish"), approval.index("git push origin")
+            approval.index("publication validate-evidence-source"),
+            approval.index("git push origin"),
         )
         self.assertLess(approval.index("git push origin"), approval.index("gh pr create"))
         self.assertNotIn("gh pr ready", approval)
@@ -93,12 +99,18 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("No pending release changes", generator)
         self.assertIn('gh workflow run release-candidate.yml', generator)
         self.assertIn("policy-verification:", ci)
+        self.assertIn(
+            "phuongnse/renovate-ops/.github/workflows/policy-verification.yml@"
+            "ac8ad2a0893bf820e5ffd5aa6d19bda7bc5667d3",
+            ci,
+        )
+        self.assertNotIn("independent-review.yml", ci)
         self.assertNotIn("release-authorization:", ci)
         self.assertIn("python templates/adopt-process.py", ci)
         self.assertIn("--check", ci)
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
-        self.assertIn("host-review.json", approval)
+        self.assertNotIn("host-review.json", approval)
 
     def test_renovate_reserves_process_adoption_for_the_lifecycle_host(self):
         renovate = json.loads(
@@ -138,28 +150,7 @@ class SelfHostingTests(unittest.TestCase):
             renovate["pip-compile"]["managerFilePatterns"],
         )
         self.assertFalse(renovate["pip_requirements"]["enabled"])
-        task = renovate["postUpgradeTasks"]
-        self.assertEqual("branch", task["executionMode"])
-        self.assertEqual(
-            [
-                "python .process/adopt-process.py --project-root . "
-                "--requirements-lock requirements/process.txt"
-            ],
-            task["commands"],
-        )
-        self.assertEqual({"python": {}}, task["installTools"])
-        self.assertTrue(
-            {
-                ".agents/skills/**",
-                ".process/adopt-process.py",
-                ".process/adopt-process-windows-job.py",
-                ".process/adoption-migrations/**",
-                ".process/process.lock",
-                ".process/project.json",
-                "requirements/process.in",
-                "requirements/process.txt",
-            }.issubset(task["fileFilters"])
-        )
+        self.assertNotIn("postUpgradeTasks", renovate)
         ci = (PROCESS_ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )

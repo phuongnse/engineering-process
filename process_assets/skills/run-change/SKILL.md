@@ -36,10 +36,13 @@ semantics shared by every project.
    failure-to-invariant protocol in the required execution reference before any
    corrective mutation. Keep dependent candidates blocked until the owning boundary
    and required proof are explicit.
-5. After a valid finding, preserve the reviewed checkpoint, begin the next
+5. When new evidence exposes a material owner decision or multiple valid boundary
+   choices, apply the owner-decision escalation protocol in the execution reference;
+   do not choose a new scope, authority, architecture, or lifecycle route implicitly.
+6. After a valid finding, preserve the reviewed checkpoint, begin the next
    implementation cycle, resolve the finding, and repeat every invalidated profile
    and independent review.
-6. Report the processctl phase, cycle, current evidence, blockers, and next owner.
+7. Report the processctl phase, cycle, current evidence, blockers, and next owner.
    Never call a task complete from prose alone.
 
 ## Hard gates

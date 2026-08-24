@@ -13,7 +13,9 @@ LIFECYCLE_COMMAND_PATHS = frozenset(
         "change start",
         "change verify",
         "contract validate",
+        "evidence encode-completion",
         "publication validate-range",
+        "publication validate-evidence-source",
         "publication validate-source",
     }
 )

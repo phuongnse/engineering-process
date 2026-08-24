@@ -26,28 +26,6 @@
   "semanticCommits": "enabled",
   "semanticCommitType": "chore",
   "prBodyTemplate": "<!-- engineering-process:pr-description:start -->\n## Summary\nRenovate proposes a normal dependency update. Engineering-process authority adoption is handled by the lifecycle host before source publication.\n\n## Contract and scope\nThe dependency update remains bounded by repository-owned configuration.\n\n## Impact and risk\nThe pull request is not merge-authorized until required project verification completes.\n\n## Verification\nCI proves the project-owned checks for this exact published checkpoint.\n\n## Independent review\nProcess-authority changes cannot enter through this Renovate path.\n\n## Requirements and rules followed\n\n- [ ] **Scope and contract** — accepted scope is implemented without unapproved expansion. [status: pending]\n- [ ] **Verification evidence** — required current profiles pass on the published checkpoint. [status: pending]\n- [ ] **Independent review** — a separate reviewer approved the published checkpoint with no open required finding. [status: pending]\n<!-- engineering-process:pr-description:end -->",
-  "postUpgradeTasks": {
-    "commands": [
-      "python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt"
-    ],
-    "executionMode": "branch",
-    "fileFilters": [
-      ".agents/.gitattributes",
-      ".agents/skills/**",
-      ".github/PULL_REQUEST_TEMPLATE.md",
-      ".process/adopt-process.py",
-      ".process/adopt-process-windows-job.py",
-      ".process/adoption-migrations/**",
-      ".process/process.lock",
-      ".process/project.json",
-      "AGENTS.md",
-      "requirements/process.in",
-      "requirements/process.txt"
-    ],
-    "installTools": {
-      "python": {}
-    }
-  },
   "packageRules": [
     {
       "description": "Reserve engineering-process adoption for the pre-publication lifecycle host",
