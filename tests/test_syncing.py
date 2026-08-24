@@ -31,6 +31,7 @@ from engineering_process.syncing import (
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
 CORE_SKILLS = (
+    "cross-repo-change",
     "define-change-contract",
     "evolve-process",
     "finish-change",

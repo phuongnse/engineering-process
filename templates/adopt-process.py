@@ -23,6 +23,8 @@ MAX_CAPTURE_BYTES = 128_000
 COMMAND_OUTPUT_STREAM_LIMIT = 1_000_000
 COMMAND_OUTPUT_TOTAL_LIMIT = 1_500_000
 READ_CHUNK_BYTES = 64 * 1024
+MAX_STATUS_BYTES = 4096
+MAX_STATUS_ERROR_CHARACTERS = 1024
 MAX_REQUIREMENTS_BYTES = 1_000_000
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 PathIdentity = tuple[int, int, int, int]
@@ -127,6 +129,53 @@ class Capture:
         return value
 
 
+@dataclass(frozen=True)
+class WindowsCleanup:
+    descendants_found: bool = False
+    error: str | None = None
+
+
+def _decode_windows_status(content: bytes) -> WindowsCleanup:
+    if not content or len(content) > MAX_STATUS_BYTES:
+        return WindowsCleanup(error="Windows Job Object status is missing or oversized")
+    try:
+        document = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return WindowsCleanup(error="Windows Job Object status is not valid UTF-8 JSON")
+    if not isinstance(document, dict) or set(document) != {
+        "schemaVersion",
+        "descendantsFound",
+        "cleanupError",
+    }:
+        return WindowsCleanup(error="Windows Job Object status has an unexpected contract")
+    if (
+        type(document["schemaVersion"]) is not int
+        or document["schemaVersion"] != 1
+        or not isinstance(document["descendantsFound"], bool)
+    ):
+        return WindowsCleanup(error="Windows Job Object status fields are invalid")
+    cleanup_error = document["cleanupError"]
+    if cleanup_error is not None and (
+        not isinstance(cleanup_error, str)
+        or not cleanup_error
+        or cleanup_error != cleanup_error.strip()
+        or len(cleanup_error) > MAX_STATUS_ERROR_CHARACTERS
+        or "\x00" in cleanup_error
+    ):
+        return WindowsCleanup(error="Windows Job Object cleanup error is invalid")
+    canonical = (
+        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
+    ).encode("utf-8")
+    if content != canonical:
+        return WindowsCleanup(error="Windows Job Object status is not canonical")
+    if cleanup_error is not None:
+        return WindowsCleanup(
+            descendants_found=document["descendantsFound"],
+            error="Windows Job Object wrapper failed: " + cleanup_error,
+        )
+    return WindowsCleanup(descendants_found=document["descendantsFound"])
+
+
 def _drain(stream: object, capture: Capture) -> None:
     try:
         while chunk := stream.read(READ_CHUNK_BYTES):
@@ -217,7 +266,7 @@ def _terminate_tree(process: subprocess.Popen[bytes]) -> bool:
     return _terminate_posix_group(process.pid)
 
 
-def _windows_wrapped_command(argv: list[str]) -> list[str]:
+def _windows_wrapped_command(argv: list[str], status_handle: int) -> list[str]:
     supplied = Path(argv[0])
     if not supplied.is_absolute() or supplied.suffix.casefold() != ".exe":
         raise RuntimeError("Windows adoption commands require an absolute .exe path")
@@ -232,11 +281,68 @@ def _windows_wrapped_command(argv: list[str]) -> list[str]:
         sys.executable,
         "-I",
         str(helper),
+        "--status-handle",
+        str(status_handle),
         "--application",
         str(application),
         "--",
         *argv,
     ]
+
+
+def _spawn_command(
+    argv: list[str], *, cwd: Path, options: dict[str, object]
+) -> tuple[subprocess.Popen[bytes], int | None]:
+    if os.name != "nt":
+        options["start_new_session"] = True
+        return subprocess.Popen(argv, **options), None
+
+    try:
+        import msvcrt
+
+        read_fd, write_fd = os.pipe()
+        process: subprocess.Popen[bytes] | None = None
+        try:
+            os.set_inheritable(read_fd, False)
+            os.set_inheritable(write_fd, True)
+            status_handle = msvcrt.get_osfhandle(write_fd)
+            startup = subprocess.STARTUPINFO()
+            startup.lpAttributeList = {"handle_list": [status_handle]}
+            command = _windows_wrapped_command(argv, status_handle)
+            options.update(
+                {
+                    "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
+                    "close_fds": True,
+                    "startupinfo": startup,
+                }
+            )
+            process = subprocess.Popen(command, **options)
+        finally:
+            os.close(write_fd)
+            if process is None:
+                os.close(read_fd)
+        return process, read_fd
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"cannot start bounded Windows adoption command: {error}") from error
+
+
+def _read_windows_status(read_fd: int, *, forced: bool) -> WindowsCleanup:
+    content = bytearray()
+    try:
+        while True:
+            chunk = os.read(read_fd, MAX_STATUS_BYTES + 1 - len(content))
+            if not chunk:
+                break
+            content.extend(chunk)
+            if len(content) > MAX_STATUS_BYTES:
+                break
+    except OSError as error:
+        return WindowsCleanup(error=f"Windows Job Object status pipe read failed: {error}")
+    finally:
+        os.close(read_fd)
+    if not content and forced:
+        return WindowsCleanup()
+    return _decode_windows_status(bytes(content))
 
 
 def _child_environment() -> dict[str, str]:
@@ -473,7 +579,6 @@ def _require_unchanged(
 
 
 def _run(argv: list[str], *, cwd: Path) -> str:
-    command = _windows_wrapped_command(argv) if os.name == "nt" else argv
     options: dict[str, object] = {
         "cwd": cwd,
         "env": _child_environment(),
@@ -481,11 +586,7 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
     }
-    if os.name == "nt":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        options["start_new_session"] = True
-    process = subprocess.Popen(command, **options)
+    process, status_reader = _spawn_command(argv, cwd=cwd, options=options)
     stdout = Capture()
     stderr = Capture()
     stdout_thread = threading.Thread(
@@ -496,29 +597,46 @@ def _run(argv: list[str], *, cwd: Path) -> str:
     )
     stdout_thread.start()
     stderr_thread.start()
+    forced = False
     try:
         return_code = process.wait(timeout=COMMAND_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
+        forced = True
         try:
             _terminate_tree(process)
         finally:
             stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
             stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            if status_reader is not None:
+                _read_windows_status(status_reader, forced=True)
+                status_reader = None
         raise RuntimeError(
             f"command timed out after {COMMAND_TIMEOUT_SECONDS} seconds"
         ) from error
     except BaseException:
+        forced = True
         try:
             _terminate_tree(process)
         finally:
             stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
             stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            if status_reader is not None:
+                _read_windows_status(status_reader, forced=True)
+                status_reader = None
         raise
     try:
         descendants_found = _terminate_tree(process)
+        if status_reader is not None:
+            cleanup = _read_windows_status(status_reader, forced=forced)
+            status_reader = None
+            if cleanup.error is not None:
+                raise RuntimeError(cleanup.error)
+            descendants_found = cleanup.descendants_found
     finally:
         stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
         stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+        if status_reader is not None:
+            os.close(status_reader)
     if stdout_thread.is_alive() or stderr_thread.is_alive():
         _terminate_tree(process)
         raise RuntimeError("command output readers did not terminate")

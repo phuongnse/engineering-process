@@ -24,6 +24,8 @@ semantics shared by every project.
    - specified: use plan-change;
    - planned or changes-requested: use implement-change;
    - implementing: use verify-change after a clean immutable checkpoint exists;
+   - improvement-required: use evolve-process and classify before corrective work;
+   - improvement-pending: use cross-repo-change and wait for the required artifact chain;
    - verified: obtain a separate reviewer through review-change;
    - review-pending: wait for the assigned reviewer; do not self-review;
    - approved: use finish-change;
@@ -34,8 +36,9 @@ semantics shared by every project.
    independent review, evidence freshness, or finding closure.
 4. When a command, gate, release, adoption, or external integration fails, apply the
    failure-to-invariant protocol in the required execution reference before any
-   corrective mutation. Keep dependent candidates blocked until the owning boundary
-   and required proof are explicit.
+   corrective mutation. The lifecycle enters `improvement-required`; keep dependent
+   candidates blocked until owner, reusable class, invariant, disposition, and local
+   or federated proof are explicit.
 5. When new evidence exposes a material owner decision or multiple valid boundary
    choices, apply the owner-decision escalation protocol in the execution reference;
    do not choose a new scope, authority, architecture, or lifecycle route implicitly.
@@ -50,6 +53,8 @@ semantics shared by every project.
 - Do not edit implementation before specification, required sign-off, and planning.
 - Do not review work produced by the same actor or context.
 - Do not convert missing, stale, failed, timed-out, or blocked evidence into a pass.
+- Do not continue verification, completion, or publication through
+  `improvement-required` or `improvement-pending`.
 - Do not publish before completion. Standing project policy may authorize automatic
   branch/PR creation after completion; merge always requires the configured human owner.
 - Do not release, deploy, or perform destructive cleanup without the corresponding

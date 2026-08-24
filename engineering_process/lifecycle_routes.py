@@ -11,6 +11,8 @@ INTERNAL_PHASES = frozenset(
         "specified",
         "planned",
         "implementing",
+        "improvement-required",
+        "improvement-pending",
         "verified",
         "review-pending",
         "changes-requested",
@@ -48,9 +50,22 @@ LIFECYCLE_ROUTE_TARGETS = _routes(
         },
         "implementing": {
             "all-required-passed": "verified",
-            "failure": "implementing",
+            "failure": "improvement-required",
             "implementation-continued": "implementing",
             "profile-passed": "implementing",
+        },
+        "improvement-required": {
+            "blocked-classified": "improvement-required",
+            "failure": "improvement-required",
+            "local-classified": "implementing",
+            "review-classified": "changes-requested",
+            "shared-classified": "improvement-pending",
+        },
+        "improvement-pending": {
+            "chain-closed": "implementing",
+            "failure": "improvement-pending",
+            "producer-rejected": "improvement-required",
+            "review-chain-closed": "changes-requested",
         },
         "verified": {
             "failure": "verified",
@@ -59,7 +74,7 @@ LIFECYCLE_ROUTE_TARGETS = _routes(
         },
         "review-pending": {
             "approved": "approved",
-            "changes-requested": "changes-requested",
+            "changes-requested": "improvement-required",
             "failure": "review-pending",
         },
         "changes-requested": {

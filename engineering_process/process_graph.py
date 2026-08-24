@@ -54,9 +54,36 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "commands": ["change implement", "change verify"],
         "transitions": {
             "all-required-passed": "review-change",
-            "failure": "implement-change",
+            "failure": "evolve-process",
             "implementation-continued": "verify-change",
             "profile-passed": "verify-change",
+        },
+    },
+    "improvement-required": {
+        "ownerSkill": "evolve-process",
+        "actor": "automation",
+        "commands": ["improvement classify", "improvement status"],
+        "transitions": {
+            "blocked-classified": "evolve-process",
+            "failure": "evolve-process",
+            "local-classified": "implement-change",
+            "review-classified": "implement-change",
+            "shared-classified": "cross-repo-change",
+        },
+    },
+    "improvement-pending": {
+        "ownerSkill": "cross-repo-change",
+        "actor": "automation",
+        "commands": [
+            "improvement attach",
+            "improvement export-signal",
+            "improvement status",
+        ],
+        "transitions": {
+            "chain-closed": "verify-change",
+            "failure": "cross-repo-change",
+            "producer-rejected": "evolve-process",
+            "review-chain-closed": "implement-change",
         },
     },
     "verified": {
@@ -75,7 +102,7 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "commands": ["change review submit", "contract validate"],
         "transitions": {
             "approved": "finish-change",
-            "changes-requested": "implement-change",
+            "changes-requested": "evolve-process",
             "failure": "review-change",
         },
     },
@@ -102,13 +129,15 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "actor": "automation",
         "commands": [
             "evidence encode-completion",
+            "improvement attach",
+            "improvement status",
             "publication validate-evidence-source",
             "publication validate-proposal-completion",
             "publication validate-range",
             "publication validate-source",
         ],
         "transitions": {
-            "failure": "publish-change",
+            "failure": "evolve-process",
             "published": None,
         },
     },

@@ -115,6 +115,26 @@ base, so a base advance forces a new head and invalidates the old completion che
 The producer capability must be released immutably before a consumer pins and enables
 it; no consumer may depend on the producer working tree.
 
+## Federated process-improvement capability
+
+Improvement signals, dispositions, resolutions, reproductions, and the producer
+catalog are independent schema-1 artifacts. Their introduction is additive schema
+surface, while automatically blocking corrective lifecycle progress until a validated
+failure has an explicit disposition changes lifecycle semantics. Before 1.0 this is a
+breaking package change and therefore requires a minor release plus migration guidance.
+
+Older lifecycle, completion, receipt, verification, and supplemental documents keep
+their released meaning. Improvement references are additive to historical state and
+completion readers; current generation emits them only when a failure or finding has
+created a case. Consumers pinned to older authorities do not gain the new behavior
+until a separately completed adoption pins an immutable release.
+
+Producer completion does not create an improvement resolution. Resolution additionally
+binds the immutable public release, and shared aggregate closure additionally binds a
+consumer reproduction after adoption. A read-only pre-release consumer candidate is
+supplemental compatibility evidence only and cannot be committed as an unreleased
+dependency.
+
 ## Release and adoption boundary
 
 Release, self-adoption, and consumer adoption are separate changes:

@@ -111,6 +111,19 @@ adoption, or external integration produces a validated failure:
    then repeat invalidated verification and independent review on one exact final
    checkpoint. Record the reusable invariant, not just the incident chronology.
 
+### Federated improvement handoff
+
+A governed verification failure or unresolved review finding transitions to
+`improvement-required`, owned by evolve-process. Classify it before corrective work.
+A reviewed project-local case returns to implementation. A shared consumer case
+transitions to `improvement-pending`, exports a bounded untrusted signal, and is owned
+by cross-repo-change until the producer disposition, completed lifecycle and immutable
+release resolution, and exact consumer reproduction all validate.
+
+Signal, disposition, producer completion, pre-release candidate, resolution, and
+reproduction are distinct authority boundaries. Portable core reads and writes local
+artifacts only. Transports preserve exact bytes and cannot mutate either repository.
+
 ## Independent review
 
 Review begins only after all baseline and change-required profiles pass on one clean
@@ -203,4 +216,6 @@ Classify a validated defect or finding as local behavior, reusable process seman
 deterministic enforcement, portability gap, or obsolete guidance. Fix the smallest
 correct owner, add regression proof for deterministic behavior, and remove duplicate
 or superseded rules. Do not memorialize an incident as ceremony without evidence of
-the reusable class.
+the reusable class. Assign producer-canonical invariant ids and consult the versioned
+catalog: a signal for an already resolved invariant is a recurrence and cannot close
+as another non-shared narrow fix without explicit owner-approved exception evidence.

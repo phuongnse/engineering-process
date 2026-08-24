@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/improvement-resolution.schema.json",
+  "title": "Immutable producer process-improvement resolution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "resolvedAt",
+    "signalSha256",
+    "dispositionSha256",
+    "canonicalInvariantId",
+    "producerLifecycle",
+    "release",
+    "regressionEvidence"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-improvement-resolution"},
+    "resolvedAt": {"type": "string", "format": "date-time"},
+    "signalSha256": {"$ref": "#/$defs/digest"},
+    "dispositionSha256": {"$ref": "#/$defs/digest"},
+    "canonicalInvariantId": {"$ref": "#/$defs/id"},
+    "producerLifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "changeId", "checkpoint", "receiptSha256"],
+      "properties": {
+        "project": {"$ref": "#/$defs/name"},
+        "changeId": {"$ref": "#/$defs/id"},
+        "checkpoint": {"$ref": "#/$defs/gitOid"},
+        "receiptSha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "version", "tag", "releaseName", "commit", "artifactSetSha256"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "version": {"$ref": "#/$defs/semver"},
+        "tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$", "maxLength": 65},
+        "releaseName": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$", "maxLength": 65},
+        "commit": {"$ref": "#/$defs/gitOid"},
+        "artifactSetSha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "regressionEvidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/digest"}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
+    "repository": {"type": "string", "minLength": 3, "maxLength": 256, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "gitOid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "semver": {"type": "string", "maxLength": 64, "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"}
+  }
+}

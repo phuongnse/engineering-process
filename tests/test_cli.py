@@ -45,6 +45,43 @@ class CliTests(unittest.TestCase):
                 0,
             )
 
+    def test_routes_portable_federated_improvement_chain(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = main(
+                [
+                    "improvement",
+                    "validate-chain",
+                    "--signal",
+                    str(PROCESS_ROOT / "examples" / "improvement-signal.json"),
+                    "--disposition",
+                    str(
+                        PROCESS_ROOT
+                        / "examples"
+                        / "improvement-disposition.json"
+                    ),
+                    "--resolution",
+                    str(
+                        PROCESS_ROOT / "examples" / "improvement-resolution.json"
+                    ),
+                    "--reproduction",
+                    str(
+                        PROCESS_ROOT
+                        / "examples"
+                        / "improvement-reproduction.json"
+                    ),
+                    "--catalog",
+                    str(PROCESS_ROOT / "examples" / "improvement-catalog.json"),
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(0, result)
+        report = json.loads(output.getvalue())
+        self.assertEqual("closed", report["phase"])
+        self.assertTrue(report["closed"])
+        self.assertIsNone(report["nextOwner"])
+
     def test_only_automation_proposal_body_input_uses_the_new_bound(self):
         stdout = io.StringIO()
         with tempfile.TemporaryDirectory() as directory:
@@ -537,6 +574,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(
                 lock.skills,
                 (
+                    "cross-repo-change",
                     "define-change-contract",
                     "evolve-process",
                     "finish-change",
@@ -564,7 +602,7 @@ class CliTests(unittest.TestCase):
                         "--process-root",
                         str(PROCESS_ROOT),
                         "--bundle",
-                        "cross-repo",
+                        "delivery",
                         "--json",
                     ]
                 )

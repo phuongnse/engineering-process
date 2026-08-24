@@ -86,6 +86,31 @@ AUTOMATION_PROPOSAL_CONTROLS = {
     "workflowChanges": False,
     "writeCapableChecks": False,
 }
+IMPROVEMENT_OWNER_BOUNDARIES = {
+    "missing-product-or-authorization-input",
+    "operations-or-external",
+    "project-local",
+    "shared-process",
+}
+IMPROVEMENT_REUSABLE_CLASSES = {
+    "deterministic-enforcement",
+    "local-behavior",
+    "obsolete-guidance",
+    "portability-gap",
+    "process-rule",
+}
+IMPROVEMENT_TRIGGER_KINDS = {
+    "external-integration",
+    "repeated-friction",
+    "review-finding",
+    "verification-failure",
+}
+IMPROVEMENT_TRIGGER_STATUSES = {
+    "blocked",
+    "changes-requested",
+    "failed",
+    "timed-out",
+}
 
 
 class ContractError(ValueError):
@@ -2061,6 +2086,639 @@ def validate_automation_proposal(
     )
 
 
+def _improvement_id(value: Any, path: str) -> str:
+    identifier = _string(value, path, max_length=64)
+    if PROFILE_PATTERN.fullmatch(identifier) is None:
+        raise ContractError(f"{path}: invalid identifier")
+    return identifier
+
+
+def _improvement_name(value: Any, path: str) -> str:
+    name = _string(value, path, max_length=128)
+    if NAME_PATTERN.fullmatch(name) is None:
+        raise ContractError(f"{path}: invalid project or actor name")
+    return name
+
+
+def _improvement_repository(value: Any, path: str) -> str:
+    repository = _string(value, path, max_length=256)
+    if REPOSITORY_PATTERN.fullmatch(repository) is None:
+        raise ContractError(f"{path}: invalid repository identity")
+    return repository
+
+
+def _improvement_digest(value: Any, path: str) -> str:
+    digest = _string(value, path, max_length=71)
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ContractError(f"{path}: invalid SHA-256 digest")
+    return digest
+
+
+def _improvement_git_oid(value: Any, path: str) -> str:
+    oid = _string(value, path, max_length=64)
+    if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) is None:
+        raise ContractError(f"{path}: invalid Git object id")
+    return oid
+
+
+def _improvement_timestamp(value: Any, path: str) -> str:
+    timestamp = _string(value, path, max_length=64)
+    if re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z",
+        timestamp,
+    ) is None:
+        raise ContractError(f"{path}: must be a UTC RFC 3339 timestamp")
+    return timestamp
+
+
+def _improvement_process(value: Any, path: str) -> dict[str, str]:
+    process = _object(value, path)
+    _exact_keys(process, required={"version", "digest"}, path=path)
+    version = _string(process["version"], f"{path}.version", max_length=64)
+    if SEMVER_PATTERN.fullmatch(version) is None:
+        raise ContractError(f"{path}.version: invalid SemVer")
+    _improvement_digest(process["digest"], f"{path}.digest")
+    return process
+
+
+def _improvement_https_reference(value: Any, path: str) -> None:
+    if value is None:
+        return
+    _https_url(value, path)
+
+
+def _improvement_source(value: Any, path: str) -> dict[str, Any]:
+    source = _object(value, path)
+    _exact_keys(
+        source,
+        required={
+            "project",
+            "repository",
+            "checkpoint",
+            "workspaceFingerprint",
+            "process",
+            "changeId",
+            "cycle",
+        },
+        path=path,
+    )
+    _improvement_name(source["project"], f"{path}.project")
+    _improvement_repository(source["repository"], f"{path}.repository")
+    _improvement_git_oid(source["checkpoint"], f"{path}.checkpoint")
+    _improvement_digest(
+        source["workspaceFingerprint"], f"{path}.workspaceFingerprint"
+    )
+    _improvement_process(source["process"], f"{path}.process")
+    change_id = source["changeId"]
+    cycle = source["cycle"]
+    if change_id is None:
+        if cycle is not None:
+            raise ContractError(f"{path}.cycle: must be null without changeId")
+    else:
+        _improvement_id(change_id, f"{path}.changeId")
+        if (
+            isinstance(cycle, bool)
+            or not isinstance(cycle, int)
+            or cycle < 1
+            or cycle > 1_000_000
+        ):
+            raise ContractError(f"{path}.cycle: invalid lifecycle cycle")
+    return source
+
+
+def _improvement_target(value: Any, path: str) -> dict[str, str]:
+    target = _object(value, path)
+    _exact_keys(target, required={"project", "repository"}, path=path)
+    _improvement_name(target["project"], f"{path}.project")
+    _improvement_repository(target["repository"], f"{path}.repository")
+    return target
+
+
+def _improvement_producer(value: Any, path: str) -> dict[str, Any]:
+    producer = _object(value, path)
+    _exact_keys(
+        producer,
+        required={"project", "repository", "checkpoint", "process"},
+        path=path,
+    )
+    _improvement_name(producer["project"], f"{path}.project")
+    _improvement_repository(producer["repository"], f"{path}.repository")
+    _improvement_git_oid(producer["checkpoint"], f"{path}.checkpoint")
+    _improvement_process(producer["process"], f"{path}.process")
+    return producer
+
+
+def _improvement_owner_boundary(value: Any, path: str) -> str:
+    if value not in IMPROVEMENT_OWNER_BOUNDARIES:
+        raise ContractError(f"{path}: invalid improvement owner boundary")
+    return value
+
+
+def _improvement_reusable_class(value: Any, path: str) -> str:
+    if value not in IMPROVEMENT_REUSABLE_CLASSES:
+        raise ContractError(f"{path}: invalid reusable improvement class")
+    return value
+
+
+def validate_improvement_signal(
+    document: Any, path: str = "improvement signal"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "signalId",
+            "createdAt",
+            "source",
+            "target",
+            "trigger",
+            "claim",
+            "evidence",
+            "controls",
+        },
+        path=path,
+    )
+    if value["schemaVersion"] != 1 or value["kind"] != "engineering-process-improvement-signal":
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    _improvement_id(value["signalId"], f"{path}.signalId")
+    _improvement_timestamp(value["createdAt"], f"{path}.createdAt")
+    _improvement_source(value["source"], f"{path}.source")
+    _improvement_target(value["target"], f"{path}.target")
+
+    trigger = _object(value["trigger"], f"{path}.trigger")
+    _exact_keys(trigger, required={"kind", "status"}, path=f"{path}.trigger")
+    if trigger["kind"] not in IMPROVEMENT_TRIGGER_KINDS:
+        raise ContractError(f"{path}.trigger.kind: invalid trigger kind")
+    if trigger["status"] not in IMPROVEMENT_TRIGGER_STATUSES:
+        raise ContractError(f"{path}.trigger.status: invalid trigger status")
+
+    claim = _object(value["claim"], f"{path}.claim")
+    _exact_keys(
+        claim,
+        required={
+            "ownerBoundary",
+            "reusableClass",
+            "proposedInvariantId",
+            "rationaleSha256",
+            "affectedSurfaces",
+        },
+        path=f"{path}.claim",
+    )
+    _improvement_owner_boundary(
+        claim["ownerBoundary"], f"{path}.claim.ownerBoundary"
+    )
+    _improvement_reusable_class(
+        claim["reusableClass"], f"{path}.claim.reusableClass"
+    )
+    _improvement_id(
+        claim["proposedInvariantId"], f"{path}.claim.proposedInvariantId"
+    )
+    _improvement_digest(
+        claim["rationaleSha256"], f"{path}.claim.rationaleSha256"
+    )
+    surfaces = _string_list(
+        claim["affectedSurfaces"],
+        f"{path}.claim.affectedSurfaces",
+        maximum=64,
+        pattern=PROFILE_PATTERN,
+    )
+    if surfaces != sorted(surfaces):
+        raise ContractError(f"{path}.claim.affectedSurfaces: must be sorted")
+
+    evidence = _object(value["evidence"], f"{path}.evidence")
+    _exact_keys(
+        evidence,
+        required={
+            "kind",
+            "artifactSha256",
+            "artifactBytes",
+            "commandSha256",
+            "diagnosticSha256",
+            "reference",
+        },
+        path=f"{path}.evidence",
+    )
+    if evidence["kind"] not in {
+        "external-event",
+        "review-report",
+        "supplemental-verification",
+        "verification-report",
+    }:
+        raise ContractError(f"{path}.evidence.kind: invalid evidence kind")
+    _improvement_digest(
+        evidence["artifactSha256"], f"{path}.evidence.artifactSha256"
+    )
+    artifact_bytes = evidence["artifactBytes"]
+    if (
+        isinstance(artifact_bytes, bool)
+        or not isinstance(artifact_bytes, int)
+        or artifact_bytes < 1
+        or artifact_bytes > MAX_JSON_BYTES
+    ):
+        raise ContractError(f"{path}.evidence.artifactBytes: invalid byte count")
+    for name in ("commandSha256", "diagnosticSha256"):
+        if evidence[name] is not None:
+            _improvement_digest(evidence[name], f"{path}.evidence.{name}")
+    _improvement_https_reference(evidence["reference"], f"{path}.evidence.reference")
+
+    controls = _object(value["controls"], f"{path}.controls")
+    required_controls = {
+        "rawOutputIncluded": False,
+        "environmentIncluded": False,
+        "secretsIncluded": False,
+        "grantsAuthority": False,
+    }
+    _exact_keys(controls, required=set(required_controls), path=f"{path}.controls")
+    if controls != required_controls:
+        raise ContractError(f"{path}.controls: improvement signals grant no authority and contain no raw sensitive evidence")
+
+
+def validate_improvement_disposition(
+    document: Any, path: str = "improvement disposition"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "createdAt",
+            "signalSha256",
+            "catalogSha256",
+            "catalogStatus",
+            "producer",
+            "decision",
+            "ownerBoundary",
+            "reusableClass",
+            "canonicalInvariantId",
+            "recurrence",
+            "linkedChangeId",
+            "rationaleSha256",
+            "exception",
+            "requiredProof",
+            "controls",
+        },
+        path=path,
+    )
+    if value["schemaVersion"] != 1 or value["kind"] != "engineering-process-improvement-disposition":
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    _improvement_timestamp(value["createdAt"], f"{path}.createdAt")
+    _improvement_digest(value["signalSha256"], f"{path}.signalSha256")
+    _improvement_digest(value["catalogSha256"], f"{path}.catalogSha256")
+    catalog_status = value["catalogStatus"]
+    if catalog_status not in {"absent", "active", "resolved", "retired"}:
+        raise ContractError(f"{path}.catalogStatus: invalid catalog status")
+    _improvement_producer(value["producer"], f"{path}.producer")
+    decision = value["decision"]
+    if decision not in {"accepted", "duplicate", "rejected"}:
+        raise ContractError(f"{path}.decision: invalid disposition")
+    owner_boundary = _improvement_owner_boundary(
+        value["ownerBoundary"], f"{path}.ownerBoundary"
+    )
+    _improvement_reusable_class(value["reusableClass"], f"{path}.reusableClass")
+    _improvement_id(
+        value["canonicalInvariantId"], f"{path}.canonicalInvariantId"
+    )
+    recurrence = value["recurrence"]
+    if recurrence not in {"duplicate", "new", "not-applicable", "recurrence"}:
+        raise ContractError(f"{path}.recurrence: invalid recurrence disposition")
+    expected_catalog_statuses = {
+        "new": {"absent"},
+        "duplicate": {"active"},
+        "recurrence": {"resolved", "retired"},
+        "not-applicable": {"absent", "active", "resolved", "retired"},
+    }[recurrence]
+    if catalog_status not in expected_catalog_statuses:
+        raise ContractError(
+            f"{path}.catalogStatus: contradicts recurrence {recurrence}"
+        )
+    linked_change_id = value["linkedChangeId"]
+    if linked_change_id is not None:
+        _improvement_id(linked_change_id, f"{path}.linkedChangeId")
+    if decision == "accepted" and linked_change_id is None:
+        raise ContractError(f"{path}.linkedChangeId: accepted signals require a producer change")
+    if decision == "rejected" and (
+        linked_change_id is not None or recurrence != "not-applicable"
+    ):
+        raise ContractError(f"{path}: rejected signals cannot link work or recurrence")
+    _improvement_digest(value["rationaleSha256"], f"{path}.rationaleSha256")
+
+    exception = value["exception"]
+    if exception is not None:
+        exception = _object(exception, f"{path}.exception")
+        _exact_keys(
+            exception,
+            required={"approvedBy", "evidenceSha256"},
+            path=f"{path}.exception",
+        )
+        _improvement_name(exception["approvedBy"], f"{path}.exception.approvedBy")
+        _improvement_digest(
+            exception["evidenceSha256"], f"{path}.exception.evidenceSha256"
+        )
+    if recurrence == "recurrence" and owner_boundary != "shared-process" and exception is None:
+        raise ContractError(f"{path}.exception: recurring non-shared disposition requires owner approval")
+
+    proof = _object(value["requiredProof"], f"{path}.requiredProof")
+    _exact_keys(
+        proof,
+        required={"producerLifecycle", "immutableRelease", "consumerReproduction"},
+        path=f"{path}.requiredProof",
+    )
+    if any(not isinstance(proof[name], bool) for name in proof):
+        raise ContractError(f"{path}.requiredProof: proof flags must be boolean")
+    if owner_boundary == "shared-process" and proof != {
+        "producerLifecycle": True,
+        "immutableRelease": True,
+        "consumerReproduction": True,
+    }:
+        raise ContractError(f"{path}.requiredProof: shared process corrections require the complete proof chain")
+    if decision == "rejected" and any(proof.values()):
+        raise ContractError(f"{path}.requiredProof: rejected signals cannot require producer proof")
+
+    controls = _object(value["controls"], f"{path}.controls")
+    required_controls = {
+        "grantsImplementation": False,
+        "grantsMerge": False,
+        "grantsRelease": False,
+        "grantsAdoption": False,
+    }
+    _exact_keys(controls, required=set(required_controls), path=f"{path}.controls")
+    if controls != required_controls:
+        raise ContractError(f"{path}.controls: disposition grants no implementation or delivery authority")
+
+
+def _improvement_release(value: Any, path: str) -> dict[str, Any]:
+    release = _object(value, path)
+    required = {
+        "repository",
+        "version",
+        "tag",
+        "releaseName",
+        "commit",
+        "artifactSetSha256",
+    }
+    _exact_keys(release, required=required, path=path)
+    _improvement_repository(release["repository"], f"{path}.repository")
+    version = _string(release["version"], f"{path}.version", max_length=64)
+    if SEMVER_PATTERN.fullmatch(version) is None:
+        raise ContractError(f"{path}.version: invalid SemVer")
+    expected_identity = f"v{version}"
+    for name in ("tag", "releaseName"):
+        identity = _string(release[name], f"{path}.{name}", max_length=65)
+        if identity != expected_identity:
+            raise ContractError(
+                f"{path}.{name}: must equal the exact release identity {expected_identity}"
+            )
+    _improvement_git_oid(release["commit"], f"{path}.commit")
+    _improvement_digest(
+        release["artifactSetSha256"], f"{path}.artifactSetSha256"
+    )
+    return release
+
+
+def validate_improvement_resolution(
+    document: Any, path: str = "improvement resolution"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "resolvedAt",
+            "signalSha256",
+            "dispositionSha256",
+            "canonicalInvariantId",
+            "producerLifecycle",
+            "release",
+            "regressionEvidence",
+        },
+        path=path,
+    )
+    if value["schemaVersion"] != 1 or value["kind"] != "engineering-process-improvement-resolution":
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    _improvement_timestamp(value["resolvedAt"], f"{path}.resolvedAt")
+    _improvement_digest(value["signalSha256"], f"{path}.signalSha256")
+    _improvement_digest(
+        value["dispositionSha256"], f"{path}.dispositionSha256"
+    )
+    _improvement_id(
+        value["canonicalInvariantId"], f"{path}.canonicalInvariantId"
+    )
+    lifecycle = _object(value["producerLifecycle"], f"{path}.producerLifecycle")
+    _exact_keys(
+        lifecycle,
+        required={"project", "changeId", "checkpoint", "receiptSha256"},
+        path=f"{path}.producerLifecycle",
+    )
+    _improvement_name(lifecycle["project"], f"{path}.producerLifecycle.project")
+    _improvement_id(lifecycle["changeId"], f"{path}.producerLifecycle.changeId")
+    _improvement_git_oid(
+        lifecycle["checkpoint"], f"{path}.producerLifecycle.checkpoint"
+    )
+    _improvement_digest(
+        lifecycle["receiptSha256"], f"{path}.producerLifecycle.receiptSha256"
+    )
+    _improvement_release(value["release"], f"{path}.release")
+    evidence = value["regressionEvidence"]
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 64:
+        raise ContractError(f"{path}.regressionEvidence: must contain 1 to 64 digests")
+    digests = [
+        _improvement_digest(item, f"{path}.regressionEvidence[{index}]")
+        for index, item in enumerate(evidence)
+    ]
+    if digests != sorted(set(digests)):
+        raise ContractError(f"{path}.regressionEvidence: must be sorted and unique")
+
+
+def validate_improvement_reproduction(
+    document: Any, path: str = "improvement reproduction"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "completedAt",
+            "signalSha256",
+            "dispositionSha256",
+            "resolutionSha256",
+            "canonicalInvariantId",
+            "consumer",
+            "release",
+            "evidence",
+        },
+        path=path,
+    )
+    if value["schemaVersion"] != 1 or value["kind"] != "engineering-process-improvement-reproduction":
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    _improvement_timestamp(value["completedAt"], f"{path}.completedAt")
+    for name in ("signalSha256", "dispositionSha256", "resolutionSha256"):
+        _improvement_digest(value[name], f"{path}.{name}")
+    _improvement_id(
+        value["canonicalInvariantId"], f"{path}.canonicalInvariantId"
+    )
+    consumer = _object(value["consumer"], f"{path}.consumer")
+    _exact_keys(
+        consumer,
+        required={
+            "project",
+            "repository",
+            "checkpoint",
+            "workspaceFingerprint",
+            "process",
+        },
+        path=f"{path}.consumer",
+    )
+    _improvement_name(consumer["project"], f"{path}.consumer.project")
+    _improvement_repository(consumer["repository"], f"{path}.consumer.repository")
+    _improvement_git_oid(consumer["checkpoint"], f"{path}.consumer.checkpoint")
+    _improvement_digest(
+        consumer["workspaceFingerprint"], f"{path}.consumer.workspaceFingerprint"
+    )
+    _improvement_process(consumer["process"], f"{path}.consumer.process")
+    _improvement_release(value["release"], f"{path}.release")
+    evidence = _object(value["evidence"], f"{path}.evidence")
+    _exact_keys(
+        evidence,
+        required={
+            "kind",
+            "status",
+            "artifactSha256",
+            "artifactBytes",
+            "changeId",
+            "cycle",
+            "profiles",
+            "reference",
+        },
+        path=f"{path}.evidence",
+    )
+    if evidence["kind"] != "lifecycle-receipt":
+        raise ContractError(
+            f"{path}.evidence.kind: must be lifecycle-receipt"
+        )
+    if evidence["status"] != "passed":
+        raise ContractError(f"{path}.evidence.status: reproduction must pass")
+    _improvement_digest(
+        evidence["artifactSha256"], f"{path}.evidence.artifactSha256"
+    )
+    artifact_bytes = evidence["artifactBytes"]
+    if (
+        isinstance(artifact_bytes, bool)
+        or not isinstance(artifact_bytes, int)
+        or artifact_bytes < 1
+        or artifact_bytes > 8_000_000
+    ):
+        raise ContractError(f"{path}.evidence.artifactBytes: invalid byte count")
+    _improvement_id(evidence["changeId"], f"{path}.evidence.changeId")
+    cycle = evidence["cycle"]
+    if (
+        isinstance(cycle, bool)
+        or not isinstance(cycle, int)
+        or cycle < 1
+        or cycle > 1_000_000
+    ):
+        raise ContractError(f"{path}.evidence.cycle: invalid lifecycle cycle")
+    profiles = _string_list(
+        evidence["profiles"],
+        f"{path}.evidence.profiles",
+        maximum=64,
+        pattern=PROFILE_PATTERN,
+    )
+    if profiles != sorted(profiles):
+        raise ContractError(f"{path}.evidence.profiles: must be sorted")
+    _improvement_https_reference(evidence["reference"], f"{path}.evidence.reference")
+
+
+def validate_improvement_catalog(
+    document: Any, path: str = "improvement catalog"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={"schemaVersion", "kind", "producer", "entries"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1 or value["kind"] != "engineering-process-improvement-catalog":
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    _improvement_target(value["producer"], f"{path}.producer")
+    entries = value["entries"]
+    if not isinstance(entries, list) or len(entries) > 4096:
+        raise ContractError(f"{path}.entries: must contain at most 4096 entries")
+    identifiers: list[str] = []
+    for index, raw_entry in enumerate(entries):
+        entry_path = f"{path}.entries[{index}]"
+        entry = _object(raw_entry, entry_path)
+        _exact_keys(
+            entry,
+            required={
+                "id",
+                "reusableClass",
+                "status",
+                "publicSurfaces",
+                "lastResolution",
+                "activeChangeId",
+            },
+            path=entry_path,
+        )
+        identifiers.append(_improvement_id(entry["id"], f"{entry_path}.id"))
+        _improvement_reusable_class(
+            entry["reusableClass"], f"{entry_path}.reusableClass"
+        )
+        status = entry["status"]
+        if status not in {"active", "resolved", "retired"}:
+            raise ContractError(f"{entry_path}.status: invalid catalog status")
+        surfaces = _string_list(
+            entry["publicSurfaces"],
+            f"{entry_path}.publicSurfaces",
+            maximum=64,
+            pattern=PROFILE_PATTERN,
+        )
+        if surfaces != sorted(surfaces):
+            raise ContractError(f"{entry_path}.publicSurfaces: must be sorted")
+        active_change_id = entry["activeChangeId"]
+        if status == "active":
+            _improvement_id(
+                active_change_id, f"{entry_path}.activeChangeId"
+            )
+        elif active_change_id is not None:
+            raise ContractError(
+                f"{entry_path}.activeChangeId: resolved invariants have no active change"
+            )
+        last_resolution = entry["lastResolution"]
+        if last_resolution is not None:
+            last_resolution = _object(
+                last_resolution, f"{entry_path}.lastResolution"
+            )
+            _exact_keys(
+                last_resolution,
+                required={"changeId", "version"},
+                path=f"{entry_path}.lastResolution",
+            )
+            _improvement_id(
+                last_resolution["changeId"],
+                f"{entry_path}.lastResolution.changeId",
+            )
+            version = _string(
+                last_resolution["version"],
+                f"{entry_path}.lastResolution.version",
+                max_length=64,
+            )
+            if SEMVER_PATTERN.fullmatch(version) is None:
+                raise ContractError(
+                    f"{entry_path}.lastResolution.version: invalid SemVer"
+                )
+        if status in {"resolved", "retired"} and last_resolution is None:
+            raise ContractError(
+                f"{entry_path}.lastResolution: resolved invariants require history"
+            )
+    if identifiers != sorted(set(identifiers)):
+        raise ContractError(f"{path}.entries: must be sorted by id and unique")
+
+
 def validate_change(document: Any, path: str = "change") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -3144,6 +3802,7 @@ def validate_completion(document: Any, path: str = "completion") -> None:
             "verification",
             "review",
         },
+        optional={"improvements"},
         path=path,
     )
     if value["schemaVersion"] != 1:
@@ -3176,3 +3835,41 @@ def validate_completion(document: Any, path: str = "completion") -> None:
         profiles.append(reference["profile"])
     if len(profiles) != len(set(profiles)):
         raise ContractError(f"{path}.verification: duplicate profiles")
+    improvements = value.get("improvements", [])
+    if not isinstance(improvements, list) or len(improvements) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.improvements: must contain at most {MAX_CONTRACT_ITEMS} items"
+        )
+    improvement_ids: list[str] = []
+    for index, raw_case in enumerate(improvements):
+        case_path = f"{path}.improvements[{index}]"
+        case = _object(raw_case, case_path)
+        _exact_keys(
+            case,
+            required={
+                "id",
+                "role",
+                "phase",
+                "invariantId",
+                "signal",
+                "disposition",
+                "resolution",
+                "reproduction",
+            },
+            path=case_path,
+        )
+        improvement_ids.append(_improvement_id(case["id"], f"{case_path}.id"))
+        if case["role"] not in {"consumer", "local", "producer"}:
+            raise ContractError(f"{case_path}.role: invalid improvement role")
+        if case["phase"] not in {"closed", "producer-completed"}:
+            raise ContractError(
+                f"{case_path}.phase: completion contains an unresolved improvement"
+            )
+        _improvement_id(case["invariantId"], f"{case_path}.invariantId")
+        for name in ("signal", "disposition", "resolution", "reproduction"):
+            if case[name] is not None:
+                _artifact_reference(case[name], f"{case_path}.{name}")
+    if improvement_ids != sorted(set(improvement_ids)):
+        raise ContractError(
+            f"{path}.improvements: must be sorted by id and unique"
+        )

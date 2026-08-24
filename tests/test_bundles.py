@@ -18,6 +18,7 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(
             bundles["core"],
             (
+                "cross-repo-change",
                 "define-change-contract",
                 "evolve-process",
                 "finish-change",
@@ -29,7 +30,6 @@ class BundleTests(unittest.TestCase):
                 "verify-change",
             ),
         )
-        self.assertEqual(bundles["cross-repo"], ("cross-repo-change",))
         self.assertEqual(
             bundles["delivery"],
             ("assess-design", "run-project-command"),

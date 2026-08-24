@@ -43,6 +43,13 @@ checkpoint and workspace fingerprint.
 
 ## Execution architecture
 
+Validated failures participate in a federated improvement loop. Consumers export
+bounded, redacted signals to the owning producer without granting authority;
+producer triage, lifecycle completion, immutable release, consumer adoption, and
+consumer reproduction remain separate gates. `processctl improvement status` exposes
+the portable chain and next owner. See
+[PROCESS_IMPROVEMENT.md](PROCESS_IMPROVEMENT.md).
+
 Consumers use one foreground-task contract on every supported platform. The contract
 owns argument-array commands, non-interactive standard input, bounded output, timeout,
 exit status, and descendant cleanup. Platform selection occurs once inside the

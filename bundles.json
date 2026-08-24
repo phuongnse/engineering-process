@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "bundles": {
     "core": [
+      "cross-repo-change",
       "define-change-contract",
       "evolve-process",
       "finish-change",
@@ -37,9 +38,6 @@
     ],
     "docs": [
       "maintain-docs"
-    ],
-    "cross-repo": [
-      "cross-repo-change"
     ]
   }
 }

@@ -39,6 +39,8 @@ class ProcessGraphTests(unittest.TestCase):
         self.assertEqual("plan-change", states["specified"]["ownerSkill"])
         self.assertEqual("implement-change", states["planned"]["ownerSkill"])
         self.assertEqual("verify-change", states["implementing"]["ownerSkill"])
+        self.assertEqual("evolve-process", states["improvement-required"]["ownerSkill"])
+        self.assertEqual("cross-repo-change", states["improvement-pending"]["ownerSkill"])
         self.assertEqual("review-change", states["verified"]["ownerSkill"])
         self.assertEqual("review-change", states["review-pending"]["ownerSkill"])
         self.assertEqual("implement-change", states["changes-requested"]["ownerSkill"])

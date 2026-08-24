@@ -20,6 +20,11 @@ from .contracts import (
     validate_automation_proposal,
     validate_automation_proposal_policy,
     validate_change,
+    validate_improvement_catalog,
+    validate_improvement_disposition,
+    validate_improvement_reproduction,
+    validate_improvement_resolution,
+    validate_improvement_signal,
     validate_plan,
     validate_process_lock,
     validate_project,
@@ -48,8 +53,19 @@ from .evidence_transport import (
     encode_completion_evidence,
 )
 from .impact import plan_profile
+from .improvement import (
+    attach_improvement_chain,
+    create_improvement_disposition,
+    create_improvement_reproduction,
+    create_improvement_resolution,
+    export_improvement_signal,
+    ingest_improvement_signal,
+    observe_improvement_signal,
+    validate_improvement_chain,
+)
 from .lifecycle import (
     begin_implementation,
+    classify_improvement_case,
     finish_change,
     lifecycle_environment_issues,
     lifecycle_status,
@@ -257,6 +273,11 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "automation-proposal": validate_automation_proposal,
         "automation-proposal-policy": validate_automation_proposal_policy,
         "change": validate_change,
+        "improvement-catalog": validate_improvement_catalog,
+        "improvement-disposition": validate_improvement_disposition,
+        "improvement-reproduction": validate_improvement_reproduction,
+        "improvement-resolution": validate_improvement_resolution,
+        "improvement-signal": validate_improvement_signal,
         "plan": validate_plan,
         "release": validate_release,
         "release-change": validate_release_change,
@@ -271,6 +292,201 @@ def command_contract_validate(args: argparse.Namespace) -> int:
             path=str(args.path),
         ),
     )
+    return 0
+
+
+def command_improvement_validate_chain(args: argparse.Namespace) -> int:
+    result = validate_improvement_chain(
+        args.signal,
+        args.disposition,
+        args.resolution,
+        args.reproduction,
+        args.catalog,
+    )
+    _emit(args, _result("improvement validate-chain", **result))
+    return 0
+
+
+def command_improvement_status(args: argparse.Namespace) -> int:
+    result = validate_improvement_chain(
+        args.signal,
+        args.disposition,
+        args.resolution,
+        args.reproduction,
+        args.catalog,
+    )
+    _emit(args, _result("improvement status", **result))
+    return 0
+
+
+def command_improvement_classify(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    state = classify_improvement_case(
+        args.project_root,
+        args.change_id,
+        args.case_id,
+        owner_boundary=args.owner_boundary,
+        reusable_class=args.reusable_class,
+        invariant_id=args.invariant_id,
+        disposition=args.disposition,
+        rationale_sha256=args.rationale_sha256,
+        target_project=args.target_project,
+        target_repository=args.target_repository,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    case = next(
+        item for item in state["improvements"] if item["id"] == args.case_id
+    )
+    _emit(
+        args,
+        _change_result(
+            "improvement classify",
+            state,
+            caseId=case["id"],
+            improvementPhase=case["phase"],
+            invariantId=case["classification"]["invariantId"],
+        ),
+    )
+    return 0
+
+
+def command_improvement_export_signal(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = export_improvement_signal(
+        args.project_root,
+        args.change_id,
+        args.case_id,
+        source_repository=args.source_repository,
+        affected_surfaces=args.affected_surface,
+        reference=args.reference,
+        output=args.output,
+        actor_id=args.actor,
+        context_id=args.context,
+        actor_kind=args.actor_kind,
+    )
+    _emit(args, _result("improvement export-signal", **result))
+    return 0
+
+
+def command_improvement_observe(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = observe_improvement_signal(
+        args.project_root,
+        signal_id=args.signal_id,
+        source_repository=args.source_repository,
+        target_project=args.target_project,
+        target_repository=args.target_repository,
+        trigger_kind=args.trigger_kind,
+        trigger_status=args.trigger_status,
+        owner_boundary=args.owner_boundary,
+        reusable_class=args.reusable_class,
+        invariant_id=args.invariant_id,
+        rationale_sha256=args.rationale_sha256,
+        affected_surfaces=args.affected_surface,
+        evidence_kind=args.evidence_kind,
+        evidence_path=args.evidence,
+        reference=args.reference,
+        change_id=args.change_id,
+        cycle=args.cycle,
+        output=args.output,
+    )
+    _emit(args, _result("improvement observe", **result))
+    return 0
+
+
+def command_improvement_disposition(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = create_improvement_disposition(
+        args.project_root,
+        args.signal,
+        args.catalog,
+        producer_repository=args.producer_repository,
+        decision=args.decision,
+        owner_boundary=args.owner_boundary,
+        reusable_class=args.reusable_class,
+        invariant_id=args.invariant_id,
+        linked_change_id=args.linked_change_id,
+        rationale_sha256=args.rationale_sha256,
+        exception_approved_by=args.exception_approved_by,
+        exception_evidence_sha256=args.exception_evidence_sha256,
+        output=args.output,
+    )
+    _emit(args, _result("improvement disposition", **result))
+    return 0
+
+
+def command_improvement_resolution(args: argparse.Namespace) -> int:
+    result = create_improvement_resolution(
+        args.project_root,
+        args.signal,
+        args.disposition,
+        args.lifecycle_receipt,
+        args.release_contract,
+        args.release_receipt,
+        args.release_authorization,
+        args.artifact_root,
+        args.artifact_attestation,
+        release_repository=args.release_repository,
+        release_tag=args.release_tag,
+        release_name=args.release_name,
+        release_commit=args.release_commit,
+        regression_evidence=args.regression_evidence,
+        output=args.output,
+    )
+    _emit(args, _result("improvement resolution", **result))
+    return 0
+
+
+def command_improvement_reproduction(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = create_improvement_reproduction(
+        args.project_root,
+        args.signal,
+        args.disposition,
+        args.resolution,
+        args.consumer_receipt,
+        consumer_repository=args.consumer_repository,
+        reference=args.reference,
+        output=args.output,
+    )
+    _emit(args, _result("improvement reproduction", **result))
+    return 0
+
+
+def command_improvement_attach(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = attach_improvement_chain(
+        args.project_root,
+        args.change_id,
+        args.case_id,
+        signal_path=args.signal,
+        disposition_path=args.disposition,
+        resolution_path=args.resolution,
+        reproduction_path=args.reproduction,
+        catalog_path=args.catalog,
+        actor_id=args.actor,
+        context_id=args.context,
+        actor_kind=args.actor_kind,
+    )
+    _emit(args, _result("improvement attach", **result))
+    return 0
+
+
+def command_improvement_ingest(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = ingest_improvement_signal(
+        args.project_root,
+        args.change_id,
+        signal_path=args.signal,
+        disposition_path=args.disposition,
+        catalog_path=args.catalog,
+        actor_id=args.actor,
+        context_id=args.context,
+        actor_kind=args.actor_kind,
+    )
+    _emit(args, _result("improvement ingest", **result))
     return 0
 
 
@@ -1252,6 +1468,11 @@ def build_parser() -> argparse.ArgumentParser:
             "automation-proposal",
             "automation-proposal-policy",
             "change",
+            "improvement-catalog",
+            "improvement-disposition",
+            "improvement-reproduction",
+            "improvement-resolution",
+            "improvement-signal",
             "plan",
             "release",
             "release-change",
@@ -1643,6 +1864,280 @@ def build_parser() -> argparse.ArgumentParser:
     publication_artifacts.set_defaults(
         handler=command_publication_validate_artifacts
     )
+
+    improvement = commands.add_parser(
+        "improvement",
+        help="Validate and govern federated process-improvement artifacts",
+    )
+    improvement_commands = improvement.add_subparsers(
+        dest="improvement_command", required=True
+    )
+    for name, handler, help_text in (
+        (
+            "validate-chain",
+            command_improvement_validate_chain,
+            "Validate an immutable signal, disposition, resolution, and reproduction chain",
+        ),
+        (
+            "status",
+            command_improvement_status,
+            "Report the current portable improvement-chain phase and next owner",
+        ),
+    ):
+        chain = improvement_commands.add_parser(name, help=help_text)
+        chain.add_argument("--signal", type=Path, required=True)
+        chain.add_argument("--disposition", type=Path)
+        chain.add_argument("--resolution", type=Path)
+        chain.add_argument("--reproduction", type=Path)
+        chain.add_argument("--catalog", type=Path)
+        _add_json(chain)
+        chain.set_defaults(handler=handler)
+
+    improvement_classify = improvement_commands.add_parser(
+        "classify",
+        help="Classify one observed lifecycle failure before corrective work continues",
+    )
+    _add_lifecycle_common(improvement_classify)
+    _add_actor(improvement_classify)
+    improvement_classify.add_argument("--change-id", required=True)
+    improvement_classify.add_argument("--case-id", required=True)
+    improvement_classify.add_argument(
+        "--owner-boundary",
+        choices=(
+            "missing-product-or-authorization-input",
+            "operations-or-external",
+            "project-local",
+            "shared-process",
+        ),
+        required=True,
+    )
+    improvement_classify.add_argument(
+        "--reusable-class",
+        choices=(
+            "deterministic-enforcement",
+            "local-behavior",
+            "obsolete-guidance",
+            "portability-gap",
+            "process-rule",
+        ),
+        required=True,
+    )
+    improvement_classify.add_argument("--invariant-id", required=True)
+    improvement_classify.add_argument(
+        "--disposition",
+        choices=(
+            "external-recovery",
+            "input-required",
+            "local-fix",
+            "producer-improvement",
+            "shared-escalation",
+        ),
+        required=True,
+    )
+    improvement_classify.add_argument("--rationale-sha256", required=True)
+    improvement_classify.add_argument("--target-project")
+    improvement_classify.add_argument("--target-repository")
+    improvement_classify.set_defaults(handler=command_improvement_classify)
+
+    improvement_observe = improvement_commands.add_parser(
+        "observe",
+        help="Export a bounded external or supplemental failure as an untrusted signal",
+    )
+    _add_lifecycle_common(improvement_observe)
+    improvement_observe.add_argument("--signal-id", required=True)
+    improvement_observe.add_argument("--source-repository", required=True)
+    improvement_observe.add_argument("--target-project", required=True)
+    improvement_observe.add_argument("--target-repository", required=True)
+    improvement_observe.add_argument(
+        "--trigger-kind",
+        choices=(
+            "external-integration",
+            "repeated-friction",
+            "review-finding",
+            "verification-failure",
+        ),
+        required=True,
+    )
+    improvement_observe.add_argument(
+        "--trigger-status",
+        choices=("blocked", "changes-requested", "failed", "timed-out"),
+        required=True,
+    )
+    improvement_observe.add_argument(
+        "--owner-boundary",
+        choices=(
+            "missing-product-or-authorization-input",
+            "operations-or-external",
+            "project-local",
+            "shared-process",
+        ),
+        required=True,
+    )
+    improvement_observe.add_argument(
+        "--reusable-class",
+        choices=(
+            "deterministic-enforcement",
+            "local-behavior",
+            "obsolete-guidance",
+            "portability-gap",
+            "process-rule",
+        ),
+        required=True,
+    )
+    improvement_observe.add_argument("--invariant-id", required=True)
+    improvement_observe.add_argument("--rationale-sha256", required=True)
+    improvement_observe.add_argument(
+        "--affected-surface", action="append", required=True
+    )
+    improvement_observe.add_argument(
+        "--evidence-kind",
+        choices=(
+            "external-event",
+            "review-report",
+            "supplemental-verification",
+            "verification-report",
+        ),
+        required=True,
+    )
+    improvement_observe.add_argument("--evidence", type=Path, required=True)
+    improvement_observe.add_argument("--reference")
+    improvement_observe.add_argument("--change-id")
+    improvement_observe.add_argument("--cycle", type=int)
+    improvement_observe.add_argument("--output", type=Path, required=True)
+    improvement_observe.set_defaults(handler=command_improvement_observe)
+
+    improvement_export = improvement_commands.add_parser(
+        "export-signal",
+        help="Export one classified shared consumer case as an untrusted portable signal",
+    )
+    _add_lifecycle_common(improvement_export)
+    _add_actor(improvement_export)
+    improvement_export.add_argument("--change-id", required=True)
+    improvement_export.add_argument("--case-id", required=True)
+    improvement_export.add_argument("--source-repository", required=True)
+    improvement_export.add_argument(
+        "--affected-surface",
+        action="append",
+        required=True,
+    )
+    improvement_export.add_argument("--reference")
+    improvement_export.add_argument("--output", type=Path, required=True)
+    improvement_export.set_defaults(handler=command_improvement_export_signal)
+
+    improvement_disposition = improvement_commands.add_parser(
+        "disposition",
+        help="Create a producer-owned triage artifact for one untrusted signal",
+    )
+    _add_lifecycle_common(improvement_disposition)
+    improvement_disposition.add_argument("--signal", type=Path, required=True)
+    improvement_disposition.add_argument("--catalog", type=Path, required=True)
+    improvement_disposition.add_argument("--producer-repository", required=True)
+    improvement_disposition.add_argument(
+        "--decision",
+        choices=("accepted", "duplicate", "rejected"),
+        required=True,
+    )
+    improvement_disposition.add_argument(
+        "--owner-boundary",
+        choices=(
+            "missing-product-or-authorization-input",
+            "operations-or-external",
+            "project-local",
+            "shared-process",
+        ),
+        required=True,
+    )
+    improvement_disposition.add_argument(
+        "--reusable-class",
+        choices=(
+            "deterministic-enforcement",
+            "local-behavior",
+            "obsolete-guidance",
+            "portability-gap",
+            "process-rule",
+        ),
+        required=True,
+    )
+    improvement_disposition.add_argument("--invariant-id", required=True)
+    improvement_disposition.add_argument("--linked-change-id")
+    improvement_disposition.add_argument("--rationale-sha256", required=True)
+    improvement_disposition.add_argument("--exception-approved-by")
+    improvement_disposition.add_argument("--exception-evidence-sha256")
+    improvement_disposition.add_argument("--output", type=Path, required=True)
+    improvement_disposition.set_defaults(handler=command_improvement_disposition)
+
+    improvement_resolution = improvement_commands.add_parser(
+        "resolution",
+        help="Bind producer completion and an immutable release to an accepted signal",
+    )
+    _add_project_root(improvement_resolution)
+    improvement_resolution.add_argument("--signal", type=Path, required=True)
+    improvement_resolution.add_argument("--disposition", type=Path, required=True)
+    improvement_resolution.add_argument(
+        "--lifecycle-receipt", type=Path, required=True
+    )
+    improvement_resolution.add_argument("--release-contract", type=Path, required=True)
+    improvement_resolution.add_argument("--release-receipt", type=Path)
+    improvement_resolution.add_argument("--release-authorization", type=Path)
+    improvement_resolution.add_argument("--release-repository", required=True)
+    improvement_resolution.add_argument("--release-tag", required=True)
+    improvement_resolution.add_argument("--release-name", required=True)
+    improvement_resolution.add_argument("--release-commit", required=True)
+    improvement_resolution.add_argument("--artifact-root", type=_root, required=True)
+    improvement_resolution.add_argument(
+        "--artifact-attestation", type=Path, required=True
+    )
+    improvement_resolution.add_argument(
+        "--regression-evidence", action="append", required=True
+    )
+    improvement_resolution.add_argument("--output", type=Path, required=True)
+    _add_json(improvement_resolution)
+    improvement_resolution.set_defaults(handler=command_improvement_resolution)
+
+    improvement_reproduction = improvement_commands.add_parser(
+        "reproduction",
+        help="Bind a released producer correction to passing consumer evidence",
+    )
+    _add_lifecycle_common(improvement_reproduction)
+    improvement_reproduction.add_argument("--signal", type=Path, required=True)
+    improvement_reproduction.add_argument(
+        "--disposition", type=Path, required=True
+    )
+    improvement_reproduction.add_argument("--resolution", type=Path, required=True)
+    improvement_reproduction.add_argument(
+        "--consumer-receipt", type=Path, required=True
+    )
+    improvement_reproduction.add_argument("--consumer-repository", required=True)
+    improvement_reproduction.add_argument("--reference")
+    improvement_reproduction.add_argument("--output", type=Path, required=True)
+    improvement_reproduction.set_defaults(handler=command_improvement_reproduction)
+
+    improvement_attach = improvement_commands.add_parser(
+        "attach",
+        help="Bind a validated producer chain to one consumer improvement case",
+    )
+    _add_lifecycle_common(improvement_attach)
+    _add_actor(improvement_attach)
+    improvement_attach.add_argument("--change-id", required=True)
+    improvement_attach.add_argument("--case-id", required=True)
+    improvement_attach.add_argument("--signal", type=Path, required=True)
+    improvement_attach.add_argument("--disposition", type=Path)
+    improvement_attach.add_argument("--resolution", type=Path)
+    improvement_attach.add_argument("--reproduction", type=Path)
+    improvement_attach.add_argument("--catalog", type=Path)
+    improvement_attach.set_defaults(handler=command_improvement_attach)
+
+    improvement_ingest = improvement_commands.add_parser(
+        "ingest",
+        help="Register an accepted external signal in its linked producer lifecycle",
+    )
+    _add_lifecycle_common(improvement_ingest)
+    _add_actor(improvement_ingest)
+    improvement_ingest.add_argument("--change-id", required=True)
+    improvement_ingest.add_argument("--signal", type=Path, required=True)
+    improvement_ingest.add_argument("--disposition", type=Path, required=True)
+    improvement_ingest.add_argument("--catalog", type=Path, required=True)
+    improvement_ingest.set_defaults(handler=command_improvement_ingest)
 
     change = commands.add_parser("change", help="Run the canonical change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)

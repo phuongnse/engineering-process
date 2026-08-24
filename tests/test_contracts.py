@@ -11,6 +11,11 @@ from engineering_process.contracts import (
     validate_automation_proposal,
     validate_automation_proposal_policy,
     validate_change,
+    validate_improvement_catalog,
+    validate_improvement_disposition,
+    validate_improvement_reproduction,
+    validate_improvement_resolution,
+    validate_improvement_signal,
     validate_plan,
     validate_process_lock,
     validate_project,
@@ -64,6 +69,53 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_improvement_contracts_validate_packaged_examples(self):
+        validators = {
+            "improvement-catalog": validate_improvement_catalog,
+            "improvement-disposition": validate_improvement_disposition,
+            "improvement-reproduction": validate_improvement_reproduction,
+            "improvement-resolution": validate_improvement_resolution,
+            "improvement-signal": validate_improvement_signal,
+        }
+        for name, validator in validators.items():
+            with self.subTest(name=name):
+                document = json.loads(
+                    (PROCESS_ROOT / "examples" / f"{name}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                validator(document)
+
+    def test_improvement_signal_rejects_authority_and_raw_evidence(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "improvement-signal.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["controls"]["grantsAuthority"] = True
+        with self.assertRaisesRegex(ContractError, "grant no authority"):
+            validate_improvement_signal(document)
+
+        document["controls"]["grantsAuthority"] = False
+        document["controls"]["rawOutputIncluded"] = True
+        with self.assertRaisesRegex(ContractError, "raw sensitive evidence"):
+            validate_improvement_signal(document)
+
+    def test_recurring_non_shared_disposition_requires_owner_exception(self):
+        document = json.loads(
+            (
+                PROCESS_ROOT / "examples" / "improvement-disposition.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["ownerBoundary"] = "project-local"
+        document["requiredProof"] = {
+            "producerLifecycle": False,
+            "immutableRelease": False,
+            "consumerReproduction": False,
+        }
+        with self.assertRaisesRegex(ContractError, "requires owner approval"):
+            validate_improvement_disposition(document)
 
     def test_automation_proposal_requires_exact_safe_controls_and_policy_digest(self):
         document = json.loads(

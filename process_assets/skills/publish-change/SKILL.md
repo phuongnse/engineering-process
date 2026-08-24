@@ -20,6 +20,9 @@ without duplicating implementation, verification, or review.
    a different machine, require a validated external completion receipt and use
    `processctl publication validate-evidence-source`; do not recreate or resubmit the
    semantic review in the publication adapter.
+   Also require improvement status to contain no unresolved consumer case; producer
+   completion may publish source but cannot claim immutable improvement resolution
+   until the separately authorized release exists.
 3. Populate the managed review-object sections with project-specific facts. Run
    `processctl publication validate-source` with the change id and exact completion
    commit, then validate branch and commit range. Provider draft/ready status is
@@ -46,6 +49,8 @@ without duplicating implementation, verification, or review.
 
 - Never infer authorization to commit, push, open, merge, release, or deploy.
 - Do not publish source with stale evidence or unresolved required findings.
+- Do not publish through `improvement-required` or `improvement-pending`, and do not
+  represent producer completion as release resolution or consumer reproduction.
 - Do not create an authoritative review object for a merely planned, implementing,
   verified, review-pending, changes-requested, or approved lifecycle. The only
   pre-completion exception is an explicitly opted-in, policy-validated, untrusted

@@ -470,6 +470,8 @@ class SelfHostingTests(unittest.TestCase):
         marker = "# Managed by engineering-process; do not edit.\n"
         self.assertTrue(template.read_text(encoding="utf-8").startswith(marker))
         self.assertTrue(managed.read_text(encoding="utf-8").startswith(marker))
+        self.assertNotIn('"--status-handle"', managed.read_text(encoding="utf-8"))
+        self.assertIn('"--status-handle"', template.read_text(encoding="utf-8"))
         self.assertTrue(
             managed_windows_helper.read_text(encoding="utf-8").startswith(marker)
         )
@@ -483,6 +485,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('"process_assets/skills/', pyproject)
         self.assertNotIn('".agents/skills/', pyproject)
         self.assertIn('"VERSIONING.md"', pyproject)
+        self.assertIn('"PROCESS_IMPROVEMENT.md"', pyproject)
+        self.assertIn('"improvement-catalog.json"', pyproject)
         self.assertIn('"templates/adopt-process.py"', pyproject)
         self.assertIn('"templates/adopt-process-windows-job.py"', pyproject)
         self.assertIn(
@@ -490,6 +494,9 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIn(
             '"schemas/supplemental-verification.schema.json"', pyproject
+        )
+        self.assertIn(
+            '"schemas/improvement-signal.schema.json"', pyproject
         )
         self.assertTrue(
             (PROCESS_ROOT / "engineering_process" / "_windows_job.py")

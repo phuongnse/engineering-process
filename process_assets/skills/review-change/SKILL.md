@@ -41,6 +41,10 @@ specific checkpoint without changing the reviewed source.
    Also treat an implementation that silently selected an unresolved project-owner
    decision about scope, authority, trust boundary, compatibility, rollout, or
    lifecycle order as completion-blocking, even when its tests pass.
+   Confirm every observed failure and carried finding has the correct improvement
+   owner, reusable class, invariant id, disposition, recurrence state, and required
+   local or federated proof. A repeated resolved invariant closed as another narrow
+   incident, or a shared case without signal-chain ownership, is required.
 5. Request changes when any required finding remains open or deferred. Approve only
    when required outcomes and evidence are complete for the reviewed checkpoint.
 6. Validate the report with processctl contract validate --kind review, then submit
@@ -56,6 +60,8 @@ specific checkpoint without changing the reviewed source.
 - Do not approve stale, indirect, missing, or blocked evidence.
 - Do not treat review prose as more authoritative than project contracts.
 - A reviewer must not intentionally mutate the checkpoint under review.
+- Do not approve an unclassified improvement case or an artifact chain whose next
+  owner contradicts the owning contract.
 - Static lint, policy, secret, pin, configuration, or CI checks are supplemental
   verification and cannot issue a semantic review verdict.
 - The reviewer actor id and context id must both be independent from every

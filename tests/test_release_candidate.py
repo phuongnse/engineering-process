@@ -14,10 +14,60 @@ from engineering_process.contracts import (
 )
 from engineering_process.publication import validate_pull_request
 from engineering_process.release_candidate import (
+    _resolved_improvement_catalog,
     prepare_release_candidate,
     render_release_pull_request,
 )
 class ReleaseCandidateTests(unittest.TestCase):
+    def test_generated_release_closes_only_catalog_entries_in_its_change_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = {
+                "schemaVersion": 1,
+                "kind": "engineering-process-improvement-catalog",
+                "producer": {
+                    "project": "sample",
+                    "repository": "example/sample",
+                },
+                "entries": [
+                    {
+                        "id": "first-invariant",
+                        "reusableClass": "deterministic-enforcement",
+                        "status": "active",
+                        "publicSurfaces": ["lifecycle"],
+                        "lastResolution": None,
+                        "activeChangeId": "included-change",
+                    },
+                    {
+                        "id": "second-invariant",
+                        "reusableClass": "portability-gap",
+                        "status": "active",
+                        "publicSurfaces": ["verification"],
+                        "lastResolution": None,
+                        "activeChangeId": "later-change",
+                    },
+                ],
+            }
+            (root / "improvement-catalog.json").write_text(
+                json.dumps(catalog) + "\n", encoding="utf-8"
+            )
+
+            result = _resolved_improvement_catalog(
+                root, change_ids={"included-change"}, version="0.2.0"
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            _path, content = result
+            updated = json.loads(content)
+            self.assertEqual("resolved", updated["entries"][0]["status"])
+            self.assertEqual(
+                {"changeId": "included-change", "version": "0.2.0"},
+                updated["entries"][0]["lastResolution"],
+            )
+            self.assertIsNone(updated["entries"][0]["activeChangeId"])
+            self.assertEqual("active", updated["entries"][1]["status"])
+
     def initialize_project(self, root: Path) -> None:
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(

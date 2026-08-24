@@ -30,6 +30,30 @@ def load_runner():
 
 
 class AdoptionRunnerTests(unittest.TestCase):
+    def test_windows_status_protocol_is_canonical_and_typed(self):
+        runner = load_runner()
+        clean = runner._decode_windows_status(
+            b'{"cleanupError":null,"descendantsFound":true,"schemaVersion":1}\n'
+        )
+        malformed = (
+            b'{"cleanupError":null,"descendantsFound":false,'
+            b'"schemaVersion":true}\n'
+        )
+
+        self.assertTrue(clean.descendants_found)
+        self.assertIsNone(clean.error)
+        self.assertIn("fields are invalid", runner._decode_windows_status(malformed).error)
+        self.assertIn("missing or oversized", runner._decode_windows_status(b"").error)
+
+    def test_windows_wrapper_command_requires_private_status_handle(self):
+        source = (
+            PROCESS_ROOT / "templates" / "adopt-process.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"--status-handle"', source)
+        self.assertIn('startup.lpAttributeList = {"handle_list": [status_handle]}', source)
+        self.assertIn("_read_windows_status", source)
+
     def test_bootstrap_classifier_matches_shared_policy_and_fails_exit_zero(self):
         runner = load_runner()
         cases = (

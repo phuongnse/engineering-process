@@ -12,6 +12,7 @@ from unittest.mock import patch
 from engineering_process.contracts import ContractError
 from engineering_process.git import portable_git_path
 from engineering_process.distribution_verify import (
+    REQUIRED_SUFFIXES,
     _tracked_paths,
     _validate_archive_members,
     _validate_archives,
@@ -89,19 +90,7 @@ class DistributionVerificationTests(unittest.TestCase):
 
     def test_archive_contract_requires_release_and_production_assets(self):
         wheel = Path("engineering_process-0.1.1-py3-none-any.whl")
-        members = [
-            "engineering_process-0.1.1.data/data/share/engineering-process/PRODUCTION_STANDARD.md",
-            "engineering_process/requirements-release.txt",
-            "engineering_process-0.1.1.data/data/share/engineering-process/release.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/adoption-migration.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/automation-proposal-policy.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/automation-proposal.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/change.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/evidence-receipt.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release-change.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/release.schema.json",
-            "engineering_process-0.1.1.data/data/share/engineering-process/schemas/supplemental-verification.schema.json",
-        ]
+        members = sorted(REQUIRED_SUFFIXES)
 
         _validate_archive_members(wheel, members)
 
@@ -114,19 +103,7 @@ class DistributionVerificationTests(unittest.TestCase):
             _validate_archive_members(wheel, [".process/runs/change/state.json"])
 
     def test_archive_contract_rejects_windows_hostile_member_names(self):
-        required = [
-            "PRODUCTION_STANDARD.md",
-            "engineering_process/requirements-release.txt",
-            "release.json",
-            "schemas/adoption-migration.schema.json",
-            "schemas/automation-proposal-policy.schema.json",
-            "schemas/automation-proposal.schema.json",
-            "schemas/change.schema.json",
-            "schemas/evidence-receipt.schema.json",
-            "schemas/release-change.schema.json",
-            "schemas/release.schema.json",
-            "schemas/supplemental-verification.schema.json",
-        ]
+        required = sorted(REQUIRED_SUFFIXES)
         cases = (
             (
                 Path("engineering_process-0.1.1-py3-none-any.whl"),
@@ -158,19 +135,7 @@ class DistributionVerificationTests(unittest.TestCase):
     def test_wheel_expansion_and_duplicate_names_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "engineering_process-0.1.1-py3-none-any.whl"
-            required = [
-                "PRODUCTION_STANDARD.md",
-                "engineering_process/requirements-release.txt",
-                "release.json",
-                "schemas/adoption-migration.schema.json",
-                "schemas/automation-proposal-policy.schema.json",
-                "schemas/automation-proposal.schema.json",
-                "schemas/change.schema.json",
-                "schemas/evidence-receipt.schema.json",
-                "schemas/release-change.schema.json",
-                "schemas/release.schema.json",
-                "schemas/supplemental-verification.schema.json",
-            ]
+            required = sorted(REQUIRED_SUFFIXES)
             with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 for name in required:
                     archive.writestr(name, b"ok")

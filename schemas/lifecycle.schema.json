@@ -31,6 +31,8 @@
         "specified",
         "planned",
         "implementing",
+        "improvement-required",
+        "improvement-pending",
         "verified",
         "review-pending",
         "changes-requested",
@@ -49,7 +51,12 @@
     "reviewAssignment": {"type": ["object", "null"]},
     "review": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
     "completion": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
-    "history": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+    "history": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "improvements": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/improvementCase"}
+    }
   },
   "$defs": {
     "actor": {
@@ -117,6 +124,50 @@
           }
         }
       ]
+    },
+    "improvementCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "trigger",
+        "phase",
+        "sourceCycle",
+        "findingId",
+        "evidence",
+        "classification",
+        "signal",
+        "disposition",
+        "resolution",
+        "reproduction"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", "maxLength": 64},
+        "role": {"enum": ["consumer", "local", "producer"]},
+        "trigger": {"enum": ["external-integration", "repeated-friction", "review-finding", "verification-failure"]},
+        "phase": {
+          "enum": [
+            "classification-required",
+            "input-required",
+            "local-resolution-required",
+            "producer-change",
+            "producer-completed",
+            "producer-disposition-required",
+            "producer-resolution-required",
+            "consumer-reproduction-required",
+            "closed"
+          ]
+        },
+        "sourceCycle": {"type": "integer", "minimum": 1},
+        "findingId": {"type": ["string", "null"]},
+        "evidence": {"$ref": "#/$defs/artifact"},
+        "classification": {"type": ["object", "null"]},
+        "signal": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "disposition": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "resolution": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "reproduction": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      }
     }
   }
 }

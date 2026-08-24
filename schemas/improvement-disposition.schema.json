@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/improvement-disposition.schema.json",
+  "title": "Producer process-improvement signal disposition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "createdAt",
+    "signalSha256",
+    "catalogSha256",
+    "catalogStatus",
+    "producer",
+    "decision",
+    "ownerBoundary",
+    "reusableClass",
+    "canonicalInvariantId",
+    "recurrence",
+    "linkedChangeId",
+    "rationaleSha256",
+    "exception",
+    "requiredProof",
+    "controls"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-improvement-disposition"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "signalSha256": {"$ref": "#/$defs/digest"},
+    "catalogSha256": {"$ref": "#/$defs/digest"},
+    "catalogStatus": {"enum": ["absent", "active", "resolved", "retired"]},
+    "producer": {"$ref": "#/$defs/producer"},
+    "decision": {"enum": ["accepted", "duplicate", "rejected"]},
+    "ownerBoundary": {"$ref": "#/$defs/ownerBoundary"},
+    "reusableClass": {"$ref": "#/$defs/reusableClass"},
+    "canonicalInvariantId": {"$ref": "#/$defs/id"},
+    "recurrence": {"enum": ["duplicate", "new", "not-applicable", "recurrence"]},
+    "linkedChangeId": {
+      "anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+    },
+    "rationaleSha256": {"$ref": "#/$defs/digest"},
+    "exception": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["approvedBy", "evidenceSha256"],
+          "properties": {
+            "approvedBy": {"$ref": "#/$defs/name"},
+            "evidenceSha256": {"$ref": "#/$defs/digest"}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
+    "requiredProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "producerLifecycle",
+        "immutableRelease",
+        "consumerReproduction"
+      ],
+      "properties": {
+        "producerLifecycle": {"type": "boolean"},
+        "immutableRelease": {"type": "boolean"},
+        "consumerReproduction": {"type": "boolean"}
+      }
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grantsImplementation", "grantsMerge", "grantsRelease", "grantsAdoption"],
+      "properties": {
+        "grantsImplementation": {"const": false},
+        "grantsMerge": {"const": false},
+        "grantsRelease": {"const": false},
+        "grantsAdoption": {"const": false}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"decision": {"const": "accepted"}}},
+      "then": {"properties": {"linkedChangeId": {"type": "string"}}}
+    },
+    {
+      "if": {"properties": {"recurrence": {"const": "new"}}},
+      "then": {"properties": {"catalogStatus": {"const": "absent"}}}
+    },
+    {
+      "if": {"properties": {"recurrence": {"const": "duplicate"}}},
+      "then": {"properties": {"catalogStatus": {"const": "active"}}}
+    },
+    {
+      "if": {"properties": {"recurrence": {"const": "recurrence"}}},
+      "then": {"properties": {"catalogStatus": {"enum": ["resolved", "retired"]}}}
+    },
+    {
+      "if": {"properties": {"decision": {"const": "rejected"}}},
+      "then": {
+        "properties": {
+          "linkedChangeId": {"type": "null"},
+          "recurrence": {"const": "not-applicable"},
+          "requiredProof": {
+            "properties": {
+              "producerLifecycle": {"const": false},
+              "immutableRelease": {"const": false},
+              "consumerReproduction": {"const": false}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"ownerBoundary": {"const": "shared-process"}}},
+      "then": {
+        "properties": {
+          "requiredProof": {
+            "properties": {
+              "producerLifecycle": {"const": true},
+              "immutableRelease": {"const": true},
+              "consumerReproduction": {"const": true}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "recurrence": {"const": "recurrence"},
+          "ownerBoundary": {"not": {"const": "shared-process"}}
+        }
+      },
+      "then": {"properties": {"exception": {"type": "object"}}}
+    }
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
+    "repository": {"type": "string", "minLength": 3, "maxLength": 256, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "gitOid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "semver": {"type": "string", "maxLength": 64, "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"},
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {"version": {"$ref": "#/$defs/semver"}, "digest": {"$ref": "#/$defs/digest"}}
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "repository", "checkpoint", "process"],
+      "properties": {
+        "project": {"$ref": "#/$defs/name"},
+        "repository": {"$ref": "#/$defs/repository"},
+        "checkpoint": {"$ref": "#/$defs/gitOid"},
+        "process": {"$ref": "#/$defs/process"}
+      }
+    },
+    "ownerBoundary": {"enum": ["missing-product-or-authorization-input", "operations-or-external", "project-local", "shared-process"]},
+    "reusableClass": {"enum": ["deterministic-enforcement", "local-behavior", "obsolete-guidance", "portability-gap", "process-rule"]}
+  }
+}

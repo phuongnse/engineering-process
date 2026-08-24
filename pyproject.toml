@@ -43,7 +43,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 engineering_process = ["requirements-*.txt"]
 
 [tool.setuptools.data-files]
-"share/engineering-process" = ["bundles.json", "process-graph.json", "release.json", "PRODUCTION_STANDARD.md", "VERSIONING.md"]
+"share/engineering-process" = ["bundles.json", "improvement-catalog.json", "process-graph.json", "release.json", "PRODUCTION_STANDARD.md", "PROCESS_IMPROVEMENT.md", "VERSIONING.md"]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
@@ -56,6 +56,11 @@ engineering_process = ["requirements-*.txt"]
   "schemas/automation-proposal.schema.json",
   "schemas/change.schema.json",
   "schemas/evidence-receipt.schema.json",
+  "schemas/improvement-catalog.schema.json",
+  "schemas/improvement-disposition.schema.json",
+  "schemas/improvement-reproduction.schema.json",
+  "schemas/improvement-resolution.schema.json",
+  "schemas/improvement-signal.schema.json",
   "schemas/lifecycle.schema.json",
   "schemas/plan.schema.json",
   "schemas/process-graph.schema.json",
@@ -73,6 +78,11 @@ engineering_process = ["requirements-*.txt"]
   "examples/automation-proposal-policy.json",
   "examples/automation-proposal.json",
   "examples/change.json",
+  "examples/improvement-catalog.json",
+  "examples/improvement-disposition.json",
+  "examples/improvement-reproduction.json",
+  "examples/improvement-resolution.json",
+  "examples/improvement-signal.json",
   "examples/plan.json",
   "examples/project.json",
   "examples/release.json",

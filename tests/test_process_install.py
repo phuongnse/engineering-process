@@ -319,24 +319,26 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
             input_error=False,
             cleanup_error="status unavailable",
         )
-        with tempfile.TemporaryDirectory() as directory, patch.object(
-            installer.os, "name", "nt"
-        ):
-            with patch.object(
-                installer, "run_bounded_process", return_value=normal
-            ):
-                attempt = installer._run_attempt(
-                    [r"C:\Python\python.exe"], Path(directory), {}
-                )
+        with tempfile.TemporaryDirectory() as directory:
+            working_directory = Path(directory)
             with (
-                patch.object(
-                    installer, "run_bounded_process", return_value=failed
-                ),
-                self.assertRaisesRegex(InstallError, "status unavailable"),
+                patch.object(installer.os, "name", "nt"),
             ):
-                installer._run_attempt(
-                    [r"C:\Python\python.exe"], Path(directory), {}
-                )
+                with patch.object(
+                    installer, "run_bounded_process", return_value=normal
+                ):
+                    attempt = installer._run_attempt(
+                        [r"C:\Python\python.exe"], working_directory, {}
+                    )
+                with (
+                    patch.object(
+                        installer, "run_bounded_process", return_value=failed
+                    ),
+                    self.assertRaisesRegex(InstallError, "status unavailable"),
+                ):
+                    installer._run_attempt(
+                        [r"C:\Python\python.exe"], working_directory, {}
+                    )
 
         self.assertEqual(125, attempt.returncode)
         self.assertFalse(attempt.descendants_terminated)

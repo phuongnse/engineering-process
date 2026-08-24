@@ -32,14 +32,21 @@ MAX_ARCHIVE_COMPRESSION_RATIO = 200
 SNAPSHOT_TIMEOUT_SECONDS = 30.0
 FORBIDDEN_PARTS = {".agents", ".process", "__pycache__", "build", "dist"}
 REQUIRED_SUFFIXES = {
+    "PROCESS_IMPROVEMENT.md",
     "PRODUCTION_STANDARD.md",
     "engineering_process/requirements-release.txt",
     "release.json",
+    "improvement-catalog.json",
     "schemas/adoption-migration.schema.json",
     "schemas/automation-proposal-policy.schema.json",
     "schemas/automation-proposal.schema.json",
     "schemas/change.schema.json",
     "schemas/evidence-receipt.schema.json",
+    "schemas/improvement-catalog.schema.json",
+    "schemas/improvement-disposition.schema.json",
+    "schemas/improvement-reproduction.schema.json",
+    "schemas/improvement-resolution.schema.json",
+    "schemas/improvement-signal.schema.json",
     "schemas/release-change.schema.json",
     "schemas/release.schema.json",
     "schemas/supplemental-verification.schema.json",

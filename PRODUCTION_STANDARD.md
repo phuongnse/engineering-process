@@ -80,6 +80,14 @@ authorization input. Dependent candidates stay blocked. Shared defects are corre
 in the producer rather than wrapped or duplicated by consumers; project behavior
 remains project-owned unless a portable class is proven.
 
+Every governed verification failure and unresolved review finding has a structured
+improvement disposition before corrective progress. A shared consumer case exports a
+bounded untrusted signal and remains incomplete until a producer disposition,
+completed-lifecycle and immutable-release resolution, and exact consumer reproduction
+all validate. A failure assigned to an already resolved catalog invariant is a
+recurrence and requires producer-owned process evolution or an explicit owner-approved
+exception. See `PROCESS_IMPROVEMENT.md`.
+
 Every correction proves valid behavior and the corresponding fail-closed class at the
 lowest reliable owner boundary. Shared corrections additionally require producer
 profiles and reproduction at affected consumer boundaries before release. A transient

@@ -24,11 +24,18 @@ from engineering_process.evidence import (
     validate_receipt,
     validate_bootstrap_authorization,
 )
+from engineering_process.improvement import (
+    create_improvement_disposition,
+    export_improvement_signal,
+    ingest_improvement_signal,
+)
 from engineering_process.lifecycle import (
     _change_lock,
     begin_implementation,
+    classify_improvement_case,
     finish_change,
     load_state,
+    lifecycle_status,
     register_plan,
     start_change,
     start_review,
@@ -631,6 +638,253 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(
                 ["working-tree-dirty"], rejected[-1]["eligibilityIssues"]
             )
+            self.assertEqual(1, len(state["improvements"]))
+            case = state["improvements"][0]
+            self.assertEqual("classification-required", case["phase"])
+            with self.assertRaisesRegex(
+                ContractError, "improvement-required"
+            ):
+                verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    "development",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            state = classify_improvement_case(
+                root,
+                "change-1",
+                case["id"],
+                owner_boundary="project-local",
+                reusable_class="local-behavior",
+                invariant_id="clean-verification-checkpoint",
+                disposition="local-fix",
+                rationale_sha256=f"sha256:{'a' * 64}",
+                target_project=None,
+                target_repository=None,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.assertEqual(
+                "local-resolution-required", state["improvements"][0]["phase"]
+            )
+
+    def test_shared_failure_exports_untrusted_signal_and_blocks_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            state = start_change(
+                root,
+                self.project(),
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                self.project(),
+                "change-1",
+                plan_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            begin_implementation(
+                root,
+                "change-1",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            real_run_profile = lifecycle_module.run_profile
+
+            def failed_report(*args, **kwargs):
+                report = real_run_profile(*args, **kwargs)
+                report["status"] = "failed"
+                report["checks"][0]["status"] = "failed"
+                report["checks"][0]["exitCode"] = 7
+                return report
+
+            with (
+                mock.patch.object(
+                    lifecycle_module,
+                    "run_profile",
+                    side_effect=failed_report,
+                ),
+                self.assertRaisesRegex(ContractError, "profile-status-not-passed"),
+            ):
+                verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    "development",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            state = load_state(root, "change-1")
+            case = state["improvements"][0]
+            classify_improvement_case(
+                root,
+                "change-1",
+                case["id"],
+                owner_boundary="shared-process",
+                reusable_class="deterministic-enforcement",
+                invariant_id="shared-verification-boundary",
+                disposition="shared-escalation",
+                rationale_sha256=f"sha256:{'d' * 64}",
+                target_project="engineering-process",
+                target_repository="example/engineering-process",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            signal_path = inputs / "signal.json"
+            result = export_improvement_signal(
+                root,
+                "change-1",
+                case["id"],
+                source_repository="example/sample-project",
+                affected_surfaces=["verification"],
+                reference=None,
+                output=signal_path,
+                actor_id="worker",
+                context_id="worker-context",
+                actor_kind="agent",
+            )
+            signal = json.loads(signal_path.read_text(encoding="utf-8"))
+
+            self.assertEqual("producer-disposition-required", result["phase"])
+            self.assertEqual(False, signal["controls"]["rawOutputIncluded"])
+            self.assertNotIn("command", signal["evidence"])
+            with self.assertRaisesRegex(
+                ContractError, "improvement-pending"
+            ):
+                verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    "development",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            status = lifecycle_status(root, "change-1")
+            self.assertEqual(1, status["improvementStatus"]["openCount"])
+            self.assertEqual(
+                "engineering-process",
+                status["improvementStatus"]["blockers"][0]["nextOwner"],
+            )
+
+    def test_producer_ingests_only_disposition_linked_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "producer"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            (root / ".process" / "project.json").write_text(
+                '{"project":"sample-project"}\n', encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "add", ".process/project.json"], cwd=root, check=True
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "add project manifest"],
+                cwd=root,
+                check=True,
+            )
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            state = start_change(
+                root,
+                self.project(),
+                contract_path,
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                self.project(),
+                "change-1",
+                plan_path,
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            signal = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "examples"
+                    / "improvement-signal.json"
+                ).read_text(encoding="utf-8")
+            )
+            signal["target"] = {
+                "project": "sample-project",
+                "repository": "example/producer",
+            }
+            signal_path = inputs / "signal.json"
+            signal_path.write_text(json.dumps(signal) + "\n", encoding="utf-8")
+            catalog = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "examples"
+                    / "improvement-catalog.json"
+                ).read_text(encoding="utf-8")
+            )
+            catalog["producer"] = signal["target"]
+            catalog_path = inputs / "catalog.json"
+            catalog_path.write_text(json.dumps(catalog) + "\n", encoding="utf-8")
+            disposition_path = inputs / "disposition.json"
+            create_improvement_disposition(
+                root,
+                signal_path,
+                catalog_path,
+                producer_repository="example/producer",
+                decision="accepted",
+                owner_boundary="shared-process",
+                reusable_class="deterministic-enforcement",
+                invariant_id="single-windows-helper-protocol",
+                linked_change_id="change-1",
+                rationale_sha256=f"sha256:{'e' * 64}",
+                exception_approved_by=None,
+                exception_evidence_sha256=None,
+                output=disposition_path,
+            )
+            result = ingest_improvement_signal(
+                root,
+                "change-1",
+                signal_path=signal_path,
+                disposition_path=disposition_path,
+                catalog_path=catalog_path,
+                actor_id="producer",
+                context_id="producer-context",
+                actor_kind="agent",
+            )
+
+            self.assertEqual("producer-change", result["casePhase"])
+            state = load_state(root, "change-1")
+            self.assertEqual("producer", state["improvements"][0]["role"])
+            self.assertEqual(
+                "single-windows-helper-protocol",
+                state["improvements"][0]["classification"]["invariantId"],
+            )
 
     def test_verification_eligibility_reason_mapping_is_complete(self):
         passing = {
@@ -737,7 +991,33 @@ class LifecycleTests(unittest.TestCase):
                 encoding="utf-8",
             )
             state = submit_review(root, "change-1", report_path)
-            self.assertEqual(state["phase"], "changes-requested")
+            self.assertEqual(state["phase"], "improvement-required")
+            case = state["improvements"][0]
+            with self.assertRaisesRegex(
+                ContractError, "before improvement classification"
+            ):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    actor_id="implementer",
+                    context_id="fix-context",
+                    kind="agent",
+                )
+            classify_improvement_case(
+                root,
+                "change-1",
+                case["id"],
+                owner_boundary="project-local",
+                reusable_class="local-behavior",
+                invariant_id="reviewed-behavior-complete",
+                disposition="local-fix",
+                rationale_sha256=f"sha256:{'b' * 64}",
+                target_project=None,
+                target_repository=None,
+                actor_id="implementer",
+                context_id="fix-context",
+                kind="agent",
+            )
             state = begin_implementation(
                 root,
                 "change-1",
@@ -983,6 +1263,22 @@ class LifecycleTests(unittest.TestCase):
                 encoding="utf-8",
             )
             submit_review(root, "change-1", report_path)
+            state = load_state(root, "change-1")
+            classify_improvement_case(
+                root,
+                "change-1",
+                state["improvements"][0]["id"],
+                owner_boundary="project-local",
+                reusable_class="local-behavior",
+                invariant_id="legacy-finding-preservation",
+                disposition="local-fix",
+                rationale_sha256=f"sha256:{'c' * 64}",
+                target_project=None,
+                target_repository=None,
+                actor_id="implementer",
+                context_id="fix-context",
+                kind="agent",
+            )
             begin_implementation(
                 root,
                 "change-1",
@@ -994,6 +1290,7 @@ class LifecycleTests(unittest.TestCase):
             legacy = json.loads(state_path.read_text(encoding="utf-8"))
             legacy["schemaVersion"] = 1
             del legacy["pendingFindings"]
+            del legacy["improvements"]
             legacy["phase"] = "approved"
             state_path.write_text(json.dumps(legacy), encoding="utf-8")
 
