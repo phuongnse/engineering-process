@@ -33,6 +33,17 @@
       "activeChangeId": "federated-process-improvement"
     },
     {
+      "id": "producer-improvement-route-completeness",
+      "reusableClass": "deterministic-enforcement",
+      "status": "active",
+      "publicSurfaces": [
+        "catalog",
+        "lifecycle"
+      ],
+      "lastResolution": null,
+      "activeChangeId": "federated-process-improvement"
+    },
+    {
       "id": "single-windows-helper-protocol",
       "reusableClass": "deterministic-enforcement",
       "status": "active",

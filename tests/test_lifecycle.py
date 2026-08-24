@@ -1223,6 +1223,21 @@ class LifecycleTests(unittest.TestCase):
                 cwd=root,
                 check=True,
             )
+            open_status = lifecycle_status(root, "change-1")["improvementStatus"][
+                "cases"
+            ][0]
+            self.assertEqual("active", open_status["catalog"]["status"])
+            self.assertEqual("change-1", open_status["catalog"]["activeChangeId"])
+            self.assertEqual("new", open_status["recurrence"])
+            self.assertEqual("sample-project", open_status["producer"]["project"])
+            self.assertEqual(
+                "example/sample-project", open_status["producer"]["repository"]
+            )
+            self.assertEqual(
+                "change-1", open_status["producer"]["linkedChangeId"]
+            )
+            self.assertIn("catalog", open_status["artifacts"])
+            self.assertNotIn("path", open_status["artifacts"]["catalog"])
             for profile in ("development", "review"):
                 state, _report = verify_change(
                     root,
@@ -1278,6 +1293,18 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("local", completion["improvements"][0]["role"])
             self.assertIsNone(
                 completion["improvements"][0]["signalCanonicalSha256"]
+            )
+            self.assertEqual(
+                canonical_json_digest(catalog),
+                completion["improvements"][0]["catalogCanonicalSha256"],
+            )
+            closed_lifecycle_status = lifecycle_status(root, "change-1")
+            self.assertEqual([], closed_lifecycle_status["issues"])
+            closed_status = closed_lifecycle_status["improvementStatus"]["cases"][0]
+            self.assertTrue(closed_status["closed"])
+            self.assertEqual("active", closed_status["catalog"]["status"])
+            self.assertEqual(
+                "change-1", closed_status["producer"]["linkedChangeId"]
             )
 
     def test_producer_ingests_only_disposition_linked_signal(self):

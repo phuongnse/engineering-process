@@ -724,17 +724,35 @@ def _case_artifact_canonical_digest(
     return canonical_json_digest(document)
 
 
+def _is_self_discovered_producer_case(case: dict[str, Any]) -> bool:
+    classification = case["classification"]
+    return (
+        case["role"] == "local"
+        and classification is not None
+        and classification["disposition"] == "producer-improvement"
+    )
+
+
+def _case_catalog_canonical_digest(
+    project_root: Path,
+    case: dict[str, Any],
+) -> str | None:
+    digest = _case_artifact_canonical_digest(project_root, case, "catalog")
+    if digest is not None or not _is_self_discovered_producer_case(case):
+        return digest
+    catalog_path = project_root / "improvement-catalog.json"
+    document = read_json(catalog_path)
+    validate_improvement_catalog(document, str(catalog_path))
+    return canonical_json_digest(document)
+
+
 def _require_producer_catalog_activation(
     project_root: Path,
     state: dict[str, Any],
     case: dict[str, Any],
 ) -> None:
     classification = case["classification"]
-    self_discovered = (
-        case["role"] == "local"
-        and classification is not None
-        and classification["disposition"] == "producer-improvement"
-    )
+    self_discovered = _is_self_discovered_producer_case(case)
     if case["role"] != "producer" and not self_discovered:
         return
     disposition_reference = case["disposition"]
@@ -840,6 +858,8 @@ def _improvement_case_status(
 ) -> dict[str, Any]:
     from .improvement import _stable_json_document, validate_improvement_chain
 
+    classification = case["classification"]
+    self_discovered = _is_self_discovered_producer_case(case)
     artifact_names = (
         "evidence",
         "signal",
@@ -869,6 +889,23 @@ def _improvement_case_status(
             "sourceSha256": reference["digest"],
             "canonicalSha256": canonical_json_digest(document),
         }
+    if self_discovered and "catalog" not in documents:
+        catalog_path = project_root / "improvement-catalog.json"
+        if catalog_path.is_symlink():
+            raise ContractError(
+                "self-discovered producer catalog must not be a symlink"
+            )
+        if catalog_path.is_file():
+            document, data = _stable_json_document(
+                catalog_path,
+                label=f"improvement case {case['id']} producer catalog",
+            )
+            validate_improvement_catalog(document, str(catalog_path))
+            documents["catalog"] = document
+            artifacts["catalog"] = {
+                "sourceSha256": _digest_bytes(data),
+                "canonicalSha256": canonical_json_digest(document),
+            }
 
     chain: dict[str, Any] | None = None
     if "signal" in paths:
@@ -902,7 +939,6 @@ def _improvement_case_status(
                 f"improvement case {case['id']} phase contradicts its artifact chain"
             )
 
-    classification = case["classification"]
     signal = documents.get("signal")
     catalog = documents.get("catalog")
     disposition = documents.get("disposition")
@@ -938,6 +974,8 @@ def _improvement_case_status(
         if disposition is not None
         else signal["target"]
         if signal is not None
+        else catalog["producer"]
+        if self_discovered and catalog is not None
         else classification["target"]
         if classification is not None
         else None
@@ -950,7 +988,11 @@ def _improvement_case_status(
             "checkpoint": producer_target.get("checkpoint"),
             "process": producer_target.get("process"),
             "linkedChangeId": (
-                disposition["linkedChangeId"] if disposition is not None else None
+                disposition["linkedChangeId"]
+                if disposition is not None
+                else state["changeId"]
+                if self_discovered
+                else None
             ),
         }
     consumer_source = (
@@ -974,7 +1016,20 @@ def _improvement_case_status(
         if disposition is not None
         else catalog_entry["status"]
         if catalog_entry is not None
+        else "missing"
+        if self_discovered
         else None
+    )
+    recurrence = (
+        disposition["recurrence"]
+        if disposition is not None
+        else "new"
+        if self_discovered
+        and catalog_entry is not None
+        and catalog_entry["lastResolution"] is None
+        else "recurrence"
+        if self_discovered and catalog_entry is not None
+        else "unassessed"
     )
     return {
         "id": case["id"],
@@ -997,9 +1052,7 @@ def _improvement_case_status(
             if classification is not None
             else None
         ),
-        "recurrence": (
-            disposition["recurrence"] if disposition is not None else "unassessed"
-        ),
+        "recurrence": recurrence,
         "catalog": {
             "status": catalog_status,
             "canonicalSha256": (
@@ -1318,10 +1371,18 @@ def _verify_change_unlocked(
     _write_atomic(report_path, report)
     eligibility_issues = _verification_eligibility_issues(report)
     if eligibility_issues:
-        evidence_reference = {
-            "path": _relative(project_root, report_path),
-            "digest": _digest_file(report_path),
-        }
+        report_digest = _digest_file(report_path)
+        evidence_reference = _copy_document(
+            project_root,
+            report_path,
+            _run_root(project_root, change_id)
+            / "improvements"
+            / "evidence"
+            / (
+                f"verification-cycle-{state['cycle']}-{profile}-"
+                f"{report_digest.removeprefix('sha256:')[:16]}.json"
+            ),
+        )
         case = _observe_improvement_case(
             state,
             trigger="verification-failure",
@@ -1338,7 +1399,7 @@ def _verify_change_unlocked(
             cycle=state["cycle"],
             profile=profile,
             report=_relative(project_root, report_path),
-            reportDigest=_digest_file(report_path),
+            reportDigest=report_digest,
             eligibilityIssues=eligibility_issues,
             improvementCase=case["id"],
         )
@@ -1664,8 +1725,8 @@ def _finish_change_unlocked(
                 "signalCanonicalSha256": _case_artifact_canonical_digest(
                     project_root, case, "signal"
                 ),
-                "catalogCanonicalSha256": _case_artifact_canonical_digest(
-                    project_root, case, "catalog"
+                "catalogCanonicalSha256": _case_catalog_canonical_digest(
+                    project_root, case
                 ),
                 "dispositionCanonicalSha256": _case_artifact_canonical_digest(
                     project_root, case, "disposition"
