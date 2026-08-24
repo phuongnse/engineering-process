@@ -138,7 +138,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_every_bootstrap_managed_text_writer_is_explicit_utf8_lf(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             manifest = self.write_manifest(root)
             managed_paths = {
                 root / ".process" / "project.json",
