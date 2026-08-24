@@ -6,7 +6,7 @@
     "command-execution",
     "verification"
   ],
-  "rationale": "Propagate typed Windows descendant-cleanup results through a private bounded helper channel and make the producer test command independent of inherited Git line-ending conversion policy.",
+  "rationale": "Propagate typed Windows descendant-cleanup results through a private bounded helper channel, route the public-action installer through the same supervisor, and make the producer test command independent of inherited Git line-ending conversion policy.",
   "schemaImpact": "unchanged",
   "migration": null
 }

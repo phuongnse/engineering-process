@@ -44,6 +44,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("uses: ./", install_block)
         self.assertIn("requirements-lock: requirements/process.txt", install_block)
         self.assertNotIn("python verification/install_process_runtime.py", ci)
+        installer = (
+            PROCESS_ROOT / "verification" / "install_process_runtime.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("run_bounded_process", installer)
+        self.assertNotIn("def _windows_wrapped_command", installer)
+        self.assertNotIn('"--status-handle"', installer)
 
     def test_release_candidate_is_reviewed_before_pr_publication(self):
         candidate = (

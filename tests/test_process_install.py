@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from engineering_process.bounded_process import BoundedProcessResult
 from verification import install_process_runtime as installer
 from verification.install_process_runtime import (
     Attempt,
@@ -258,6 +259,87 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
                 elapsed = installer.time.monotonic() - started
             self.assertTrue(attempt.timed_out)
             self.assertLess(elapsed, 3.0)
+
+    def test_windows_runner_maps_the_shared_bounded_result_exactly(self):
+        result = BoundedProcessResult(
+            returncode=7,
+            stdout=b"stdout",
+            stderr=b"stderr",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=True,
+            input_error=False,
+            cleanup_error=None,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            working_directory = Path(directory)
+            with (
+                patch.object(installer.os, "name", "nt"),
+                patch.object(
+                    installer, "run_bounded_process", return_value=result
+                ) as bounded,
+            ):
+                attempt = installer._run_attempt(
+                    [r"C:\Python\python.exe", "-m", "pip"],
+                    working_directory,
+                    {"PATH": r"C:\Python"},
+                )
+
+        self.assertEqual(7, attempt.returncode)
+        self.assertEqual(b"stdout", attempt.stdout)
+        self.assertEqual(b"stderr", attempt.stderr)
+        self.assertTrue(attempt.descendants_terminated)
+        bounded.assert_called_once_with(
+            [r"C:\Python\python.exe", "-m", "pip"],
+            working_directory=working_directory,
+            environment={"PATH": r"C:\Python"},
+            timeout_seconds=installer.ATTEMPT_TIMEOUT_SECONDS,
+            max_stream_bytes=installer.MAX_OUTPUT_BYTES,
+            max_total_bytes=installer.MAX_OUTPUT_BYTES,
+        )
+
+    def test_windows_runner_preserves_normal_exit_125_and_fails_on_cleanup(self):
+        normal = BoundedProcessResult(
+            returncode=125,
+            stdout=b"",
+            stderr=b"",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=False,
+            input_error=False,
+            cleanup_error=None,
+        )
+        failed = BoundedProcessResult(
+            returncode=None,
+            stdout=b"",
+            stderr=b"",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=False,
+            input_error=False,
+            cleanup_error="status unavailable",
+        )
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            installer.os, "name", "nt"
+        ):
+            with patch.object(
+                installer, "run_bounded_process", return_value=normal
+            ):
+                attempt = installer._run_attempt(
+                    [r"C:\Python\python.exe"], Path(directory), {}
+                )
+            with (
+                patch.object(
+                    installer, "run_bounded_process", return_value=failed
+                ),
+                self.assertRaisesRegex(InstallError, "status unavailable"),
+            ):
+                installer._run_attempt(
+                    [r"C:\Python\python.exe"], Path(directory), {}
+                )
+
+        self.assertEqual(125, attempt.returncode)
+        self.assertFalse(attempt.descendants_terminated)
 
     @unittest.skipIf(os.name == "nt", "Windows descendants are covered by Job Object tests")
     def test_real_runner_terminates_descendants_left_by_successful_root(self):
