@@ -341,6 +341,86 @@ class ProcessRuntimeInstallTests(unittest.TestCase):
         self.assertEqual(125, attempt.returncode)
         self.assertFalse(attempt.descendants_terminated)
 
+    def test_windows_runner_maps_timeout_and_output_overflow(self):
+        scenarios = (
+            (True, False),
+            (False, True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            working_directory = Path(directory)
+            for timed_out, output_exceeded in scenarios:
+                with self.subTest(
+                    timed_out=timed_out, output_exceeded=output_exceeded
+                ):
+                    result = BoundedProcessResult(
+                        returncode=-1,
+                        stdout=b"bounded stdout",
+                        stderr=b"bounded stderr",
+                        timed_out=timed_out,
+                        output_exceeded=output_exceeded,
+                        descendants_found=False,
+                        input_error=False,
+                        cleanup_error=None,
+                    )
+                    with (
+                        patch.object(installer.os, "name", "nt"),
+                        patch.object(
+                            installer, "run_bounded_process", return_value=result
+                        ),
+                    ):
+                        attempt = installer._run_attempt(
+                            [r"C:\Python\python.exe"], working_directory, {}
+                        )
+
+                    self.assertEqual(b"bounded stdout", attempt.stdout)
+                    self.assertEqual(b"bounded stderr", attempt.stderr)
+                    self.assertEqual(timed_out, attempt.timed_out)
+                    self.assertEqual(output_exceeded, attempt.output_exceeded)
+
+    def test_windows_runner_input_error_fails_closed_without_retry(self):
+        result = BoundedProcessResult(
+            returncode=None,
+            stdout=b"",
+            stderr=b"",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=False,
+            input_error=True,
+            cleanup_error=None,
+        )
+        bounded_call_counts = []
+
+        def runner(command, working_directory, environment):
+            with (
+                patch.object(installer.os, "name", "nt"),
+                patch.object(
+                    installer, "run_bounded_process", return_value=result
+                ) as bounded,
+            ):
+                try:
+                    return installer._run_attempt(
+                        command, working_directory, environment
+                    )
+                finally:
+                    bounded_call_counts.append(bounded.call_count)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock = self.fixture(root)
+            sleeps = []
+            with self.assertRaisesRegex(
+                InstallError, "unexpected input failure"
+            ):
+                install_process_runtime(
+                    root,
+                    lock,
+                    runner=runner,
+                    sleeper=sleeps.append,
+                )
+
+        self.assertEqual([1], bounded_call_counts)
+        self.assertEqual([], sleeps)
+
     @unittest.skipIf(os.name == "nt", "Windows descendants are covered by Job Object tests")
     def test_real_runner_terminates_descendants_left_by_successful_root(self):
         with tempfile.TemporaryDirectory() as directory:
