@@ -11,5 +11,5 @@
   ],
   "rationale": "Make evolve-process the mandatory owner of improvement-required, route shared consumer cases through improvement-pending, add a transport-neutral signal/disposition/resolution/reproduction chain and producer recurrence catalog, and block verification, completion, and publication until the applicable local or federated proof is explicit.",
   "schemaImpact": "additive",
-  "migration": "Adopt cross-repo-change as a mandatory core skill and synchronize the new process graph and managed guidance. Lifecycle hosts must classify every newly observed governed verification failure or unresolved review finding before corrective work, transport shared cases only through validated improvement artifacts, and keep consumer candidates blocked until immutable producer resolution and released consumer reproduction. Existing lifecycle and evidence documents retain their released meaning."
+  "migration": "After adoption, sync cross-repo-change. Classify governed failures/findings and block shared consumers until disposition, immutable release, and exact reproduction. Old pins/receipts retain meaning."
 }

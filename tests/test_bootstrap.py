@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import engineering_process.bootstrap as bootstrap_module
 from engineering_process.bootstrap import (
     AGENTS_END,
     AGENTS_START,
@@ -147,17 +148,19 @@ class BootstrapTests(unittest.TestCase):
                 root / ".gitignore",
                 root / ".agents" / ".gitattributes",
             }
-            original_write_text = Path.write_text
-            managed_calls: list[dict[str, object]] = []
+            original_write_utf8_lf = bootstrap_module._write_utf8_lf
+            managed_calls: list[Path] = []
 
-            def record_write_text(
-                path: Path, content: str, *args: object, **kwargs: object
-            ) -> int:
+            def record_write_utf8_lf(path: Path, content: str) -> None:
                 if path in managed_paths:
-                    managed_calls.append(dict(kwargs))
-                return original_write_text(path, content, *args, **kwargs)
+                    managed_calls.append(path)
+                original_write_utf8_lf(path, content)
 
-            with mock.patch.object(Path, "write_text", new=record_write_text):
+            with mock.patch.object(
+                bootstrap_module,
+                "_write_utf8_lf",
+                side_effect=record_write_utf8_lf,
+            ):
                 initialize_project(
                     root,
                     PROCESS_ROOT,
@@ -171,9 +174,7 @@ class BootstrapTests(unittest.TestCase):
                 {path for path in managed_paths if path.is_file()},
             )
             self.assertEqual(len(managed_paths), len(managed_calls))
-            for call in managed_calls:
-                self.assertEqual("utf-8", call.get("encoding"))
-                self.assertEqual("\n", call.get("newline"))
+            self.assertEqual(managed_paths, set(managed_calls))
             for path in managed_paths:
                 content = path.read_bytes()
                 self.assertNotIn(b"\r\n", content)

@@ -11,6 +11,7 @@ from engineering_process.contracts import (
     validate_change,
     validate_plan,
     validate_release,
+    validate_release_change,
 )
 from engineering_process.publication import validate_pull_request
 from engineering_process.release_candidate import (
@@ -19,6 +20,36 @@ from engineering_process.release_candidate import (
     render_release_pull_request,
 )
 class ReleaseCandidateTests(unittest.TestCase):
+    def test_source_release_migration_aggregate_fits_public_contract(self):
+        changes_dir = Path(__file__).resolve().parent.parent / "release-changes"
+        if not changes_dir.is_dir():
+            self.skipTest("source release-change fragments are not packaged")
+        migrations = []
+        federated_migration = None
+        for path in sorted(changes_dir.glob("*.json")):
+            change = validate_release_change(
+                json.loads(path.read_text(encoding="utf-8")), str(path)
+            )
+            if change.migration is None:
+                continue
+            migrations.append(f"{change.identifier}: {change.migration}")
+            if change.identifier == "federated-process-improvement":
+                federated_migration = change.migration
+
+        aggregate = "; ".join(migrations)
+        self.assertLessEqual(len(aggregate), 1_000)
+        self.assertIsNotNone(federated_migration)
+        assert federated_migration is not None
+        for required in (
+            "cross-repo-change",
+            "Classify governed failures/findings",
+            "block shared consumers",
+            "immutable release",
+            "exact reproduction",
+            "Old pins/receipts retain meaning",
+        ):
+            self.assertIn(required, federated_migration)
+
     def test_generated_release_closes_only_catalog_entries_in_its_change_set(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
