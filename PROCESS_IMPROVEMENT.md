@@ -65,6 +65,13 @@ case may reach producer completion but stays release-owned until an immutable
 resolution exists. A shared consumer case stays incomplete until disposition,
 resolution, and reproduction all validate.
 
+`producer-improvement` classifies a shared-process defect discovered in the producer's
+own governed work. It remains local producer lifecycle work and requires the reviewed
+catalog to activate the same invariant and change before completion; it does not
+fabricate a consumer signal. Inbound consumer evidence enters only through
+`improvement ingest` and retains the complete signal/catalog/disposition receipt
+boundary.
+
 `processctl change status` reports every local, producer, and consumer case, including
 proposed and canonical invariant ids, recurrence, catalog status and digest,
 producer/change, immutable release, consumer checkpoint/process identity, artifact

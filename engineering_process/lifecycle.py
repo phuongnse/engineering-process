@@ -729,19 +729,27 @@ def _require_producer_catalog_activation(
     state: dict[str, Any],
     case: dict[str, Any],
 ) -> None:
-    if case["role"] != "producer":
+    classification = case["classification"]
+    self_discovered = (
+        case["role"] == "local"
+        and classification is not None
+        and classification["disposition"] == "producer-improvement"
+    )
+    if case["role"] != "producer" and not self_discovered:
         return
     disposition_reference = case["disposition"]
-    if disposition_reference is None:
+    if case["role"] == "producer" and disposition_reference is None:
         raise ContractError(
             f"producer improvement case {case['id']} lacks a disposition"
         )
-    disposition = read_json(
-        _artifact_path(project_root, disposition_reference)
-    )
-    validate_improvement_disposition(
-        disposition, f"producer improvement case {case['id']} disposition"
-    )
+    disposition = None
+    if disposition_reference is not None:
+        disposition = read_json(
+            _artifact_path(project_root, disposition_reference)
+        )
+        validate_improvement_disposition(
+            disposition, f"producer improvement case {case['id']} disposition"
+        )
     catalog_path = project_root / "improvement-catalog.json"
     if catalog_path.is_symlink() or not catalog_path.is_file():
         raise ContractError(
@@ -750,19 +758,36 @@ def _require_producer_catalog_activation(
         )
     catalog = read_json(catalog_path)
     validate_improvement_catalog(catalog, str(catalog_path))
-    producer = disposition["producer"]
-    if catalog["producer"] != {
-        "project": producer["project"],
-        "repository": producer["repository"],
-    }:
-        raise ContractError(
-            "reviewed improvement catalog producer does not match the disposition"
-        )
+    if disposition is not None:
+        producer = disposition["producer"]
+        if catalog["producer"] != {
+            "project": producer["project"],
+            "repository": producer["repository"],
+        }:
+            raise ContractError(
+                "reviewed improvement catalog producer does not match the disposition"
+            )
+        invariant_id = disposition["canonicalInvariantId"]
+        reusable_class = disposition["reusableClass"]
+        linked_change_id = disposition["linkedChangeId"]
+    else:
+        if classification is None:
+            raise ContractError(
+                f"producer improvement case {case['id']} lacks classification"
+            )
+        if catalog["producer"]["project"] != state["project"]:
+            raise ContractError(
+                "reviewed improvement catalog producer does not match the "
+                "lifecycle project"
+            )
+        invariant_id = classification["invariantId"]
+        reusable_class = classification["reusableClass"]
+        linked_change_id = state["changeId"]
     entry = next(
         (
             item
             for item in catalog["entries"]
-            if item["id"] == disposition["canonicalInvariantId"]
+            if item["id"] == invariant_id
         ),
         None,
     )
@@ -774,13 +799,13 @@ def _require_producer_catalog_activation(
     if (
         entry["status"] != "active"
         or entry["activeChangeId"] != state["changeId"]
-        or disposition["linkedChangeId"] != state["changeId"]
+        or linked_change_id != state["changeId"]
     ):
         raise ContractError(
             "producer improvement completion requires reviewed catalog activation "
             "for the selected lifecycle change"
         )
-    if entry["reusableClass"] != disposition["reusableClass"]:
+    if entry["reusableClass"] != reusable_class:
         raise ContractError(
             "reviewed catalog reusable class does not match the disposition"
         )
@@ -1803,6 +1828,10 @@ def _classify_improvement_case_unlocked(
         raise ContractError("invalid improvement invariant id")
     if disposition not in IMPROVEMENT_DISPOSITIONS:
         raise ContractError("invalid improvement disposition")
+    if disposition == "producer-improvement" and owner_boundary != "shared-process":
+        raise ContractError(
+            "producer improvement requires the shared-process owner boundary"
+        )
     if DIGEST_PATTERN.fullmatch(rationale_sha256) is None:
         raise ContractError("improvement rationale must be a SHA-256 digest")
     if disposition == "shared-escalation":
@@ -1831,12 +1860,12 @@ def _classify_improvement_case_unlocked(
                 "only shared escalation may select a remote improvement target"
             )
         target = None
-        case["role"] = "producer" if disposition == "producer-improvement" else "local"
+        case["role"] = "local"
         case["phase"] = {
             "external-recovery": "local-resolution-required",
             "input-required": "input-required",
             "local-fix": "local-resolution-required",
-            "producer-improvement": "producer-change",
+            "producer-improvement": "local-resolution-required",
         }[disposition]
     case["classification"] = {
         "ownerBoundary": owner_boundary,

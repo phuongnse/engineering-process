@@ -1088,6 +1088,198 @@ class LifecycleTests(unittest.TestCase):
             )
             self.assertNotIn(".process/runs", json.dumps(closed_case))
 
+    def test_self_discovered_producer_improvement_requires_catalog_and_completes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "producer"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            state = start_change(
+                root,
+                self.project(),
+                contract_path,
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                self.project(),
+                "change-1",
+                plan_path,
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            begin_implementation(
+                root,
+                "change-1",
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            real_run_profile = lifecycle_module.run_profile
+
+            def failed_report(*args, **kwargs):
+                report = real_run_profile(*args, **kwargs)
+                report["status"] = "failed"
+                report["checks"][0]["status"] = "failed"
+                report["checks"][0]["exitCode"] = 9
+                return report
+
+            with (
+                mock.patch.object(
+                    lifecycle_module,
+                    "run_profile",
+                    side_effect=failed_report,
+                ),
+                self.assertRaisesRegex(ContractError, "profile-status-not-passed"),
+            ):
+                verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    "development",
+                    actor_id="producer",
+                    context_id="producer-context",
+                    kind="agent",
+                )
+            state = load_state(root, "change-1")
+            case = state["improvements"][0]
+            with self.assertRaisesRegex(
+                ContractError, "shared-process owner boundary"
+            ):
+                classify_improvement_case(
+                    root,
+                    "change-1",
+                    case["id"],
+                    owner_boundary="project-local",
+                    reusable_class="deterministic-enforcement",
+                    invariant_id="producer-route-complete",
+                    disposition="producer-improvement",
+                    rationale_sha256=f"sha256:{'4' * 64}",
+                    target_project=None,
+                    target_repository=None,
+                    actor_id="producer",
+                    context_id="producer-context",
+                    kind="agent",
+                )
+            state = classify_improvement_case(
+                root,
+                "change-1",
+                case["id"],
+                owner_boundary="shared-process",
+                reusable_class="deterministic-enforcement",
+                invariant_id="producer-route-complete",
+                disposition="producer-improvement",
+                rationale_sha256=f"sha256:{'4' * 64}",
+                target_project=None,
+                target_repository=None,
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            case = state["improvements"][0]
+            self.assertEqual("local", case["role"])
+            self.assertEqual("local-resolution-required", case["phase"])
+            with self.assertRaisesRegex(
+                ContractError, "reviewed improvement-catalog.json"
+            ):
+                lifecycle_module._require_producer_catalog_activation(
+                    root, state, case
+                )
+            catalog = {
+                "schemaVersion": 1,
+                "kind": "engineering-process-improvement-catalog",
+                "producer": {
+                    "project": "sample-project",
+                    "repository": "example/sample-project",
+                },
+                "entries": [
+                    {
+                        "id": "producer-route-complete",
+                        "reusableClass": "deterministic-enforcement",
+                        "status": "active",
+                        "publicSurfaces": ["lifecycle"],
+                        "lastResolution": None,
+                        "activeChangeId": "change-1",
+                    }
+                ],
+            }
+            (root / "improvement-catalog.json").write_text(
+                json.dumps(catalog) + "\n", encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "add", "improvement-catalog.json"], cwd=root, check=True
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "activate producer invariant"],
+                cwd=root,
+                check=True,
+            )
+            for profile in ("development", "review"):
+                state, _report = verify_change(
+                    root,
+                    self.project(),
+                    "change-1",
+                    profile,
+                    actor_id="producer",
+                    context_id="producer-context",
+                    kind="agent",
+                )
+            state, assignment = start_review(
+                root,
+                "change-1",
+                actor_id="reviewer",
+                context_id="producer-improvement-review",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The test host created a fresh read-only review context",
+            )
+            report_path = inputs / "review.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "changeId": "change-1",
+                        "cycle": 1,
+                        "checkpoint": assignment["checkpoint"],
+                        "workspaceFingerprint": assignment[
+                            "workspaceFingerprint"
+                        ],
+                        "comparisonBase": assignment["comparisonBase"],
+                        "reviewer": assignment["reviewer"],
+                        "independence": assignment["independence"],
+                        "quality": self.review_quality(),
+                        "verdict": "approved",
+                        "findings": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = submit_review(root, "change-1", report_path)
+            self.assertEqual("approved", state["phase"])
+            self.assertEqual("closed", state["improvements"][0]["phase"])
+            state, completion = finish_change(
+                root,
+                "change-1",
+                actor_id="producer",
+                context_id="producer-context",
+                kind="agent",
+            )
+            self.assertEqual("completed", state["phase"])
+            self.assertEqual("local", completion["improvements"][0]["role"])
+            self.assertIsNone(
+                completion["improvements"][0]["signalCanonicalSha256"]
+            )
+
     def test_producer_ingests_only_disposition_linked_signal(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
