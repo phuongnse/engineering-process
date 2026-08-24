@@ -422,6 +422,7 @@ def command_improvement_resolution(args: argparse.Namespace) -> int:
         args.project_root,
         args.signal,
         args.disposition,
+        args.catalog,
         args.lifecycle_receipt,
         args.release_contract,
         args.release_receipt,
@@ -445,6 +446,7 @@ def command_improvement_reproduction(args: argparse.Namespace) -> int:
         args.project_root,
         args.signal,
         args.disposition,
+        args.catalog,
         args.resolution,
         args.consumer_receipt,
         consumer_repository=args.consumer_repository,
@@ -2073,6 +2075,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_project_root(improvement_resolution)
     improvement_resolution.add_argument("--signal", type=Path, required=True)
     improvement_resolution.add_argument("--disposition", type=Path, required=True)
+    improvement_resolution.add_argument("--catalog", type=Path, required=True)
     improvement_resolution.add_argument(
         "--lifecycle-receipt", type=Path, required=True
     )
@@ -2103,6 +2106,7 @@ def build_parser() -> argparse.ArgumentParser:
     improvement_reproduction.add_argument(
         "--disposition", type=Path, required=True
     )
+    improvement_reproduction.add_argument("--catalog", type=Path, required=True)
     improvement_reproduction.add_argument("--resolution", type=Path, required=True)
     improvement_reproduction.add_argument(
         "--consumer-receipt", type=Path, required=True
@@ -2124,7 +2128,7 @@ def build_parser() -> argparse.ArgumentParser:
     improvement_attach.add_argument("--disposition", type=Path)
     improvement_attach.add_argument("--resolution", type=Path)
     improvement_attach.add_argument("--reproduction", type=Path)
-    improvement_attach.add_argument("--catalog", type=Path)
+    improvement_attach.add_argument("--catalog", type=Path, required=True)
     improvement_attach.set_defaults(handler=command_improvement_attach)
 
     improvement_ingest = improvement_commands.add_parser(

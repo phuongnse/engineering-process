@@ -138,6 +138,7 @@
         "evidence",
         "classification",
         "signal",
+        "catalog",
         "disposition",
         "resolution",
         "reproduction"
@@ -164,6 +165,7 @@
         "evidence": {"$ref": "#/$defs/artifact"},
         "classification": {"type": ["object", "null"]},
         "signal": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "catalog": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
         "disposition": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
         "resolution": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
         "reproduction": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}

@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from engineering_process.contracts import ContractError
+from engineering_process.contracts import ContractError, canonical_json_digest
 from engineering_process.improvement import (
     create_improvement_reproduction,
     create_improvement_resolution,
@@ -67,7 +67,18 @@ class ImprovementProtocolTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ContractError, "canonical signal digest"):
-                validate_improvement_chain(self.example("signal"), path)
+                validate_improvement_chain(
+                    self.example("signal"),
+                    path,
+                    catalog_path=self.example("catalog"),
+                )
+
+    def test_disposition_requires_its_exact_catalog_snapshot(self):
+        with self.assertRaisesRegex(ContractError, "exact producer catalog"):
+            validate_improvement_chain(
+                self.example("signal"),
+                self.example("disposition"),
+            )
 
     def test_chain_rejects_symlinked_untrusted_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -99,6 +110,92 @@ class ImprovementProtocolTests(unittest.TestCase):
                     self.example("disposition"),
                     catalog_path=path,
                 )
+
+    def test_duplicate_disposition_must_link_the_catalog_active_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signal = json.loads(self.example("signal").read_text(encoding="utf-8"))
+            catalog = json.loads(
+                self.example("catalog").read_text(encoding="utf-8")
+            )
+            entry = catalog["entries"][0]
+            entry["status"] = "active"
+            entry["lastResolution"] = None
+            entry["activeChangeId"] = "expected-active-change"
+            disposition = json.loads(
+                self.example("disposition").read_text(encoding="utf-8")
+            )
+            disposition["decision"] = "duplicate"
+            disposition["recurrence"] = "duplicate"
+            disposition["catalogStatus"] = "active"
+            disposition["linkedChangeId"] = "different-change"
+            disposition["signalSha256"] = canonical_json_digest(signal)
+            disposition["catalogSha256"] = canonical_json_digest(catalog)
+            catalog_path = root / "catalog.json"
+            disposition_path = root / "disposition.json"
+            catalog_path.write_text(json.dumps(catalog) + "\n", encoding="utf-8")
+            disposition_path.write_text(
+                json.dumps(disposition) + "\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ContractError, "catalog active change"):
+                validate_improvement_chain(
+                    self.example("signal"),
+                    disposition_path,
+                    catalog_path=catalog_path,
+                )
+
+    def test_retired_invariant_cannot_be_reactivated_by_a_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog = json.loads(
+                self.example("catalog").read_text(encoding="utf-8")
+            )
+            catalog["entries"][0]["status"] = "retired"
+            disposition = json.loads(
+                self.example("disposition").read_text(encoding="utf-8")
+            )
+            disposition["catalogStatus"] = "retired"
+            disposition["catalogSha256"] = canonical_json_digest(catalog)
+            catalog_path = root / "catalog.json"
+            disposition_path = root / "disposition.json"
+            catalog_path.write_text(json.dumps(catalog) + "\n", encoding="utf-8")
+            disposition_path.write_text(
+                json.dumps(disposition) + "\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ContractError, "resolved catalog invariant"):
+                validate_improvement_chain(
+                    self.example("signal"),
+                    disposition_path,
+                    catalog_path=catalog_path,
+                )
+
+    def test_producer_can_assign_a_cataloged_canonical_invariant_to_an_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signal = json.loads(self.example("signal").read_text(encoding="utf-8"))
+            signal["claim"]["proposedInvariantId"] = "windows-helper-alias"
+            disposition = json.loads(
+                self.example("disposition").read_text(encoding="utf-8")
+            )
+            disposition["signalSha256"] = canonical_json_digest(signal)
+            signal_path = root / "signal.json"
+            disposition_path = root / "disposition.json"
+            signal_path.write_text(json.dumps(signal) + "\n", encoding="utf-8")
+            disposition_path.write_text(
+                json.dumps(disposition) + "\n", encoding="utf-8"
+            )
+
+            result = validate_improvement_chain(
+                signal_path,
+                disposition_path,
+                catalog_path=self.example("catalog"),
+            )
+
+            self.assertEqual("windows-helper-alias", signal["claim"]["proposedInvariantId"])
+            self.assertEqual("single-windows-helper-protocol", result["invariantId"])
+            self.assertEqual("recurrence", result["recurrence"])
 
     def test_artifact_writer_is_exclusive_and_validates_before_write(self):
         document = json.loads(
@@ -194,8 +291,56 @@ class ImprovementProtocolTests(unittest.TestCase):
     def test_resolution_requires_completed_producer_receipt_and_immutable_release(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            signal = json.loads(self.example("signal").read_text(encoding="utf-8"))
+            disposition = json.loads(
+                self.example("disposition").read_text(encoding="utf-8")
+            )
+            completion = {
+                "improvements": [
+                    {
+                        "role": "producer",
+                        "phase": "producer-completed",
+                        "invariantId": disposition["canonicalInvariantId"],
+                        "signalCanonicalSha256": canonical_json_digest(signal),
+                        "catalogCanonicalSha256": disposition["catalogSha256"],
+                        "dispositionCanonicalSha256": canonical_json_digest(
+                            disposition
+                        ),
+                    }
+                ]
+            }
             receipt = root / "receipt.json"
-            receipt.write_text("{}\n", encoding="utf-8")
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "artifacts": {
+                            "completion": {
+                                "sourceText": json.dumps(completion)
+                            }
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            unrelated_receipt = root / "unrelated-receipt.json"
+            unrelated_completion = json.loads(json.dumps(completion))
+            unrelated_completion["improvements"][0][
+                "signalCanonicalSha256"
+            ] = f"sha256:{'9' * 64}"
+            unrelated_receipt.write_text(
+                json.dumps(
+                    {
+                        "artifacts": {
+                            "completion": {
+                                "sourceText": json.dumps(unrelated_completion)
+                            }
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             release = root / "release.json"
             release.write_text("{}\n", encoding="utf-8")
             artifacts = root / "artifacts"
@@ -227,10 +372,32 @@ class ImprovementProtocolTests(unittest.TestCase):
                     return_value={},
                 ),
             ):
+                with self.assertRaisesRegex(
+                    ContractError, "reviewed ingested improvement case"
+                ):
+                    create_improvement_resolution(
+                        root,
+                        self.example("signal"),
+                        self.example("disposition"),
+                        self.example("catalog"),
+                        unrelated_receipt,
+                        release,
+                        None,
+                        None,
+                        artifacts,
+                        attestation,
+                        release_repository="example/engineering-process",
+                        release_tag="v0.6.0",
+                        release_name="v0.6.0",
+                        release_commit="e" * 40,
+                        regression_evidence=[f"sha256:{'1' * 64}"],
+                        output=root / "unrelated-resolution.json",
+                    )
                 result = create_improvement_resolution(
                     root,
                     self.example("signal"),
                     self.example("disposition"),
+                    self.example("catalog"),
                     receipt,
                     release,
                     None,
@@ -316,6 +483,7 @@ class ImprovementProtocolTests(unittest.TestCase):
                     root,
                     self.example("signal"),
                     self.example("disposition"),
+                    self.example("catalog"),
                     self.example("resolution"),
                     receipt,
                     consumer_repository="example/sample-consumer",

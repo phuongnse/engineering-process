@@ -11,6 +11,7 @@ from typing import Any
 
 from .contracts import (
     ContractError,
+    canonical_json_digest,
     DIGEST_PATTERN,
     IMPROVEMENT_OWNER_BOUNDARIES,
     IMPROVEMENT_REUSABLE_CLASSES,
@@ -22,6 +23,8 @@ from .contracts import (
     read_json,
     validate_change,
     validate_completion,
+    validate_improvement_catalog,
+    validate_improvement_disposition,
     validate_plan,
     validate_review,
     validate_verification,
@@ -409,6 +412,7 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
             "evidence",
             "classification",
             "signal",
+            "catalog",
             "disposition",
             "resolution",
             "reproduction",
@@ -445,7 +449,14 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
             or PROFILE_PATTERN.fullmatch(case["findingId"]) is None
         ):
             raise ContractError(f"{case_path}.findingId: invalid finding id")
-        for field in ("evidence", "signal", "disposition", "resolution", "reproduction"):
+        for field in (
+            "evidence",
+            "signal",
+            "catalog",
+            "disposition",
+            "resolution",
+            "reproduction",
+        ):
             reference = case[field]
             if field == "evidence" and reference is None:
                 raise ContractError(f"{case_path}.evidence: required")
@@ -666,6 +677,7 @@ def _observe_improvement_case(
         "evidence": evidence,
         "classification": None,
         "signal": None,
+        "catalog": None,
         "disposition": None,
         "resolution": None,
         "reproduction": None,
@@ -698,6 +710,291 @@ def _resolve_reviewed_improvements(state: dict[str, Any]) -> None:
             case["phase"] = "closed"
         elif case["phase"] == "producer-change":
             case["phase"] = "producer-completed"
+
+
+def _case_artifact_canonical_digest(
+    project_root: Path,
+    case: dict[str, Any],
+    name: str,
+) -> str | None:
+    artifact = case[name]
+    if artifact is None:
+        return None
+    document = read_json(_artifact_path(project_root, artifact))
+    return canonical_json_digest(document)
+
+
+def _require_producer_catalog_activation(
+    project_root: Path,
+    state: dict[str, Any],
+    case: dict[str, Any],
+) -> None:
+    if case["role"] != "producer":
+        return
+    disposition_reference = case["disposition"]
+    if disposition_reference is None:
+        raise ContractError(
+            f"producer improvement case {case['id']} lacks a disposition"
+        )
+    disposition = read_json(
+        _artifact_path(project_root, disposition_reference)
+    )
+    validate_improvement_disposition(
+        disposition, f"producer improvement case {case['id']} disposition"
+    )
+    catalog_path = project_root / "improvement-catalog.json"
+    if catalog_path.is_symlink() or not catalog_path.is_file():
+        raise ContractError(
+            "producer improvement completion requires the reviewed "
+            "improvement-catalog.json"
+        )
+    catalog = read_json(catalog_path)
+    validate_improvement_catalog(catalog, str(catalog_path))
+    producer = disposition["producer"]
+    if catalog["producer"] != {
+        "project": producer["project"],
+        "repository": producer["repository"],
+    }:
+        raise ContractError(
+            "reviewed improvement catalog producer does not match the disposition"
+        )
+    entry = next(
+        (
+            item
+            for item in catalog["entries"]
+            if item["id"] == disposition["canonicalInvariantId"]
+        ),
+        None,
+    )
+    if entry is None:
+        raise ContractError(
+            "producer improvement completion requires the canonical invariant "
+            "in the reviewed catalog"
+        )
+    if (
+        entry["status"] != "active"
+        or entry["activeChangeId"] != state["changeId"]
+        or disposition["linkedChangeId"] != state["changeId"]
+    ):
+        raise ContractError(
+            "producer improvement completion requires reviewed catalog activation "
+            "for the selected lifecycle change"
+        )
+    if entry["reusableClass"] != disposition["reusableClass"]:
+        raise ContractError(
+            "reviewed catalog reusable class does not match the disposition"
+        )
+
+
+def _improvement_next_owner(
+    project: str,
+    case: dict[str, Any],
+) -> str | None:
+    classification = case["classification"]
+    return {
+        "classification-required": project,
+        "consumer-reproduction-required": project,
+        "input-required": "owner-input",
+        "local-resolution-required": project,
+        "producer-change": project,
+        "producer-completed": "release-owner",
+        "producer-disposition-required": (
+            classification["target"]["project"]
+            if classification is not None and classification["target"] is not None
+            else "producer"
+        ),
+        "producer-resolution-required": "producer-release-owner",
+        "closed": None,
+    }[case["phase"]]
+
+
+def _improvement_case_status(
+    project_root: Path,
+    state: dict[str, Any],
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    from .improvement import _stable_json_document, validate_improvement_chain
+
+    artifact_names = (
+        "evidence",
+        "signal",
+        "catalog",
+        "disposition",
+        "resolution",
+        "reproduction",
+    )
+    paths: dict[str, Path] = {}
+    documents: dict[str, dict[str, Any]] = {}
+    artifacts: dict[str, dict[str, str]] = {}
+    for name in artifact_names:
+        reference = case[name]
+        if reference is None:
+            continue
+        path = _artifact_path(project_root, reference)
+        document, data = _stable_json_document(
+            path, label=f"improvement case {case['id']} {name}"
+        )
+        if _digest_bytes(data) != reference["digest"]:
+            raise ContractError(
+                f"improvement case {case['id']} {name} changed while status was read"
+            )
+        paths[name] = path
+        documents[name] = document
+        artifacts[name] = {
+            "sourceSha256": reference["digest"],
+            "canonicalSha256": canonical_json_digest(document),
+        }
+
+    chain: dict[str, Any] | None = None
+    if "signal" in paths:
+        chain = validate_improvement_chain(
+            paths["signal"],
+            paths.get("disposition"),
+            paths.get("resolution"),
+            paths.get("reproduction"),
+            paths.get("catalog"),
+        )
+        allowed_case_phases = {
+            "consumer": {
+                "signal-exported": "producer-disposition-required",
+                "producer-disposition": "producer-resolution-required",
+                "producer-rejected": "input-required",
+                "producer-released": "consumer-reproduction-required",
+                "closed": "closed",
+            },
+            "producer": {
+                "producer-disposition": {"producer-change", "producer-completed"},
+            },
+        }
+        expected = allowed_case_phases.get(case["role"], {}).get(chain["phase"])
+        phase_matches = (
+            case["phase"] in expected
+            if isinstance(expected, set)
+            else case["phase"] == expected
+        )
+        if expected is None or not phase_matches:
+            raise ContractError(
+                f"improvement case {case['id']} phase contradicts its artifact chain"
+            )
+
+    classification = case["classification"]
+    signal = documents.get("signal")
+    catalog = documents.get("catalog")
+    disposition = documents.get("disposition")
+    resolution = documents.get("resolution")
+    reproduction = documents.get("reproduction")
+    proposed_invariant = (
+        signal["claim"]["proposedInvariantId"]
+        if signal is not None
+        else classification["invariantId"]
+        if classification is not None
+        else None
+    )
+    canonical_invariant = (
+        disposition["canonicalInvariantId"]
+        if disposition is not None
+        else classification["invariantId"]
+        if classification is not None and case["role"] == "local"
+        else None
+    )
+
+    catalog_entry = None
+    if catalog is not None and canonical_invariant is not None:
+        catalog_entry = next(
+            (
+                item
+                for item in catalog["entries"]
+                if item["id"] == canonical_invariant
+            ),
+            None,
+        )
+    producer_target = (
+        disposition["producer"]
+        if disposition is not None
+        else signal["target"]
+        if signal is not None
+        else classification["target"]
+        if classification is not None
+        else None
+    )
+    producer = None
+    if producer_target is not None:
+        producer = {
+            "project": producer_target["project"],
+            "repository": producer_target["repository"],
+            "checkpoint": producer_target.get("checkpoint"),
+            "process": producer_target.get("process"),
+            "linkedChangeId": (
+                disposition["linkedChangeId"] if disposition is not None else None
+            ),
+        }
+    consumer_source = (
+        reproduction["consumer"]
+        if reproduction is not None
+        else signal["source"]
+        if signal is not None
+        else None
+    )
+    consumer = None
+    if consumer_source is not None:
+        consumer = {
+            "project": consumer_source["project"],
+            "repository": consumer_source["repository"],
+            "checkpoint": consumer_source["checkpoint"],
+            "workspaceFingerprint": consumer_source["workspaceFingerprint"],
+            "process": consumer_source["process"],
+        }
+    catalog_status = (
+        disposition["catalogStatus"]
+        if disposition is not None
+        else catalog_entry["status"]
+        if catalog_entry is not None
+        else None
+    )
+    return {
+        "id": case["id"],
+        "phase": case["phase"],
+        "role": case["role"],
+        "trigger": case["trigger"],
+        "sourceCycle": case["sourceCycle"],
+        "invariantId": (
+            canonical_invariant if canonical_invariant is not None else proposed_invariant
+        ),
+        "proposedInvariantId": proposed_invariant,
+        "canonicalInvariantId": canonical_invariant,
+        "ownerBoundary": (
+            classification["ownerBoundary"] if classification is not None else None
+        ),
+        "reusableClass": (
+            disposition["reusableClass"]
+            if disposition is not None
+            else classification["reusableClass"]
+            if classification is not None
+            else None
+        ),
+        "recurrence": (
+            disposition["recurrence"] if disposition is not None else "unassessed"
+        ),
+        "catalog": {
+            "status": catalog_status,
+            "canonicalSha256": (
+                artifacts.get("catalog", {}).get("canonicalSha256")
+            ),
+            "activeChangeId": (
+                catalog_entry["activeChangeId"] if catalog_entry is not None else None
+            ),
+            "lastResolution": (
+                catalog_entry["lastResolution"] if catalog_entry is not None else None
+            ),
+        },
+        "producer": producer,
+        "release": resolution["release"] if resolution is not None else None,
+        "consumer": consumer,
+        "artifacts": artifacts,
+        "chainPhase": chain["phase"] if chain is not None else None,
+        "closed": case["phase"] == "closed",
+        "nextOwner": _improvement_next_owner(state["project"], case),
+    }
 
 
 def _start_change_unlocked(
@@ -1299,6 +1596,8 @@ def _finish_change_unlocked(
         or source["fingerprint"] != review["workspaceFingerprint"]
     ):
         raise ContractError("approved review is stale for the current source")
+    for case in state["improvements"]:
+        _require_producer_catalog_activation(project_root, state, case)
     required = set(contract["requiredProfiles"])
     if {item["profile"] for item in state["verification"]} != required:
         raise ContractError("completion requires the exact required verification profiles")
@@ -1333,9 +1632,19 @@ def _finish_change_unlocked(
                 "phase": case["phase"],
                 "invariantId": case["classification"]["invariantId"],
                 "signal": case["signal"],
+                "catalog": case["catalog"],
                 "disposition": case["disposition"],
                 "resolution": case["resolution"],
                 "reproduction": case["reproduction"],
+                "signalCanonicalSha256": _case_artifact_canonical_digest(
+                    project_root, case, "signal"
+                ),
+                "catalogCanonicalSha256": _case_artifact_canonical_digest(
+                    project_root, case, "catalog"
+                ),
+                "dispositionCanonicalSha256": _case_artifact_canonical_digest(
+                    project_root, case, "disposition"
+                ),
             }
             for case in state["improvements"]
         ],
@@ -1369,50 +1678,65 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
             _artifact_path(project_root, evidence)
         except ContractError as error:
             issues.append(str(error))
+    improvement_cases: list[dict[str, Any]] = []
     for case in state["improvements"]:
-        for name in (
-            "evidence",
-            "signal",
-            "disposition",
-            "resolution",
-            "reproduction",
-        ):
-            artifact = case[name]
-            if artifact is None:
-                continue
-            try:
-                _artifact_path(project_root, artifact)
-            except ContractError as error:
-                issues.append(str(error))
+        try:
+            improvement_cases.append(
+                _improvement_case_status(project_root, state, case)
+            )
+        except ContractError as error:
+            issues.append(str(error))
+            classification = case["classification"]
+            improvement_cases.append(
+                {
+                    "id": case["id"],
+                    "phase": case["phase"],
+                    "role": case["role"],
+                    "trigger": case["trigger"],
+                    "sourceCycle": case["sourceCycle"],
+                    "invariantId": (
+                        classification["invariantId"]
+                        if classification is not None
+                        else None
+                    ),
+                    "proposedInvariantId": (
+                        classification["invariantId"]
+                        if classification is not None
+                        else None
+                    ),
+                    "canonicalInvariantId": None,
+                    "ownerBoundary": (
+                        classification["ownerBoundary"]
+                        if classification is not None
+                        else None
+                    ),
+                    "reusableClass": (
+                        classification["reusableClass"]
+                        if classification is not None
+                        else None
+                    ),
+                    "recurrence": "unassessed",
+                    "catalog": None,
+                    "producer": None,
+                    "release": None,
+                    "consumer": None,
+                    "artifacts": {},
+                    "chainPhase": None,
+                    "closed": case["phase"] == "closed",
+                    "nextOwner": _improvement_next_owner(state["project"], case),
+                    "status": "invalid-artifact-chain",
+                }
+            )
     improvement_blockers = [
         {
             "id": case["id"],
             "phase": case["phase"],
             "role": case["role"],
-            "invariantId": (
-                case["classification"]["invariantId"]
-                if case["classification"] is not None
-                else None
-            ),
-            "nextOwner": {
-                "classification-required": state["project"],
-                "consumer-reproduction-required": state["project"],
-                "input-required": "owner-input",
-                "local-resolution-required": state["project"],
-                "producer-change": state["project"],
-                "producer-completed": "release-owner",
-                "producer-disposition-required": (
-                    case["classification"]["target"]["project"]
-                    if case["classification"] is not None
-                    and case["classification"]["target"] is not None
-                    else "producer"
-                ),
-                "producer-resolution-required": "producer-release-owner",
-                "closed": None,
-            }[case["phase"]],
+            "invariantId": case["invariantId"],
+            "nextOwner": case["nextOwner"],
         }
-        for case in state["improvements"]
-        if case["phase"] != "closed"
+        for case in improvement_cases
+        if not case["closed"]
     ]
     if state["phase"] == "completed" and any(
         case["phase"] not in {"closed", "producer-completed"}
@@ -1439,6 +1763,7 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
             "count": len(state["improvements"]),
             "openCount": len(improvement_blockers),
             "blockers": improvement_blockers,
+            "cases": improvement_cases,
         },
     }
 
@@ -1561,9 +1886,11 @@ def _bind_improvement_chain_unlocked(
     case_id: str,
     *,
     signal_path: Path,
+    catalog_path: Path | None,
     disposition_path: Path | None,
     resolution_path: Path | None,
     reproduction_path: Path | None,
+    expected_canonical_digests: dict[str, str],
     chain_phase: str,
     actor_id: str,
     context_id: str,
@@ -1575,54 +1902,112 @@ def _bind_improvement_chain_unlocked(
         raise ContractError(
             f"improvement case {case_id} must be classified before artifact binding"
         )
-    phase_by_role = {
-        "consumer": {
-            "signal-exported": "producer-disposition-required",
-            "producer-disposition": "producer-resolution-required",
-            "producer-rejected": "input-required",
-            "producer-released": "consumer-reproduction-required",
-            "closed": "closed",
-        },
-        "producer": {
-            "producer-disposition": "producer-change",
-            "producer-released": "producer-completed",
-            "closed": "producer-completed",
-        },
-    }
-    allowed = phase_by_role.get(case["role"], {})
-    if chain_phase not in allowed:
+    if case["role"] != "consumer":
         raise ContractError(
-            f"improvement chain phase {chain_phase} is invalid for {case['role']} case"
+            "only a consumer improvement case can attach a transported chain"
         )
+    expected_stage = {
+        ("producer-disposition-required", False): "signal-exported",
+        ("producer-disposition-required", True): "producer-disposition",
+        ("producer-resolution-required", True): "producer-released",
+        ("consumer-reproduction-required", True): "closed",
+    }.get((case["phase"], case["signal"] is not None))
+    if chain_phase == "producer-rejected" and (
+        case["phase"] == "producer-disposition-required"
+        and case["signal"] is not None
+    ):
+        expected_stage = "producer-rejected"
+    if chain_phase != expected_stage:
+        raise ContractError(
+            f"improvement chain phase {chain_phase} cannot advance consumer case "
+            f"from {case['phase']}"
+        )
+    required_fields = {
+        "signal-exported": {"signal"},
+        "producer-disposition": {"signal", "catalog", "disposition"},
+        "producer-rejected": {"signal", "catalog", "disposition"},
+        "producer-released": {"signal", "catalog", "disposition", "resolution"},
+        "closed": {
+            "signal",
+            "catalog",
+            "disposition",
+            "resolution",
+            "reproduction",
+        },
+    }[chain_phase]
     supplied = {
         "signal": signal_path,
+        "catalog": catalog_path,
         "disposition": disposition_path,
         "resolution": resolution_path,
         "reproduction": reproduction_path,
     }
+    if {name for name, path in supplied.items() if path is not None} != required_fields:
+        raise ContractError(
+            f"improvement chain phase {chain_phase} requires exactly: "
+            + ", ".join(sorted(required_fields))
+        )
+    from .improvement import _stable_json_document
+
+    snapshots: dict[str, dict[str, Any]] = {}
+    for field in sorted(required_fields):
+        source_path = supplied[field]
+        assert source_path is not None
+        document, _data = _stable_json_document(
+            source_path,
+            label=f"improvement {field} artifact",
+        )
+        expected_digest = expected_canonical_digests.get(field)
+        if expected_digest is None or canonical_json_digest(document) != expected_digest:
+            raise ContractError(
+                f"improvement {field} changed after chain validation"
+            )
+        snapshots[field] = document
+    signal_document = snapshots["signal"]
+    classification = case["classification"]
+    assert classification is not None
+    if (
+        signal_document.get("signalId") != case_id
+        or signal_document.get("source", {}).get("project") != state["project"]
+        or signal_document.get("source", {}).get("changeId") != change_id
+        or signal_document.get("source", {}).get("cycle") != case["sourceCycle"]
+        or signal_document.get("target") != classification["target"]
+        or signal_document.get("trigger", {}).get("kind") != case["trigger"]
+        or signal_document.get("claim", {}).get("ownerBoundary")
+        != classification["ownerBoundary"]
+        or signal_document.get("claim", {}).get("reusableClass")
+        != classification["reusableClass"]
+        or signal_document.get("claim", {}).get("proposedInvariantId")
+        != classification["invariantId"]
+        or signal_document.get("claim", {}).get("rationaleSha256")
+        != classification["rationaleSha256"]
+    ):
+        raise ContractError(
+            f"improvement signal does not belong to lifecycle case {case_id}"
+        )
     destination_root = _run_root(project_root, change_id) / "improvements" / case_id
-    for field, source_path in supplied.items():
-        if source_path is None:
-            continue
+    for field in sorted(required_fields):
         current = case[field]
         if current is not None:
-            document = read_json(source_path)
-            content = (
-                json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n"
-            ).encode("utf-8")
-            if current["digest"] != _digest_bytes(content):
+            current_document = read_json(_artifact_path(project_root, current))
+            if canonical_json_digest(current_document) != expected_canonical_digests[field]:
                 raise ContractError(
                     f"improvement case {case_id} {field} artifact is immutable"
                 )
             continue
-        artifact = _copy_document(
-            project_root,
-            source_path,
-            destination_root / f"{field}.json",
-        )
-        case[field] = artifact
-    case["phase"] = allowed[chain_phase]
+        destination = destination_root / f"{field}.json"
+        _write_atomic(destination, snapshots[field])
+        case[field] = {
+            "path": _relative(project_root, destination),
+            "digest": _digest_file(destination),
+        }
+    case["phase"] = {
+        "signal-exported": "producer-disposition-required",
+        "producer-disposition": "producer-resolution-required",
+        "producer-rejected": "input-required",
+        "producer-released": "consumer-reproduction-required",
+        "closed": "closed",
+    }[chain_phase]
     actor = _actor(actor_id, context_id, kind)
     _event(
         state,
@@ -1659,7 +2044,9 @@ def _register_producer_improvement_case_unlocked(
     change_id: str,
     *,
     signal_path: Path,
+    catalog_path: Path,
     disposition_path: Path,
+    expected_canonical_digests: dict[str, str],
     signal_id: str,
     canonical_invariant_id: str,
     owner_boundary: str,
@@ -1678,12 +2065,30 @@ def _register_producer_improvement_case_unlocked(
     if any(case["id"] == case_id for case in state["improvements"]):
         raise ContractError(f"improvement signal {signal_id} is already registered")
     destination_root = _run_root(project_root, change_id) / "improvements" / case_id
-    signal = _copy_document(
-        project_root, signal_path, destination_root / "signal.json"
-    )
-    disposition = _copy_document(
-        project_root, disposition_path, destination_root / "disposition.json"
-    )
+    from .improvement import _stable_json_document
+
+    artifacts: dict[str, dict[str, str]] = {}
+    for field, source_path in (
+        ("signal", signal_path),
+        ("catalog", catalog_path),
+        ("disposition", disposition_path),
+    ):
+        document, _data = _stable_json_document(
+            source_path, label=f"producer improvement {field}"
+        )
+        if canonical_json_digest(document) != expected_canonical_digests[field]:
+            raise ContractError(
+                f"producer improvement {field} changed after validation"
+            )
+        destination = destination_root / f"{field}.json"
+        _write_atomic(destination, document)
+        artifacts[field] = {
+            "path": _relative(project_root, destination),
+            "digest": _digest_file(destination),
+        }
+    signal = artifacts["signal"]
+    catalog = artifacts["catalog"]
+    disposition = artifacts["disposition"]
     case = {
         "id": case_id,
         "role": "producer",
@@ -1701,6 +2106,7 @@ def _register_producer_improvement_case_unlocked(
             "target": None,
         },
         "signal": signal,
+        "catalog": catalog,
         "disposition": disposition,
         "resolution": None,
         "reproduction": None,
@@ -1784,9 +2190,11 @@ def bind_improvement_chain(
     case_id: str,
     *,
     signal_path: Path,
+    catalog_path: Path | None,
     disposition_path: Path | None,
     resolution_path: Path | None,
     reproduction_path: Path | None,
+    expected_canonical_digests: dict[str, str],
     chain_phase: str,
     actor_id: str,
     context_id: str,
@@ -1798,9 +2206,11 @@ def bind_improvement_chain(
             change_id,
             case_id,
             signal_path=signal_path,
+            catalog_path=catalog_path,
             disposition_path=disposition_path,
             resolution_path=resolution_path,
             reproduction_path=reproduction_path,
+            expected_canonical_digests=expected_canonical_digests,
             chain_phase=chain_phase,
             actor_id=actor_id,
             context_id=context_id,
@@ -1813,7 +2223,9 @@ def register_producer_improvement_case(
     change_id: str,
     *,
     signal_path: Path,
+    catalog_path: Path,
     disposition_path: Path,
+    expected_canonical_digests: dict[str, str],
     signal_id: str,
     canonical_invariant_id: str,
     owner_boundary: str,
@@ -1828,7 +2240,9 @@ def register_producer_improvement_case(
             project_root,
             change_id,
             signal_path=signal_path,
+            catalog_path=catalog_path,
             disposition_path=disposition_path,
+            expected_canonical_digests=expected_canonical_digests,
             signal_id=signal_id,
             canonical_invariant_id=canonical_invariant_id,
             owner_boundary=owner_boundary,

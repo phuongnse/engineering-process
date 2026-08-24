@@ -3852,9 +3852,13 @@ def validate_completion(document: Any, path: str = "completion") -> None:
                 "phase",
                 "invariantId",
                 "signal",
+                "catalog",
                 "disposition",
                 "resolution",
                 "reproduction",
+                "signalCanonicalSha256",
+                "catalogCanonicalSha256",
+                "dispositionCanonicalSha256",
             },
             path=case_path,
         )
@@ -3866,9 +3870,34 @@ def validate_completion(document: Any, path: str = "completion") -> None:
                 f"{case_path}.phase: completion contains an unresolved improvement"
             )
         _improvement_id(case["invariantId"], f"{case_path}.invariantId")
-        for name in ("signal", "disposition", "resolution", "reproduction"):
+        for name in (
+            "signal",
+            "catalog",
+            "disposition",
+            "resolution",
+            "reproduction",
+        ):
             if case[name] is not None:
                 _artifact_reference(case[name], f"{case_path}.{name}")
+        for name in (
+            "signalCanonicalSha256",
+            "catalogCanonicalSha256",
+            "dispositionCanonicalSha256",
+        ):
+            digest = case[name]
+            if digest is not None:
+                _improvement_digest(digest, f"{case_path}.{name}")
+        if case["role"] in {"consumer", "producer"} and any(
+            case[name] is None
+            for name in (
+                "signalCanonicalSha256",
+                "catalogCanonicalSha256",
+                "dispositionCanonicalSha256",
+            )
+        ):
+            raise ContractError(
+                f"{case_path}: shared improvement completion lacks canonical chain digests"
+            )
     if improvement_ids != sorted(set(improvement_ids)):
         raise ContractError(
             f"{path}.improvements: must be sorted by id and unique"

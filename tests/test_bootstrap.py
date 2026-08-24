@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from engineering_process.bootstrap import (
     AGENTS_END,
@@ -133,6 +134,50 @@ class BootstrapTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
             self.assertEqual(pr_template.count(PR_DESCRIPTION_START), 1)
             self.assertEqual(pr_template.count(PR_DESCRIPTION_END), 1)
+
+    def test_every_bootstrap_managed_text_writer_is_explicit_utf8_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.write_manifest(root)
+            managed_paths = {
+                root / ".process" / "project.json",
+                root / ".process" / "process.lock",
+                root / "AGENTS.md",
+                root / ".github" / "PULL_REQUEST_TEMPLATE.md",
+                root / ".gitignore",
+                root / ".agents" / ".gitattributes",
+            }
+            original_write_text = Path.write_text
+            managed_calls: list[dict[str, object]] = []
+
+            def record_write_text(
+                path: Path, content: str, *args: object, **kwargs: object
+            ) -> int:
+                if path in managed_paths:
+                    managed_calls.append(dict(kwargs))
+                return original_write_text(path, content, *args, **kwargs)
+
+            with mock.patch.object(Path, "write_text", new=record_write_text):
+                initialize_project(
+                    root,
+                    PROCESS_ROOT,
+                    manifest_path=manifest,
+                    requested_bundles=["core"],
+                    replace=False,
+                )
+
+            self.assertEqual(
+                managed_paths,
+                {path for path in managed_paths if path.is_file()},
+            )
+            self.assertEqual(len(managed_paths), len(managed_calls))
+            for call in managed_calls:
+                self.assertEqual("utf-8", call.get("encoding"))
+                self.assertEqual("\n", call.get("newline"))
+            for path in managed_paths:
+                content = path.read_bytes()
+                self.assertNotIn(b"\r\n", content)
+                self.assertTrue(content.endswith(b"\n"))
 
     def test_refuses_to_guess_how_to_merge_an_unmanaged_pr_template(self):
         with tempfile.TemporaryDirectory() as directory:

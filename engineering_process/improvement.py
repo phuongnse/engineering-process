@@ -140,6 +140,10 @@ def validate_improvement_chain(
         )
     if resolution_path is None and reproduction_path is not None:
         raise ContractError("improvement reproduction requires a resolution")
+    if disposition_path is not None and catalog_path is None:
+        raise ContractError(
+            "improvement disposition validation requires its exact producer catalog"
+        )
     _chain_bytes(
         (
             signal_path,
@@ -216,6 +220,14 @@ def validate_improvement_chain(
         if recurrence == "duplicate" and entry is not None and entry["status"] != "active":
             raise ContractError(
                 "duplicate improvement disposition requires an active catalog invariant"
+            )
+        if (
+            recurrence == "duplicate"
+            and entry is not None
+            and disposition["linkedChangeId"] != entry["activeChangeId"]
+        ):
+            raise ContractError(
+                "duplicate improvement disposition must link the catalog active change"
             )
     result.update(
         {
@@ -534,9 +546,11 @@ def export_improvement_signal(
         change_id,
         case_id,
         signal_path=output,
+        catalog_path=None,
         disposition_path=None,
         resolution_path=None,
         reproduction_path=None,
+        expected_canonical_digests={"signal": signal_digest},
         chain_phase="signal-exported",
         actor_id=actor_id,
         context_id=context_id,
@@ -819,6 +833,7 @@ def create_improvement_resolution(
     project_root: Path,
     signal_path: Path,
     disposition_path: Path,
+    catalog_path: Path,
     lifecycle_receipt_path: Path,
     release_contract_path: Path,
     release_receipt_path: Path | None,
@@ -851,8 +866,26 @@ def create_improvement_resolution(
         raise ContractError(
             "improvement resolution requires the complete shared proof contract"
         )
-    validate_improvement_chain(signal_path, disposition_path)
+    validate_improvement_chain(
+        signal_path,
+        disposition_path,
+        catalog_path=catalog_path,
+    )
+    receipt_document, receipt_bytes_before = _stable_json_document(
+        lifecycle_receipt_path,
+        label="producer improvement lifecycle receipt",
+        limit=8_000_000,
+    )
     receipt = validate_receipt(lifecycle_receipt_path)
+    _receipt_document_after, receipt_bytes_after = _stable_json_document(
+        lifecycle_receipt_path,
+        label="producer improvement lifecycle receipt",
+        limit=8_000_000,
+    )
+    if receipt_bytes_after != receipt_bytes_before:
+        raise ContractError(
+            "producer improvement lifecycle receipt changed during validation"
+        )
     producer = disposition["producer"]
     if (
         receipt["project"] != producer["project"]
@@ -860,6 +893,43 @@ def create_improvement_resolution(
     ):
         raise ContractError(
             "improvement lifecycle receipt does not match producer disposition"
+        )
+    receipt_artifacts = receipt_document.get("artifacts")
+    completion_entry = (
+        receipt_artifacts.get("completion")
+        if isinstance(receipt_artifacts, dict)
+        else None
+    )
+    completion_text = (
+        completion_entry.get("sourceText")
+        if isinstance(completion_entry, dict)
+        else None
+    )
+    try:
+        completion_document = json.loads(completion_text)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ContractError(
+            "producer lifecycle receipt lacks a valid completion artifact"
+        ) from error
+    improvements = completion_document.get("improvements")
+    expected_signal_digest = canonical_json_digest(signal)
+    expected_disposition_digest = canonical_json_digest(disposition)
+    matching_cases = [
+        case
+        for case in improvements
+        if isinstance(improvements, list)
+        and isinstance(case, dict)
+        and case.get("role") == "producer"
+        and case.get("phase") == "producer-completed"
+        and case.get("invariantId") == disposition["canonicalInvariantId"]
+        and case.get("signalCanonicalSha256") == expected_signal_digest
+        and case.get("catalogCanonicalSha256") == disposition["catalogSha256"]
+        and case.get("dispositionCanonicalSha256")
+        == expected_disposition_digest
+    ] if isinstance(improvements, list) else []
+    if len(matching_cases) != 1:
+        raise ContractError(
+            "producer lifecycle receipt does not contain the reviewed ingested improvement case"
         )
     release_document = read_json(release_contract_path)
     release_contract = validate_release(
@@ -887,6 +957,11 @@ def create_improvement_resolution(
         raise ContractError(
             "validated immutable release does not match the release contract version"
         )
+    _attestation_document, attestation_bytes_before = _stable_json_document(
+        artifact_attestation_path,
+        label="producer distribution attestation",
+        limit=256_000,
+    )
     validate_distribution_attestation(
         project_root,
         artifact_root,
@@ -895,15 +970,22 @@ def create_improvement_resolution(
         authorization_path=release_authorization_path,
         checkpoint=release_commit,
     )
+    _attestation_after, attestation_bytes_after = _stable_json_document(
+        artifact_attestation_path,
+        label="producer distribution attestation",
+        limit=256_000,
+    )
+    if attestation_bytes_after != attestation_bytes_before:
+        raise ContractError(
+            "producer distribution attestation changed during validation"
+        )
     artifact_set_sha256 = "sha256:" + hashlib.sha256(
-        artifact_attestation_path.read_bytes()
+        attestation_bytes_before
     ).hexdigest()
     digests = sorted(set(regression_evidence))
     if not digests:
         raise ContractError("improvement resolution requires regression evidence")
-    receipt_sha256 = "sha256:" + hashlib.sha256(
-        lifecycle_receipt_path.read_bytes()
-    ).hexdigest()
+    receipt_sha256 = "sha256:" + hashlib.sha256(receipt_bytes_before).hexdigest()
     resolution = {
         "schemaVersion": 1,
         "kind": "engineering-process-improvement-resolution",
@@ -934,6 +1016,7 @@ def create_improvement_resolution(
         signal_path,
         disposition_path,
         output,
+        catalog_path=catalog_path,
     )
     return {
         "signalId": signal["signalId"],
@@ -951,6 +1034,7 @@ def create_improvement_reproduction(
     project_root: Path,
     signal_path: Path,
     disposition_path: Path,
+    catalog_path: Path,
     resolution_path: Path,
     lifecycle_receipt_path: Path,
     *,
@@ -966,6 +1050,7 @@ def create_improvement_reproduction(
         signal_path,
         disposition_path,
         resolution_path,
+        catalog_path=catalog_path,
     )
     signal = _load(
         signal_path, validate_improvement_signal, "improvement signal"
@@ -1085,6 +1170,7 @@ def create_improvement_reproduction(
         disposition_path,
         resolution_path,
         output,
+        catalog_path,
     )
     return {
         **chain,
@@ -1119,14 +1205,37 @@ def attach_improvement_chain(
         reproduction_path,
         catalog_path,
     )
+    disposition = (
+        _load(
+            disposition_path,
+            validate_improvement_disposition,
+            "improvement disposition",
+        )
+        if disposition_path is not None
+        else None
+    )
+    expected_digests = {"signal": chain["signalSha256"]}
+    if disposition is not None:
+        expected_digests.update(
+            {
+                "catalog": disposition["catalogSha256"],
+                "disposition": chain["dispositionSha256"],
+            }
+        )
+    if resolution_path is not None:
+        expected_digests["resolution"] = chain["resolutionSha256"]
+    if reproduction_path is not None:
+        expected_digests["reproduction"] = chain["reproductionSha256"]
     state = bind_improvement_chain(
         project_root,
         change_id,
         case_id,
         signal_path=signal_path,
+        catalog_path=catalog_path,
         disposition_path=disposition_path,
         resolution_path=resolution_path,
         reproduction_path=reproduction_path,
+        expected_canonical_digests=expected_digests,
         chain_phase=chain["phase"],
         actor_id=actor_id,
         context_id=context_id,
@@ -1174,7 +1283,13 @@ def ingest_improvement_signal(
         project_root,
         change_id,
         signal_path=signal_path,
+        catalog_path=catalog_path,
         disposition_path=disposition_path,
+        expected_canonical_digests={
+            "signal": chain["signalSha256"],
+            "catalog": disposition["catalogSha256"],
+            "disposition": chain["dispositionSha256"],
+        },
         signal_id=signal["signalId"],
         canonical_invariant_id=disposition["canonicalInvariantId"],
         owner_boundary=disposition["ownerBoundary"],

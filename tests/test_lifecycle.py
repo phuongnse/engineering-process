@@ -15,6 +15,7 @@ from engineering_process.contracts import (
     ImpactComponent,
     Project,
     ProjectImpact,
+    canonical_json_digest,
 )
 from engineering_process.evidence import (
     _canonical_digest,
@@ -25,9 +26,11 @@ from engineering_process.evidence import (
     validate_bootstrap_authorization,
 )
 from engineering_process.improvement import (
+    attach_improvement_chain,
     create_improvement_disposition,
     export_improvement_signal,
     ingest_improvement_signal,
+    validate_improvement_chain,
 )
 from engineering_process.lifecycle import (
     _change_lock,
@@ -183,6 +186,126 @@ class LifecycleTests(unittest.TestCase):
                 for dimension in CORE_QUALITY_DIMENSIONS
             ],
         }
+
+    def write_shared_improvement_chain(
+        self,
+        inputs: Path,
+        signal: dict[str, object],
+        *,
+        prefix: str,
+    ) -> dict[str, Path]:
+        target = signal["target"]
+        source = signal["source"]
+        claim = signal["claim"]
+        assert isinstance(target, dict)
+        assert isinstance(source, dict)
+        assert isinstance(claim, dict)
+        catalog = {
+            "schemaVersion": 1,
+            "kind": "engineering-process-improvement-catalog",
+            "producer": target,
+            "entries": [],
+        }
+        disposition = {
+            "schemaVersion": 1,
+            "kind": "engineering-process-improvement-disposition",
+            "createdAt": "2026-08-24T01:00:00Z",
+            "signalSha256": canonical_json_digest(signal),
+            "catalogSha256": canonical_json_digest(catalog),
+            "catalogStatus": "absent",
+            "producer": {
+                **target,
+                "checkpoint": "9" * 40,
+                "process": {
+                    "version": "0.4.0",
+                    "digest": f"sha256:{'a' * 64}",
+                },
+            },
+            "decision": "accepted",
+            "ownerBoundary": claim["ownerBoundary"],
+            "reusableClass": claim["reusableClass"],
+            "canonicalInvariantId": claim["proposedInvariantId"],
+            "recurrence": "new",
+            "linkedChangeId": "producer-change",
+            "rationaleSha256": claim["rationaleSha256"],
+            "exception": None,
+            "requiredProof": {
+                "producerLifecycle": True,
+                "immutableRelease": True,
+                "consumerReproduction": True,
+            },
+            "controls": {
+                "grantsImplementation": False,
+                "grantsMerge": False,
+                "grantsRelease": False,
+                "grantsAdoption": False,
+            },
+        }
+        version = source["process"]["version"]
+        release = {
+            "repository": target["repository"],
+            "version": version,
+            "tag": f"v{version}",
+            "releaseName": f"v{version}",
+            "commit": "e" * 40,
+            "artifactSetSha256": f"sha256:{'f' * 64}",
+        }
+        resolution = {
+            "schemaVersion": 1,
+            "kind": "engineering-process-improvement-resolution",
+            "resolvedAt": "2026-08-24T02:00:00Z",
+            "signalSha256": canonical_json_digest(signal),
+            "dispositionSha256": canonical_json_digest(disposition),
+            "canonicalInvariantId": disposition["canonicalInvariantId"],
+            "producerLifecycle": {
+                "project": target["project"],
+                "changeId": disposition["linkedChangeId"],
+                "checkpoint": "c" * 40,
+                "receiptSha256": f"sha256:{'d' * 64}",
+            },
+            "release": release,
+            "regressionEvidence": [f"sha256:{'1' * 64}"],
+        }
+        reproduction = {
+            "schemaVersion": 1,
+            "kind": "engineering-process-improvement-reproduction",
+            "completedAt": "2026-08-24T03:00:00Z",
+            "signalSha256": canonical_json_digest(signal),
+            "dispositionSha256": canonical_json_digest(disposition),
+            "resolutionSha256": canonical_json_digest(resolution),
+            "canonicalInvariantId": disposition["canonicalInvariantId"],
+            "consumer": {
+                "project": source["project"],
+                "repository": source["repository"],
+                "checkpoint": source["checkpoint"],
+                "workspaceFingerprint": source["workspaceFingerprint"],
+                "process": source["process"],
+            },
+            "release": release,
+            "evidence": {
+                "kind": "lifecycle-receipt",
+                "status": "passed",
+                "artifactSha256": f"sha256:{'2' * 64}",
+                "artifactBytes": 4096,
+                "changeId": "consumer-reproduction",
+                "cycle": 1,
+                "profiles": ["development", "review"],
+                "reference": None,
+            },
+        }
+        documents = {
+            "signal": signal,
+            "catalog": catalog,
+            "disposition": disposition,
+            "resolution": resolution,
+            "reproduction": reproduction,
+        }
+        paths: dict[str, Path] = {}
+        for name, document in documents.items():
+            path = inputs / f"{prefix}-{name}.json"
+            path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+            paths[name] = path
+        return paths
 
     def prepare_verified_change(
         self, root: Path, inputs: Path, *, change_id: str = "change-1"
@@ -751,6 +874,21 @@ class LifecycleTests(unittest.TestCase):
                 context_id="worker-context",
                 kind="agent",
             )
+            examples = Path(__file__).resolve().parent.parent / "examples"
+            with self.assertRaisesRegex(ContractError, "cannot advance consumer case"):
+                attach_improvement_chain(
+                    root,
+                    "change-1",
+                    case["id"],
+                    signal_path=examples / "improvement-signal.json",
+                    disposition_path=examples / "improvement-disposition.json",
+                    resolution_path=examples / "improvement-resolution.json",
+                    reproduction_path=examples / "improvement-reproduction.json",
+                    catalog_path=examples / "improvement-catalog.json",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    actor_kind="agent",
+                )
             signal_path = inputs / "signal.json"
             result = export_improvement_signal(
                 root,
@@ -769,9 +907,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("producer-disposition-required", result["phase"])
             self.assertEqual(False, signal["controls"]["rawOutputIncluded"])
             self.assertNotIn("command", signal["evidence"])
-            with self.assertRaisesRegex(
-                ContractError, "improvement-pending"
-            ):
+            with self.assertRaisesRegex(ContractError, "improvement-pending"):
                 verify_change(
                     root,
                     self.project(),
@@ -787,6 +923,170 @@ class LifecycleTests(unittest.TestCase):
                 "engineering-process",
                 status["improvementStatus"]["blockers"][0]["nextOwner"],
             )
+            wrong_invariant = json.loads(json.dumps(signal))
+            wrong_invariant["claim"][
+                "proposedInvariantId"
+            ] = "wrong-verification-boundary"
+            wrong_invariant_paths = self.write_shared_improvement_chain(
+                inputs, wrong_invariant, prefix="wrong-invariant"
+            )
+            with self.assertRaisesRegex(
+                ContractError, "does not belong to lifecycle case"
+            ):
+                attach_improvement_chain(
+                    root,
+                    "change-1",
+                    case["id"],
+                    signal_path=wrong_invariant_paths["signal"],
+                    disposition_path=wrong_invariant_paths["disposition"],
+                    resolution_path=None,
+                    reproduction_path=None,
+                    catalog_path=wrong_invariant_paths["catalog"],
+                    actor_id="worker",
+                    context_id="worker-context",
+                    actor_kind="agent",
+                )
+            wrong_target = json.loads(json.dumps(signal))
+            wrong_target["target"] = {
+                "project": "other-producer",
+                "repository": "example/other-producer",
+            }
+            wrong_target_paths = self.write_shared_improvement_chain(
+                inputs, wrong_target, prefix="wrong-target"
+            )
+            with self.assertRaisesRegex(
+                ContractError, "does not belong to lifecycle case"
+            ):
+                attach_improvement_chain(
+                    root,
+                    "change-1",
+                    case["id"],
+                    signal_path=wrong_target_paths["signal"],
+                    disposition_path=wrong_target_paths["disposition"],
+                    resolution_path=None,
+                    reproduction_path=None,
+                    catalog_path=wrong_target_paths["catalog"],
+                    actor_id="worker",
+                    context_id="worker-context",
+                    actor_kind="agent",
+                )
+            chain_paths = self.write_shared_improvement_chain(
+                inputs, signal, prefix="matching"
+            )
+            validated = validate_improvement_chain(
+                chain_paths["signal"],
+                chain_paths["disposition"],
+                catalog_path=chain_paths["catalog"],
+            )
+            original_disposition = chain_paths["disposition"].read_text(
+                encoding="utf-8"
+            )
+            changed_disposition = json.loads(original_disposition)
+            changed_disposition["rationaleSha256"] = f"sha256:{'3' * 64}"
+            chain_paths["disposition"].write_text(
+                json.dumps(changed_disposition) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "changed after chain validation"):
+                lifecycle_module.bind_improvement_chain(
+                    root,
+                    "change-1",
+                    case["id"],
+                    signal_path=chain_paths["signal"],
+                    catalog_path=chain_paths["catalog"],
+                    disposition_path=chain_paths["disposition"],
+                    resolution_path=None,
+                    reproduction_path=None,
+                    expected_canonical_digests={
+                        "signal": validated["signalSha256"],
+                        "catalog": canonical_json_digest(
+                            json.loads(
+                                chain_paths["catalog"].read_text(encoding="utf-8")
+                            )
+                        ),
+                        "disposition": validated["dispositionSha256"],
+                    },
+                    chain_phase=validated["phase"],
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            chain_paths["disposition"].write_text(
+                original_disposition, encoding="utf-8"
+            )
+            attached = attach_improvement_chain(
+                root,
+                "change-1",
+                case["id"],
+                signal_path=chain_paths["signal"],
+                disposition_path=chain_paths["disposition"],
+                resolution_path=None,
+                reproduction_path=None,
+                catalog_path=chain_paths["catalog"],
+                actor_id="worker",
+                context_id="worker-context",
+                actor_kind="agent",
+            )
+            self.assertEqual("producer-resolution-required", attached["casePhase"])
+            disposition_status = lifecycle_status(root, "change-1")[
+                "improvementStatus"
+            ]["cases"][0]
+            self.assertEqual("new", disposition_status["recurrence"])
+            self.assertEqual(
+                "producer-change",
+                disposition_status["producer"]["linkedChangeId"],
+            )
+            with self.assertRaisesRegex(ContractError, "cannot advance consumer case"):
+                attach_improvement_chain(
+                    root,
+                    "change-1",
+                    case["id"],
+                    signal_path=chain_paths["signal"],
+                    disposition_path=chain_paths["disposition"],
+                    resolution_path=None,
+                    reproduction_path=None,
+                    catalog_path=chain_paths["catalog"],
+                    actor_id="worker",
+                    context_id="worker-context",
+                    actor_kind="agent",
+                )
+            released = attach_improvement_chain(
+                root,
+                "change-1",
+                case["id"],
+                signal_path=chain_paths["signal"],
+                disposition_path=chain_paths["disposition"],
+                resolution_path=chain_paths["resolution"],
+                reproduction_path=None,
+                catalog_path=chain_paths["catalog"],
+                actor_id="worker",
+                context_id="worker-context",
+                actor_kind="agent",
+            )
+            self.assertEqual("consumer-reproduction-required", released["casePhase"])
+            closed = attach_improvement_chain(
+                root,
+                "change-1",
+                case["id"],
+                signal_path=chain_paths["signal"],
+                disposition_path=chain_paths["disposition"],
+                resolution_path=chain_paths["resolution"],
+                reproduction_path=chain_paths["reproduction"],
+                catalog_path=chain_paths["catalog"],
+                actor_id="worker",
+                context_id="worker-context",
+                actor_kind="agent",
+            )
+            self.assertEqual("closed", closed["casePhase"])
+            closed_status = lifecycle_status(root, "change-1")["improvementStatus"]
+            self.assertEqual(0, closed_status["openCount"])
+            closed_case = closed_status["cases"][0]
+            self.assertTrue(closed_case["closed"])
+            self.assertEqual("v0.1.1", closed_case["release"]["tag"])
+            self.assertEqual(
+                signal["source"]["checkpoint"],
+                closed_case["consumer"]["checkpoint"],
+            )
+            self.assertNotIn(".process/runs", json.dumps(closed_case))
 
     def test_producer_ingests_only_disposition_linked_signal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -885,6 +1185,36 @@ class LifecycleTests(unittest.TestCase):
                 "single-windows-helper-protocol",
                 state["improvements"][0]["classification"]["invariantId"],
             )
+            status_case = lifecycle_status(root, "change-1")["improvementStatus"][
+                "cases"
+            ][0]
+            self.assertEqual("producer", status_case["role"])
+            self.assertEqual("producer-change", status_case["phase"])
+            self.assertEqual("recurrence", status_case["recurrence"])
+            self.assertEqual("resolved", status_case["catalog"]["status"])
+            self.assertEqual("change-1", status_case["producer"]["linkedChangeId"])
+            with self.assertRaisesRegex(
+                ContractError, "reviewed improvement-catalog.json"
+            ):
+                lifecycle_module._require_producer_catalog_activation(
+                    root, state, state["improvements"][0]
+                )
+            catalog["entries"][0]["status"] = "active"
+            catalog["entries"][0]["activeChangeId"] = "change-1"
+            (root / "improvement-catalog.json").write_text(
+                json.dumps(catalog) + "\n", encoding="utf-8"
+            )
+            lifecycle_module._require_producer_catalog_activation(
+                root, state, state["improvements"][0]
+            )
+            catalog["entries"][0]["activeChangeId"] = "different-change"
+            (root / "improvement-catalog.json").write_text(
+                json.dumps(catalog) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "selected lifecycle change"):
+                lifecycle_module._require_producer_catalog_activation(
+                    root, state, state["improvements"][0]
+                )
 
     def test_verification_eligibility_reason_mapping_is_complete(self):
         passing = {

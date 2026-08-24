@@ -23,6 +23,7 @@ from .publication import (
     validate_project_extensions,
 )
 from .syncing import (
+    _write_utf8_lf,
     adoption_runner_target_issues,
     git_attributes_target_issues,
     managed_parent_issues,
@@ -84,7 +85,7 @@ def _write_text(path: Path, content: str) -> None:
     if _read_optional_text(path) == content:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _write_utf8_lf(path, content)
 
 
 def _agents_update(project_root: Path, process_root: Path) -> tuple[Path, str]:
@@ -155,7 +156,7 @@ def _write_attributes(path: Path, content: str) -> None:
     if current == content:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _write_utf8_lf(path, content)
 
 
 def initialize_project(

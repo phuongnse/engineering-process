@@ -65,7 +65,11 @@ case may reach producer completion but stays release-owned until an immutable
 resolution exists. A shared consumer case stays incomplete until disposition,
 resolution, and reproduction all validate.
 
-`processctl change status` reports local case blockers and next owner.
+`processctl change status` reports every local, producer, and consumer case, including
+proposed and canonical invariant ids, recurrence, catalog status and digest,
+producer/change, immutable release, consumer checkpoint/process identity, artifact
+source and canonical digests, blockers, and next owner. The public projection omits
+private lifecycle artifact paths.
 `processctl improvement status` reports a transported artifact chain without reading
 either repository's private lifecycle files.
 
@@ -80,7 +84,11 @@ A new signal assigned to a resolved catalog invariant is a recurrence. It cannot
 closed as another non-shared narrow incident unless the producer disposition carries
 an explicit owner-approved exception and evidence digest. An active invariant yields
 a duplicate disposition linked to existing work. A new semantic class is added only
-through a reviewed producer lifecycle.
+through a reviewed producer lifecycle. Before that producer lifecycle can complete,
+the reviewed distribution catalog must contain the canonical invariant as `active`,
+with the same reusable class and `activeChangeId` as the selected lifecycle. Release
+PR materialization resolves only entries whose active change is in the exact release
+change set.
 
 ## Release and adoption
 
