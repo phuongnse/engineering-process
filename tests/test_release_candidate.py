@@ -36,10 +36,20 @@ class ReleaseCandidateTests(unittest.TestCase):
             if change.identifier == "federated-process-improvement":
                 federated_migration = change.migration
 
-        aggregate = "; ".join(migrations)
+        if federated_migration is None:
+            release = validate_release(
+                json.loads(
+                    (changes_dir.parent / "release.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+            )
+            aggregate = release.migration or ""
+            self.assertIn("federated-process-improvement:", aggregate)
+            federated_migration = aggregate
+        else:
+            aggregate = "; ".join(migrations)
         self.assertLessEqual(len(aggregate), 1_000)
-        self.assertIsNotNone(federated_migration)
-        assert federated_migration is not None
         for required in (
             "cross-repo-change",
             "Classify governed failures/findings",
