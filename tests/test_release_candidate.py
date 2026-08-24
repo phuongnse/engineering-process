@@ -51,12 +51,12 @@ class ReleaseCandidateTests(unittest.TestCase):
             aggregate = "; ".join(migrations)
         self.assertLessEqual(len(aggregate), 1_000)
         for required in (
-            "cross-repo-change",
-            "Classify governed failures/findings",
-            "block shared consumers",
+            "Must adopt cross-repo-change",
+            "classify governed failures/findings",
+            "consumers await disposition",
             "immutable release",
             "exact reproduction",
-            "Old pins/receipts retain meaning",
+            "Released lifecycle/evidence readers retain historical meaning",
         ):
             self.assertIn(required, federated_migration)
 
