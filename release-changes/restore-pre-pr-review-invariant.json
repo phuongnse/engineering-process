@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "restore-pre-pr-review-invariant",
+  "type": "breaking",
+  "surfaces": [
+    "cli",
+    "distribution",
+    "skills",
+    "workflow"
+  ],
+  "rationale": "Restore semantic checkpoint review before PR publication, prevent static checks from fabricating approval, make publication a mandatory core skill, add a runtime-bound process graph, and define safe self-hosted authority rotation.",
+  "schemaImpact": "additive",
+  "migration": "Consumers must adopt the mandatory publish-change core skill, use process-graph validation, supply a host-produced semantic review report before completion, transport only validated completion evidence to remote publication adapters, create PRs only after source/evidence validation, and rotate self-hosted trust roots through old-authority introduction before immutable cutover."
+}

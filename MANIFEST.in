@@ -1,4 +1,2 @@
-prune .agents
-prune .process
-global-exclude __pycache__
-global-exclude *.py[cod]
+# Package inputs are explicitly declared in pyproject.toml. Archive verification
+# rejects managed, generated, and bytecode paths from both wheel and sdist outputs.

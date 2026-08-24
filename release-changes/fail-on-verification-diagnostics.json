@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "fail-on-verification-diagnostics",
+  "type": "breaking",
+  "surfaces": [
+    "command-execution",
+    "supplemental-verification",
+    "verification-evidence"
+  ],
+  "rationale": "Process-owned commands now fail on classified warning or error diagnostics even when the child exits zero, and current verification and supplemental evidence require redacted diagnostic summaries.",
+  "schemaImpact": "breaking",
+  "migration": "Correct warnings and errors emitted by canonical commands before adoption. Generate verification schema 3 and supplemental-verification schema 2 for current evidence; retain schema-1/schema-2 verification reports and supplemental schema-1 bundles only as historical evidence, without suppression or down-conversion."
+}

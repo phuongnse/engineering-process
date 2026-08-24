@@ -36,6 +36,7 @@ CORE_SKILLS = (
     "finish-change",
     "implement-change",
     "plan-change",
+    "publish-change",
     "review-change",
     "run-change",
     "verify-change",
@@ -330,6 +331,11 @@ class SyncTests(unittest.TestCase):
                 check=True,
             )
             subprocess.run(
+                ["git", "add", ".gitattributes"],
+                cwd=project_root,
+                check=True,
+            )
+            subprocess.run(
                 ["git", "config", "core.autocrlf", "true"],
                 cwd=project_root,
                 check=True,
@@ -338,7 +344,6 @@ class SyncTests(unittest.TestCase):
                 [
                     "git",
                     "add",
-                    ".gitattributes",
                     ".agents/.gitattributes",
                     relative,
                 ],

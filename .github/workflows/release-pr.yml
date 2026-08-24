@@ -1,4 +1,4 @@
-name: Release PR
+name: Prepare unpublished Release candidate
 
 on:
   push:
@@ -6,42 +6,31 @@ on:
     paths:
       - "release-changes/*.json"
       - ".github/workflows/release-pr.yml"
+      - ".github/workflows/release-candidate.yml"
+      - ".github/workflows/release-approval.yml"
       - ".process/process.lock"
       - "requirements/process.in"
       - "requirements/process.txt"
       - "verification/classify_release_preparation.py"
 
 permissions:
+  actions: write
   contents: read
 
 concurrency:
-  group: engineering-process-release-pr
+  group: engineering-process-release-candidate-source
   cancel-in-progress: false
 
 jobs:
   prepare:
-    name: Create or update the governed Release PR
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Materialize an unpublished candidate artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - name: Create short-lived Release PR token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
-          owner: phuongnse
-          repositories: engineering-process
-          permission-contents: write
-          permission-metadata: read
-          permission-pull-requests: write
-          permission-workflows: write
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
       - name: Detect pending release changes
         id: applicability
@@ -51,26 +40,13 @@ jobs:
             echo 'pending=true' >> "$GITHUB_OUTPUT"
           else
             echo 'pending=false' >> "$GITHUB_OUTPUT"
-            echo 'No pending release changes; Release PR generation is not applicable.'
+            echo 'No pending release changes; candidate preparation is not applicable.'
           fi
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: steps.applicability.outputs.pending == 'true'
         with:
           python-version: "3.14"
-
-      - name: Return an existing Release PR to draft
-        if: steps.applicability.outputs.pending == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RELEASE_BRANCH: automation/release/next
-        run: |
-          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          if test -n "$pr_number" && \
-            test "$(gh pr view "$pr_number" --json isDraft --jq .isDraft)" = false; then
-            gh pr ready "$pr_number" --undo
-          fi
 
       - name: Install exact candidate dependencies
         if: steps.applicability.outputs.pending == 'true'
@@ -80,132 +56,65 @@ jobs:
           -r engineering_process/requirements-dev.txt
           -r engineering_process/requirements-build.txt
 
-      - name: Reset the bot-owned branch to protected main
-        if: steps.applicability.outputs.pending == 'true'
-        id: branch
-        env:
-          RELEASE_BRANCH: automation/release/next
-        run: |
-          remote_sha="$(git ls-remote --heads origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
-          printf 'remote_sha=%s\n' "$remote_sha" >> "$GITHUB_OUTPUT"
-          git switch -C "$RELEASE_BRANCH" "$GITHUB_SHA"
-
-      - name: Derive and materialize the exact release candidate
+      - name: Derive and materialize the candidate without publishing source
         if: steps.applicability.outputs.pending == 'true'
         id: release
         run: |
-          set +e
           python processctl.py publication prepare-release --json \
             > "$RUNNER_TEMP/release-candidate.json"
-          prepare_status="$?"
-          set -e
-          if test "$prepare_status" -ne 0; then
-            if python verification/classify_release_preparation.py \
-              "$RUNNER_TEMP/release-candidate.json"; then
-              cat "$RUNNER_TEMP/release-candidate.json"
-              echo 'deferred=true' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            cat "$RUNNER_TEMP/release-candidate.json" >&2
-            exit "$prepare_status"
-          fi
-          echo 'deferred=false' >> "$GITHUB_OUTPUT"
-          python processctl.py publication release-pr-body \
-            --state draft --output "$RUNNER_TEMP/release-pr.md" --json
-          version="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["version"])')"
-          tag="v$version"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Refresh stale self-adoption through verified publication
-        if: >-
-          steps.applicability.outputs.pending == 'true' &&
-          steps.release.outputs.deferred == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
           version="$(jq -r .version release.json)"
-          package="$(jq -r .identity.package release.json)"
-          tag="$(jq -r .identity.tag release.json)"
-          test "$tag" = "v$version"
-          test "$(jq -r .identity.releaseName release.json)" = "$tag"
-          commit="$(git rev-parse --verify "$tag^{commit}")"
-          printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$'
-          git merge-base --is-ancestor "$commit" "$GITHUB_SHA"
-          test "$(gh release view "$tag" --json tagName --jq .tagName)" = "$tag"
-          test "$(gh release view "$tag" --json name --jq .name)" = "$tag"
-          test "$(gh release view "$tag" --json isDraft --jq .isDraft)" = false
-          test "$(gh release view "$tag" --json isPrerelease --jq .isPrerelease)" = false
-          gh release verify "$tag"
-          attestation="$package-$tag-artifacts.json"
-          mapfile -t digests < <(
-            gh release view "$tag" --json assets \
-              --jq ".assets[] | select(.name == \"$attestation\") | .digest"
-          )
-          test "${#digests[@]}" -eq 1
-          digest="${digests[0]}"
-          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
-          jq -n \
-            --arg attestationDigest "$digest" \
-            --arg commit "$commit" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg tag "$tag" \
-            --arg version "$version" \
-            '{event_type: "engineering-process-release-ready", client_payload: {attestationDigest: $attestationDigest, commit: $commit, repository: $repository, tag: $tag, version: $version}}' \
-            > "$RUNNER_TEMP/publication-refresh-event.json"
-          gh api --method POST \
-            "repos/$GITHUB_REPOSITORY/dispatches" \
-            --input "$RUNNER_TEMP/publication-refresh-event.json"
+          test "$(jq -r .identity.tag release.json)" = "v$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      - name: Commit the generated candidate
-        if: >-
-          steps.applicability.outputs.pending == 'true' &&
-          steps.release.outputs.deferred != 'true'
+      - name: Commit the unpublished candidate locally
+        if: steps.applicability.outputs.pending == 'true'
         id: candidate
         env:
-          RELEASE_BRANCH: automation/release/next
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          REMOTE_SHA: ${{ steps.branch.outputs.remote_sha }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add --all -- .release release-changes release.json pyproject.toml engineering_process/__init__.py
           git diff --cached --quiet && {
-            echo "release candidate did not change the repository" >&2
+            echo 'release candidate did not change the repository' >&2
             exit 1
           }
-          git commit -m "chore(release): prepare $RELEASE_TAG"
-          if test -n "$REMOTE_SHA"; then
-            git push \
-              --force-with-lease="refs/heads/$RELEASE_BRANCH:$REMOTE_SHA" \
-              origin "HEAD:refs/heads/$RELEASE_BRANCH"
-          else
-            git push --set-upstream origin "HEAD:refs/heads/$RELEASE_BRANCH"
-          fi
-          printf 'head_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git commit -m "chore(release): prepare v$RELEASE_VERSION"
+          head_sha="$(git rev-parse HEAD)"
+          base_sha="$(git rev-parse HEAD^)"
+          test "$base_sha" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/unpublished-candidate"
+          git bundle create "$RUNNER_TEMP/unpublished-candidate/source.bundle" HEAD "^$base_sha"
+          jq -n \
+            --arg baseSha "$base_sha" \
+            --arg headSha "$head_sha" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg version "$RELEASE_VERSION" \
+            '{schemaVersion: 1, repository: $repository, baseSha: $baseSha, headSha: $headSha, version: $version}' \
+            > "$RUNNER_TEMP/unpublished-candidate/candidate.json"
+          printf 'base_sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
+          printf 'head_sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Create or refresh the Release PR
-        if: >-
-          steps.applicability.outputs.pending == 'true' &&
-          steps.release.outputs.deferred != 'true'
-        id: pull-request
+      - name: Preserve the unpublished source artifact
+        if: steps.applicability.outputs.pending == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unpublished-release-candidate-${{ steps.candidate.outputs.head_sha }}
+          path: ${{ runner.temp }}/unpublished-candidate
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+          include-hidden-files: false
+
+      - name: Dispatch exact checkpoint verification
+        if: steps.applicability.outputs.pending == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RELEASE_BRANCH: automation/release/next
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: |
-          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          if test -z "$pr_number"; then
-            gh pr create --draft --base main --head "$RELEASE_BRANCH" \
-              --title "chore(release): prepare $RELEASE_TAG" \
-              --body-file "$RUNNER_TEMP/release-pr.md"
-          else
-            gh pr edit "$pr_number" \
-              --title "chore(release): prepare $RELEASE_TAG" \
-              --body-file "$RUNNER_TEMP/release-pr.md"
-          fi
-          pr_number="$(gh pr list --state open --head "$RELEASE_BRANCH" \
-            --json number --jq '.[0].number // empty')"
-          test -n "$pr_number"
-          printf 'pr_number=%s\n' "$pr_number" >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.candidate.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
+        run: >-
+          gh workflow run release-candidate.yml
+          --repo "$GITHUB_REPOSITORY" --ref main
+          -f source_run_id="$GITHUB_RUN_ID"
+          -f comparison_base="$BASE_SHA"
+          -f release_head_sha="$HEAD_SHA"

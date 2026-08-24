@@ -20,7 +20,7 @@
     "reports"
   ],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "kind": {"const": "engineering-process-supplemental-verification"},
     "status": {"enum": ["passed", "failed"]},
     "checkpoint": {"$ref": "#/$defs/gitOid"},
@@ -178,8 +178,68 @@
         "stdoutSha256": {"$ref": "#/$defs/hexSha256"},
         "stderrSha256": {"$ref": "#/$defs/hexSha256"},
         "outputTruncated": {"type": "boolean"},
-        "streamOutputTruncated": {"type": "boolean"}
+        "streamOutputTruncated": {"type": "boolean"},
+        "diagnostics": {"$ref": "#/$defs/diagnostics"}
       }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "status",
+        "count",
+        "matches",
+        "matchesTruncated"
+      ],
+      "properties": {
+        "policy": {"const": "forbid-warning-error"},
+        "status": {"enum": ["clean", "failed"]},
+        "count": {"type": "integer", "minimum": 0},
+        "matches": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "stream", "line", "lineSha256"],
+            "properties": {
+              "severity": {"enum": ["warning", "error"]},
+              "stream": {"enum": ["stdout", "stderr"]},
+              "line": {"type": "integer", "minimum": 1},
+              "lineSha256": {"$ref": "#/$defs/hexSha256"}
+            }
+          }
+        },
+        "matchesTruncated": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"status": {"const": "clean"}},
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "count": {"const": 0},
+              "matches": {"maxItems": 0},
+              "matchesTruncated": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"status": {"const": "failed"}},
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "count": {"minimum": 1},
+              "matches": {"minItems": 1}
+            }
+          }
+        }
+      ]
     },
     "report": {
       "type": "object",
@@ -205,7 +265,7 @@
         },
         "bytes": {"type": "integer", "minimum": 1, "maximum": 1000000},
         "sha256": {"$ref": "#/$defs/sha256"},
-        "schemaVersion": {"const": 2},
+        "schemaVersion": {"enum": [2, 3]},
         "profile": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
@@ -248,5 +308,47 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 1}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "reports": {
+            "items": {
+              "properties": {
+                "schemaVersion": {"const": 2},
+                "checks": {
+                  "items": {"not": {"required": ["diagnostics"]}}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 2}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "reports": {
+            "items": {
+              "properties": {
+                "schemaVersion": {"const": 3},
+                "checks": {
+                  "items": {"required": ["diagnostics"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

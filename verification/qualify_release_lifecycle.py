@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 from typing import Sequence
@@ -13,15 +12,18 @@ from typing import Sequence
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from engineering_process.bounded_process import run_bounded_process
 from engineering_process.contracts import ContractError
-from verification.prepare_release_review import (
-    TRUSTED_VERIFIER_REPOSITORY,
-    TRUSTED_VERIFIER_SHA,
+from engineering_process.diagnostics import (
+    classify_diagnostics,
+    diagnostic_failure_message,
 )
 
 
 COMMAND_TIMEOUT_SECONDS = 120
 PROFILE_TIMEOUT_SECONDS = 2_400
+COMMAND_OUTPUT_STREAM_LIMIT = 1_000_000
+COMMAND_OUTPUT_TOTAL_LIMIT = 1_500_000
 SENSITIVE_ENVIRONMENT_MARKERS = (
     "CREDENTIAL",
     "PASSWORD",
@@ -36,18 +38,6 @@ def pending_release_changes(project_root: Path) -> tuple[Path, ...]:
     if not changes_root.is_dir():
         raise ContractError("release qualification requires release-changes/")
     return tuple(sorted(path for path in changes_root.glob("*.json") if path.is_file()))
-
-
-def qualification_evidence(checkpoint: str) -> dict[str, str]:
-    return {
-        "status": "passed",
-        "governanceMode": "single-maintainer",
-        "verificationKind": "independent-automated",
-        "repository": "phuongnse/engineering-process",
-        "headSha": checkpoint,
-        "verifierRepository": TRUSTED_VERIFIER_REPOSITORY,
-        "verifierSha": TRUSTED_VERIFIER_SHA,
-    }
 
 
 def _safe_environment() -> dict[str, str]:
@@ -71,32 +61,56 @@ def _run(
     capture: bool = False,
 ) -> str:
     try:
-        result = subprocess.run(
-            list(command),
-            cwd=cwd,
-            env=_safe_environment(),
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE if capture else None,
-            stderr=subprocess.PIPE if capture else None,
-            timeout=timeout_seconds,
+        result = run_bounded_process(
+            command,
+            working_directory=cwd,
+            environment=_safe_environment(),
+            timeout_seconds=timeout_seconds,
+            max_stream_bytes=COMMAND_OUTPUT_STREAM_LIMIT,
+            max_total_bytes=COMMAND_OUTPUT_TOTAL_LIMIT,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError) as error:
         raise ContractError(f"release qualification command failed: {error}") from error
+    if result.timed_out:
+        raise ContractError(
+            f"release qualification command exceeded {timeout_seconds} seconds"
+        )
+    if result.output_exceeded:
+        raise ContractError("release qualification command output exceeded its limit")
+    if result.descendants_found or result.cleanup_error is not None:
+        raise ContractError(
+            result.cleanup_error
+            or "release qualification command left descendant processes"
+        )
+    stdout = result.stdout
+    stderr = result.stderr
+    if not capture:
+        if stdout:
+            sys.stdout.buffer.write(stdout)
+            sys.stdout.buffer.flush()
+        if stderr:
+            sys.stderr.buffer.write(stderr)
+            sys.stderr.buffer.flush()
     if result.returncode != 0:
         detail = ""
         if capture:
-            combined = (result.stdout or b"") + (result.stderr or b"")
+            combined = stdout + stderr
             detail = combined[-8_192:].decode("utf-8", errors="replace").strip()
         rendered = " ".join(command)
         raise ContractError(
             f"release qualification command exited {result.returncode}: {rendered}"
             + (f": {detail}" if detail else "")
         )
+    diagnostics = classify_diagnostics(stdout=stdout, stderr=stderr)
+    diagnostic_error = diagnostic_failure_message(
+        diagnostics, subject="release qualification command"
+    )
+    if diagnostic_error is not None:
+        raise ContractError(diagnostic_error)
     if not capture:
         return ""
     try:
-        return result.stdout.decode("utf-8").strip()
+        return stdout.decode("utf-8").strip()
     except UnicodeDecodeError as error:
         raise ContractError("release qualification command output is not UTF-8") from error
 
@@ -305,112 +319,9 @@ def qualify_release_lifecycle(
                 ),
                 PROFILE_TIMEOUT_SECONDS,
             ),
-            (
-                (
-                    authority_command,
-                    "change",
-                    "review",
-                    "start",
-                    "--actor",
-                    "renovate-ops-independent-reviewer",
-                    "--context",
-                    f"review-{context}",
-                    "--actor-kind",
-                    "agent",
-                    "--change-id",
-                    change_id,
-                    "--method",
-                    "isolated-context",
-                    "--attested-by",
-                    f"renovate-ops-{TRUSTED_VERIFIER_SHA}",
-                    "--attestation-evidence",
-                    f"github://{TRUSTED_VERIFIER_REPOSITORY}/commit/{TRUSTED_VERIFIER_SHA}",
-                ),
-                COMMAND_TIMEOUT_SECONDS,
-            ),
         )
         for command, timeout_seconds in lifecycle_commands:
             _run(command, cwd=candidate, timeout_seconds=timeout_seconds)
-        independent_evidence = qualification_root / "qualification-evidence.json"
-        _write_object(
-            independent_evidence,
-            qualification_evidence(checkpoint),
-            "qualification evidence",
-        )
-        review_report = qualification_root / "release-review.json"
-        _run(
-            [
-                sys.executable,
-                "verification/prepare_release_review.py",
-                "--project-root",
-                str(candidate),
-                "--change-id",
-                change_id,
-                "--independent-evidence",
-                str(independent_evidence),
-                "--output",
-                str(review_report),
-            ],
-            cwd=candidate,
-        )
-        _run(
-            [
-                authority_command,
-                "change",
-                "review",
-                "submit",
-                "--change-id",
-                change_id,
-                "--report",
-                str(review_report),
-            ],
-            cwd=candidate,
-        )
-        _run(
-            [
-                authority_command,
-                "change",
-                "finish",
-                "--actor",
-                "qualification-release-bot",
-                "--context",
-                context,
-                "--actor-kind",
-                "agent",
-                "--change-id",
-                change_id,
-            ],
-            cwd=candidate,
-        )
-        release = _read_object(candidate / "release.json", "release contract")
-        provenance = release.get("provenance")
-        identity = release.get("identity")
-        if not isinstance(provenance, dict) or not isinstance(identity, dict):
-            raise ContractError("generated release identity is invalid")
-        mode = provenance.get("mode")
-        if mode == "governed":
-            evidence_name = identity.get("receiptAsset")
-            export_command = [authority_command, "evidence", "export"]
-            validate_command = [authority_command, "evidence", "validate"]
-        elif mode == "bootstrap-authority":
-            evidence_name = identity.get("authorizationAsset")
-            export_command = [sys.executable, "processctl.py", "evidence", "export-bootstrap"]
-            validate_command = [
-                sys.executable,
-                "processctl.py",
-                "evidence",
-                "validate-bootstrap",
-            ]
-        else:
-            raise ContractError("generated release provenance mode is not publishable")
-        if not isinstance(evidence_name, str) or not evidence_name:
-            raise ContractError("generated release evidence asset is invalid")
-        exported_evidence = qualification_root / evidence_name
-        _run(
-            [*export_command, "--change-id", change_id, "--output", str(exported_evidence)],
-            cwd=candidate,
-        )
-        _run([*validate_command, str(exported_evidence)], cwd=candidate)
         raw_status = _run(
             [
                 authority_command,
@@ -430,10 +341,12 @@ def qualify_release_lifecycle(
         if (
             not isinstance(lifecycle_status, dict)
             or lifecycle_status.get("status") != "passed"
-            or lifecycle_status.get("phase") != "completed"
+            or lifecycle_status.get("phase") != "verified"
             or lifecycle_status.get("current") is not True
         ):
-            raise ContractError("release qualification lifecycle did not complete")
+            raise ContractError(
+                "release qualification did not stop at the verified reviewer handoff"
+            )
     final_status = _run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=root,
@@ -446,6 +359,8 @@ def qualify_release_lifecycle(
         "sourceCheckpoint": source_checkpoint,
         "candidateCheckpoint": checkpoint,
         "changeId": change_id,
+        "phase": "verified",
+        "nextSkill": "review-change",
         "authority": str(authority),
         "pendingChanges": [path.name for path in changes],
     }

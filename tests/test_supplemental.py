@@ -1,4 +1,5 @@
 import hashlib
+import copy
 import json
 import tempfile
 import unittest
@@ -22,7 +23,7 @@ TIMESTAMP = "2026-08-20T00:00:00Z"
 def fake_report(profile: str) -> dict[str, object]:
     check_id = f"{profile}-check"
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "project": "engineering-process",
         "profile": profile,
         "checkpoint": CHECKPOINT,
@@ -68,6 +69,13 @@ def fake_report(profile: str) -> dict[str, object]:
                 "stderrSha256": "4" * 64,
                 "outputTruncated": False,
                 "streamOutputTruncated": False,
+                "diagnostics": {
+                    "policy": "forbid-warning-error",
+                    "status": "clean",
+                    "count": 0,
+                    "matches": [],
+                    "matchesTruncated": False,
+                },
                 "pathEntries": [],
             }
         ],
@@ -162,7 +170,7 @@ class SupplementalVerificationTests(unittest.TestCase):
                     f"sha256:{hashlib.sha256(content).hexdigest()}",
                 )
 
-    def test_timeout_metadata_is_additive_to_verification_schema_two(self):
+    def test_timeout_metadata_is_additive_to_verification_schema_three(self):
         report = fake_report("development")
         report["checks"][0].pop("timeoutSeconds")
         schema = json.loads(
@@ -172,6 +180,36 @@ class SupplementalVerificationTests(unittest.TestCase):
         )
 
         jsonschema.Draft202012Validator(schema).validate(report)
+
+    def test_verification_schema_two_reader_remains_valid(self):
+        report = fake_report("development")
+        report["schemaVersion"] = 2
+        report["checks"][0].pop("diagnostics")
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "verification.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        jsonschema.Draft202012Validator(schema).validate(report)
+
+    def test_supplemental_schema_one_reader_remains_valid(self):
+        manifest, _ = self.build()
+        legacy = copy.deepcopy(manifest)
+        legacy["schemaVersion"] = 1
+        for entry in legacy["reports"]:
+            entry["schemaVersion"] = 2
+            for check in entry["checks"]:
+                check.pop("diagnostics")
+        schema = json.loads(
+            (
+                PROCESS_ROOT
+                / "schemas"
+                / "supplemental-verification.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        jsonschema.Draft202012Validator(schema).validate(legacy)
 
     def test_checkpoint_mismatch_fails_before_running_profiles(self):
         run_profile = mock.Mock()

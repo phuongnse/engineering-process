@@ -132,24 +132,21 @@ jobs:
             printf 'evidence_asset=%s\n' "$evidence_asset"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Restore exact-head release authorization evidence
+      - name: Restore exact-head pre-publication completion evidence
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
-          status="$(gh api "repos/$GITHUB_REPOSITORY/commits/$REVIEWED_SHA/status" \
-            --jq '.statuses | map(select(.context == "release-authorization")) | sort_by(.created_at) | last | .state // empty')"
-          test "$status" = success
-          artifact_name="release-authorization-$REVIEWED_SHA"
+          artifact_name="release-completion-$REVIEWED_SHA"
           run_id="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
             -f name="$artifact_name" -f per_page=100 \
             --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | last | .workflow_run.id // empty')"
           test -n "$run_id"
-          mkdir -p "$RUNNER_TEMP/release-authorization"
+          mkdir -p "$RUNNER_TEMP/release-completion"
           gh run download "$run_id" --name "$artifact_name" \
-            --dir "$RUNNER_TEMP/release-authorization"
-          test -f "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
+            --dir "$RUNNER_TEMP/release-completion"
+          test -f "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
 
       - name: Prove reviewed tree, merge commit, release contract, and prior tag
         env:
@@ -163,12 +160,12 @@ jobs:
           evidence_args=(--reviewed-commit "$REVIEWED_SHA")
           if test "$MODE" = governed; then
             "${controller[@]}" evidence validate \
-              "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
-            evidence_args+=(--receipt "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET")
+              "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
+            evidence_args+=(--receipt "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET")
           else
             "${controller[@]}" evidence validate-bootstrap \
-              "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
-            evidence_args+=(--authorization "$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET")
+              "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
+            evidence_args+=(--authorization "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET")
           fi
           "${controller[@]}" publication authorize-release \
             --project-root "$GITHUB_WORKSPACE" \
@@ -195,7 +192,7 @@ jobs:
           TAG: ${{ steps.identity.outputs.tag }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
-          evidence_path="$RUNNER_TEMP/release-authorization/$EVIDENCE_ASSET"
+          evidence_path="$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
           expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
           {
             printf '%s\n' "$EVIDENCE_ASSET"

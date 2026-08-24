@@ -17,6 +17,8 @@ from .contracts import (
     derive_release_version,
     read_json,
     validate_adoption_migration,
+    validate_automation_proposal,
+    validate_automation_proposal_policy,
     validate_change,
     validate_plan,
     validate_process_lock,
@@ -41,6 +43,10 @@ from .evidence import (
     validate_bootstrap_authorization,
     validate_receipt,
 )
+from .evidence_transport import (
+    COMPLETION_EVIDENCE_KINDS,
+    encode_completion_evidence,
+)
 from .impact import plan_profile
 from .lifecycle import (
     begin_implementation,
@@ -53,13 +59,19 @@ from .lifecycle import (
     submit_review,
     verify_change,
 )
-from .runner import run_profile
+from .runner import run_profile, source_state
 from .publication import (
+    MAX_PULL_REQUEST_BODY_BYTES,
+    validate_controlled_automation_proposal,
+    validate_controlled_automation_proposal_completion,
     validate_branch,
     validate_commit_range,
     validate_commit_subject,
+    validate_completed_publication,
     validate_pull_request,
+    validate_evidence_publication,
 )
+from .process_graph import load_process_graph, process_root_from_skills
 from .release import validate_release_checkpoint
 from .release_candidate import prepare_release_candidate, render_release_pull_request
 from .skills import validate_skills
@@ -240,8 +252,10 @@ def command_adoption_check(args: argparse.Namespace) -> int:
 
 def command_contract_validate(args: argparse.Namespace) -> int:
     document = read_json(args.path)
-    validators: dict[str, Callable[[Any, str], None]] = {
+    validators: dict[str, Callable[[Any, str], Any]] = {
         "adoption-migration": validate_adoption_migration,
+        "automation-proposal": validate_automation_proposal,
+        "automation-proposal-policy": validate_automation_proposal_policy,
         "change": validate_change,
         "plan": validate_plan,
         "release": validate_release,
@@ -450,6 +464,10 @@ def command_change_status(args: argparse.Namespace) -> int:
 
 def command_skills_validate(args: argparse.Namespace) -> int:
     issues = validate_skills(args.root)
+    try:
+        load_process_graph(process_root_from_skills(args.root), args.root)
+    except ContractError as error:
+        issues.extend(str(error).splitlines())
     value = _result(
         "skills validate",
         status="failed" if issues else "passed",
@@ -533,6 +551,16 @@ def command_evidence_validate_bootstrap(args: argparse.Namespace) -> int:
             **details,
         ),
     )
+    return 0
+
+
+def command_evidence_encode_completion(args: argparse.Namespace) -> int:
+    details = encode_completion_evidence(
+        args.evidence,
+        args.output,
+        kind=args.evidence_kind,
+    )
+    _emit(args, _result("evidence encode-completion", **details))
     return 0
 
 
@@ -790,14 +818,41 @@ def command_publication_validate_range(args: argparse.Namespace) -> int:
     )
 
 
-def command_publication_validate_pr(args: argparse.Namespace) -> int:
+def _publication_body(args: argparse.Namespace) -> str:
     if args.body_file is not None:
         try:
-            body = args.body_file.read_text(encoding="utf-8")
+            return args.body_file.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as error:
             raise ContractError(f"{args.body_file}: cannot read PR body: {error}") from error
-    else:
-        body = os.environ.get("PR_BODY", "")
+    return os.environ.get("PR_BODY", "")
+
+
+def _proposal_body(args: argparse.Namespace) -> str:
+    if args.body_file is not None:
+        try:
+            with args.body_file.open("rb") as handle:
+                body = handle.read(MAX_PULL_REQUEST_BODY_BYTES + 1)
+        except OSError as error:
+            raise ContractError(f"{args.body_file}: cannot read PR body: {error}") from error
+        if len(body) > MAX_PULL_REQUEST_BODY_BYTES:
+            raise ContractError(
+                f"{args.body_file}: PR body exceeds "
+                f"{MAX_PULL_REQUEST_BODY_BYTES} bytes"
+            )
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ContractError(f"{args.body_file}: PR body must be UTF-8") from error
+    body = os.environ.get("PR_BODY", "")
+    if len(body.encode("utf-8")) > MAX_PULL_REQUEST_BODY_BYTES:
+        raise ContractError(
+            f"PR_BODY exceeds {MAX_PULL_REQUEST_BODY_BYTES} bytes"
+        )
+    return body
+
+
+def command_publication_validate_pr(args: argparse.Namespace) -> int:
+    body = _publication_body(args)
     issues = validate_pull_request(
         title=args.title,
         body=body,
@@ -811,6 +866,145 @@ def command_publication_validate_pr(args: argparse.Namespace) -> int:
         branch=args.branch,
         state=args.state,
         title=args.title,
+    )
+
+
+def command_publication_validate_source(args: argparse.Namespace) -> int:
+    lifecycle = lifecycle_status(args.project_root, args.change_id)
+    issues = validate_completed_publication(
+        title=args.title,
+        body=_publication_body(args),
+        branch=args.branch,
+        commit=args.commit,
+        lifecycle=lifecycle,
+        source=source_state(args.project_root),
+    )
+    return _publication_result(
+        args,
+        "publication validate-source",
+        issues,
+        branch=args.branch,
+        changeId=args.change_id,
+        commit=args.commit,
+        phase=lifecycle["phase"],
+        title=args.title,
+    )
+
+
+def command_publication_validate_evidence_source(args: argparse.Namespace) -> int:
+    evidence = (
+        validate_receipt(args.evidence)
+        if args.evidence_kind == "receipt"
+        else validate_bootstrap_authorization(args.evidence)
+    )
+    project_path = args.project_root / ".process" / "project.json"
+    project = validate_project(read_json(project_path), str(project_path))
+    issues = validate_evidence_publication(
+        title=args.title,
+        body=_publication_body(args),
+        branch=args.branch,
+        commit=args.commit,
+        project=project.identifier,
+        evidence=evidence,
+        source=source_state(args.project_root),
+    )
+    return _publication_result(
+        args,
+        "publication validate-evidence-source",
+        issues,
+        branch=args.branch,
+        changeId=evidence["changeId"],
+        commit=args.commit,
+        evidenceKind=args.evidence_kind,
+        evidenceSha256=evidence["sha256"],
+        title=args.title,
+    )
+
+
+def _proposal_policy_evidence(args: argparse.Namespace):
+    return validate_automation_proposal(
+        read_json(args.policy_evidence), str(args.policy_evidence)
+    )
+
+
+def command_publication_validate_proposal(args: argparse.Namespace) -> int:
+    proposal = _proposal_policy_evidence(args)
+    source = source_state(args.project_root)
+    issues = validate_controlled_automation_proposal(
+        args.project_root,
+        repository=args.repository,
+        title=args.title,
+        body=_proposal_body(args),
+        branch=args.branch,
+        target_branch=args.target_branch,
+        base_commit=args.base_commit,
+        state=args.state,
+        commit=args.commit,
+        verifier_repository=args.verifier_repository,
+        verifier_commit=args.verifier_commit,
+        proposal=proposal,
+        source=source,
+    )
+    return _publication_result(
+        args,
+        "publication validate-proposal",
+        issues,
+        automationOwner=proposal.automation_owner,
+        baseSha=args.base_commit,
+        branch=args.branch,
+        commit=args.commit,
+        completionCheck=proposal.completion_check,
+        proposalKind=proposal.proposal_kind,
+        policySha256=proposal.opt_in_sha256,
+        repository=args.repository,
+        sourceFingerprint=source.get("fingerprint"),
+        targetBranch=args.target_branch,
+        verifierCommit=args.verifier_commit,
+        verifierRepository=args.verifier_repository,
+    )
+
+
+def command_publication_validate_proposal_completion(
+    args: argparse.Namespace,
+) -> int:
+    proposal = _proposal_policy_evidence(args)
+    evidence = validate_receipt(args.evidence)
+    project_path = args.project_root / ".process" / "project.json"
+    project = validate_project(read_json(project_path), str(project_path))
+    body = _proposal_body(args)
+    source = source_state(args.project_root)
+    issues = validate_controlled_automation_proposal_completion(
+        args.project_root,
+        repository=args.repository,
+        project=project.identifier,
+        title=args.title,
+        body=body,
+        branch=args.branch,
+        target_branch=args.target_branch,
+        base_commit=args.base_commit,
+        commit=args.commit,
+        verifier_repository=args.verifier_repository,
+        verifier_commit=args.verifier_commit,
+        proposal=proposal,
+        evidence=evidence,
+        source=source,
+    )
+    return _publication_result(
+        args,
+        "publication validate-proposal-completion",
+        issues,
+        baseSha=args.base_commit,
+        branch=args.branch,
+        changeId=evidence["changeId"],
+        commit=args.commit,
+        completionCheck=proposal.completion_check,
+        evidenceKind=args.evidence_kind,
+        evidenceSha256=evidence["sha256"],
+        policySha256=proposal.opt_in_sha256,
+        repository=args.repository,
+        sourceFingerprint=source.get("fingerprint"),
+        verifierCommit=args.verifier_commit,
+        verifierRepository=args.verifier_repository,
     )
 
 
@@ -1055,6 +1249,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--kind",
         choices=(
             "adoption-migration",
+            "automation-proposal",
+            "automation-proposal-policy",
             "change",
             "plan",
             "release",
@@ -1128,6 +1324,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(evidence_validate_bootstrap)
     evidence_validate_bootstrap.set_defaults(
         handler=command_evidence_validate_bootstrap
+    )
+    evidence_encode_completion = evidence_commands.add_parser(
+        "encode-completion",
+        help="Validate and encode completion evidence for a publication adapter",
+    )
+    evidence_encode_completion.add_argument("--evidence", type=Path, required=True)
+    evidence_encode_completion.add_argument(
+        "--evidence-kind",
+        choices=COMPLETION_EVIDENCE_KINDS,
+        required=True,
+    )
+    evidence_encode_completion.add_argument("--output", type=Path, required=True)
+    _add_json(evidence_encode_completion)
+    evidence_encode_completion.set_defaults(
+        handler=command_evidence_encode_completion
     )
     evidence_prune = evidence_commands.add_parser(
         "prune", help="Validate a receipt before pruning a completed local run"
@@ -1258,6 +1469,96 @@ def build_parser() -> argparse.ArgumentParser:
     publication_pr.add_argument("--body-file", type=Path)
     _add_json(publication_pr)
     publication_pr.set_defaults(handler=command_publication_validate_pr)
+
+    publication_source = publication_commands.add_parser(
+        "validate-source",
+        help="Validate source publication against a current completed lifecycle",
+    )
+    _add_project_root(publication_source)
+    publication_source.add_argument("--change-id", required=True)
+    publication_source.add_argument("--commit", required=True)
+    publication_source.add_argument("--title", required=True)
+    publication_source.add_argument("--branch", required=True)
+    publication_source.add_argument("--body-file", type=Path)
+    _add_json(publication_source)
+    publication_source.set_defaults(handler=command_publication_validate_source)
+
+    publication_evidence_source = publication_commands.add_parser(
+        "validate-evidence-source",
+        help="Validate source publication against external completion evidence",
+    )
+    _add_project_root(publication_evidence_source)
+    publication_evidence_source.add_argument("--evidence", type=Path, required=True)
+    publication_evidence_source.add_argument(
+        "--evidence-kind",
+        choices=("receipt", "bootstrap-authorization"),
+        required=True,
+    )
+    publication_evidence_source.add_argument("--commit", required=True)
+    publication_evidence_source.add_argument("--title", required=True)
+    publication_evidence_source.add_argument("--branch", required=True)
+    publication_evidence_source.add_argument("--body-file", type=Path)
+    _add_json(publication_evidence_source)
+    publication_evidence_source.set_defaults(
+        handler=command_publication_validate_evidence_source
+    )
+
+    publication_proposal = publication_commands.add_parser(
+        "validate-proposal",
+        help="Validate an explicitly opted-in untrusted automation proposal",
+    )
+    _add_project_root(publication_proposal)
+    publication_proposal.add_argument(
+        "--policy-evidence", type=Path, required=True
+    )
+    publication_proposal.add_argument("--repository", required=True)
+    publication_proposal.add_argument("--commit", required=True)
+    publication_proposal.add_argument("--title", required=True)
+    publication_proposal.add_argument("--branch", required=True)
+    publication_proposal.add_argument("--target-branch", required=True)
+    publication_proposal.add_argument("--base-commit", required=True)
+    publication_proposal.add_argument(
+        "--state", choices=("draft", "ready"), required=True
+    )
+    publication_proposal.add_argument("--body-file", type=Path)
+    publication_proposal.add_argument("--verifier-repository", required=True)
+    publication_proposal.add_argument("--verifier-commit", required=True)
+    _add_json(publication_proposal)
+    publication_proposal.set_defaults(
+        handler=command_publication_validate_proposal
+    )
+
+    publication_proposal_completion = publication_commands.add_parser(
+        "validate-proposal-completion",
+        help="Validate exact proposal policy and lifecycle evidence before merge gating",
+    )
+    _add_project_root(publication_proposal_completion)
+    publication_proposal_completion.add_argument(
+        "--policy-evidence", type=Path, required=True
+    )
+    publication_proposal_completion.add_argument(
+        "--evidence", type=Path, required=True
+    )
+    publication_proposal_completion.add_argument(
+        "--evidence-kind",
+        choices=("receipt",),
+        required=True,
+    )
+    publication_proposal_completion.add_argument("--repository", required=True)
+    publication_proposal_completion.add_argument("--commit", required=True)
+    publication_proposal_completion.add_argument("--title", required=True)
+    publication_proposal_completion.add_argument("--branch", required=True)
+    publication_proposal_completion.add_argument("--target-branch", required=True)
+    publication_proposal_completion.add_argument("--base-commit", required=True)
+    publication_proposal_completion.add_argument("--body-file", type=Path)
+    publication_proposal_completion.add_argument(
+        "--verifier-repository", required=True
+    )
+    publication_proposal_completion.add_argument("--verifier-commit", required=True)
+    _add_json(publication_proposal_completion)
+    publication_proposal_completion.set_defaults(
+        handler=command_publication_validate_proposal_completion
+    )
 
     publication_version = publication_commands.add_parser(
         "plan-version",

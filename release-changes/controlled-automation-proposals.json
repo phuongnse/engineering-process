@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "controlled-automation-proposals",
+  "type": "capability",
+  "surfaces": [
+    "cli",
+    "publication",
+    "schema",
+    "skills"
+  ],
+  "rationale": "Add an explicit strict-default policy contract for untrusted dependency proposals and an exact-head lifecycle-completion merge gate without granting proposal creation semantic or merge authority. Before enabling it, consumers must adopt the immutable capability release in a completed lifecycle, add the protected-base opt-in policy in a separate completed change, pin an immutable verifier, and require the canonical completion check.",
+  "schemaImpact": "additive",
+  "migration": null
+}

@@ -13,6 +13,15 @@ import threading
 import time
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from engineering_process.diagnostics import (
+    classify_diagnostics,
+    diagnostic_failure_message,
+)
+
+
 PUBLIC_INDEX = "https://pypi.org/simple"
 MAX_LOCK_BYTES = 1_000_000
 MAX_OUTPUT_BYTES = 1_000_000
@@ -404,6 +413,15 @@ def install_process_runtime(
                 "pip attempt left descendant processes; they were terminated"
             )
         if attempt.returncode == 0:
+            diagnostics = classify_diagnostics(
+                stdout=attempt.stdout,
+                stderr=attempt.stderr,
+            )
+            diagnostic_error = diagnostic_failure_message(
+                diagnostics, subject="pip install"
+            )
+            if diagnostic_error is not None:
+                raise InstallError(diagnostic_error)
             return
         if not retryable_exact_version_absence(attempt, version):
             raise InstallError(

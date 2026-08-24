@@ -23,6 +23,7 @@ class BundleTests(unittest.TestCase):
                 "finish-change",
                 "implement-change",
                 "plan-change",
+                "publish-change",
                 "review-change",
                 "run-change",
                 "verify-change",
@@ -48,7 +49,7 @@ class BundleTests(unittest.TestCase):
         )
         self.assertEqual(bundles["mcp"], ("integrate-mcp",))
         self.assertEqual(bundles["docs"], ("maintain-docs",))
-        self.assertEqual(bundles["publication"], ("publish-change",))
+        self.assertNotIn("publication", bundles)
 
     def test_rejects_duplicate_bundle_ownership(self):
         with tempfile.TemporaryDirectory() as directory:

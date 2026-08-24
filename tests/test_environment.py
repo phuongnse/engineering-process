@@ -101,6 +101,35 @@ def project_document(*, setup: bool = True, dependency: bool = False):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_exit_zero_warning_or_error_diagnostic_fails_closed(self):
+        cases = (
+            ("stdout", "WARN: degraded validation"),
+            ("stderr", "ERROR: unavailable validation engine"),
+            ("stdout", "::warning file=app.py,line=1::degraded validation"),
+            ("stderr", "::error title=Validation::unavailable validation engine"),
+        )
+        for stream, message in cases:
+            with self.subTest(stream=stream), tempfile.TemporaryDirectory() as directory:
+                writer = "sys.stdout" if stream == "stdout" else "sys.stderr"
+                report = execute_command(
+                    Path(directory),
+                    identifier=f"diagnostic-{stream}",
+                    run=(
+                        sys.executable,
+                        "-c",
+                        f"import sys; {writer}.write({message!r} + '\\n')",
+                    ),
+                    timeout_seconds=30,
+                    working_directory=".",
+                )
+
+                self.assertEqual(0, report["exitCode"])
+                self.assertEqual("failed", report["status"])
+                self.assertEqual("failed", report["diagnostics"]["status"])
+                self.assertEqual(stream, report["diagnostics"]["matches"][0]["stream"])
+                self.assertIn("forbidden warning/error diagnostics", report["error"])
+                self.assertNotIn(message, report["error"])
+
     @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
     def test_successful_command_allows_short_natural_descendant_drain(self):
         with tempfile.TemporaryDirectory() as directory:

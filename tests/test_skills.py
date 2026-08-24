@@ -36,6 +36,24 @@ class SkillTests(unittest.TestCase):
             validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []
         )
 
+    def test_controlled_proposals_remain_untrusted_until_exact_completion(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        execution = (skills / "run-change" / "references" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+        publish = (skills / "publish-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (execution, publish):
+            normalized = text.lower().replace("-", " ")
+            self.assertIn("controlled automation proposal", normalized)
+            self.assertIn("validate-proposal-completion", text)
+            self.assertIn("exact head", normalized)
+            self.assertIn("automerge", text)
+            self.assertIn("process-authority", text)
+        self.assertIn("Missing or disabled base policy fails closed", execution)
+
     def test_digest_changes_with_instruction_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 
 from .contracts import ContractError
+from .process_graph import load_process_graph
 from .skills import MARKER_NAME, validate_skills
 
 
@@ -53,6 +54,9 @@ def distribution_digest(
     issues = validate_skills(skill_root, selected_skills)
     if issues:
         raise ContractError("\n".join(issues))
+    graph_required = "run-change" in selected_skills
+    if graph_required:
+        load_process_graph(process_root, skill_root, selected_skills)
 
     runtime_root = (
         Path(__file__).resolve().parent
@@ -70,6 +74,8 @@ def distribution_digest(
             )
 
     entries.append(("assets/bundles.json", root / "bundles.json"))
+    if graph_required:
+        entries.append(("assets/process-graph.json", root / "process-graph.json"))
     release_contract = root / "release.json"
     if release_contract.is_file():
         entries.append(("assets/release.json", release_contract))

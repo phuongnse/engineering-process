@@ -24,19 +24,11 @@ from .contracts import (
 )
 from .environment import require_environment_profile
 from .git import run_git
+from .lifecycle_routes import INTERNAL_PHASES, lifecycle_next_state
 from .runner import run_profile, source_state
 
 
-PHASES = {
-    "specified",
-    "planned",
-    "implementing",
-    "verified",
-    "review-pending",
-    "changes-requested",
-    "approved",
-    "completed",
-}
+PHASES = set(INTERNAL_PHASES)
 
 FINDING_IDENTITY_FIELDS = (
     "id",
@@ -453,6 +445,15 @@ def _require_phase(state: dict[str, Any], *allowed: str) -> None:
         )
 
 
+def _transition_phase(state: dict[str, Any], result: str) -> None:
+    next_state = lifecycle_next_state(state["phase"], result)
+    if next_state not in PHASES:
+        raise ContractError(
+            f"lifecycle result {result!r} leaves the internal change lifecycle"
+        )
+    state["phase"] = next_state
+
+
 def _contract(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     document = read_json(_artifact_path(project_root, state["contract"]))
     validate_change(document, "registered change")
@@ -523,7 +524,7 @@ def _start_change_unlocked(
         "schemaVersion": 2,
         "changeId": change_id,
         "project": project.identifier,
-        "phase": "specified",
+        "phase": lifecycle_next_state("unregistered", "success"),
         "cycle": 1,
         "revision": 1,
         "comparisonBase": comparison_base,
@@ -609,7 +610,7 @@ def _register_plan_unlocked(
         project_root, plan_path, _run_root(project_root, change_id) / "plan.json"
     )
     state["plan"] = artifact
-    state["phase"] = "planned"
+    _transition_phase(state, "success")
     _event(state, "planned", actor)
     _save_state(project_root, state)
     return state
@@ -627,7 +628,8 @@ def _begin_implementation_unlocked(
     _contract(project_root, state)
     _plan(project_root, state)
     actor = _actor(actor_id, context_id, kind)
-    if state["phase"] == "verified":
+    starting_phase = state["phase"]
+    if starting_phase == "verified":
         source = source_state(project_root)
         checkpoints = {item["checkpoint"] for item in state["verification"]}
         fingerprints = {
@@ -663,7 +665,7 @@ def _begin_implementation_unlocked(
         )
     else:
         _require_phase(state, "planned", "implementing", "changes-requested")
-    if state["phase"] == "changes-requested":
+    if starting_phase == "changes-requested":
         state["cycle"] += 1
         state["implementationActors"] = []
         state["verification"] = []
@@ -671,7 +673,13 @@ def _begin_implementation_unlocked(
         state["review"] = None
     if actor not in state["implementationActors"]:
         state["implementationActors"].append(actor)
-    state["phase"] = "implementing"
+    transition_result = {
+        "changes-requested": "success",
+        "implementing": "implementation-continued",
+        "planned": "success",
+        "verified": "source-changed",
+    }[starting_phase]
+    _transition_phase(state, transition_result)
     _event(state, "implementation-started", actor, cycle=state["cycle"])
     _save_state(project_root, state)
     return state
@@ -761,7 +769,9 @@ def _verify_change_unlocked(
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
     if required_profiles <= current_profiles and len(checkpoints) == 1 and len(fingerprints) == 1:
-        state["phase"] = "verified"
+        _transition_phase(state, "all-required-passed")
+    else:
+        _transition_phase(state, "profile-passed")
     _event(
         state,
         "verification-recorded",
@@ -854,7 +864,7 @@ def _start_review_unlocked(
     _write_atomic(assignment_path, assignment)
     assignment["path"] = _relative(project_root, assignment_path)
     state["reviewAssignment"] = assignment
-    state["phase"] = "review-pending"
+    _transition_phase(state, "reviewer-assigned")
     _event(
         state,
         "review-started",
@@ -956,9 +966,7 @@ def _submit_review_unlocked(
         for finding in document["findings"]
         if finding["status"] in UNRESOLVED_FINDING_STATUSES
     ]
-    state["phase"] = (
-        "approved" if document["verdict"] == "approved" else "changes-requested"
-    )
+    _transition_phase(state, document["verdict"])
     _event(
         state,
         "review-submitted",
@@ -1031,7 +1039,7 @@ def _finish_change_unlocked(
         "path": _relative(project_root, completion_path),
         "digest": _digest_file(completion_path),
     }
-    state["phase"] = "completed"
+    _transition_phase(state, "success")
     _event(state, "completed", actor, cycle=state["cycle"])
     _save_state(project_root, state)
     return state, completion

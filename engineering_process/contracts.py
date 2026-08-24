@@ -36,6 +36,16 @@ PLATFORM_PATTERN = re.compile(
 COMMAND_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 CHECKSUM_PATTERN = re.compile(r"^(?:sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$")
 BASE_REF_PATTERN = re.compile(r"^(?!-)[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$")
+REPOSITORY_PATTERN = re.compile(
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+)
+AUTOMATION_BRANCH_PATTERN = re.compile(
+    r"^automation/[a-z0-9]+(?:-[a-z0-9]+)*/"
+    r"[a-z0-9](?:[a-z0-9._/-]*[a-z0-9])?$"
+)
+AUTOMATION_BRANCH_PREFIX_PATTERN = re.compile(
+    r"^automation/[a-z0-9]+(?:-[a-z0-9]+)*/$"
+)
 MAX_JSON_BYTES = 1_000_000
 MAX_IMPACT_BASE_REFS = 16
 MAX_IMPACT_COMPONENTS = 256
@@ -45,6 +55,8 @@ MAX_PROJECT_PROFILES = 64
 MAX_CHECKS_PER_PROFILE = 256
 MAX_PROJECT_CHECKS = 1_024
 MAX_CONTRACT_ITEMS = 256
+MAX_AUTOMATION_PROPOSAL_PATHS = 1_000
+MAX_AUTOMATION_PROPOSAL_PATH_BYTES = 256_000
 PRODUCTION_STANDARD = "production-v1"
 CORE_QUALITY_DIMENSIONS = (
     "compatibility",
@@ -58,6 +70,22 @@ CORE_QUALITY_DIMENSIONS = (
     "security",
     "supply-chain",
 )
+AUTOMATION_PROPOSAL_CONTROLS = {
+    "automerge": False,
+    "deploymentChanges": False,
+    "humanMergeRequired": True,
+    "plugins": False,
+    "privilegedCi": False,
+    "processAuthorityChanges": False,
+    "releaseChanges": False,
+    "scripts": False,
+    "securityPolicyChanges": False,
+    "shellExecution": False,
+    "trustRootChanges": False,
+    "upToDateBeforeMerge": True,
+    "workflowChanges": False,
+    "writeCapableChecks": False,
+}
 
 
 class ContractError(ValueError):
@@ -256,6 +284,26 @@ class ReleaseChange:
     migration: str | None
 
 
+@dataclass(frozen=True)
+class AutomationProposal:
+    repository: str
+    proposal_kind: str
+    automation_owner: str
+    branch: str
+    target_branch: str
+    base_sha: str
+    head_sha: str
+    title: str
+    body_sha256: str
+    changed_paths: tuple[str, ...]
+    opt_in_path: str
+    opt_in_sha256: str
+    opt_in_document: dict[str, Any]
+    completion_check: str
+    verifier_repository: str
+    verifier_commit: str
+
+
 def read_json(path: Path) -> Any:
     try:
         data = path.read_bytes()
@@ -275,6 +323,16 @@ def read_json(path: Path) -> Any:
         raise ContractError(
             f"{path}:{error.lineno}:{error.colno}: invalid JSON: {error.msg}"
         ) from error
+
+
+def canonical_json_digest(document: Any) -> str:
+    encoded = json.dumps(
+        document,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _object(value: Any, path: str) -> dict[str, Any]:
@@ -1745,6 +1803,264 @@ def validate_release_change(
     )
 
 
+def _automation_proposal_controls(value: Any, path: str) -> dict[str, bool]:
+    controls = _object(value, path)
+    _exact_keys(
+        controls,
+        required=set(AUTOMATION_PROPOSAL_CONTROLS),
+        path=path,
+    )
+    for name, expected in AUTOMATION_PROPOSAL_CONTROLS.items():
+        if controls[name] is not expected:
+            required = "true" if expected else "false"
+            raise ContractError(f"{path}.{name}: must be {required}")
+    return dict(controls)
+
+
+def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
+    policy = _object(value, path)
+    _exact_keys(
+        policy,
+        required={
+            "schemaVersion",
+            "kind",
+            "enabled",
+            "targetBranch",
+            "branchPrefix",
+            "completionCheck",
+            "allowedAutomationOwners",
+            "allowedProposalKinds",
+            "requiredControls",
+        },
+        path=path,
+    )
+    if policy["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if policy["kind"] != "engineering-process-automation-proposal-policy":
+        raise ContractError(f"{path}.kind: invalid policy kind")
+    if policy["enabled"] is not True:
+        raise ContractError(f"{path}.enabled: must be true")
+    target_branch = _string(
+        policy["targetBranch"], f"{path}.targetBranch", max_length=512
+    )
+    if (
+        BASE_REF_PATTERN.fullmatch(target_branch) is None
+        or ".." in target_branch
+        or "//" in target_branch
+        or target_branch.endswith(("/", "."))
+    ):
+        raise ContractError(f"{path}.targetBranch: invalid protected target ref")
+    branch_prefix = _string(
+        policy["branchPrefix"], f"{path}.branchPrefix", max_length=128
+    )
+    if AUTOMATION_BRANCH_PREFIX_PATTERN.fullmatch(branch_prefix) is None:
+        raise ContractError(
+            f"{path}.branchPrefix: must use automation/<owner>/ format"
+        )
+    if policy["completionCheck"] != "lifecycle-completion":
+        raise ContractError(
+            f"{path}.completionCheck: must be lifecycle-completion"
+        )
+    owners = _string_list(
+        policy["allowedAutomationOwners"],
+        f"{path}.allowedAutomationOwners",
+        maximum=1,
+        pattern=PROFILE_PATTERN,
+    )
+    if owners != sorted(owners):
+        raise ContractError(f"{path}.allowedAutomationOwners: must be sorted")
+    proposal_kinds = _string_list(
+        policy["allowedProposalKinds"],
+        f"{path}.allowedProposalKinds",
+        maximum=1,
+        pattern=PROFILE_PATTERN,
+    )
+    if proposal_kinds != ["dependency-update"]:
+        raise ContractError(
+            f"{path}.allowedProposalKinds: must contain only dependency-update"
+        )
+    _automation_proposal_controls(
+        policy["requiredControls"], f"{path}.requiredControls"
+    )
+    return dict(policy)
+
+
+def validate_automation_proposal_policy(
+    document: Any, path: str = "automation-proposal-policy"
+) -> dict[str, Any]:
+    return _automation_proposal_policy(document, path)
+
+
+def validate_automation_proposal(
+    document: Any, path: str = "automation-proposal"
+) -> AutomationProposal:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "status",
+            "repository",
+            "proposalKind",
+            "automationOwner",
+            "branch",
+            "targetBranch",
+            "baseSha",
+            "headSha",
+            "title",
+            "bodySha256",
+            "changedPaths",
+            "optIn",
+            "verifier",
+            "observedControls",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["kind"] != "engineering-process-controlled-automation-proposal":
+        raise ContractError(f"{path}.kind: invalid proposal evidence kind")
+    if value["status"] != "passed":
+        raise ContractError(f"{path}.status: must be passed")
+    repository = _string(value["repository"], f"{path}.repository", max_length=256)
+    if REPOSITORY_PATTERN.fullmatch(repository) is None:
+        raise ContractError(f"{path}.repository: invalid repository identity")
+    if value["proposalKind"] != "dependency-update":
+        raise ContractError(f"{path}.proposalKind: must be dependency-update")
+    proposal_kind = value["proposalKind"]
+    automation_owner = _string(
+        value["automationOwner"], f"{path}.automationOwner", max_length=64
+    )
+    if PROFILE_PATTERN.fullmatch(automation_owner) is None:
+        raise ContractError(f"{path}.automationOwner: invalid automation owner")
+    branch = _string(value["branch"], f"{path}.branch", max_length=512)
+    if AUTOMATION_BRANCH_PATTERN.fullmatch(branch) is None:
+        raise ContractError(f"{path}.branch: invalid automation branch")
+    target_branch = _string(
+        value["targetBranch"], f"{path}.targetBranch", max_length=512
+    )
+    if BASE_REF_PATTERN.fullmatch(target_branch) is None:
+        raise ContractError(f"{path}.targetBranch: invalid target branch")
+    base_sha = _string(value["baseSha"], f"{path}.baseSha", max_length=40)
+    head_sha = _string(value["headSha"], f"{path}.headSha", max_length=40)
+    for label, sha in (("baseSha", base_sha), ("headSha", head_sha)):
+        if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+            raise ContractError(f"{path}.{label}: must be a full lowercase Git SHA")
+    title = _string(value["title"], f"{path}.title", max_length=72)
+    body_sha256 = _string(
+        value["bodySha256"], f"{path}.bodySha256", max_length=71
+    )
+    if DIGEST_PATTERN.fullmatch(body_sha256) is None:
+        raise ContractError(f"{path}.bodySha256: must be a SHA-256 digest")
+    raw_paths = value["changedPaths"]
+    if (
+        not isinstance(raw_paths, list)
+        or not raw_paths
+        or len(raw_paths) > MAX_AUTOMATION_PROPOSAL_PATHS
+    ):
+        raise ContractError(
+            f"{path}.changedPaths: must contain between 1 and "
+            f"{MAX_AUTOMATION_PROPOSAL_PATHS} paths"
+        )
+    changed_paths: list[str] = []
+    aggregate_path_bytes = 0
+    for index, item in enumerate(raw_paths):
+        item_path = f"{path}.changedPaths[{index}]"
+        changed = _relative_tool_path(item, item_path, strict_portable=True)
+        if any(ord(character) < 0x20 or ord(character) > 0x7e for character in changed):
+            raise ContractError(f"{item_path}: must contain printable ASCII only")
+        aggregate_path_bytes += len(changed.encode("utf-8"))
+        if aggregate_path_bytes > MAX_AUTOMATION_PROPOSAL_PATH_BYTES:
+            raise ContractError(
+                f"{path}.changedPaths: exceeds "
+                f"{MAX_AUTOMATION_PROPOSAL_PATH_BYTES} aggregate bytes"
+            )
+        changed_paths.append(changed)
+    if changed_paths != sorted(set(changed_paths)):
+        raise ContractError(f"{path}.changedPaths: must be sorted and unique")
+
+    opt_in = _object(value["optIn"], f"{path}.optIn")
+    _exact_keys(
+        opt_in,
+        required={"path", "sha256", "document"},
+        path=f"{path}.optIn",
+    )
+    if opt_in["path"] != ".process/automation-proposals.json":
+        raise ContractError(
+            f"{path}.optIn.path: must be .process/automation-proposals.json"
+        )
+    opt_in_sha256 = _string(
+        opt_in["sha256"], f"{path}.optIn.sha256", max_length=71
+    )
+    if DIGEST_PATTERN.fullmatch(opt_in_sha256) is None:
+        raise ContractError(f"{path}.optIn.sha256: must be a SHA-256 digest")
+    policy = _automation_proposal_policy(
+        opt_in["document"], f"{path}.optIn.document"
+    )
+    if canonical_json_digest(policy) != opt_in_sha256:
+        raise ContractError(
+            f"{path}.optIn.sha256: does not match the canonical policy document"
+        )
+    if policy["targetBranch"] != target_branch:
+        raise ContractError(f"{path}.targetBranch: does not match opt-in policy")
+    if not branch.startswith(policy["branchPrefix"]):
+        raise ContractError(f"{path}.branch: does not match opt-in branch prefix")
+    if automation_owner not in policy["allowedAutomationOwners"]:
+        raise ContractError(f"{path}.automationOwner: not allowed by opt-in policy")
+    if policy["branchPrefix"] != f"automation/{automation_owner}/":
+        raise ContractError(
+            f"{path}.automationOwner: does not match opt-in branch prefix"
+        )
+    if proposal_kind not in policy["allowedProposalKinds"]:
+        raise ContractError(f"{path}.proposalKind: not allowed by opt-in policy")
+    observed_controls = _automation_proposal_controls(
+        value["observedControls"], f"{path}.observedControls"
+    )
+    if observed_controls != policy["requiredControls"]:
+        raise ContractError(
+            f"{path}.observedControls: does not match opt-in required controls"
+        )
+
+    verifier = _object(value["verifier"], f"{path}.verifier")
+    _exact_keys(
+        verifier,
+        required={"repository", "commit"},
+        path=f"{path}.verifier",
+    )
+    verifier_repository = _string(
+        verifier["repository"], f"{path}.verifier.repository", max_length=256
+    )
+    if REPOSITORY_PATTERN.fullmatch(verifier_repository) is None:
+        raise ContractError(f"{path}.verifier.repository: invalid repository identity")
+    verifier_commit = _string(
+        verifier["commit"], f"{path}.verifier.commit", max_length=40
+    )
+    if re.fullmatch(r"[0-9a-f]{40}", verifier_commit) is None:
+        raise ContractError(
+            f"{path}.verifier.commit: must be a full lowercase Git SHA"
+        )
+    return AutomationProposal(
+        repository=repository,
+        proposal_kind=proposal_kind,
+        automation_owner=automation_owner,
+        branch=branch,
+        target_branch=target_branch,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        title=title,
+        body_sha256=body_sha256,
+        changed_paths=tuple(changed_paths),
+        opt_in_path=opt_in["path"],
+        opt_in_sha256=opt_in_sha256,
+        opt_in_document=policy,
+        completion_check=policy["completionCheck"],
+        verifier_repository=verifier_repository,
+        verifier_commit=verifier_commit,
+    )
+
+
 def validate_change(document: Any, path: str = "change") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -2403,11 +2719,71 @@ def _verification_reference(value: Any, path: str) -> None:
         raise ContractError(f"{path}.checkpoint: invalid commit digest")
 
 
+def _validate_diagnostics(document: Any, path: str) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "policy",
+            "status",
+            "count",
+            "matches",
+            "matchesTruncated",
+        },
+        path=path,
+    )
+    if value["policy"] != "forbid-warning-error":
+        raise ContractError(f"{path}.policy: invalid diagnostic policy")
+    if value["status"] not in {"clean", "failed"}:
+        raise ContractError(f"{path}.status: must be clean or failed")
+    count = value["count"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ContractError(f"{path}.count: must be a non-negative integer")
+    matches = value["matches"]
+    if not isinstance(matches, list) or len(matches) > 8:
+        raise ContractError(f"{path}.matches: must contain at most 8 items")
+    for index, raw_match in enumerate(matches):
+        match_path = f"{path}.matches[{index}]"
+        match = _object(raw_match, match_path)
+        _exact_keys(
+            match,
+            required={"severity", "stream", "line", "lineSha256"},
+            path=match_path,
+        )
+        if match["severity"] not in {"warning", "error"}:
+            raise ContractError(f"{match_path}.severity: invalid severity")
+        if match["stream"] not in {"stdout", "stderr"}:
+            raise ContractError(f"{match_path}.stream: invalid stream")
+        line = match["line"]
+        if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+            raise ContractError(f"{match_path}.line: must be a positive integer")
+        digest = _string(
+            match["lineSha256"], f"{match_path}.lineSha256", max_length=64
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ContractError(f"{match_path}.lineSha256: invalid sha256")
+    truncated = value["matchesTruncated"]
+    if not isinstance(truncated, bool):
+        raise ContractError(f"{path}.matchesTruncated: must be boolean")
+    if count < len(matches):
+        raise ContractError(f"{path}.count: cannot be less than recorded matches")
+    if truncated != (count > len(matches)):
+        raise ContractError(
+            f"{path}.matchesTruncated: does not match diagnostic count"
+        )
+    if value["status"] == "clean" and (
+        count != 0 or matches or truncated
+    ):
+        raise ContractError(f"{path}: clean diagnostics contain findings")
+    if value["status"] == "failed" and (count == 0 or not matches):
+        raise ContractError(f"{path}: failed diagnostics require a recorded finding")
+
+
 def validate_verification(document: Any, path: str = "verification") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2}:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+    if schema_version not in {1, 2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
     required = {
         "schemaVersion",
         "project",
@@ -2424,7 +2800,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
     }
     _exact_keys(
         value,
-        required=required | ({"impact"} if schema_version == 2 else set()),
+        required=required | ({"impact"} if schema_version >= 2 else set()),
         optional={"impact"} if schema_version == 1 else set(),
         path=path,
     )
@@ -2459,7 +2835,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         raise ContractError(f"{path}.checks: must be an array")
     if schema_version == 1 and not checks:
         raise ContractError(f"{path}.checks: schema 1 requires at least one check")
-    if schema_version == 2 and len(checks) > MAX_CONTRACT_ITEMS:
+    if schema_version >= 2 and len(checks) > MAX_CONTRACT_ITEMS:
         raise ContractError(f"{path}.checks: exceeds {MAX_CONTRACT_ITEMS} items")
     check_ids: list[str] = []
     for index, raw_check in enumerate(checks):
@@ -2485,9 +2861,12 @@ def validate_verification(document: Any, path: str = "verification") -> None:
             "outputTruncated",
             "streamOutputTruncated",
         }
+        diagnostic_fields = {"diagnostics"}
         _exact_keys(
             check,
-            required=required_check | (evidence_fields if schema_version == 2 else set()),
+            required=required_check
+            | (evidence_fields if schema_version >= 2 else set())
+            | (diagnostic_fields if schema_version == 3 else set()),
             optional={"error", "pathEntries", "timeoutSeconds"}
             | (evidence_fields if schema_version == 1 else set()),
             path=check_path,
@@ -2513,7 +2892,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         command = check["command"]
         if not isinstance(command, list) or not command:
             raise ContractError(f"{check_path}.command: must not be empty")
-        if schema_version == 2 and len(command) > MAX_CONTRACT_ITEMS:
+        if schema_version >= 2 and len(command) > MAX_CONTRACT_ITEMS:
             raise ContractError(
                 f"{check_path}.command: exceeds {MAX_CONTRACT_ITEMS} items"
             )
@@ -2559,16 +2938,24 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         for name in ("outputTruncated", "streamOutputTruncated"):
             if name in check and not isinstance(check[name], bool):
                 raise ContractError(f"{check_path}.{name}: must be boolean")
+        if schema_version == 3:
+            _validate_diagnostics(
+                check["diagnostics"], f"{check_path}.diagnostics"
+            )
         if check["status"] == "passed" and (
             check["exitCode"] != 0
             or check.get("impactIntegrity") == "failed"
+            or (
+                schema_version == 3
+                and check["diagnostics"]["status"] != "clean"
+            )
             or "error" in check
         ):
             raise ContractError(f"{check_path}: passing check has contradictory evidence")
     if len(check_ids) != len(set(check_ids)):
         raise ContractError(f"{path}.checks: duplicate ids are not allowed")
 
-    if schema_version == 2:
+    if schema_version >= 2:
         impact = _object(value["impact"], f"{path}.impact")
         _exact_keys(
             impact,

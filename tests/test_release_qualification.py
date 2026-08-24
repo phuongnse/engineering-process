@@ -4,18 +4,75 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from engineering_process.contracts import ContractError
 from verification.qualify_release_lifecycle import (
+    _run,
     _safe_environment,
     pending_release_changes,
-    qualification_evidence,
     qualify_release_lifecycle,
 )
 
 
 class ReleaseQualificationTests(unittest.TestCase):
+    def test_qualification_maps_bounded_process_failures(self):
+        scenarios = (
+            ({"timed_out": True}, "exceeded 120 seconds"),
+            ({"output_exceeded": True}, "output exceeded"),
+            ({"descendants_found": True}, "left descendant processes"),
+            ({"cleanup_error": "cleanup sentinel"}, "cleanup sentinel"),
+        )
+        for changes, expected in scenarios:
+            result = {
+                "returncode": 0,
+                "stdout": b"",
+                "stderr": b"",
+                "timed_out": False,
+                "output_exceeded": False,
+                "descendants_found": False,
+                "input_error": False,
+                "cleanup_error": None,
+            }
+            result.update(changes)
+            with (
+                self.subTest(expected=expected),
+                tempfile.TemporaryDirectory() as directory,
+                patch(
+                    "verification.qualify_release_lifecycle.run_bounded_process",
+                    return_value=SimpleNamespace(**result),
+                ),
+                self.assertRaisesRegex(ContractError, expected),
+            ):
+                _run(["tool"], cwd=Path(directory))
+
+    def test_exit_zero_qualification_diagnostic_fails_closed_without_raw_text(self):
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=b"",
+            stderr=b"WARNING: secret-shaped=value\n",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=False,
+            input_error=False,
+            cleanup_error=None,
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "verification.qualify_release_lifecycle.run_bounded_process",
+                return_value=completed,
+            ),
+            self.assertRaisesRegex(
+                ContractError,
+                "release qualification command emitted forbidden warning/error",
+            ) as raised,
+        ):
+            _run(["tool"], cwd=Path(directory), capture=True)
+
+        self.assertNotIn("secret-shaped", str(raised.exception))
+
     def test_pending_changes_are_sorted_and_bounded_to_json_fragments(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -29,13 +86,17 @@ class ReleaseQualificationTests(unittest.TestCase):
 
             self.assertEqual(["alpha.json", "zeta.json"], [path.name for path in result])
 
-    def test_qualification_evidence_is_explicitly_bound_to_exact_checkpoint(self):
-        evidence = qualification_evidence("a" * 40)
+    def test_qualification_source_cannot_synthesize_semantic_approval(self):
+        source = (
+            Path(__file__).resolve().parent.parent
+            / "verification"
+            / "qualify_release_lifecycle.py"
+        ).read_text(encoding="utf-8")
 
-        self.assertEqual("a" * 40, evidence["headSha"])
-        self.assertEqual("independent-automated", evidence["verificationKind"])
-        self.assertEqual("phuongnse/renovate-ops", evidence["verifierRepository"])
-        self.assertEqual(40, len(evidence["verifierSha"]))
+        self.assertNotIn("qualification_semantic_review", source)
+        self.assertNotIn('"verdict": "approved"', source)
+        self.assertNotIn('"change",\n                    "review",', source)
+        self.assertIn('lifecycle_status.get("phase") != "verified"', source)
 
     def test_qualification_subprocesses_do_not_receive_secret_environment(self):
         environment = {

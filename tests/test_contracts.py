@@ -1,12 +1,15 @@
 import hashlib
 import json
 import unittest
+from pathlib import Path
 
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
     ContractError,
     derive_release_version,
     validate_adoption_migration,
+    validate_automation_proposal,
+    validate_automation_proposal_policy,
     validate_change,
     validate_plan,
     validate_process_lock,
@@ -15,6 +18,9 @@ from engineering_process.contracts import (
     validate_release_change,
     validate_review,
 )
+
+
+PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class ProjectContractTests(unittest.TestCase):
@@ -58,6 +64,59 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_automation_proposal_requires_exact_safe_controls_and_policy_digest(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-proposal.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        proposal = validate_automation_proposal(document)
+
+        self.assertEqual("renovate", proposal.automation_owner)
+        self.assertEqual("lifecycle-completion", proposal.completion_check)
+
+        document["observedControls"]["scripts"] = True
+        with self.assertRaisesRegex(ContractError, "scripts: must be false"):
+            validate_automation_proposal(document)
+
+        document["observedControls"]["scripts"] = False
+        document["optIn"]["document"]["allowedAutomationOwners"] = ["other"]
+        with self.assertRaisesRegex(ContractError, "canonical policy document"):
+            validate_automation_proposal(document)
+
+    def test_automation_proposal_policy_is_an_explicit_strict_opt_in(self):
+        policy = json.loads(
+            (
+                PROCESS_ROOT / "examples" / "automation-proposal-policy.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        validate_automation_proposal_policy(policy)
+
+        policy["enabled"] = False
+        with self.assertRaisesRegex(ContractError, "enabled: must be true"):
+            validate_automation_proposal_policy(policy)
+
+        policy["enabled"] = True
+        policy["requiredControls"]["writeCapableChecks"] = True
+        with self.assertRaisesRegex(ContractError, "writeCapableChecks: must be false"):
+            validate_automation_proposal_policy(policy)
+
+    def test_automation_proposal_bounds_and_canonicalizes_changed_paths(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "automation-proposal.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["changedPaths"] = ["package.json", "package-lock.json"]
+        with self.assertRaisesRegex(ContractError, "sorted and unique"):
+            validate_automation_proposal(document)
+
+        document["changedPaths"] = [f"locks/dependency-{index}.lock" for index in range(1001)]
+        with self.assertRaisesRegex(ContractError, "between 1 and 1000"):
+            validate_automation_proposal(document)
 
     def test_adoption_migration_binds_distinct_final_versions_and_project(self):
         project = self.valid_project()

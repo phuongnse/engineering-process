@@ -4,13 +4,13 @@ import json
 import os
 import shutil
 import stat
-import subprocess
 import tarfile
 import tempfile
 import time
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 import urllib.request
 from dataclasses import replace
@@ -248,15 +248,99 @@ class ManagedToolTests(unittest.TestCase):
             with (
                 patch("engineering_process.tooling._remaining", return_value=0.25),
                 patch(
-                    "engineering_process.tooling.subprocess.run",
-                    side_effect=subprocess.TimeoutExpired("download", 0.25),
+                    "engineering_process.tooling.run_bounded_process",
+                    return_value=SimpleNamespace(
+                        returncode=-1,
+                        stdout=b"",
+                        stderr=b"",
+                        timed_out=True,
+                        output_exceeded=False,
+                        descendants_found=False,
+                        input_error=False,
+                        cleanup_error=None,
+                    ),
                 ) as run,
             ):
                 with self.assertRaisesRegex(ContractError, "exceeded its timeout"):
                     download_artifact(artifact, destination, deadline=123.0)
 
             self.assertFalse(destination.exists())
-            self.assertEqual(0.25, run.call_args.kwargs["timeout"])
+            self.assertEqual(0.25, run.call_args.kwargs["timeout_seconds"])
+
+    def test_download_worker_output_overflow_fails_closed(self):
+        artifact = ManagedToolArtifact(
+            platform="linux-glibc-x64",
+            url="https://downloads.example.test/sample",
+            checksum=f"sha256:{'0' * 64}",
+            archive_format="file",
+            strip_components=0,
+            max_download_bytes=100,
+            max_extracted_bytes=100,
+            max_files=1,
+            commands={"sample": ManagedCommand("sample", None)},
+        )
+        result = SimpleNamespace(
+            returncode=-1,
+            stdout=b"",
+            stderr=b"x" * 64_000,
+            timed_out=False,
+            output_exceeded=True,
+            descendants_found=False,
+            input_error=False,
+            cleanup_error=None,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "artifact"
+            with (
+                patch("engineering_process.tooling._remaining", return_value=1.0),
+                patch(
+                    "engineering_process.tooling.run_bounded_process",
+                    return_value=result,
+                ),
+                self.assertRaisesRegex(ContractError, "output exceeded"),
+            ):
+                download_artifact(artifact, destination, deadline=123.0)
+
+        self.assertFalse(destination.exists())
+
+    def test_exit_zero_download_worker_diagnostic_fails_closed(self):
+        artifact = ManagedToolArtifact(
+            platform="linux-glibc-x64",
+            url="https://downloads.example.test/sample",
+            checksum=f"sha256:{'0' * 64}",
+            archive_format="file",
+            strip_components=0,
+            max_download_bytes=100,
+            max_extracted_bytes=100,
+            max_files=1,
+            commands={"sample": ManagedCommand("sample", None)},
+        )
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=b"",
+            stderr=b"WARNING: secret-shaped=value\n",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=False,
+            input_error=False,
+            cleanup_error=None,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "artifact"
+            with (
+                patch("engineering_process.tooling._remaining", return_value=1.0),
+                patch(
+                    "engineering_process.tooling.run_bounded_process",
+                    return_value=completed,
+                ),
+                self.assertRaisesRegex(
+                    ContractError,
+                    "download worker emitted forbidden warning/error diagnostics",
+                ) as raised,
+            ):
+                download_artifact(artifact, destination, deadline=123.0)
+
+        self.assertNotIn("secret-shaped", str(raised.exception))
 
     def write_archive(self, root: Path, *, unsafe: bool = False) -> Path:
         archive = root / "sample.tar.gz"

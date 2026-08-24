@@ -20,15 +20,88 @@ from pathlib import Path
 COMMAND_TIMEOUT_SECONDS = 300
 TERMINATION_TIMEOUT_SECONDS = 5
 MAX_CAPTURE_BYTES = 128_000
+COMMAND_OUTPUT_STREAM_LIMIT = 1_000_000
+COMMAND_OUTPUT_TOTAL_LIMIT = 1_500_000
 READ_CHUNK_BYTES = 64 * 1024
 MAX_REQUIREMENTS_BYTES = 1_000_000
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 PathIdentity = tuple[int, int, int, int]
 
+# Bootstrap snapshot of the non-configurable policy in
+# engineering_process/diagnostics.py. This runner executes before the target
+# authority exists, so its regression suite keeps the two classifiers aligned.
+_TOOL_PREFIX = (
+    r"(?:cmake|cargo|dotnet|go|gradle|maven|msbuild|npm|pip|pnpm|rustc|yarn)"
+)
+_WARNING_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"^\s*{_TOOL_PREFIX}\s+warn(?:ing)?\b",
+        r"^\s*::warning(?:\s+[^\r\n]{0,4096})?::",
+        r"^\s*(?:##)?\[\s*warn(?:ing)?\s*\]",
+        r"^\s*warn(?:ing)?\b(?:\s*:|\s+\[|$)",
+        r"^\s*[A-Za-z0-9_.+-]+\s+Warning\b(?:\s+at\b|\s*:|\s+\[|$)",
+        r"^[^\r\n]{0,512}:\d+(?::\d+)?:\s*warning\b",
+        r"\b[A-Za-z][A-Za-z0-9_.]*Warning\s*:",
+        r'^\s*\{[^\r\n]{0,4096}"(?:level|severity)"\s*:\s*"(?:warn|warning)"',
+        r"^\s*(?:level|severity)\s*[=:]\s*(?:warn|warning)\b",
+    )
+)
+_ERROR_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"^\s*{_TOOL_PREFIX}\s+error\b",
+        r"^\s*::error(?:\s+[^\r\n]{0,4096})?::",
+        r"^\s*(?:##)?\[\s*error\s*\]",
+        r"^\s*error\b(?:\s*:|\s+\[|$)",
+        r"^[^\r\n]{0,512}:\d+(?::\d+)?:\s*error\b",
+        r"\b[A-Za-z][A-Za-z0-9_.]*Error\s*:",
+        r'^\s*\{[^\r\n]{0,4096}"(?:level|severity)"\s*:\s*"error"',
+        r"^\s*(?:level|severity)\s*[=:]\s*error\b",
+    )
+)
+
+
+def _diagnostic_severity(line: str) -> str | None:
+    if any(pattern.search(line) is not None for pattern in _ERROR_PATTERNS):
+        return "error"
+    if any(pattern.search(line) is not None for pattern in _WARNING_PATTERNS):
+        return "warning"
+    return None
+
+
+def _diagnostic_failure(stdout: bytes, stderr: bytes) -> str | None:
+    count = 0
+    first: tuple[str, str, int, str] | None = None
+    for stream, content in (("stdout", stdout), ("stderr", stderr)):
+        for line_number, raw_line in enumerate(content.splitlines(), start=1):
+            severity = _diagnostic_severity(
+                raw_line.decode("utf-8", errors="replace")
+            )
+            if severity is None:
+                continue
+            count += 1
+            if first is None:
+                first = (
+                    severity,
+                    stream,
+                    line_number,
+                    hashlib.sha256(raw_line).hexdigest(),
+                )
+    if first is None:
+        return None
+    severity, stream, line_number, digest = first
+    return (
+        "command emitted forbidden warning/error diagnostics: "
+        f"count={count}; first={severity} on {stream} line {line_number} "
+        f"sha256:{digest}"
+    )
+
 
 @dataclass
 class Capture:
     content: bytearray = field(default_factory=bytearray)
+    diagnostic_content: bytearray = field(default_factory=bytearray)
     count: int = 0
     digest: object = field(default_factory=hashlib.sha256)
 
@@ -38,6 +111,11 @@ class Capture:
         remaining = MAX_CAPTURE_BYTES - len(self.content)
         if remaining > 0:
             self.content.extend(chunk[:remaining])
+        diagnostic_remaining = (
+            COMMAND_OUTPUT_STREAM_LIMIT - len(self.diagnostic_content)
+        )
+        if diagnostic_remaining > 0:
+            self.diagnostic_content.extend(chunk[:diagnostic_remaining])
 
     def text(self) -> str:
         value = bytes(self.content).decode("utf-8", errors="replace")
@@ -446,11 +524,23 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         raise RuntimeError("command output readers did not terminate")
     if descendants_found:
         raise RuntimeError("command left descendant processes; they were terminated")
+    if (
+        stdout.count > COMMAND_OUTPUT_STREAM_LIMIT
+        or stderr.count > COMMAND_OUTPUT_STREAM_LIMIT
+        or stdout.count + stderr.count > COMMAND_OUTPUT_TOTAL_LIMIT
+    ):
+        raise RuntimeError("command output exceeded the fail-closed byte budget")
     if return_code != 0:
         raise RuntimeError(
             f"command failed with exit status {return_code}\n"
             f"stdout:\n{stdout.text()}\nstderr:\n{stderr.text()}"
         )
+    diagnostic_error = _diagnostic_failure(
+        bytes(stdout.diagnostic_content),
+        bytes(stderr.diagnostic_content),
+    )
+    if diagnostic_error is not None:
+        raise RuntimeError(diagnostic_error)
     return stdout.text()
 
 

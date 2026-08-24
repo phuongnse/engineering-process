@@ -36,6 +36,8 @@ REQUIRED_SUFFIXES = {
     "engineering_process/requirements-release.txt",
     "release.json",
     "schemas/adoption-migration.schema.json",
+    "schemas/automation-proposal-policy.schema.json",
+    "schemas/automation-proposal.schema.json",
     "schemas/change.schema.json",
     "schemas/evidence-receipt.schema.json",
     "schemas/release-change.schema.json",
@@ -495,6 +497,7 @@ def verify_distribution(
                 ),
                 timeout_seconds=900,
                 working_directory=".",
+                environment_overrides={"PYTHONDONTWRITEBYTECODE": None},
                 stream_output=True,
             )
             if result["status"] != "passed":

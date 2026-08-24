@@ -43,7 +43,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 engineering_process = ["requirements-*.txt"]
 
 [tool.setuptools.data-files]
-"share/engineering-process" = ["bundles.json", "release.json", "PRODUCTION_STANDARD.md", "VERSIONING.md"]
+"share/engineering-process" = ["bundles.json", "process-graph.json", "release.json", "PRODUCTION_STANDARD.md", "VERSIONING.md"]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
@@ -52,10 +52,13 @@ engineering_process = ["requirements-*.txt"]
 ]
 "share/engineering-process/schemas" = [
   "schemas/adoption-migration.schema.json",
+  "schemas/automation-proposal-policy.schema.json",
+  "schemas/automation-proposal.schema.json",
   "schemas/change.schema.json",
   "schemas/evidence-receipt.schema.json",
   "schemas/lifecycle.schema.json",
   "schemas/plan.schema.json",
+  "schemas/process-graph.schema.json",
   "schemas/process-lock.schema.json",
   "schemas/project.schema.json",
   "schemas/release.schema.json",
@@ -67,6 +70,8 @@ engineering_process = ["requirements-*.txt"]
 ]
 "share/engineering-process/examples" = [
   "examples/adoption-migration.json",
+  "examples/automation-proposal-policy.json",
+  "examples/automation-proposal.json",
   "examples/change.json",
   "examples/plan.json",
   "examples/project.json",

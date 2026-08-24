@@ -27,7 +27,8 @@ semantics shared by every project.
    - verified: obtain a separate reviewer through review-change;
    - review-pending: wait for the assigned reviewer; do not self-review;
    - approved: use finish-change;
-   - completed: stop unless publication was separately authorized.
+   - completed: use publish-change when standing project policy authorizes automatic
+     publication, then stop at the human merge boundary.
 3. Apply the nearest AGENTS.md and domain skill inside each phase. Project policy may
    add stronger gates but cannot remove lifecycle phases, baseline profiles,
    independent review, evidence freshness, or finding closure.
@@ -35,10 +36,13 @@ semantics shared by every project.
    failure-to-invariant protocol in the required execution reference before any
    corrective mutation. Keep dependent candidates blocked until the owning boundary
    and required proof are explicit.
-5. After a valid finding, preserve the reviewed checkpoint, begin the next
+5. When new evidence exposes a material owner decision or multiple valid boundary
+   choices, apply the owner-decision escalation protocol in the execution reference;
+   do not choose a new scope, authority, architecture, or lifecycle route implicitly.
+6. After a valid finding, preserve the reviewed checkpoint, begin the next
    implementation cycle, resolve the finding, and repeat every invalidated profile
    and independent review.
-6. Report the processctl phase, cycle, current evidence, blockers, and next owner.
+7. Report the processctl phase, cycle, current evidence, blockers, and next owner.
    Never call a task complete from prose alone.
 
 ## Hard gates
@@ -46,8 +50,10 @@ semantics shared by every project.
 - Do not edit implementation before specification, required sign-off, and planning.
 - Do not review work produced by the same actor or context.
 - Do not convert missing, stale, failed, timed-out, or blocked evidence into a pass.
-- Do not publish, merge, release, deploy, or perform destructive cleanup unless the
-  user separately authorized that project-owned action.
+- Do not publish before completion. Standing project policy may authorize automatic
+  branch/PR creation after completion; merge always requires the configured human owner.
+- Do not release, deploy, or perform destructive cleanup without the corresponding
+  project-owned authorization.
 
 ## Output
 
