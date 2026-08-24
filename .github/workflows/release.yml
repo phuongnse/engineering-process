@@ -11,6 +11,8 @@ on:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish.yml"
       - "verification/check_pypi_publication.py"
+      - "verification/restore_release_evidence.py"
+      - "verification/select_release_evidence.py"
       - "verification/validate_publish_event.py"
       - "verification/verify_distribution.py"
       - "verification/verify_installed_distribution.py"
@@ -137,16 +139,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-        run: |
-          artifact_name="release-completion-$REVIEWED_SHA"
-          run_id="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
-            -f name="$artifact_name" -f per_page=100 \
-            --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | last | .workflow_run.id // empty')"
-          test -n "$run_id"
-          mkdir -p "$RUNNER_TEMP/release-completion"
-          gh run download "$run_id" --name "$artifact_name" \
-            --dir "$RUNNER_TEMP/release-completion"
-          test -f "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
+          TAG: ${{ steps.identity.outputs.tag }}
+        run: >-
+          python
+          "$GITHUB_WORKSPACE/.release-controller/verification/restore_release_evidence.py"
+          --repository "$GITHUB_REPOSITORY"
+          --reviewed-sha "$REVIEWED_SHA"
+          --tag "$TAG"
+          --evidence-asset "$EVIDENCE_ASSET"
+          --output "$RUNNER_TEMP/release-completion"
 
       - name: Prove reviewed tree, merge commit, release contract, and prior tag
         env:

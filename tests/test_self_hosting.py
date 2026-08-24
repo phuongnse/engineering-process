@@ -180,6 +180,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('".github/workflows/publish.yml"', release)
         for controller in (
             "check_pypi_publication.py",
+            "restore_release_evidence.py",
+            "select_release_evidence.py",
             "validate_publish_event.py",
             "verify_distribution.py",
             "verify_installed_distribution.py",
@@ -193,6 +195,25 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("permission-workflows: write", release)
         self.assertIn("token: ${{ steps.app-token.outputs.token }}", release)
         self.assertIn("publication authorize-release", release)
+        evidence_start = release.index(
+            "- name: Restore exact-head pre-publication completion evidence"
+        )
+        evidence_end = release.index(
+            "- name: Prove reviewed tree, merge commit, release contract, and prior tag",
+            evidence_start,
+        )
+        evidence_recovery = release[evidence_start:evidence_end]
+        self.assertIn(
+            '"$GITHUB_WORKSPACE/.release-controller/verification/restore_release_evidence.py"',
+            evidence_recovery,
+        )
+        self.assertIn('--reviewed-sha "$REVIEWED_SHA"', evidence_recovery)
+        self.assertIn('--evidence-asset "$EVIDENCE_ASSET"', evidence_recovery)
+        self.assertIn('--output "$RUNNER_TEMP/release-completion"', evidence_recovery)
+        self.assertNotIn("python verification/restore_release_evidence.py", evidence_recovery)
+        self.assertNotIn("gh run download", evidence_recovery)
+        self.assertNotIn("gh release download", evidence_recovery)
+        self.assertNotIn("gh release create", evidence_recovery)
         self.assertIn("gh release edit", release)
         for workflow in (release, prepare, publish):
             self.assertIn(".release-controller", workflow)
