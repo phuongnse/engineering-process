@@ -40,8 +40,10 @@ def decode_windows_job_status(content: bytes) -> CleanupOutcome:
             bounded=False,
             error="Windows Job Object status has an unexpected contract",
         )
-    if document["schemaVersion"] != 1 or not isinstance(
-        document["descendantsFound"], bool
+    if (
+        type(document["schemaVersion"]) is not int
+        or document["schemaVersion"] != 1
+        or not isinstance(document["descendantsFound"], bool)
     ):
         return CleanupOutcome(
             bounded=False,
@@ -134,6 +136,16 @@ class WindowsProcessSupervisor:
         self._forced_termination: set[int] = set()
         self._status_lock = threading.Lock()
 
+    def _discard_status_reader(self, process_id: int) -> None:
+        with self._status_lock:
+            read_fd = self._status_readers.pop(process_id, None)
+            self._forced_termination.discard(process_id)
+        if read_fd is not None:
+            try:
+                os.close(read_fd)
+            except OSError:
+                pass
+
     def resolve_application(
         self,
         command: str,
@@ -225,6 +237,7 @@ class WindowsProcessSupervisor:
             try:
                 process.wait(timeout=grace_seconds)
             except subprocess.TimeoutExpired:
+                self._discard_status_reader(process.pid)
                 return CleanupOutcome(
                     bounded=False,
                     error="Windows Job Object wrapper survived bounded termination",

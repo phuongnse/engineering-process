@@ -39,6 +39,10 @@ class ProcessSupervisionTests(unittest.TestCase):
             b'{"schemaVersion":1}',
             b'{ "cleanupError": null, "descendantsFound": false, '
             b'"schemaVersion": 1 }\n',
+            b'{"cleanupError":null,"descendantsFound":false,'
+            b'"schemaVersion":true}\n',
+            b'{"cleanupError":null,"descendantsFound":false,'
+            b'"schemaVersion":1.0}\n',
             b"x" * 4097,
         ):
             with self.subTest(content=content[:20]):
@@ -92,6 +96,25 @@ class ProcessSupervisionTests(unittest.TestCase):
         outcome = supervisor.finalize(process, grace_seconds=1)
 
         self.assertEqual(CleanupOutcome(bounded=True), outcome)
+
+    def test_windows_survived_termination_discards_status_reader(self):
+        supervisor = WindowsProcessSupervisor()
+        process = Mock(pid=999)
+        process.poll.return_value = None
+        process.terminate.side_effect = OSError("terminate failed")
+        process.wait.side_effect = subprocess.TimeoutExpired("wrapper", 1)
+        read_fd, write_fd = os.pipe()
+        supervisor._status_readers[999] = read_fd
+
+        outcome = supervisor.terminate(process, grace_seconds=1)
+
+        os.close(write_fd)
+        self.assertFalse(outcome.bounded)
+        self.assertIn("survived", outcome.error or "")
+        self.assertNotIn(999, supervisor._status_readers)
+        self.assertNotIn(999, supervisor._forced_termination)
+        with self.assertRaises(OSError):
+            os.fstat(read_fd)
 
     def test_platform_selection_is_confined_to_the_supervision_boundary(self):
         self.assertEqual(
