@@ -180,6 +180,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('".github/workflows/publish.yml"', release)
         for controller in (
             "check_pypi_publication.py",
+            "select_release_evidence.py",
             "validate_publish_event.py",
             "verify_distribution.py",
             "verify_installed_distribution.py",
@@ -201,13 +202,16 @@ class SelfHostingTests(unittest.TestCase):
             evidence_start,
         )
         evidence_recovery = release[evidence_start:evidence_end]
-        self.assertIn('if test -n "$run_id"; then', evidence_recovery)
         self.assertIn(
-            'test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false',
+            "python verification/select_release_evidence.py",
             evidence_recovery,
         )
         self.assertIn(
-            'test "$(gh release view "$TAG" --json publishedAt --jq .publishedAt)" != null',
+            'if test "$source" = actions; then',
+            evidence_recovery,
+        )
+        self.assertIn(
+            'test "$source" = published-release-required',
             evidence_recovery,
         )
         self.assertIn('gh release verify "$TAG"', evidence_recovery)
@@ -216,9 +220,20 @@ class SelfHostingTests(unittest.TestCase):
             evidence_recovery,
         )
         self.assertLess(
+            evidence_recovery.index("python verification/select_release_evidence.py"),
+            evidence_recovery.index('gh run download "$run_id"'),
+        )
+        self.assertLess(
+            evidence_recovery.index('--release "$RUNNER_TEMP/verified-published-release.json"'),
+            evidence_recovery.index(
+                'gh release download "$TAG" --pattern "$EVIDENCE_ASSET"'
+            ),
+        )
+        self.assertLess(
             evidence_recovery.index('gh run download "$run_id"'),
             evidence_recovery.index('gh release verify "$TAG"'),
         )
+        self.assertIn('test "$(wc -c < "$evidence_path")" -le 8000000', evidence_recovery)
         self.assertNotIn("gh release create", evidence_recovery)
         self.assertIn("gh release edit", release)
         for workflow in (release, prepare, publish):

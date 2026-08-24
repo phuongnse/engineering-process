@@ -11,6 +11,7 @@ on:
       - ".github/workflows/prepare-release.yml"
       - ".github/workflows/publish.yml"
       - "verification/check_pypi_publication.py"
+      - "verification/select_release_evidence.py"
       - "verification/validate_publish_event.py"
       - "verification/verify_distribution.py"
       - "verification/verify_installed_distribution.py"
@@ -140,25 +141,44 @@ jobs:
           TAG: ${{ steps.identity.outputs.tag }}
         run: |
           artifact_name="release-completion-$REVIEWED_SHA"
-          run_id="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
+          gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
             -f name="$artifact_name" -f per_page=100 \
-            --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | last | .workflow_run.id // empty')"
+            > "$RUNNER_TEMP/completion-artifacts.json"
+          selector=(
+            python verification/select_release_evidence.py
+            --actions "$RUNNER_TEMP/completion-artifacts.json"
+            --expected-actions-artifact "$artifact_name"
+            --expected-tag "$TAG"
+            --evidence-asset "$EVIDENCE_ASSET"
+          )
+          selection="$("${selector[@]}")"
+          source="$(jq -r .source <<<"$selection")"
           mkdir -p "$RUNNER_TEMP/release-completion"
-          if test -n "$run_id"; then
+          if test "$source" = actions; then
+            run_id="$(jq -r .runId <<<"$selection")"
             echo "Restoring completion evidence from Actions run $run_id."
             gh run download "$run_id" --name "$artifact_name" \
               --dir "$RUNNER_TEMP/release-completion"
           else
-            test "$(gh release view "$TAG" --json tagName --jq .tagName)" = "$TAG"
-            test "$(gh release view "$TAG" --json name --jq .name)" = "$TAG"
-            test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false
-            test "$(gh release view "$TAG" --json publishedAt --jq .publishedAt)" != null
+            test "$source" = published-release-required
+            gh release view "$TAG" --json tagName,name,isDraft,publishedAt,assets \
+              > "$RUNNER_TEMP/published-release.json"
             gh release verify "$TAG"
+            jq '. + {immutabilityVerified: true}' \
+              "$RUNNER_TEMP/published-release.json" \
+              > "$RUNNER_TEMP/verified-published-release.json"
+            selection="$(
+              "${selector[@]}" \
+                --release "$RUNNER_TEMP/verified-published-release.json"
+            )"
+            test "$(jq -r .source <<<"$selection")" = published-release
             echo "Restoring completion evidence from immutable published release $TAG."
             gh release download "$TAG" --pattern "$EVIDENCE_ASSET" \
               --dir "$RUNNER_TEMP/release-completion"
           fi
-          test -f "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
+          evidence_path="$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
+          test -f "$evidence_path"
+          test "$(wc -c < "$evidence_path")" -le 8000000
 
       - name: Prove reviewed tree, merge commit, release contract, and prior tag
         env:
