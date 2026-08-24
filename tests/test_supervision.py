@@ -7,12 +7,92 @@ import subprocess
 from unittest.mock import Mock, patch
 
 from engineering_process._supervisor_posix import PosixProcessSupervisor
-from engineering_process._supervisor_windows import resolve_windows_application
+from engineering_process._supervisor_windows import (
+    WindowsProcessSupervisor,
+    decode_windows_job_status,
+    resolve_windows_application,
+)
 from engineering_process.helper_launch import isolated_helper_command
 from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
 class ProcessSupervisionTests(unittest.TestCase):
+    def test_windows_status_protocol_reports_descendants_and_wrapper_errors(self):
+        descendant = decode_windows_job_status(
+            b'{"cleanupError":null,"descendantsFound":true,"schemaVersion":1}\n'
+        )
+        failed = decode_windows_job_status(
+            b'{"cleanupError":"cleanup failed","descendantsFound":false,'
+            b'"schemaVersion":1}\n'
+        )
+
+        self.assertEqual(
+            CleanupOutcome(bounded=True, descendants_found=True), descendant
+        )
+        self.assertFalse(failed.bounded)
+        self.assertIn("cleanup failed", failed.error or "")
+
+    def test_windows_status_protocol_rejects_missing_malformed_and_oversized_data(self):
+        for content in (
+            b"",
+            b"not json",
+            b'{"schemaVersion":1}',
+            b'{ "cleanupError": null, "descendantsFound": false, '
+            b'"schemaVersion": 1 }\n',
+            b"x" * 4097,
+        ):
+            with self.subTest(content=content[:20]):
+                outcome = decode_windows_job_status(content)
+                self.assertFalse(outcome.bounded)
+                self.assertIsNotNone(outcome.error)
+
+    def test_windows_finalization_consumes_status_pipe_once(self):
+        supervisor = WindowsProcessSupervisor()
+        process = Mock(pid=123)
+        read_fd, write_fd = os.pipe()
+        os.write(
+            write_fd,
+            b'{"cleanupError":null,"descendantsFound":true,"schemaVersion":1}\n',
+        )
+        os.close(write_fd)
+        supervisor._status_readers[123] = read_fd
+
+        outcome = supervisor.finalize(process, grace_seconds=1)
+        repeated = supervisor.finalize(process, grace_seconds=1)
+
+        self.assertEqual(
+            CleanupOutcome(bounded=True, descendants_found=True), outcome
+        )
+        self.assertFalse(repeated.bounded)
+        self.assertIn("unavailable", repeated.error or "")
+
+    def test_windows_forced_termination_allows_empty_closed_status_pipe(self):
+        supervisor = WindowsProcessSupervisor()
+        process = Mock(pid=456)
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+        supervisor._status_readers[456] = read_fd
+        supervisor._forced_termination.add(456)
+
+        outcome = supervisor.finalize(process, grace_seconds=1)
+
+        self.assertEqual(CleanupOutcome(bounded=True), outcome)
+
+    def test_windows_status_disambiguates_normal_target_exit_125(self):
+        supervisor = WindowsProcessSupervisor()
+        process = Mock(pid=789, returncode=125)
+        read_fd, write_fd = os.pipe()
+        os.write(
+            write_fd,
+            b'{"cleanupError":null,"descendantsFound":false,"schemaVersion":1}\n',
+        )
+        os.close(write_fd)
+        supervisor._status_readers[789] = read_fd
+
+        outcome = supervisor.finalize(process, grace_seconds=1)
+
+        self.assertEqual(CleanupOutcome(bounded=True), outcome)
+
     def test_platform_selection_is_confined_to_the_supervision_boundary(self):
         self.assertEqual(
             "PosixProcessSupervisor",

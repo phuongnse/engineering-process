@@ -1,5 +1,7 @@
 import ctypes
 from ctypes import wintypes
+import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -33,6 +35,9 @@ class FakeKernel32:
         self.termination_calls = 0
         self.creation_flags = None
         self.job_attribute = None
+        self.handle_attribute = None
+        self.updated_attributes = []
+        self.attribute_counts = []
         self.application = None
         self.command_line = None
 
@@ -52,7 +57,8 @@ class FakeKernel32:
         self.CloseHandle = NativeCall(self._close_handle)
 
     def _initialize_attribute_list(self, attribute_list, count, flags, size_pointer):
-        del count, flags
+        del flags
+        self.attribute_counts.append(count)
         size = ctypes.cast(size_pointer, ctypes.POINTER(ctypes.c_size_t))
         if not attribute_list:
             size.contents.value = 64
@@ -70,10 +76,18 @@ class FakeKernel32:
         return_size,
     ):
         del attribute_list, flags, value_size, previous, return_size
-        self.asserted_attribute = attribute
-        self.job_attribute = ctypes.cast(
-            value, ctypes.POINTER(wintypes.HANDLE)
-        )[0]
+        self.updated_attributes.append(attribute)
+        if attribute == _windows_job.PROC_THREAD_ATTRIBUTE_JOB_LIST:
+            self.job_attribute = ctypes.cast(
+                value, ctypes.POINTER(wintypes.HANDLE)
+            )[0]
+        elif attribute == _windows_job.PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
+            handles = ctypes.cast(
+                value, ctypes.POINTER(wintypes.HANDLE * 3)
+            ).contents
+            self.handle_attribute = list(handles)
+        else:
+            return False
         return True
 
     def _delete_attribute_list(self, attribute_list):
@@ -154,6 +168,39 @@ class FakeKernel32:
 
 
 class WindowsJobTests(unittest.TestCase):
+    def test_status_record_is_bounded_typed_and_written_once(self):
+        stream = io.BytesIO()
+
+        _windows_job._write_status(
+            stream,
+            descendants_found=True,
+            cleanup_error=None,
+        )
+        document = json.loads(stream.getvalue())
+
+        self.assertEqual(
+            {
+                "schemaVersion": 1,
+                "descendantsFound": True,
+                "cleanupError": None,
+            },
+            document,
+        )
+        self.assertLessEqual(
+            len(stream.getvalue()), _windows_job.MAX_STATUS_BYTES
+        )
+
+    def test_status_record_bounds_cleanup_error(self):
+        content = _windows_job._status_bytes(
+            descendants_found=False,
+            cleanup_error="x" * 10_000,
+        )
+
+        self.assertEqual(
+            _windows_job.MAX_STATUS_ERROR_CHARACTERS,
+            len(json.loads(content)["cleanupError"]),
+        )
+
     def test_natural_drain_uses_the_portable_supervision_bound(self):
         self.assertEqual(
             NATURAL_DRAIN_GRACE_MILLISECONDS,
@@ -169,10 +216,22 @@ class WindowsJobTests(unittest.TestCase):
 
         self.assertEqual(7, exit_code)
         self.assertEqual(
-            _windows_job.PROC_THREAD_ATTRIBUTE_JOB_LIST,
-            kernel32.asserted_attribute,
+            [
+                _windows_job.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                _windows_job.PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            ],
+            kernel32.updated_attributes,
         )
         self.assertEqual(101, kernel32.job_attribute)
+        self.assertEqual(
+            [
+                _windows_job.STD_INPUT_HANDLE,
+                _windows_job.STD_OUTPUT_HANDLE,
+                _windows_job.STD_ERROR_HANDLE,
+            ],
+            kernel32.handle_attribute,
+        )
+        self.assertEqual([2, 2], kernel32.attribute_counts)
         self.assertTrue(
             kernel32.creation_flags & _windows_job.EXTENDED_STARTUPINFO_PRESENT
         )
@@ -229,7 +288,10 @@ class WindowsJobTests(unittest.TestCase):
         kernel32.active_processes = [1, 0]
 
         with patch.object(_windows_job, "NATURAL_DRAIN_GRACE_MILLISECONDS", 0):
-            with self.assertRaisesRegex(OSError, "left descendant processes"):
+            with self.assertRaisesRegex(
+                _windows_job.DescendantsFoundError,
+                "left descendant processes",
+            ):
                 _windows_job._run(
                     r"C:\Python\python.exe", ["python", "-V"], kernel32=kernel32
                 )
@@ -269,7 +331,10 @@ class WindowsJobTests(unittest.TestCase):
                 "raise SystemExit(0 if marker.exists() else 2)"
             )
 
-            with self.assertRaisesRegex(OSError, "left descendant processes"):
+            with self.assertRaisesRegex(
+                _windows_job.DescendantsFoundError,
+                "left descendant processes",
+            ):
                 _windows_job._run(
                     sys.executable,
                     [

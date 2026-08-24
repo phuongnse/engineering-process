@@ -46,7 +46,7 @@ CLI, schemas, and tests.
 Run:
 
 ~~~text
-python -m unittest discover -s tests -p test_*.py
+python verification/run_test_suite.py
 python processctl.py skills validate --root process_assets/skills
 ~~~
 

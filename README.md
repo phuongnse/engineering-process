@@ -691,7 +691,7 @@ fingerprint, source tree, or publication range.
 ~~~text
 python -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python verification/run_test_suite.py
 .venv/bin/python processctl.py skills validate --root process_assets/skills
 .venv/bin/python processctl.py digest
 ~~~

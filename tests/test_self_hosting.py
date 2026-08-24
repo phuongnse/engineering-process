@@ -255,6 +255,11 @@ class SelfHostingTests(unittest.TestCase):
         project = json.loads(
             (PROCESS_ROOT / ".process" / "project.json").read_text(encoding="utf-8")
         )
+        development = next(
+            check
+            for check in project["profiles"]["development"]
+            if check["id"] == "unit-and-contract-tests"
+        )
         requirement = next(
             item
             for item in project["environment"]["requirements"]
@@ -268,6 +273,13 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn(
             "engineering_process/requirements-build.txt",
             requirement["remediation"],
+        )
+        self.assertEqual(
+            ["python", "verification/run_test_suite.py"], development["run"]
+        )
+        self.assertIn(
+            "python verification/run_test_suite.py",
+            (PROCESS_ROOT / "AGENTS.md").read_text(encoding="utf-8"),
         )
 
     def test_ci_binds_and_uploads_bounded_matrix_evidence(self):

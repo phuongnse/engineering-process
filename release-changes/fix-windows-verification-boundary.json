@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "fix-windows-verification-boundary",
+  "type": "fix",
+  "surfaces": [
+    "command-execution",
+    "verification"
+  ],
+  "rationale": "Propagate typed Windows descendant-cleanup results through a private bounded helper channel and make the producer test command independent of inherited Git line-ending conversion policy.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}
