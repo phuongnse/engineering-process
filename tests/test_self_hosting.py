@@ -101,6 +101,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('gh pr merge "$pr_number"', approval)
         self.assertIn('--auto --squash --match-head-commit "$HEAD_SHA"', approval)
         self.assertLess(approval.index("gh pr create"), approval.index("gh pr merge"))
+        self.assertLess(
+            approval.index('if test "$action" = merged; then'),
+            approval.index("git ls-remote origin refs/heads/main"),
+        )
         self.assertIn("Project-specific: Completion evidence", approval)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".process/process.lock"', generator)
