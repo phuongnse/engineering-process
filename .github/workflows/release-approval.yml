@@ -53,6 +53,14 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.comparison_base }}
 
+      - name: Validate current protected candidate base and preserve base-owned adapters
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+        run: |
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          cp verification/validate_release_completion_identity.py \
+            "$RUNNER_TEMP/validate-release-completion-identity.py"
+
       - name: Restore the exact unpublished candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -108,12 +116,14 @@ jobs:
               > "$RUNNER_TEMP/completion-summary.json"
             evidence_kind=bootstrap-authorization
           fi
-          change_id="$(jq -r .id .release/change.json)"
-          test "$(jq -r .changeId "$RUNNER_TEMP/completion-summary.json")" = "$change_id"
-          test "$(jq -r .checkpoint "$RUNNER_TEMP/completion-summary.json")" = "$HEAD_SHA"
-          test "$(jq -r .comparisonBase "$RUNNER_TEMP/completion-summary.json")" = "$BASE_SHA"
-          test "$(jq -r .processVersion "$RUNNER_TEMP/completion-summary.json")" = "$(jq -r .process.version .process/process.lock)"
-          test "$(jq -r .processDigest "$RUNNER_TEMP/completion-summary.json")" = "$(jq -r .process.digest .process/process.lock)"
+          "$RUNNER_TEMP/process-authority/bin/python" \
+            "$RUNNER_TEMP/validate-release-completion-identity.py" \
+            --summary "$RUNNER_TEMP/completion-summary.json" \
+            --evidence "$RUNNER_TEMP/completion-evidence.json" \
+            --release-change .release/change.json \
+            --process-lock .process/process.lock \
+            --expected-checkpoint "$HEAD_SHA" \
+            > "$RUNNER_TEMP/completion-identity.json"
           evidence_asset="$(jq -r '.identity.receiptAsset // .identity.authorizationAsset' release.json)"
           test -n "$evidence_asset"
           mkdir -p "$RUNNER_TEMP/completion"

@@ -646,6 +646,14 @@ gh workflow run release-approval.yml --ref main \
   -f completion_evidence_gzip_base64="$(<completion.txt)"
 ~~~
 
+The callback `comparison_base` is the candidate source base: the immediate protected
+`main` parent used for source restoration, current-base checks, and the publication
+range. The receipt's lifecycle comparison base is independently owned by
+`.release/change.json` and normally identifies the previous immutable release tag;
+the publication boundary validates both identities against their respective owners.
+An older callback whose candidate source base is no longer current fails before any
+candidate-owned publication adapter is invoked.
+
 A bootstrap-authority release uses `evidence export-bootstrap` and
 `--evidence-kind bootstrap-authorization`. The adapter rejects oversized or malformed
 transport, a different process identity, base, project, checkpoint, workspace

@@ -109,6 +109,12 @@ and exports its evidence. It then marks the managed checklist satisfied, creates
 reconciles the exact PR, and enables protected exact-head squash auto-merge using the
 short-lived App token. Independent semantic review is never manufactured or replaced.
 
+The callback's candidate source base is the immediate protected `main` parent used
+to restore and publish the generated commit. It is intentionally distinct from the
+lifecycle comparison base in `.release/change.json`, which owns the reviewed range
+from the previous immutable release. Completion evidence must match the latter;
+artifact restoration, current-main, and publication-range gates must match the former.
+
 Merging that ready Release PR is the only publication authorization. Standing policy
 removes the per-release maintainer merge step; branch protection remains the merge
 gate. No maintainer runs a release command, creates a tag, creates a GitHub Release,
