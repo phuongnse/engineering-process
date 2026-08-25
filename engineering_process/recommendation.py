@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import stat
-import tempfile
 from typing import Any, Callable
 
 from .contracts import (
@@ -273,39 +272,102 @@ def _write_new_artifact(
         raise ContractError(f"{label} parent cannot be resolved: {error}") from error
     destination = parent / output.name
     try:
-        destination.lstat()
-    except FileNotFoundError:
-        pass
+        parent_before = parent.stat()
     except OSError as error:
-        raise ContractError(f"{destination}: cannot inspect {label}: {error}") from error
-    else:
-        raise ContractError(f"{destination}: refusing to replace {label}")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=parent
-    )
-    temporary = Path(temporary_name)
+        raise ContractError(f"{parent}: cannot inspect {label} parent: {error}") from error
+    if not stat.S_ISDIR(parent_before.st_mode):
+        raise ContractError(f"{parent}: {label} parent must be a directory")
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    opened: os.stat_result | None = None
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
         try:
-            os.link(temporary, destination, follow_symlinks=False)
+            descriptor = os.open(destination, flags, 0o600)
         except FileExistsError as error:
-            raise ContractError(
-                f"{destination}: refusing to replace concurrently created {label}"
-            ) from error
+            raise ContractError(f"{destination}: refusing to replace {label}") from error
         except OSError as error:
             raise ContractError(
                 f"{destination}: cannot create exclusive {label}: {error}"
             ) from error
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ContractError(f"{destination}: {label} must be a regular file")
+        with os.fdopen(descriptor, "w+b") as stream:
+            descriptor = -1
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+            parent_after = parent.stat()
+            final = destination.lstat()
+            if (
+                parent_after.st_dev != parent_before.st_dev
+                or parent_after.st_ino != parent_before.st_ino
+                or stat.S_IFMT(parent_after.st_mode)
+                != stat.S_IFMT(parent_before.st_mode)
+            ):
+                raise ContractError(f"{destination}: {label} parent identity changed")
+            if (
+                not stat.S_ISREG(final.st_mode)
+                or final.st_dev != opened.st_dev
+                or final.st_ino != opened.st_ino
+            ):
+                raise ContractError(f"{destination}: {label} final identity changed")
+            stream.seek(0)
+            if stream.read(len(data) + 1) != data:
+                raise ContractError(f"{destination}: {label} final bytes changed")
+            final_open = os.fstat(stream.fileno())
+            if (
+                final_open.st_dev != opened.st_dev
+                or final_open.st_ino != opened.st_ino
+                or final_open.st_size != len(data)
+            ):
+                raise ContractError(f"{destination}: {label} final metadata changed")
+            if os.name == "posix":
+                directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                directory_descriptor = os.open(parent, directory_flags)
+                try:
+                    directory = os.fstat(directory_descriptor)
+                    if (
+                        directory.st_dev != parent_before.st_dev
+                        or directory.st_ino != parent_before.st_ino
+                    ):
+                        raise ContractError(
+                            f"{destination}: {label} parent identity changed"
+                        )
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+    except ContractError:
+        if descriptor >= 0:
+            os.close(descriptor)
+            descriptor = -1
+        if opened is not None:
+            try:
+                current = destination.lstat()
+                if (
+                    current.st_dev == opened.st_dev
+                    and current.st_ino == opened.st_ino
+                ):
+                    destination.unlink()
+            except OSError:
+                pass
+        raise
     except OSError as error:
+        if descriptor >= 0:
+            os.close(descriptor)
+            descriptor = -1
+        if opened is not None:
+            try:
+                current = destination.lstat()
+                if (
+                    current.st_dev == opened.st_dev
+                    and current.st_ino == opened.st_ino
+                ):
+                    destination.unlink()
+            except OSError:
+                pass
         raise ContractError(f"{destination}: cannot write {label}: {error}") from error
-    finally:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
     return canonical_json_digest(document), destination
 
 
