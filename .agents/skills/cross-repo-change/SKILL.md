@@ -24,12 +24,18 @@ repository depend on another repository's internal process files.
    order or an explicit compatibility window when project policy requires one.
 7. Report every repository state; do not call the aggregate change complete while one
    required repository remains failed, stale, not run, or blocked.
+8. In `improvement-pending`, exchange only the versioned signal, producer disposition,
+   immutable-release resolution, and consumer reproduction. Validate every digest
+   link and next owner; a transport preserves exact bytes and never reads either
+   repository's private lifecycle directory.
 
 ## Hard gates
 
 - Do not copy private implementation knowledge across a public contract boundary.
 - Do not use sibling filesystem layout as a production dependency.
 - Do not silently advance one repository beyond an unresolved owner decision in another.
+- Do not let a consumer signal grant producer authority or let producer completion
+  substitute for immutable release, consumer adoption, or consumer reproduction.
 
 ## Output
 
