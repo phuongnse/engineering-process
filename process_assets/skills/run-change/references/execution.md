@@ -16,6 +16,23 @@ Apply these semantics throughout every change lifecycle.
 6. Separate development completion from commit creation, publication, merge, release,
    deployment, and destructive data operations.
 
+## Standing gated automation
+
+A valid project-owned standing automation policy is continuing authorization for its
+declared routine operations. An owner directive may authorize a completed change that
+installs the policy but never substitutes for missing or invalid policy. After each
+owning gate passes, continue commit, push, review-object,
+exact-head merge, release, publication, deployment, adoption, and ephemeral cleanup
+without requesting per-action confirmation. Policy never waives lifecycle order,
+independent review, current evidence, exact head/base, required checks, branch
+protection, release identity, consumer ownership, or destructive-target validation.
+
+Escalation is exceptions-only. Involve the owner only when a required action or
+authority is unavailable (`capability-unavailable`), bounded idempotent recovery is
+exhausted (`bounded-recovery-exhausted`), or a material product/security choice is
+missing (`decision-required`). Pending checks, ordinary retries, hard work, and a
+routine authorized merge are not escalation reasons.
+
 ## Change-driven scope
 
 Map affected paths, callers, consumers, trust boundaries, migrations, generated
@@ -41,7 +58,8 @@ it. Do not infer broad completion from a focused check.
 
 ## Blocker protocol
 
-When progress depends on user-controlled or external state:
+When progress depends on user-controlled or external state and no standing policy
+already authorizes the required operation:
 
 1. Classify repository defect, missing product decision, or external-state blocker.
 2. Reproduce through the smallest permitted boundary and preserve the exact command,
@@ -182,13 +200,16 @@ base/head, finalized ready metadata, clean source, and external completion recei
 Only then may the provider adapter create that exact-head check. A changed head has no
 inherited authorization;
 the protected branch must require the proposal to be current with its exact validated
-base before merge; duplicate mismatch fails closed; only the configured human owner
-merges. Existing consumers remain on the strict default until a separately completed
-opt-in change is merged.
+base before merge; duplicate mismatch fails closed. Schema-1 proposal policy preserves
+its historical human-only meaning. Schema 2 keeps provider automerge disabled before
+completion, then permits exact-head merge only through the protected-base standing
+policy. Existing consumers remain on schema 1 until a separately completed opt-in
+change is merged.
 
 After completion, standing consumer policy may automate branch push and review-object
-creation. Provider draft/ready state is non-normative. Automation stops after creating
-the completed candidate; only the configured human owner authorizes merge.
+creation, required-check waiting, exact-head merge, release, deployment, adoption, and
+ephemeral cleanup. Provider draft/ready state is non-normative. Automation stops only
+at a terminal result or one of the three declared escalation reasons.
 
 ## Authority rotation
 

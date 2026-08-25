@@ -52,6 +52,7 @@ engineering_process = ["requirements-*.txt"]
 ]
 "share/engineering-process/schemas" = [
   "schemas/adoption-migration.schema.json",
+  "schemas/automation-policy.schema.json",
   "schemas/automation-proposal-policy.schema.json",
   "schemas/automation-proposal.schema.json",
   "schemas/change.schema.json",
@@ -75,6 +76,7 @@ engineering_process = ["requirements-*.txt"]
 ]
 "share/engineering-process/examples" = [
   "examples/adoption-migration.json",
+  "examples/automation-policy.json",
   "examples/automation-proposal-policy.json",
   "examples/automation-proposal.json",
   "examples/change.json",

@@ -9,5 +9,5 @@
   ],
   "rationale": "Process-owned commands now fail on classified warning or error diagnostics even when the child exits zero, and current verification and supplemental evidence require redacted diagnostic summaries.",
   "schemaImpact": "breaking",
-  "migration": "Correct warnings and errors emitted by canonical commands before adoption. Generate verification schema 3 and supplemental-verification schema 2 for current evidence; retain schema-1/schema-2 verification reports and supplemental schema-1 bundles only as historical evidence, without suppression or down-conversion."
+  "migration": "Fix canonical-command warnings/errors. Emit verification schema 3 and supplemental schema 2; retain verification 1/2 and supplemental 1 only as history. Never suppress or down-convert."
 }

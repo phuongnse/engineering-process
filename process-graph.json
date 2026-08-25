@@ -117,18 +117,19 @@
       "actor": "automation",
       "commands": ["evidence encode-completion", "improvement attach", "improvement status", "publication validate-evidence-source", "publication validate-proposal-completion", "publication validate-range", "publication validate-source"],
       "transitions": [
-        {"result": "published", "nextState": "awaiting-human-merge", "nextSkill": null},
+        {"result": "published", "nextState": "awaiting-merge", "nextSkill": "publish-change"},
         {"result": "failure", "nextState": "completed", "nextSkill": "evolve-process"}
       ]
     },
     {
-      "id": "awaiting-human-merge",
-      "ownerSkill": null,
-      "actor": "human",
+      "id": "awaiting-merge",
+      "ownerSkill": "publish-change",
+      "actor": "automation",
       "commands": [],
       "transitions": [
-        {"result": "merged", "nextState": null, "nextSkill": null},
-        {"result": "not-merged", "nextState": "awaiting-human-merge", "nextSkill": null}
+        {"result": "merge-blocked", "nextState": "awaiting-merge", "nextSkill": "publish-change"},
+        {"result": "escalation-required", "nextState": "awaiting-merge", "nextSkill": "publish-change"},
+        {"result": "merged", "nextState": null, "nextSkill": null}
       ]
     }
   ]

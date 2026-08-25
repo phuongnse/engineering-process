@@ -142,6 +142,21 @@ policy. This keeps distribution input bytes platform-independent. The producer
 root policy is not a consumer-managed asset and is never written by bootstrap or
 sync.
 
+## Standing gated automation
+
+A project-owned standing policy may authorize unattended commit, push,
+review-object, exact-head merge, release, publication, deployment, adoption, and
+ephemeral cleanup only after the existing owning gates pass. It never weakens
+lifecycle completion, fresh independent review, exact head/base, required checks,
+branch protection, consumer ownership, release identity, or destructive-target
+validation. Provider automerge remains disabled for untrusted pre-completion
+proposals.
+
+Owner involvement is exceptions-only: a required capability or authority is
+unavailable, bounded idempotent recovery is exhausted, or a material product/security
+decision is missing. Pending checks, normal bounded retries, and routine authorized
+merge or publication operations continue automatically with durable diagnostics.
+
 ## Release identity
 
 The release contract is the source of truth for package name, distribution name,

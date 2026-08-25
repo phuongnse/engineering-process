@@ -50,15 +50,22 @@ class ProcessGraphTests(unittest.TestCase):
             "publication validate-proposal-completion",
             states["completed"]["commands"],
         )
-        self.assertEqual("human", states["awaiting-human-merge"]["actor"])
-        self.assertIsNone(states["awaiting-human-merge"]["ownerSkill"])
+        self.assertEqual("automation", states["awaiting-merge"]["actor"])
+        self.assertEqual("publish-change", states["awaiting-merge"]["ownerSkill"])
+        self.assertEqual(
+            {"escalation-required", "merge-blocked", "merged"},
+            {
+                transition["result"]
+                for transition in states["awaiting-merge"]["transitions"]
+            },
+        )
         self.assertEqual(
             ["completed"],
             [
                 state["id"]
                 for state in graph["states"]
-                if state["id"] != "awaiting-human-merge" and any(
-                    transition["nextState"] == "awaiting-human-merge"
+                if state["id"] != "awaiting-merge" and any(
+                    transition["nextState"] == "awaiting-merge"
                     for transition in state["transitions"]
                 )
             ],

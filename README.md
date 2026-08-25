@@ -372,7 +372,7 @@ skills are internal owners, not a workflow each project must reconnect.
 
 `process-graph.json` is the machine-readable owner for that chain. It binds every
 phase to one owner skill, permitted `processctl` commands, success/failure outcomes,
-next phase/skill, and the final human merge boundary. Distribution validation rejects
+next phase/skill, and the standing-policy merge boundary. Distribution validation rejects
 missing skills, non-core chain owners, nonexistent commands, unknown phases, and
 broken handoffs; prose skills explain the graph but do not replace it.
 
@@ -437,7 +437,10 @@ through a fail-closed migration that replays immutable review artifacts to recon
 pending findings before any transition is allowed.
 
 Completion does not imply commit creation, push, merge, release, or deployment.
-Those remain separately authorized project workflows.
+Those remain separately gated project workflows. A valid `.process/automation.json`
+provides standing authorization, so the host continues each operation automatically
+after its owning gate instead of asking for repeated confirmation. An owner directive
+may authorize installing that policy but never substitutes for a missing policy.
 
 When new evidence exposes multiple materially valid directions or would change
 accepted scope, owner, trust boundary, authority, compatibility, rollout, or
@@ -451,8 +454,9 @@ and every required profile pass on a clean checkpoint; a consumer-selected indep
 agent or human semantically reviews that checkpoint; findings repeat implementation,
 complete verification, and fresh review until approved; `change finish` records
 completion; only then may automation push and create the PR. Static policy/secret/pin
-checks supplement this review and cannot generate a semantic verdict. The configured
-human owner alone merges.
+checks supplement this review and cannot generate a semantic verdict. With a valid
+standing policy, automation then waits for exact-head/current-base required checks and
+performs the configured merge without a separate human step.
 
 Completed local evidence can be moved across machines or attached to a release as a
 bounded receipt. Export and validate it before any explicit prune:
@@ -512,12 +516,28 @@ pull-request descriptions; use visible CommonMark instead.
 canonical publication gate and requires current completion evidence for the exact
 commit, regardless of provider draft/ready presentation.
 
+### Standing gated automation
+
+Projects opt into unattended routine operation with `.process/automation.json`, using
+the packaged `automation-policy` schema. The exact policy authorizes commit, push,
+review-object publication, merge, release, publication, deployment, adoption, and
+ephemeral cleanup only after their existing gates. Merge always requires completed
+lifecycle evidence, fresh independent review, exact head, current protected base,
+required checks, branch protection, and the configured merge method. Missing or
+invalid policy grants no authority.
+
+The confirmation mode is `exceptions-only`. Automation involves the owner only when a
+required capability or authority is unavailable, bounded idempotent recovery is
+exhausted, or a material product/security decision is missing. Pending checks,
+ordinary retries, routine merges, and already authorized external actions continue
+without per-action confirmation.
+
 ### Controlled automation proposals
 
 Completion-before-publication remains the default. A consumer may enable an untrusted
 dependency proposal before completion only through a policy file already present on
 the protected base at `.process/automation-proposals.json`. The policy uses the
-shape in `examples/automation-proposal-policy.json`: it explicitly enables schema 1,
+shape in `examples/automation-proposal-policy.json`: current policy uses schema 2,
 selects the target and automation prefix, allows only `dependency-update`,
 requires the canonical `lifecycle-completion` check, and fixes every dangerous control
 to its fail-closed value. Absence, disablement, a branch-only policy, or a policy digest
@@ -570,7 +590,9 @@ processctl publication validate-proposal-completion --project-root . \
 Only a successful combined gate permits the provider adapter to create
 `lifecycle-completion` for that exact SHA. A force update has no inherited check;
 branch protection must require the proposal to be current with the exact validated
-base; duplicate mismatch fails closed; only the configured human owner merges.
+base; duplicate mismatch fails closed. Historical schema-1 policy remains human-only.
+Schema 2 keeps provider automerge disabled before completion and permits merge only
+after the protected base's standing automation policy and exact completion gate pass.
 Provider tokens, check APIs, branch protection, retries, and repository selection
 remain consumer-owned adapter behavior.
 
@@ -608,7 +630,8 @@ registers the assignment, submits the exact report, resolves any finding loop, r
 gzip/base64 evidence to `release-approval.yml`; semantic reports and reviewer selection
 never become workflow inputs. The publication workflow validates the receipt against
 the exact clean source with `publication validate-evidence-source`, and only then
-pushes the branch and creates a ready PR. No workflow invokes merge.
+pushes the branch, creates or reconciles the ready PR, validates the standing policy,
+and enables exact-head protected auto-merge. No workflow bypasses branch protection.
 
 The host callback is deterministic after semantic completion:
 

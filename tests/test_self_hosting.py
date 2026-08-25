@@ -64,6 +64,7 @@ class SelfHostingTests(unittest.TestCase):
         ci = (
             PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
         ).read_text(encoding="utf-8")
+        readme = (PROCESS_ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("workflow_dispatch:", candidate)
         self.assertNotIn("pull_request:", candidate)
@@ -90,8 +91,35 @@ class SelfHostingTests(unittest.TestCase):
         self.assertLess(approval.index("git push origin"), approval.index("gh pr create"))
         self.assertNotIn("gh pr ready", approval)
         self.assertIn("reconcile_completed_release.py", approval)
-        self.assertIn("--limit 2", approval)
+        self.assertIn("--state all", approval)
+        self.assertIn("--limit 20", approval)
+        self.assertIn('if test "$action" = merged; then', approval)
         self.assertIn("if test \"$action\" = existing", approval)
+        self.assertNotIn('if test "$action" = existing; then\n            exit 0', approval)
+        self.assertIn("enable protected auto-merge", approval)
+        self.assertNotIn(
+            "processctl.py contract validate --kind automation-policy", approval
+        )
+        self.assertIn('git show "$BASE_SHA:.process/automation.json"', approval)
+        self.assertIn(
+            'git show "$BASE_SHA:verification/validate_protected_automation_policy.py"',
+            approval,
+        )
+        self.assertIn(
+            'cmp "$RUNNER_TEMP/protected-base-automation.json" .process/automation.json',
+            approval,
+        )
+        self.assertIn("validate-protected-automation-policy.py", approval)
+        self.assertIn("protected-automation-summary.json", approval)
+        self.assertIn(".pullRequestNumber", approval)
+        self.assertNotIn("'.[0].number'", approval)
+        self.assertIn('gh pr merge "$pr_number"', approval)
+        self.assertIn('--auto "--$merge_method" --match-head-commit "$HEAD_SHA"', approval)
+        self.assertLess(approval.index("gh pr create"), approval.index("gh pr merge"))
+        self.assertLess(
+            approval.index('if test "$action" = merged; then'),
+            approval.index("git ls-remote origin refs/heads/main"),
+        )
         self.assertIn("Project-specific: Completion evidence", approval)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".process/process.lock"', generator)
@@ -120,6 +148,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertNotIn("host-review.json", approval)
+        self.assertIn("enables exact-head protected auto-merge", readme)
+        self.assertIn("No workflow bypasses branch protection", readme)
+        self.assertNotIn("No workflow invokes merge", readme)
 
     def test_renovate_cannot_publish_before_a_completed_lifecycle(self):
         renovate = json.loads(

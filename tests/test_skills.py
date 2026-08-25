@@ -61,6 +61,30 @@ class SkillTests(unittest.TestCase):
             self.assertIn("process-authority", text)
         self.assertIn("Missing or disabled base policy fails closed", execution)
 
+    def test_standing_policy_continues_automation_and_escalates_only_exceptions(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        execution = (skills / "run-change" / "references" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+        run_change = (skills / "run-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        publish = (skills / "publish-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (execution, run_change, publish):
+            self.assertIn("standing", text.lower())
+            self.assertIn("exact-head", text.lower())
+        for reason in (
+            "bounded-recovery-exhausted",
+            "capability-unavailable",
+            "decision-required",
+        ):
+            self.assertIn(reason, execution + publish)
+        self.assertNotIn("human merge boundary", run_change.lower())
+        self.assertNotIn("do not merge on behalf", publish.lower())
+
     def test_digest_changes_with_instruction_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

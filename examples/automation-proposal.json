@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "engineering-process-controlled-automation-proposal",
   "status": "passed",
   "repository": "example/project",
@@ -17,9 +17,9 @@
   ],
   "optIn": {
     "path": ".process/automation-proposals.json",
-    "sha256": "sha256:e249c6028af471d7aa1208d9e400b9db5154377b991150bdab7d5991d6d5fc9b",
+    "sha256": "sha256:f2c53f92188f3230a9657ef87a19e589697826ca44f2fef177c6d18fb6118c4f",
     "document": {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "engineering-process-automation-proposal-policy",
       "enabled": true,
       "targetBranch": "main",
@@ -45,7 +45,7 @@
         "securityPolicyChanges": false,
         "trustRootChanges": false,
         "upToDateBeforeMerge": true,
-        "humanMergeRequired": true
+        "humanMergeRequired": false
       }
     }
   },
@@ -67,6 +67,6 @@
     "securityPolicyChanges": false,
     "trustRootChanges": false,
     "upToDateBeforeMerge": true,
-    "humanMergeRequired": true
+    "humanMergeRequired": false
   }
 }

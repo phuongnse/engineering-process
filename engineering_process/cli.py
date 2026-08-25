@@ -17,6 +17,7 @@ from .contracts import (
     derive_release_version,
     read_json,
     validate_adoption_migration,
+    validate_automation_policy,
     validate_automation_proposal,
     validate_automation_proposal_policy,
     validate_change,
@@ -270,6 +271,7 @@ def command_contract_validate(args: argparse.Namespace) -> int:
     document = read_json(args.path)
     validators: dict[str, Callable[[Any, str], Any]] = {
         "adoption-migration": validate_adoption_migration,
+        "automation-policy": validate_automation_policy,
         "automation-proposal": validate_automation_proposal,
         "automation-proposal-policy": validate_automation_proposal_policy,
         "change": validate_change,
@@ -1467,6 +1469,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--kind",
         choices=(
             "adoption-migration",
+            "automation-policy",
             "automation-proposal",
             "automation-proposal-policy",
             "change",

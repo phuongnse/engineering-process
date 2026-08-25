@@ -38,6 +38,7 @@ REQUIRED_SUFFIXES = {
     "release.json",
     "improvement-catalog.json",
     "schemas/adoption-migration.schema.json",
+    "schemas/automation-policy.schema.json",
     "schemas/automation-proposal-policy.schema.json",
     "schemas/automation-proposal.schema.json",
     "schemas/change.schema.json",

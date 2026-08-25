@@ -30,7 +30,8 @@ semantics shared by every project.
    - review-pending: wait for the assigned reviewer; do not self-review;
    - approved: use finish-change;
    - completed: use publish-change when standing project policy authorizes automatic
-     publication, then stop at the human merge boundary.
+     publication and continue through exact-head merge, release, deployment, adoption,
+     and cleanup gates until the authorized operation is terminal;
 3. Apply the nearest AGENTS.md and domain skill inside each phase. Project policy may
    add stronger gates but cannot remove lifecycle phases, baseline profiles,
    independent review, evidence freshness, or finding closure.
@@ -56,9 +57,12 @@ semantics shared by every project.
 - Do not continue verification, completion, or publication through
   `improvement-required` or `improvement-pending`.
 - Do not publish before completion. Standing project policy may authorize automatic
-  branch/PR creation after completion; merge always requires the configured human owner.
-- Do not release, deploy, or perform destructive cleanup without the corresponding
-  project-owned authorization.
+  commit, push, branch/PR creation, and exact-head merge after completion.
+- Treat a valid standing policy as authorization for its declared release,
+  deployment, adoption, and ephemeral-cleanup operations;
+  do not request redundant per-action confirmation.
+- Escalate only when a required capability or authority is unavailable, bounded
+  recovery is exhausted, or a material product/security decision is missing.
 
 ## Output
 

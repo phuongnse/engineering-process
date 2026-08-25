@@ -403,6 +403,21 @@ class CliTests(unittest.TestCase):
             "automation-proposal-policy", json.loads(stdout.getvalue())["kind"]
         )
 
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = main(
+                [
+                    "contract",
+                    "validate",
+                    "--kind",
+                    "automation-policy",
+                    str(PROCESS_ROOT / "examples" / "automation-policy.json"),
+                    "--json",
+                ]
+            )
+        self.assertEqual(0, result)
+        self.assertEqual("automation-policy", json.loads(stdout.getvalue())["kind"])
+
     def test_routes_proposal_and_exact_completion_validation(self):
         proposal = SimpleNamespace(
             automation_owner="renovate",

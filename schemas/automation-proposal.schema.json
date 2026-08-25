@@ -23,7 +23,7 @@
     "observedControls"
   ],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "kind": {"const": "engineering-process-controlled-automation-proposal"},
     "status": {"const": "passed"},
     "repository": {"$ref": "#/$defs/repository"},
@@ -128,7 +128,7 @@
         "securityPolicyChanges": {"const": false},
         "trustRootChanges": {"const": false},
         "upToDateBeforeMerge": {"const": true},
-        "humanMergeRequired": {"const": true}
+        "humanMergeRequired": {"type": "boolean"}
       }
     },
     "policy": {
@@ -146,7 +146,7 @@
         "requiredControls"
       ],
       "properties": {
-        "schemaVersion": {"const": 1},
+        "schemaVersion": {"enum": [1, 2]},
         "kind": {"const": "engineering-process-automation-proposal-policy"},
         "enabled": {"const": true},
         "targetBranch": {"$ref": "#/$defs/ref"},
@@ -173,5 +173,51 @@
         "requiredControls": {"$ref": "#/$defs/controls"}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 1}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "observedControls": {
+            "properties": {"humanMergeRequired": {"const": true}}
+          },
+          "optIn": {
+            "properties": {
+              "document": {
+                "properties": {
+                  "schemaVersion": {"const": 1},
+                  "requiredControls": {
+                    "properties": {"humanMergeRequired": {"const": true}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "observedControls": {
+            "properties": {"humanMergeRequired": {"const": false}}
+          },
+          "optIn": {
+            "properties": {
+              "document": {
+                "properties": {
+                  "schemaVersion": {"const": 2},
+                  "requiredControls": {
+                    "properties": {"humanMergeRequired": {"const": false}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
