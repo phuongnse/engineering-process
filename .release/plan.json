@@ -32,8 +32,8 @@
     }
   ],
   "approach": "Validate the generated release contract and every declared surface, build from the exact reviewed tree, and permit publication only after independent approval and merge.",
-  "changeId": "release-0-4-0",
-  "contractDigest": "sha256:6fa92ed54097070aa4f14ab17f798185bbb6713cbfaaecb53fca11b91911a22b",
+  "changeId": "release-0-5-0",
+  "contractDigest": "sha256:be08643e8a665e1d683c5b6484155e436b79ec812035c7c2238691b1d372fdec",
   "openDecisions": [],
   "risks": [
     {
@@ -45,9 +45,13 @@
   "workItems": [
     {
       "affectedPaths": [
-        "release.json",
+        ".release/change.json",
+        ".release/plan.json",
+        "engineering_process/__init__.py",
+        "improvement-catalog.json",
         "pyproject.toml",
-        "engineering_process/__init__.py"
+        "release-changes/",
+        "release.json"
       ],
       "id": "work-release",
       "outcome": "Verify and publish the exact generated release candidate",
