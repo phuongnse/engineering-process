@@ -197,8 +197,9 @@ jobs:
             exit 0
           fi
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
-          python processctl.py contract validate \
-            --kind automation-policy .process/automation.json
+          git show "$BASE_SHA:.process/automation.json" \
+            > "$RUNNER_TEMP/protected-base-automation.json"
+          cmp "$RUNNER_TEMP/protected-base-automation.json" .process/automation.json
           test "$(jq -r .merge.method .process/automation.json)" = squash
           if test "$action" = existing; then
             pr_number="$(jq -r '.[0].number' "$RUNNER_TEMP/open-release-prs.json")"

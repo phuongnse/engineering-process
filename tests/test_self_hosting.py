@@ -64,6 +64,7 @@ class SelfHostingTests(unittest.TestCase):
         ci = (
             PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
         ).read_text(encoding="utf-8")
+        readme = (PROCESS_ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("workflow_dispatch:", candidate)
         self.assertNotIn("pull_request:", candidate)
@@ -96,7 +97,14 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("if test \"$action\" = existing", approval)
         self.assertNotIn('if test "$action" = existing; then\n            exit 0', approval)
         self.assertIn("enable protected auto-merge", approval)
-        self.assertIn("--kind automation-policy .process/automation.json", approval)
+        self.assertNotIn(
+            "processctl.py contract validate --kind automation-policy", approval
+        )
+        self.assertIn('git show "$BASE_SHA:.process/automation.json"', approval)
+        self.assertIn(
+            'cmp "$RUNNER_TEMP/protected-base-automation.json" .process/automation.json',
+            approval,
+        )
         self.assertIn(".merge.method .process/automation.json", approval)
         self.assertIn('gh pr merge "$pr_number"', approval)
         self.assertIn('--auto --squash --match-head-commit "$HEAD_SHA"', approval)
@@ -133,6 +141,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertNotIn("host-review.json", approval)
+        self.assertIn("enables exact-head protected auto-merge", readme)
+        self.assertIn("No workflow bypasses branch protection", readme)
+        self.assertNotIn("No workflow invokes merge", readme)
 
     def test_renovate_cannot_publish_before_a_completed_lifecycle(self):
         renovate = json.loads(
