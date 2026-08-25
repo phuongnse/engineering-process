@@ -16,8 +16,8 @@
   "affectedProjects": [
     "engineering-process"
   ],
-  "comparisonBase": "8458d9e211d95ae9749ccf71b5a5b9d90bc1503c",
-  "id": "release-0-5-1",
+  "comparisonBase": "dd16e711d7c95a71173add8f31fac163cbc85e3f",
+  "id": "release-0-6-0",
   "quality": {
     "assessments": [
       {
@@ -118,5 +118,5 @@
     "rationale": "The release contract owns the exact public change set and identity surfaces.",
     "reference": "release.json and VERSIONING.md"
   },
-  "summary": "Authorize and publish engineering-process 0.5.1"
+  "summary": "Authorize and publish engineering-process 0.6.0"
 }

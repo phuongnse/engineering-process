@@ -1,46 +1,51 @@
 {
   "schemaVersion": 3,
-  "previousVersion": "0.5.0",
-  "version": "0.5.1",
-  "classification": "patch",
-  "compatibility": "backward-compatible",
-  "schemaImpact": "unchanged",
-  "migration": null,
+  "previousVersion": "0.5.1",
+  "version": "0.6.0",
+  "classification": "minor",
+  "compatibility": "incompatible",
+  "schemaImpact": "additive",
+  "migration": "evidence-valid-remote-verification: After immutable release and adoption, route every new material owner decision through recommendation review and resolution. Projects that need remote claims separately add named remoteVerification requirements to the target-version project manifest and select them through requiredEvidence on new change contracts; historical decisions and completed lifecycles require no backfill.",
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.5.1",
-    "releaseName": "v0.5.1",
+    "tag": "v0.6.0",
+    "releaseName": "v0.6.0",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.5.1-py3-none-any.whl",
-      "engineering_process-0.5.1.tar.gz"
+      "engineering_process-0.6.0-py3-none-any.whl",
+      "engineering_process-0.6.0.tar.gz"
     ],
-    "receiptAsset": "engineering-process-v0.5.1-evidence.json",
+    "receiptAsset": "engineering-process-v0.6.0-evidence.json",
     "authorizationAsset": null
   },
   "provenance": {
     "mode": "governed",
     "statement": "The public N-1 lifecycle receipt and reviewed Release PR authorize this release.",
     "lifecycleReceipt": {
-      "asset": "engineering-process-v0.5.1-evidence.json",
+      "asset": "engineering-process-v0.6.0-evidence.json",
       "project": "engineering-process",
-      "changeId": "release-0-5-1",
+      "changeId": "release-0-6-0",
       "cycle": 1
     }
   },
   "changes": [
     {
-      "id": "extend-windows-natural-drain",
-      "type": "fix",
+      "id": "evidence-valid-remote-verification",
+      "type": "breaking",
       "surfaces": [
-        "command-execution",
-        "windows-supervision"
+        "cli",
+        "governance",
+        "lifecycle",
+        "recommendation",
+        "schema",
+        "skills",
+        "verification"
       ],
-      "rationale": "Extend the Windows Job Object natural-drain bound from 250 milliseconds to 5 seconds so successful finite Cargo and Tauri commands can finish child accounting while commands that retain descendants beyond the bound remain terminated and fail closed."
+      "rationale": "Require evidence-derived valid recommendations with stateful independent challenge, and add project-owned exact-checkpoint remote evidence requests whose complete selector set must be ingested before review or completion."
     }
   ]
 }

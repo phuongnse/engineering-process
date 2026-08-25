@@ -15,11 +15,11 @@
       "status": "resolved"
     },
     {
-      "activeChangeId": "evidence-valid-remote-verification",
+      "activeChangeId": null,
       "id": "failure-to-invariant-disposition-enforcement",
       "lastResolution": {
-        "changeId": "federated-process-improvement",
-        "version": "0.5.0"
+        "changeId": "evidence-valid-remote-verification",
+        "version": "0.6.0"
       },
       "publicSurfaces": [
         "governance",
@@ -28,7 +28,7 @@
         "skills"
       ],
       "reusableClass": "deterministic-enforcement",
-      "status": "active"
+      "status": "resolved"
     },
     {
       "activeChangeId": null,
