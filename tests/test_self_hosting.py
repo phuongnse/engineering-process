@@ -145,6 +145,17 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("'.[0].number'", approval)
         self.assertIn('gh pr merge "$pr_number"', approval)
         self.assertIn('--auto "--$merge_method" --match-head-commit "$HEAD_SHA"', approval)
+        self.assertIn("gh auth setup-git --hostname github.com", approval)
+        create_token = approval.index("Create short-lived source publication token")
+        configure_credentials = approval.index(
+            "gh auth setup-git --hostname github.com"
+        )
+        source_push = approval.index('git push origin "$HEAD_SHA:refs/heads/$RELEASE_BRANCH"')
+        self.assertLess(create_token, configure_credentials)
+        self.assertLess(configure_credentials, source_push)
+        self.assertNotIn("x-access-token", approval)
+        self.assertNotIn("http.extraheader", approval)
+        self.assertNotIn("https://$GH_TOKEN", approval)
         self.assertLess(approval.index("gh pr create"), approval.index("gh pr merge"))
         merged_terminal = approval.index('if test "$action" = merged; then')
         post_reconciliation_base_gate = approval.index(

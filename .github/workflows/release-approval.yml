@@ -189,6 +189,7 @@ jobs:
           HEAD_SHA: ${{ inputs.release_head_sha }}
           RELEASE_BRANCH: automation/release/next
         run: |
+          gh auth setup-git --hostname github.com
           remote_sha="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
           version="$(jq -r .version release.json)"
           title="chore(release): prepare v$version"
