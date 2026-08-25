@@ -1,6 +1,8 @@
 import base64
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -26,6 +28,58 @@ class Response:
 
 
 class CompletedReleaseDispatchTests(unittest.TestCase):
+    def test_protected_policy_validator_accepts_only_complete_standing_authority(self):
+        root = Path(__file__).resolve().parent.parent
+        validator = root / "verification" / "validate_protected_automation_policy.py"
+        policy = json.loads(
+            (root / ".process" / "automation.json").read_text(encoding="utf-8")
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            policy_path = Path(directory) / "policy.json"
+
+            def validate(document):
+                policy_path.write_text(
+                    json.dumps(document, sort_keys=True), encoding="utf-8"
+                )
+                return subprocess.run(
+                    [sys.executable, str(validator), "--policy", str(policy_path)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+            valid = validate(policy)
+            self.assertEqual(0, valid.returncode, valid.stderr)
+            self.assertEqual(
+                {"mergeMethod": "squash", "status": "valid"},
+                json.loads(valid.stdout),
+            )
+
+            invalid_policies = []
+            for field, value in (
+                ("enabled", False),
+                ("kind", "other-policy"),
+                ("confirmationMode", "always"),
+                ("actions", policy["actions"][:-1]),
+                ("escalationReasons", policy["escalationReasons"][:-1]),
+            ):
+                invalid = json.loads(json.dumps(policy))
+                invalid[field] = value
+                invalid_policies.append((field, invalid))
+            missing_gate = json.loads(json.dumps(policy))
+            del missing_gate["merge"]["requireRequiredChecks"]
+            invalid_policies.append(("missing-merge-gate", missing_gate))
+            disabled_gate = json.loads(json.dumps(policy))
+            disabled_gate["merge"]["requireIndependentReview"] = False
+            invalid_policies.append(("disabled-merge-gate", disabled_gate))
+
+            for label, invalid in invalid_policies:
+                with self.subTest(label=label):
+                    rejected = validate(invalid)
+                    self.assertNotEqual(0, rejected.returncode)
+                    self.assertIn("protected automation policy", rejected.stderr)
+
     def test_builds_one_bounded_secret_free_dispatch(self):
         encoded = base64.b64encode(b"gzip evidence")
         request = publication_dispatch_request(
@@ -92,7 +146,7 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            "publish-and-create",
+            {"action": "publish-and-create", "pullRequestNumber": None},
             reconcile_completed_release(
                 open_pull_requests=[],
                 remote_head_sha="",
@@ -104,7 +158,7 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            "existing",
+            {"action": "existing", "pullRequestNumber": 42},
             reconcile_completed_release(
                 open_pull_requests=[existing],
                 remote_head_sha=expected_head,
@@ -122,7 +176,7 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
             "state": "MERGED",
         }
         self.assertEqual(
-            "merged",
+            {"action": "merged", "pullRequestNumber": 42},
             reconcile_completed_release(
                 open_pull_requests=[merged],
                 remote_head_sha="",
@@ -141,10 +195,23 @@ class CompletedReleaseDispatchTests(unittest.TestCase):
             "title": "chore(release): prepare v0.4.0",
         }
         self.assertEqual(
-            "publish-and-create",
+            {"action": "publish-and-create", "pullRequestNumber": None},
             reconcile_completed_release(
                 open_pull_requests=[historical],
                 remote_head_sha="",
+                expected_head_sha=expected_head,
+                expected_base="main",
+                expected_branch="automation/release/next",
+                expected_title=existing["title"],
+                expected_body=body,
+            ),
+        )
+
+        self.assertEqual(
+            {"action": "existing", "pullRequestNumber": 42},
+            reconcile_completed_release(
+                open_pull_requests=[historical, existing],
+                remote_head_sha=expected_head,
                 expected_head_sha=expected_head,
                 expected_base="main",
                 expected_branch="automation/release/next",

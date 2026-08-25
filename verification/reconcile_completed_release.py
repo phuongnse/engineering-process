@@ -42,7 +42,7 @@ def reconcile_completed_release(
     expected_branch: str,
     expected_title: str,
     expected_body: str,
-) -> str:
+) -> dict[str, int | str | None]:
     if SHA_PATTERN.fullmatch(expected_head_sha) is None:
         raise ContractError("expected release head must be a full lowercase Git SHA")
     if remote_head_sha and SHA_PATTERN.fullmatch(remote_head_sha) is None:
@@ -110,7 +110,10 @@ def reconcile_completed_release(
                 "existing Release PR does not match the exact completed publication: "
                 + ", ".join(sorted(set(mismatches)))
             )
-        return "existing" if state == "OPEN" else "merged"
+        return {
+            "action": "existing" if state == "OPEN" else "merged",
+            "pullRequestNumber": number,
+        }
 
     conflicting_open = [
         pull_request
@@ -121,14 +124,14 @@ def reconcile_completed_release(
         raise ContractError("open Release PR does not match the completed head")
     if not records or not matching_branch:
         if not remote_head_sha:
-            return "publish-and-create"
+            return {"action": "publish-and-create", "pullRequestNumber": None}
         if remote_head_sha == expected_head_sha:
-            return "create"
+            return {"action": "create", "pullRequestNumber": None}
         raise ContractError("existing release branch does not match the completed head")
     if not remote_head_sha:
-        return "publish-and-create"
+        return {"action": "publish-and-create", "pullRequestNumber": None}
     if remote_head_sha == expected_head_sha:
-        return "create"
+        return {"action": "create", "pullRequestNumber": None}
     raise ContractError("existing release branch does not match the completed head")
 
 
@@ -155,7 +158,7 @@ def main() -> int:
             limit=MAX_RELEASE_PULL_REQUEST_BODY_BYTES,
             label="expected Release PR body",
         ).decode("utf-8")
-        action = reconcile_completed_release(
+        result = reconcile_completed_release(
             open_pull_requests=pull_requests,
             remote_head_sha=arguments.remote_head_sha,
             expected_head_sha=arguments.expected_head_sha,
@@ -166,7 +169,7 @@ def main() -> int:
         )
     except (ContractError, UnicodeDecodeError, json.JSONDecodeError) as error:
         parser.error(str(error))
-    print(action)
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
 

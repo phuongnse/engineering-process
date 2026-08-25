@@ -102,12 +102,19 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIn('git show "$BASE_SHA:.process/automation.json"', approval)
         self.assertIn(
+            'git show "$BASE_SHA:verification/validate_protected_automation_policy.py"',
+            approval,
+        )
+        self.assertIn(
             'cmp "$RUNNER_TEMP/protected-base-automation.json" .process/automation.json',
             approval,
         )
-        self.assertIn(".merge.method .process/automation.json", approval)
+        self.assertIn("validate-protected-automation-policy.py", approval)
+        self.assertIn("protected-automation-summary.json", approval)
+        self.assertIn(".pullRequestNumber", approval)
+        self.assertNotIn("'.[0].number'", approval)
         self.assertIn('gh pr merge "$pr_number"', approval)
-        self.assertIn('--auto --squash --match-head-commit "$HEAD_SHA"', approval)
+        self.assertIn('--auto "--$merge_method" --match-head-commit "$HEAD_SHA"', approval)
         self.assertLess(approval.index("gh pr create"), approval.index("gh pr merge"))
         self.assertLess(
             approval.index('if test "$action" = merged; then'),

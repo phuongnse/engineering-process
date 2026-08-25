@@ -185,24 +185,33 @@ jobs:
           gh pr list --state all --head "$RELEASE_BRANCH" --base main --limit 20 \
             --json baseRefName,body,headRefName,headRefOid,isDraft,mergedAt,number,state,title \
             > "$RUNNER_TEMP/open-release-prs.json"
-          action="$(python verification/reconcile_completed_release.py \
+          python verification/reconcile_completed_release.py \
             --open-pull-requests "$RUNNER_TEMP/open-release-prs.json" \
             --remote-head-sha "$remote_sha" \
             --expected-head-sha "$HEAD_SHA" \
             --expected-base main \
             --expected-branch "$RELEASE_BRANCH" \
             --expected-title "$title" \
-            --expected-body "$RUNNER_TEMP/release-pr.md")"
+            --expected-body "$RUNNER_TEMP/release-pr.md" \
+            > "$RUNNER_TEMP/release-reconciliation.json"
+          action="$(jq -er .action "$RUNNER_TEMP/release-reconciliation.json")"
           if test "$action" = merged; then
             exit 0
           fi
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          git show "$BASE_SHA:verification/validate_protected_automation_policy.py" \
+            > "$RUNNER_TEMP/validate-protected-automation-policy.py"
           git show "$BASE_SHA:.process/automation.json" \
             > "$RUNNER_TEMP/protected-base-automation.json"
           cmp "$RUNNER_TEMP/protected-base-automation.json" .process/automation.json
-          test "$(jq -r .merge.method .process/automation.json)" = squash
+          python "$RUNNER_TEMP/validate-protected-automation-policy.py" \
+            --policy "$RUNNER_TEMP/protected-base-automation.json" \
+            > "$RUNNER_TEMP/protected-automation-summary.json"
+          merge_method="$(jq -er .mergeMethod \
+            "$RUNNER_TEMP/protected-automation-summary.json")"
           if test "$action" = existing; then
-            pr_number="$(jq -r '.[0].number' "$RUNNER_TEMP/open-release-prs.json")"
+            pr_number="$(jq -er .pullRequestNumber \
+              "$RUNNER_TEMP/release-reconciliation.json")"
           else
             if test "$action" = publish-and-create; then
               git push origin "$HEAD_SHA:refs/heads/$RELEASE_BRANCH"
@@ -215,4 +224,4 @@ jobs:
           printf '%s' "$pr_number" | grep -Eq '^[1-9][0-9]*$'
           test "$(gh pr view "$pr_number" --json headRefOid --jq .headRefOid)" = "$HEAD_SHA"
           gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" \
-            --auto --squash --match-head-commit "$HEAD_SHA"
+            --auto "--$merge_method" --match-head-commit "$HEAD_SHA"
