@@ -29,11 +29,12 @@ product behavior or reopening foundational choices.
    invariants and assumptions before comparing options. Create a recommendation
    artifact whose classifications and complete valid set are derived by processctl;
    apply cost or minimal-change optimization only within that valid set.
-8. Obtain an independent adversarial recommendation review from a distinct actor and
-   fresh context. Present a high-risk recommendation only after `processctl
-   recommendation validate-chain` approves the exact digest-bound chain. If no valid
-   option exists, report the missing evidence or authority instead of recommending an
-   invalid or unproven compromise.
+8. Run `processctl recommendation review start` to reserve an unused project-global
+   context and bind the exact reviewer assignment before an independent adversarial
+   review begins. Present a high-risk recommendation only after `processctl
+   recommendation validate-chain` approves the exact assignment-bound chain. If no
+   valid option exists, report the missing evidence or authority instead of
+   recommending an invalid or unproven compromise.
 9. Record the owner's selected valid option in a recommendation resolution. Treat the
    resolution as decision evidence, never as lifecycle, merge, release, deployment,
    or adoption authority.

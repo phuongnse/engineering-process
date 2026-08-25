@@ -3,15 +3,11 @@
   "kind": "engineering-process-recommendation-review",
   "decisionId": "remote-evidence-ordering",
   "recommendationSha256": "sha256:137a6ce0094d5bbefce305c264d4523edb392d213be91095f78517e8fed15ed7",
+  "assignmentSha256": "sha256:dd4a80061fa1816e10851b996ae4055f0aaecb40ef448b190b0bc9ab42a94115",
   "reviewer": {
     "actorId": "independent-decision-reviewer",
     "contextId": "fresh-decision-review-context",
     "kind": "agent"
-  },
-  "independence": {
-    "method": "isolated-context",
-    "attestedBy": "agent-host",
-    "evidence": "The reviewer context did not prepare the recommendation or participate in its option analysis."
   },
   "challengeAssessments": [
     {

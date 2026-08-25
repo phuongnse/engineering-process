@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -243,11 +244,11 @@ def _write_atomic(path: Path, document: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def _reserve_review_context(
+def reserve_review_context(
     project_root: Path,
     state: dict[str, Any],
     reviewer: dict[str, str],
-) -> None:
+) -> dict[str, Any]:
     context_digest = hashlib.sha256(
         reviewer["contextId"].encode("utf-8")
     ).hexdigest()
@@ -300,6 +301,58 @@ def _reserve_review_context(
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+    return record
+
+
+def review_context_reservation(
+    project_root: Path,
+    context_id: str,
+) -> dict[str, Any]:
+    if not context_id or context_id != context_id.strip() or len(context_id) > 256:
+        raise ContractError("review context id must be a bounded non-empty value")
+    context_digest = hashlib.sha256(context_id.encode("utf-8")).hexdigest()
+    path = _runs_root(project_root) / ".review-contexts" / f"{context_digest}.json"
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{path}: cannot inspect review context reservation: {error}"
+        ) from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise ContractError("review context reservation must be a regular file")
+    document = read_json(path)
+    try:
+        after = path.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{path}: cannot recheck review context reservation: {error}"
+        ) from error
+    if (
+        after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+    ):
+        raise ContractError("review context reservation changed while reading")
+    if not isinstance(document, dict):
+        raise ContractError("review context reservation must be an object")
+    expected_keys = {
+        "schemaVersion",
+        "contextDigest",
+        "actorId",
+        "kind",
+        "changeId",
+        "cycle",
+        "reservedAt",
+    }
+    if set(document) != expected_keys:
+        raise ContractError("review context reservation has an unexpected contract")
+    if document["schemaVersion"] != 1:
+        raise ContractError("review context reservation schemaVersion must be 1")
+    if document["contextDigest"] != f"sha256:{context_digest}":
+        raise ContractError("review context reservation digest does not match context")
+    return document
 
 
 def _copy_document(
@@ -1516,7 +1569,7 @@ def _start_review_unlocked(
         "verification": state["verification"],
         "pendingFindings": state["pendingFindings"],
     }
-    _reserve_review_context(project_root, state, reviewer)
+    reserve_review_context(project_root, state, reviewer)
     assignment_path = _run_root(project_root, change_id) / f"review-request-{state['cycle']}.json"
     _write_atomic(assignment_path, assignment)
     assignment["path"] = _relative(project_root, assignment_path)

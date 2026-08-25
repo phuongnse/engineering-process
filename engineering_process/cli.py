@@ -32,6 +32,7 @@ from .contracts import (
     validate_recommendation,
     validate_recommendation_resolution,
     validate_recommendation_review,
+    validate_recommendation_review_assignment,
     validate_release,
     validate_release_change,
     validate_review,
@@ -94,6 +95,7 @@ from .publication import (
 from .process_graph import load_process_graph, process_root_from_skills
 from .recommendation import (
     create_recommendation_resolution,
+    start_recommendation_review,
     validate_recommendation_chain,
 )
 from .release import validate_release_checkpoint
@@ -291,6 +293,7 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "recommendation": validate_recommendation,
         "recommendation-resolution": validate_recommendation_resolution,
         "recommendation-review": validate_recommendation_review,
+        "recommendation-review-assignment": validate_recommendation_review_assignment,
         "release": validate_release,
         "release-change": validate_release_change,
         "review": validate_review,
@@ -308,8 +311,11 @@ def command_contract_validate(args: argparse.Namespace) -> int:
 
 
 def command_recommendation_validate_chain(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
     result = validate_recommendation_chain(
+        args.project_root,
         args.recommendation,
+        args.assignment,
         args.review,
         args.resolution,
     )
@@ -321,9 +327,28 @@ def command_recommendation_validate_chain(args: argparse.Namespace) -> int:
     return 0 if result["allowed"] else 1
 
 
-def command_recommendation_resolution(args: argparse.Namespace) -> int:
-    result = create_recommendation_resolution(
+def command_recommendation_review_start(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = start_recommendation_review(
+        args.project_root,
         args.recommendation,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+        method=args.method,
+        attested_by=args.attested_by,
+        evidence=args.attestation_evidence,
+    )
+    _emit(args, _result("recommendation review start", **result))
+    return 0
+
+
+def command_recommendation_resolution(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = create_recommendation_resolution(
+        args.project_root,
+        args.recommendation,
+        args.assignment,
         args.review,
         selected_option_id=args.selected_option,
         owner_id=args.owner_id,
@@ -1520,6 +1545,7 @@ def build_parser() -> argparse.ArgumentParser:
             "recommendation",
             "recommendation-resolution",
             "recommendation-review",
+            "recommendation-review-assignment",
             "release",
             "release-change",
             "review",
@@ -1541,22 +1567,55 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-chain",
         help="Validate recommendation validity and its independent challenge",
     )
+    _add_project_root(recommendation_validate)
+    _add_process_root(recommendation_validate)
     recommendation_validate.add_argument(
         "--recommendation", type=Path, required=True
     )
+    recommendation_validate.add_argument("--assignment", type=Path, required=True)
     recommendation_validate.add_argument("--review", type=Path, required=True)
     recommendation_validate.add_argument("--resolution", type=Path)
     _add_json(recommendation_validate)
     recommendation_validate.set_defaults(
         handler=command_recommendation_validate_chain
     )
+    recommendation_review = recommendation_commands.add_parser(
+        "review", help="Register an independent recommendation reviewer"
+    )
+    recommendation_review_commands = recommendation_review.add_subparsers(
+        dest="recommendation_review_command", required=True
+    )
+    recommendation_review_start = recommendation_review_commands.add_parser(
+        "start",
+        help="Reserve a fresh project-global context and create an assignment",
+    )
+    _add_project_root(recommendation_review_start)
+    _add_process_root(recommendation_review_start)
+    _add_actor(recommendation_review_start)
+    recommendation_review_start.add_argument(
+        "--recommendation", type=Path, required=True
+    )
+    recommendation_review_start.add_argument(
+        "--method", choices=("isolated-context", "separate-person"), required=True
+    )
+    recommendation_review_start.add_argument("--attested-by", required=True)
+    recommendation_review_start.add_argument(
+        "--attestation-evidence", required=True
+    )
+    _add_json(recommendation_review_start)
+    recommendation_review_start.set_defaults(
+        handler=command_recommendation_review_start
+    )
     recommendation_resolution = recommendation_commands.add_parser(
         "resolution",
         help="Create a non-authorizing owner resolution for an approved chain",
     )
+    _add_project_root(recommendation_resolution)
+    _add_process_root(recommendation_resolution)
     recommendation_resolution.add_argument(
         "--recommendation", type=Path, required=True
     )
+    recommendation_resolution.add_argument("--assignment", type=Path, required=True)
     recommendation_resolution.add_argument("--review", type=Path, required=True)
     recommendation_resolution.add_argument("--selected-option", required=True)
     recommendation_resolution.add_argument("--owner-id", required=True)

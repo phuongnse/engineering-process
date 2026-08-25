@@ -440,6 +440,7 @@ def _string_list(
     *,
     minimum: int = 1,
     maximum: int | None = None,
+    item_max_length: int = 4096,
     pattern: re.Pattern[str] | None = None,
 ) -> list[str]:
     if not isinstance(value, list) or len(value) < minimum:
@@ -448,7 +449,7 @@ def _string_list(
         raise ContractError(f"{path}: exceeds {maximum} items")
     result: list[str] = []
     for index, item in enumerate(value):
-        text = _string(item, f"{path}[{index}]")
+        text = _string(item, f"{path}[{index}]", max_length=item_max_length)
         if pattern is not None and pattern.fullmatch(text) is None:
             raise ContractError(f"{path}[{index}]: has an invalid format")
         result.append(text)
@@ -2037,6 +2038,7 @@ def validate_recommendation(
             f"{option_path}.tradeoffs",
             minimum=0,
             maximum=32,
+            item_max_length=1000,
         )
         selected_assumptions = _string_list(
             option["assumptionIds"],
@@ -2221,8 +2223,8 @@ def validate_recommendation_review(
             "kind",
             "decisionId",
             "recommendationSha256",
+            "assignmentSha256",
             "reviewer",
-            "independence",
             "challengeAssessments",
             "invariantAssessments",
             "optionAssessments",
@@ -2244,25 +2246,12 @@ def validate_recommendation_review(
         f"{path}.recommendationSha256",
         required=True,
     )
+    _recommendation_evidence_digest(
+        value["assignmentSha256"],
+        f"{path}.assignmentSha256",
+        required=True,
+    )
     _validate_actor(value["reviewer"], f"{path}.reviewer")
-    independence = _object(value["independence"], f"{path}.independence")
-    _exact_keys(
-        independence,
-        required={"method", "attestedBy", "evidence"},
-        path=f"{path}.independence",
-    )
-    if independence["method"] not in {"isolated-context", "separate-person"}:
-        raise ContractError(f"{path}.independence.method: invalid method")
-    _string(
-        independence["attestedBy"],
-        f"{path}.independence.attestedBy",
-        max_length=256,
-    )
-    _string(
-        independence["evidence"],
-        f"{path}.independence.evidence",
-        max_length=2000,
-    )
 
     failed_assessment = False
     challenges = value["challengeAssessments"]
@@ -2404,6 +2393,75 @@ def validate_recommendation_review(
         )
 
 
+def validate_recommendation_review_assignment(
+    document: Any, path: str = "recommendation-review-assignment"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "decisionId",
+            "recommendationSha256",
+            "coordinator",
+            "reviewer",
+            "independence",
+            "contextReservationSha256",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["kind"] != "engineering-process-recommendation-review-assignment":
+        raise ContractError(f"{path}.kind: invalid recommendation review assignment kind")
+    decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
+    if PROFILE_PATTERN.fullmatch(decision_id) is None:
+        raise ContractError(f"{path}.decisionId: invalid decision id")
+    for field in ("recommendationSha256", "contextReservationSha256"):
+        _recommendation_evidence_digest(
+            value[field], f"{path}.{field}", required=True
+        )
+    coordinator = _validate_actor(value["coordinator"], f"{path}.coordinator")
+    reviewer = _validate_actor(value["reviewer"], f"{path}.reviewer")
+    if coordinator["actorId"] == reviewer["actorId"]:
+        raise ContractError(f"{path}: reviewer actor must differ from coordinator")
+    if coordinator["contextId"] == reviewer["contextId"]:
+        raise ContractError(f"{path}: reviewer context must differ from coordinator")
+    independence = _object(value["independence"], f"{path}.independence")
+    _exact_keys(
+        independence,
+        required={"method", "attestedBy", "evidence"},
+        path=f"{path}.independence",
+    )
+    method = independence["method"]
+    if (reviewer["kind"] == "agent" and method != "isolated-context") or (
+        reviewer["kind"] == "human" and method != "separate-person"
+    ):
+        raise ContractError(
+            f"{path}.independence.method: does not match reviewer kind"
+        )
+    attested_by = _string(
+        independence["attestedBy"],
+        f"{path}.independence.attestedBy",
+        max_length=256,
+    )
+    participants = {
+        coordinator["actorId"],
+        coordinator["contextId"],
+        reviewer["actorId"],
+        reviewer["contextId"],
+    }
+    if attested_by in participants:
+        raise ContractError(f"{path}.independence: cannot be participant-attested")
+    _string(
+        independence["evidence"],
+        f"{path}.independence.evidence",
+        max_length=2000,
+    )
+
+
 def validate_recommendation_resolution(
     document: Any, path: str = "recommendation-resolution"
 ) -> None:
@@ -2415,6 +2473,7 @@ def validate_recommendation_resolution(
             "kind",
             "decisionId",
             "recommendationSha256",
+            "assignmentSha256",
             "reviewSha256",
             "selectedOptionId",
             "owner",
@@ -2438,6 +2497,7 @@ def validate_recommendation_resolution(
         raise ContractError(f"{path}.selectedOptionId: invalid option id")
     for field in (
         "recommendationSha256",
+        "assignmentSha256",
         "reviewSha256",
         "selectionRationaleSha256",
     ):

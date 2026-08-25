@@ -9,8 +9,8 @@
     "kind",
     "decisionId",
     "recommendationSha256",
+    "assignmentSha256",
     "reviewer",
-    "independence",
     "challengeAssessments",
     "invariantAssessments",
     "optionAssessments",
@@ -23,17 +23,8 @@
     "kind": {"const": "engineering-process-recommendation-review"},
     "decisionId": {"$ref": "#/$defs/id"},
     "recommendationSha256": {"$ref": "#/$defs/digest"},
+    "assignmentSha256": {"$ref": "#/$defs/digest"},
     "reviewer": {"$ref": "#/$defs/actor"},
-    "independence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["method", "attestedBy", "evidence"],
-      "properties": {
-        "method": {"enum": ["isolated-context", "separate-person"]},
-        "attestedBy": {"type": "string", "minLength": 1, "maxLength": 256},
-        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
-      }
-    },
     "challengeAssessments": {
       "type": "array",
       "minItems": 4,

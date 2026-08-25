@@ -9,6 +9,7 @@
     "kind",
     "decisionId",
     "recommendationSha256",
+    "assignmentSha256",
     "reviewSha256",
     "selectedOptionId",
     "owner",
@@ -21,6 +22,7 @@
     "kind": {"const": "engineering-process-recommendation-resolution"},
     "decisionId": {"$ref": "#/$defs/id"},
     "recommendationSha256": {"$ref": "#/$defs/digest"},
+    "assignmentSha256": {"$ref": "#/$defs/digest"},
     "reviewSha256": {"$ref": "#/$defs/digest"},
     "selectedOptionId": {"$ref": "#/$defs/id"},
     "owner": {
