@@ -414,10 +414,11 @@ class RecommendationTests(unittest.TestCase):
             root = Path(directory)
             recommendation_path, assignment_path, review_path = self.prepare_chain(root)
             output = root / "resolution.json"
+            canonical_output = output.resolve(strict=False)
             real_open = os.open
 
             def create_concurrent(path, flags, mode=0o777, *, dir_fd=None):
-                if Path(path) == output:
+                if Path(path).resolve(strict=False) == canonical_output:
                     output.write_text("concurrent\n", encoding="utf-8")
                 if dir_fd is None:
                     return real_open(path, flags, mode)
@@ -449,12 +450,16 @@ class RecommendationTests(unittest.TestCase):
             displaced = root / "artifacts-displaced"
             parent.mkdir()
             output = parent / "resolution.json"
+            canonical_output = output.resolve(strict=False)
             real_open = os.open
             swapped = False
 
             def swap_parent(path, flags, mode=0o777, *, dir_fd=None):
                 nonlocal swapped
-                if Path(path) == output and not swapped:
+                if (
+                    Path(path).resolve(strict=False) == canonical_output
+                    and not swapped
+                ):
                     parent.rename(displaced)
                     parent.mkdir()
                     swapped = True

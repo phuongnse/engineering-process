@@ -38,6 +38,7 @@
     ]
   },
   "requiredProfiles": ["development", "review"],
+  "requiredEvidence": ["supported-python-platforms"],
   "signOff": {
     "required": false,
     "status": "not-required",

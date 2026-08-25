@@ -39,6 +39,8 @@ BASE_REF_PATTERN = re.compile(r"^(?!-)[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$")
 REPOSITORY_PATTERN = re.compile(
     r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
 )
+REMOTE_SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$")
+PYTHON_MINOR_PATTERN = re.compile(r"^3\.(?:11|12|13|14)$")
 AUTOMATION_BRANCH_PATTERN = re.compile(
     r"^automation/[a-z0-9]+(?:-[a-z0-9]+)*/"
     r"[a-z0-9](?:[a-z0-9._/-]*[a-z0-9])?$"
@@ -68,6 +70,15 @@ RECOMMENDATION_RESOLUTION_CONTROLS = {
     "grantsMerge": False,
     "grantsRelease": False,
 }
+REMOTE_VERIFICATION_REQUEST_CONTROLS = {
+    "grantsAdoption": False,
+    "grantsDeployment": False,
+    "grantsLifecycleCompletion": False,
+    "grantsMerge": False,
+    "grantsRelease": False,
+    "grantsReview": False,
+}
+MAX_REMOTE_ARCHIVE_BYTES = 4_000_000
 MAX_AUTOMATION_PROPOSAL_PATHS = 1_000
 MAX_AUTOMATION_PROPOSAL_PATH_BYTES = 256_000
 PRODUCTION_STANDARD = "production-v1"
@@ -299,6 +310,31 @@ class ProjectEnvironment:
 
 
 @dataclass(frozen=True)
+class RemoteVerificationExecution:
+    provider: str
+    repository: str
+    workflow: str
+    workflow_ref: str
+
+
+@dataclass(frozen=True)
+class RemoteVerificationSelector:
+    identifier: str
+    runner_os: str
+    runner_arch: str | None
+    implementation: str
+    python_minor: str
+
+
+@dataclass(frozen=True)
+class RemoteVerificationRequirement:
+    identifier: str
+    profiles: tuple[str, ...]
+    execution: RemoteVerificationExecution
+    selectors: tuple[RemoteVerificationSelector, ...]
+
+
+@dataclass(frozen=True)
 class Project:
     identifier: str
     profiles: dict[str, tuple[Check, ...]]
@@ -306,6 +342,7 @@ class Project:
     environment: ProjectEnvironment | None = None
     impact: ProjectImpact | None = None
     quality_extensions: tuple[str, ...] = ()
+    remote_verification: dict[str, RemoteVerificationRequirement] | None = None
 
 
 @dataclass(frozen=True)
@@ -1168,6 +1205,190 @@ def _validate_environment(
     )
 
 
+def _validate_remote_verification(
+    document: Any,
+    path: str,
+    *,
+    defined_profiles: set[str],
+) -> dict[str, RemoteVerificationRequirement]:
+    value = _object(document, path)
+    _exact_keys(value, required={"requirements"}, path=path)
+    raw_requirements = value["requirements"]
+    if (
+        not isinstance(raw_requirements, list)
+        or not 1 <= len(raw_requirements) <= 64
+    ):
+        raise ContractError(f"{path}.requirements: must contain 1 to 64 items")
+    requirements: dict[str, RemoteVerificationRequirement] = {}
+    identifiers: list[str] = []
+    total_selectors = 0
+    for index, raw_requirement in enumerate(raw_requirements):
+        requirement_path = f"{path}.requirements[{index}]"
+        requirement = _object(raw_requirement, requirement_path)
+        _exact_keys(
+            requirement,
+            required={"id", "profiles", "execution", "selectors"},
+            path=requirement_path,
+        )
+        identifier = _string(
+            requirement["id"], f"{requirement_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{requirement_path}.id: invalid requirement id")
+        identifiers.append(identifier)
+        profiles = _string_list(
+            requirement["profiles"],
+            f"{requirement_path}.profiles",
+            maximum=64,
+            pattern=PROFILE_PATTERN,
+        )
+        if not profiles or profiles != sorted(set(profiles)):
+            raise ContractError(
+                f"{requirement_path}.profiles: must be non-empty, sorted, and unique"
+            )
+        unknown_profiles = sorted(set(profiles) - defined_profiles)
+        if unknown_profiles:
+            raise ContractError(
+                f"{requirement_path}.profiles: undefined profiles: "
+                + ", ".join(unknown_profiles)
+            )
+
+        raw_execution = _object(
+            requirement["execution"], f"{requirement_path}.execution"
+        )
+        _exact_keys(
+            raw_execution,
+            required={"provider", "repository", "workflow", "workflowRef"},
+            path=f"{requirement_path}.execution",
+        )
+        provider = _string(
+            raw_execution["provider"],
+            f"{requirement_path}.execution.provider",
+            max_length=128,
+        )
+        if REMOTE_SAFE_NAME_PATTERN.fullmatch(provider) is None:
+            raise ContractError(
+                f"{requirement_path}.execution.provider: invalid provider name"
+            )
+        repository = _string(
+            raw_execution["repository"],
+            f"{requirement_path}.execution.repository",
+            max_length=256,
+        )
+        if REPOSITORY_PATTERN.fullmatch(repository) is None:
+            raise ContractError(
+                f"{requirement_path}.execution.repository: invalid repository"
+            )
+        workflow = _string(
+            raw_execution["workflow"],
+            f"{requirement_path}.execution.workflow",
+            max_length=256,
+        )
+        workflow_ref = _string(
+            raw_execution["workflowRef"],
+            f"{requirement_path}.execution.workflowRef",
+            max_length=512,
+        )
+        execution = RemoteVerificationExecution(
+            provider=provider,
+            repository=repository,
+            workflow=workflow,
+            workflow_ref=workflow_ref,
+        )
+
+        raw_selectors = requirement["selectors"]
+        if (
+            not isinstance(raw_selectors, list)
+            or not 1 <= len(raw_selectors) <= 64
+        ):
+            raise ContractError(
+                f"{requirement_path}.selectors: must contain 1 to 64 items"
+            )
+        total_selectors += len(raw_selectors)
+        if total_selectors > MAX_CONTRACT_ITEMS:
+            raise ContractError(
+                f"{path}.requirements: exceeds {MAX_CONTRACT_ITEMS} total selectors"
+            )
+        selectors: list[RemoteVerificationSelector] = []
+        selector_ids: list[str] = []
+        selector_identities: set[tuple[str, str | None, str, str]] = set()
+        for selector_index, raw_selector in enumerate(raw_selectors):
+            selector_path = (
+                f"{requirement_path}.selectors[{selector_index}]"
+            )
+            selector = _object(raw_selector, selector_path)
+            _exact_keys(
+                selector,
+                required={"id", "runnerOs", "implementation", "pythonMinor"},
+                optional={"runnerArch"},
+                path=selector_path,
+            )
+            selector_id = _string(
+                selector["id"], f"{selector_path}.id", max_length=64
+            )
+            if PROFILE_PATTERN.fullmatch(selector_id) is None:
+                raise ContractError(f"{selector_path}.id: invalid selector id")
+            selector_ids.append(selector_id)
+            runner_os = _string(
+                selector["runnerOs"],
+                f"{selector_path}.runnerOs",
+                max_length=64,
+            )
+            runner_arch = (
+                _string(
+                    selector["runnerArch"],
+                    f"{selector_path}.runnerArch",
+                    max_length=64,
+                )
+                if "runnerArch" in selector
+                else None
+            )
+            implementation = _string(
+                selector["implementation"],
+                f"{selector_path}.implementation",
+                max_length=64,
+            )
+            python_minor = _string(
+                selector["pythonMinor"],
+                f"{selector_path}.pythonMinor",
+                max_length=4,
+            )
+            if PYTHON_MINOR_PATTERN.fullmatch(python_minor) is None:
+                raise ContractError(
+                    f"{selector_path}.pythonMinor: unsupported Python minor"
+                )
+            identity = (runner_os, runner_arch, implementation, python_minor)
+            if identity in selector_identities:
+                raise ContractError(
+                    f"{requirement_path}.selectors: duplicate selector identity"
+                )
+            selector_identities.add(identity)
+            selectors.append(
+                RemoteVerificationSelector(
+                    identifier=selector_id,
+                    runner_os=runner_os,
+                    runner_arch=runner_arch,
+                    implementation=implementation,
+                    python_minor=python_minor,
+                )
+            )
+        if selector_ids != sorted(set(selector_ids)):
+            raise ContractError(
+                f"{requirement_path}.selectors: must be sorted by id and unique"
+            )
+        requirements[identifier] = RemoteVerificationRequirement(
+            identifier=identifier,
+            profiles=tuple(profiles),
+            execution=execution,
+            selectors=tuple(selectors),
+        )
+    if identifiers != sorted(set(identifiers)):
+        raise ContractError(
+            f"{path}.requirements: must be sorted by id and unique"
+        )
+    return requirements
+
+
 def validate_project(document: Any, path: str = "project") -> Project:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -1177,7 +1398,8 @@ def validate_project(document: Any, path: str = "project") -> Project:
         value,
         required={"schemaVersion", "project", "lifecycle", "profiles"}
         | ({"environment"} if schema_version >= 2 else set()),
-        optional={"$schema"} | ({"impact"} if schema_version >= 3 else set()),
+        optional={"$schema"}
+        | ({"impact", "remoteVerification"} if schema_version >= 3 else set()),
         path=path,
     )
     identifier = _string(value["project"], f"{path}.project", max_length=128)
@@ -1328,6 +1550,15 @@ def validate_project(document: Any, path: str = "project") -> Project:
             f"{path}.lifecycle.requiredProfiles: undefined profiles: "
             f"{', '.join(missing_required)}"
         )
+    remote_verification = (
+        _validate_remote_verification(
+            value["remoteVerification"],
+            f"{path}.remoteVerification",
+            defined_profiles=set(profiles),
+        )
+        if "remoteVerification" in value
+        else None
+    )
     environment = (
         _validate_environment(
             value["environment"],
@@ -1353,6 +1584,7 @@ def validate_project(document: Any, path: str = "project") -> Project:
         environment=environment,
         impact=impact,
         quality_extensions=tuple(quality_extensions),
+        remote_verification=remote_verification,
     )
 
 
@@ -2533,6 +2765,384 @@ def validate_recommendation_resolution(
             raise ContractError(f"{path}.controls.{name}: must be false")
 
 
+def validate_remote_verification_request(
+    document: Any, path: str = "remote-verification-request"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "changeId",
+            "cycle",
+            "project",
+            "checkpoint",
+            "comparisonBase",
+            "workspaceFingerprint",
+            "createdAt",
+            "requirements",
+            "controls",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if (
+        isinstance(value["schemaVersion"], bool)
+        or value["schemaVersion"] != 1
+        or value["kind"]
+        != "engineering-process-remote-verification-request"
+    ):
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    for name, pattern, maximum in (
+        ("changeId", PROFILE_PATTERN, 64),
+        ("project", NAME_PATTERN, 128),
+    ):
+        text = _string(value[name], f"{path}.{name}", max_length=maximum)
+        if pattern.fullmatch(text) is None:
+            raise ContractError(f"{path}.{name}: invalid identifier")
+    cycle = value["cycle"]
+    if (
+        isinstance(cycle, bool)
+        or not isinstance(cycle, int)
+        or not 1 <= cycle <= 1_000_000
+    ):
+        raise ContractError(f"{path}.cycle: invalid lifecycle cycle")
+    for name in ("checkpoint", "comparisonBase"):
+        oid = _string(value[name], f"{path}.{name}", max_length=64)
+        if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", oid) is None:
+            raise ContractError(f"{path}.{name}: invalid git object id")
+    fingerprint = _string(
+        value["workspaceFingerprint"],
+        f"{path}.workspaceFingerprint",
+        max_length=71,
+    )
+    if DIGEST_PATTERN.fullmatch(fingerprint) is None:
+        raise ContractError(
+            f"{path}.workspaceFingerprint: invalid sha256 digest"
+        )
+    _improvement_timestamp(value["createdAt"], f"{path}.createdAt")
+
+    requirements = value["requirements"]
+    if not isinstance(requirements, list) or not 1 <= len(requirements) <= 64:
+        raise ContractError(f"{path}.requirements: must contain 1 to 64 items")
+    requirement_ids: list[str] = []
+    total_selectors = 0
+    for index, raw_requirement in enumerate(requirements):
+        requirement_path = f"{path}.requirements[{index}]"
+        requirement = _object(raw_requirement, requirement_path)
+        _exact_keys(
+            requirement,
+            required={"id", "profiles", "execution", "selectors"},
+            path=requirement_path,
+        )
+        requirement_id = _string(
+            requirement["id"], f"{requirement_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(requirement_id) is None:
+            raise ContractError(f"{requirement_path}.id: invalid requirement id")
+        requirement_ids.append(requirement_id)
+        profiles = _string_list(
+            requirement["profiles"],
+            f"{requirement_path}.profiles",
+            maximum=64,
+            pattern=PROFILE_PATTERN,
+        )
+        if not profiles or profiles != sorted(set(profiles)):
+            raise ContractError(
+                f"{requirement_path}.profiles: must be non-empty, sorted, and unique"
+            )
+        execution = _object(
+            requirement["execution"], f"{requirement_path}.execution"
+        )
+        _exact_keys(
+            execution,
+            required={
+                "provider",
+                "repository",
+                "workflow",
+                "workflowRef",
+                "workflowSha",
+            },
+            path=f"{requirement_path}.execution",
+        )
+        provider = _string(
+            execution["provider"],
+            f"{requirement_path}.execution.provider",
+            max_length=128,
+        )
+        if REMOTE_SAFE_NAME_PATTERN.fullmatch(provider) is None:
+            raise ContractError(
+                f"{requirement_path}.execution.provider: invalid provider"
+            )
+        repository = _string(
+            execution["repository"],
+            f"{requirement_path}.execution.repository",
+            max_length=256,
+        )
+        if REPOSITORY_PATTERN.fullmatch(repository) is None:
+            raise ContractError(
+                f"{requirement_path}.execution.repository: invalid repository"
+            )
+        _string(
+            execution["workflow"],
+            f"{requirement_path}.execution.workflow",
+            max_length=256,
+        )
+        _string(
+            execution["workflowRef"],
+            f"{requirement_path}.execution.workflowRef",
+            max_length=512,
+        )
+        workflow_sha = _string(
+            execution["workflowSha"],
+            f"{requirement_path}.execution.workflowSha",
+            max_length=64,
+        )
+        if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", workflow_sha) is None:
+            raise ContractError(
+                f"{requirement_path}.execution.workflowSha: invalid git object id"
+            )
+        selectors = requirement["selectors"]
+        if not isinstance(selectors, list) or not 1 <= len(selectors) <= 64:
+            raise ContractError(
+                f"{requirement_path}.selectors: must contain 1 to 64 items"
+            )
+        total_selectors += len(selectors)
+        if total_selectors > MAX_CONTRACT_ITEMS:
+            raise ContractError(
+                f"{path}.requirements: exceeds {MAX_CONTRACT_ITEMS} total selectors"
+            )
+        selector_ids: list[str] = []
+        identities: set[tuple[str, str | None, str, str]] = set()
+        for selector_index, raw_selector in enumerate(selectors):
+            selector_path = f"{requirement_path}.selectors[{selector_index}]"
+            selector = _object(raw_selector, selector_path)
+            _exact_keys(
+                selector,
+                required={"id", "runnerOs", "implementation", "pythonMinor"},
+                optional={"runnerArch"},
+                path=selector_path,
+            )
+            selector_id = _string(
+                selector["id"], f"{selector_path}.id", max_length=64
+            )
+            if PROFILE_PATTERN.fullmatch(selector_id) is None:
+                raise ContractError(f"{selector_path}.id: invalid selector id")
+            selector_ids.append(selector_id)
+            runner_os = _string(
+                selector["runnerOs"], f"{selector_path}.runnerOs", max_length=64
+            )
+            runner_arch = (
+                _string(
+                    selector["runnerArch"],
+                    f"{selector_path}.runnerArch",
+                    max_length=64,
+                )
+                if "runnerArch" in selector
+                else None
+            )
+            implementation = _string(
+                selector["implementation"],
+                f"{selector_path}.implementation",
+                max_length=64,
+            )
+            python_minor = _string(
+                selector["pythonMinor"],
+                f"{selector_path}.pythonMinor",
+                max_length=4,
+            )
+            if PYTHON_MINOR_PATTERN.fullmatch(python_minor) is None:
+                raise ContractError(
+                    f"{selector_path}.pythonMinor: unsupported Python minor"
+                )
+            identity = (runner_os, runner_arch, implementation, python_minor)
+            if identity in identities:
+                raise ContractError(
+                    f"{requirement_path}.selectors: duplicate selector identity"
+                )
+            identities.add(identity)
+        if selector_ids != sorted(set(selector_ids)):
+            raise ContractError(
+                f"{requirement_path}.selectors: must be sorted by id and unique"
+            )
+    if requirement_ids != sorted(set(requirement_ids)):
+        raise ContractError(
+            f"{path}.requirements: must be sorted by id and unique"
+        )
+    controls = _object(value["controls"], f"{path}.controls")
+    _exact_keys(
+        controls,
+        required=set(REMOTE_VERIFICATION_REQUEST_CONTROLS),
+        path=f"{path}.controls",
+    )
+    if controls != REMOTE_VERIFICATION_REQUEST_CONTROLS:
+        raise ContractError(
+            f"{path}.controls: remote verification grants no downstream authority"
+        )
+
+
+def validate_remote_verification_evidence(
+    document: Any, path: str = "remote-verification-evidence"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "requestSha256",
+            "capturedAt",
+            "artifacts",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if (
+        isinstance(value["schemaVersion"], bool)
+        or value["schemaVersion"] != 1
+        or value["kind"]
+        != "engineering-process-remote-verification-evidence"
+    ):
+        raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    digest = _string(
+        value["requestSha256"], f"{path}.requestSha256", max_length=71
+    )
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ContractError(f"{path}.requestSha256: invalid sha256 digest")
+    _improvement_timestamp(value["capturedAt"], f"{path}.capturedAt")
+    artifacts = value["artifacts"]
+    if not isinstance(artifacts, list) or not 1 <= len(artifacts) <= 256:
+        raise ContractError(f"{path}.artifacts: must contain 1 to 256 items")
+    identities: list[tuple[str, str]] = []
+    archive_names: set[str] = set()
+    artifact_ids: set[str] = set()
+    for index, raw_artifact in enumerate(artifacts):
+        artifact_path = f"{path}.artifacts[{index}]"
+        artifact = _object(raw_artifact, artifact_path)
+        _exact_keys(
+            artifact,
+            required={"requirementId", "selectorId", "archive", "service"},
+            path=artifact_path,
+        )
+        identity: list[str] = []
+        for name in ("requirementId", "selectorId"):
+            identifier = _string(
+                artifact[name], f"{artifact_path}.{name}", max_length=64
+            )
+            if PROFILE_PATTERN.fullmatch(identifier) is None:
+                raise ContractError(f"{artifact_path}.{name}: invalid id")
+            identity.append(identifier)
+        identities.append((identity[0], identity[1]))
+        archive = _object(artifact["archive"], f"{artifact_path}.archive")
+        _exact_keys(
+            archive,
+            required={"path", "bytes", "sha256"},
+            path=f"{artifact_path}.archive",
+        )
+        archive_name = _string(
+            archive["path"], f"{artifact_path}.archive.path", max_length=132
+        )
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip", archive_name)
+            is None
+            or archive_name in archive_names
+        ):
+            raise ContractError(
+                f"{artifact_path}.archive.path: invalid or duplicate archive name"
+            )
+        archive_names.add(archive_name)
+        archive_bytes = archive["bytes"]
+        if (
+            isinstance(archive_bytes, bool)
+            or not isinstance(archive_bytes, int)
+            or not 1 <= archive_bytes <= MAX_REMOTE_ARCHIVE_BYTES
+        ):
+            raise ContractError(f"{artifact_path}.archive.bytes: invalid byte count")
+        archive_digest = _string(
+            archive["sha256"],
+            f"{artifact_path}.archive.sha256",
+            max_length=71,
+        )
+        if DIGEST_PATTERN.fullmatch(archive_digest) is None:
+            raise ContractError(
+                f"{artifact_path}.archive.sha256: invalid digest"
+            )
+        service = _object(artifact["service"], f"{artifact_path}.service")
+        _exact_keys(
+            service,
+            required={
+                "artifactId",
+                "name",
+                "sizeInBytes",
+                "digest",
+                "runId",
+                "runAttempt",
+                "runUrl",
+            },
+            path=f"{artifact_path}.service",
+        )
+        artifact_id = _string(
+            service["artifactId"],
+            f"{artifact_path}.service.artifactId",
+            max_length=64,
+        )
+        if re.fullmatch(r"[1-9][0-9]{0,63}", artifact_id) is None:
+            raise ContractError(f"{artifact_path}.service.artifactId: invalid id")
+        if artifact_id in artifact_ids:
+            raise ContractError(
+                f"{artifact_path}.service.artifactId: duplicate artifact id"
+            )
+        artifact_ids.add(artifact_id)
+        name = _string(
+            service["name"], f"{artifact_path}.service.name", max_length=128
+        )
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
+            raise ContractError(f"{artifact_path}.service.name: invalid name")
+        size = service["sizeInBytes"]
+        if (
+            isinstance(size, bool)
+            or not isinstance(size, int)
+            or not 1 <= size <= MAX_REMOTE_ARCHIVE_BYTES
+            or size != archive_bytes
+        ):
+            raise ContractError(
+                f"{artifact_path}.service.sizeInBytes: must match bounded archive bytes"
+            )
+        service_digest = _string(
+            service["digest"],
+            f"{artifact_path}.service.digest",
+            max_length=71,
+        )
+        if service_digest != archive_digest:
+            raise ContractError(
+                f"{artifact_path}.service.digest: must match archive sha256"
+            )
+        run_id = _string(
+            service["runId"], f"{artifact_path}.service.runId", max_length=64
+        )
+        if re.fullmatch(r"[1-9][0-9]{0,63}", run_id) is None:
+            raise ContractError(f"{artifact_path}.service.runId: invalid run id")
+        attempt = service["runAttempt"]
+        if (
+            isinstance(attempt, bool)
+            or not isinstance(attempt, int)
+            or not 1 <= attempt <= 1_000
+        ):
+            raise ContractError(
+                f"{artifact_path}.service.runAttempt: invalid attempt"
+            )
+        url = _string(
+            service["runUrl"], f"{artifact_path}.service.runUrl", max_length=2048
+        )
+        if not url.startswith("https://"):
+            raise ContractError(f"{artifact_path}.service.runUrl: must use HTTPS")
+    if identities != sorted(set(identities)):
+        raise ContractError(
+            f"{path}.artifacts: must be sorted by requirementId/selectorId and unique"
+        )
+
+
 def _automation_proposal_controls(
     value: Any, path: str, *, schema_version: int
 ) -> dict[str, bool]:
@@ -3523,7 +4133,8 @@ def validate_change(document: Any, path: str = "change") -> None:
     _exact_keys(
         value,
         required=required_keys,
-        optional={"$schema"},
+        optional={"$schema"}
+        | ({"requiredEvidence"} if schema_version == 3 else set()),
         path=path,
     )
     identifier = _string(value["id"], f"{path}.id", max_length=64)
@@ -3566,6 +4177,19 @@ def validate_change(document: Any, path: str = "change") -> None:
         pattern=PROFILE_PATTERN,
         maximum=MAX_PROJECT_PROFILES if schema_version == 3 else None,
     )
+    if "requiredEvidence" in value:
+        required_evidence = _string_list(
+            value["requiredEvidence"],
+            f"{path}.requiredEvidence",
+            maximum=64,
+            pattern=PROFILE_PATTERN,
+        )
+        if not required_evidence or required_evidence != sorted(
+            set(required_evidence)
+        ):
+            raise ContractError(
+                f"{path}.requiredEvidence: must be non-empty, sorted, and unique"
+            )
 
     criteria = value["acceptanceCriteria"]
     if not isinstance(criteria, list) or not criteria:
@@ -4583,7 +5207,7 @@ def validate_completion(document: Any, path: str = "completion") -> None:
             "verification",
             "review",
         },
-        optional={"improvements"},
+        optional={"improvements", "remoteVerification"},
         path=path,
     )
     if value["schemaVersion"] != 1:
@@ -4616,6 +5240,11 @@ def validate_completion(document: Any, path: str = "completion") -> None:
         profiles.append(reference["profile"])
     if len(profiles) != len(set(profiles)):
         raise ContractError(f"{path}.verification: duplicate profiles")
+    remote_verification = value.get("remoteVerification")
+    if remote_verification is not None:
+        _artifact_reference(
+            remote_verification, f"{path}.remoteVerification"
+        )
     improvements = value.get("improvements", [])
     if not isinstance(improvements, list) or len(improvements) > MAX_CONTRACT_ITEMS:
         raise ContractError(

@@ -37,14 +37,17 @@
     {
       "id": "verify-blocked-runtime",
       "skill": "verify-change",
-      "prompt": "The required browser verification profile cannot start because its supported runtime is unavailable. A unit-test profile passes.",
+      "prompt": "The required browser verification profile cannot start because its supported runtime is unavailable. Local unit evidence passes, and a selected four-platform remote requirement is also missing one exact-checkpoint artifact.",
       "mustInclude": [
         "browser profile remains blocked",
         "unit evidence is reported separately",
-        "no completion claim"
+        "missing remote selector remains blocking",
+        "lifecycle remains implementing",
+        "no review or completion claim"
       ],
       "mustNotInclude": [
         "unit tests substituted for browser evidence",
+        "later PR checks substituted for lifecycle evidence",
         "blocked converted to passed"
       ]
     },

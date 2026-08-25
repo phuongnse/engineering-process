@@ -71,6 +71,16 @@ are preserved with review evidence. These reports supplement the public N-1
 lifecycle authority; code under verification never promotes itself to lifecycle
 authority.
 
+Projects declare named remote requirements and their exact profile and
+platform/runtime selector sets; change contracts select requirement ids. A lifecycle
+request binds those expanded requirements to one clean checkpoint, comparison base,
+workspace fingerprint, and immutable base-owned workflow checkpoint without granting
+review or delivery authority. Provider adapters remain project-owned and transport
+only the exact request. Core ingests local artifact bytes, verifies service and
+content digests plus one-to-one selector coverage, and keeps the lifecycle
+implementing until every local profile and remote requirement passes. A provider job
+conclusion or later PR check is not lifecycle evidence by itself.
+
 ## Failure to invariant
 
 A validated command, gate, release, adoption, or external-integration failure must

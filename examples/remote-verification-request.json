@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-remote-verification-request",
+  "changeId": "issue-123",
+  "cycle": 1,
+  "project": "example-service",
+  "checkpoint": "1111111111111111111111111111111111111111",
+  "comparisonBase": "0000000000000000000000000000000000000000",
+  "workspaceFingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "requirements": [
+    {
+      "id": "supported-python-platforms",
+      "profiles": ["development", "review"],
+      "execution": {
+        "provider": "example-actions",
+        "repository": "example/example-service",
+        "workflow": "CI",
+        "workflowRef": "example/example-service/.ci/verify.yml@refs/heads/main",
+        "workflowSha": "0000000000000000000000000000000000000000"
+      },
+      "selectors": [
+        {
+          "id": "linux-python-3-11",
+          "runnerOs": "Linux",
+          "implementation": "CPython",
+          "pythonMinor": "3.11"
+        }
+      ]
+    }
+  ],
+  "controls": {
+    "grantsAdoption": false,
+    "grantsDeployment": false,
+    "grantsLifecycleCompletion": false,
+    "grantsMerge": false,
+    "grantsRelease": false,
+    "grantsReview": false
+  }
+}

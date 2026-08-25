@@ -8,6 +8,8 @@ LIFECYCLE_COMMAND_PATHS = frozenset(
         "change finish",
         "change implement",
         "change plan",
+        "change remote ingest",
+        "change remote request",
         "change review start",
         "change review submit",
         "change start",

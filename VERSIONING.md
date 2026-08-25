@@ -154,6 +154,15 @@ Completed historical decisions retain their original evidence and require no
 backfill. A recommendation resolution is decision evidence only and never substitutes
 for lifecycle completion or delivery authority.
 
+Remote-verification request and evidence-set schema-1 artifacts, optional project
+requirements, optional change selections, lifecycle references, and receipt content
+are additive serialized surfaces. A project does not gain the gate until a separate
+adoption validates the target-version manifest and selects requirement ids. Once
+selected, missing exact remote evidence blocks review and completion; a later PR
+matrix is not a compatibility substitute. Provider transport remains project-owned,
+while request expansion, ingestion, invalidation, and terminal ordering are portable
+process semantics.
+
 ## Release and adoption boundary
 
 Release, self-adoption, and consumer adoption are separate changes:

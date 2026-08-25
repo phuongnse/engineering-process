@@ -11,6 +11,7 @@ from typing import Any
 
 from .contracts import (
     ContractError,
+    canonical_json_digest,
     DIGEST_PATTERN,
     MAX_JSON_BYTES,
     NAME_PATTERN,
@@ -21,6 +22,8 @@ from .contracts import (
     validate_completion,
     validate_plan,
     validate_process_lock,
+    validate_remote_verification_evidence,
+    validate_remote_verification_request,
     validate_review,
     validate_verification,
 )
@@ -86,6 +89,46 @@ def _entry(project_root: Path, reference: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _remote_entries(
+    project_root: Path, state: dict[str, Any]
+) -> dict[str, Any] | None:
+    remote = state.get("remoteVerification")
+    if remote is None:
+        return None
+    if not isinstance(remote.get("request"), dict) or not isinstance(
+        remote.get("evidence"), dict
+    ):
+        raise ContractError("completed lifecycle remote evidence is incomplete")
+    request_entry = _entry(project_root, remote["request"])
+    index_entry = _entry(project_root, remote["evidence"])
+    index = _validate_entry(index_entry, "remote verification index")
+    source_entry = _entry(project_root, index["sourceEvidence"])
+    artifacts: list[dict[str, Any]] = []
+    for artifact in index["artifacts"]:
+        artifacts.append(
+            {
+                "requirementId": artifact["requirementId"],
+                "selectorId": artifact["selectorId"],
+                "archive": artifact["archive"],
+                "service": artifact["service"],
+                "manifest": _entry(project_root, artifact["manifest"]),
+                "verification": [
+                    {
+                        "profile": reference["profile"],
+                        **_entry(project_root, reference),
+                    }
+                    for reference in artifact["verification"]
+                ],
+            }
+        )
+    return {
+        "request": request_entry,
+        "index": index_entry,
+        "sourceEvidence": source_entry,
+        "artifacts": artifacts,
+    }
+
+
 def _export_evidence(
     project_root: Path,
     change_id: str,
@@ -112,6 +155,9 @@ def _export_evidence(
         "review": _entry(project_root, state["review"]),
         "completion": _entry(project_root, state["completion"]),
     }
+    remote_entries = _remote_entries(project_root, state)
+    if remote_entries is not None:
+        artifacts["remoteVerification"] = remote_entries
     receipt: dict[str, Any] = {
         "schemaVersion": 1,
         "kind": kind,
@@ -230,6 +276,149 @@ def _validate_entry(entry: Any, path: str) -> dict[str, Any]:
     return document
 
 
+def _validate_remote_receipt(
+    remote: Any,
+    *,
+    state: dict[str, Any],
+    contract: dict[str, Any],
+    checkpoint: str,
+    fingerprint: str,
+) -> None:
+    if not isinstance(remote, dict):
+        raise ContractError("receipt.artifacts.remoteVerification: must be an object")
+    _require_exact(
+        remote,
+        {"request", "index", "sourceEvidence", "artifacts"},
+        "receipt.artifacts.remoteVerification",
+    )
+    request = _validate_entry(
+        remote["request"], "receipt.artifacts.remoteVerification.request"
+    )
+    validate_remote_verification_request(request, "receipt remote request")
+    index = _validate_entry(
+        remote["index"], "receipt.artifacts.remoteVerification.index"
+    )
+    source_evidence = _validate_entry(
+        remote["sourceEvidence"],
+        "receipt.artifacts.remoteVerification.sourceEvidence",
+    )
+    validate_remote_verification_evidence(
+        source_evidence, "receipt remote source evidence"
+    )
+    if (
+        request["changeId"] != state["changeId"]
+        or request["cycle"] != state["cycle"]
+        or request["project"] != state["project"]
+        or request["checkpoint"] != checkpoint
+        or request["comparisonBase"] != state["comparisonBase"]
+        or request["workspaceFingerprint"] != fingerprint
+        or index.get("requestSha256") != canonical_json_digest(request)
+        or source_evidence["requestSha256"] != canonical_json_digest(request)
+    ):
+        raise ContractError("receipt remote verification identity is inconsistent")
+    expected_index_keys = {
+        "schemaVersion",
+        "kind",
+        "requestSha256",
+        "checkpoint",
+        "comparisonBase",
+        "workspaceFingerprint",
+        "sourceEvidence",
+        "artifacts",
+    }
+    if (
+        not isinstance(index, dict)
+        or set(index) != expected_index_keys
+        or index["schemaVersion"] != 1
+        or index["kind"]
+        != "engineering-process-ingested-remote-verification"
+        or index["checkpoint"] != checkpoint
+        or index["comparisonBase"] != state["comparisonBase"]
+        or index["workspaceFingerprint"] != fingerprint
+    ):
+        raise ContractError("receipt remote verification index is invalid")
+    artifacts = remote["artifacts"]
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ContractError("receipt remote verification artifacts are empty")
+    if len(artifacts) != len(index["artifacts"]):
+        raise ContractError("receipt remote verification artifact count mismatch")
+    identities: list[tuple[str, str]] = []
+    for position, (artifact, index_artifact) in enumerate(
+        zip(artifacts, index["artifacts"], strict=True)
+    ):
+        path = f"receipt.artifacts.remoteVerification.artifacts[{position}]"
+        if not isinstance(artifact, dict):
+            raise ContractError(f"{path}: must be an object")
+        _require_exact(
+            artifact,
+            {
+                "requirementId",
+                "selectorId",
+                "archive",
+                "service",
+                "manifest",
+                "verification",
+            },
+            path,
+        )
+        identity = (artifact["requirementId"], artifact["selectorId"])
+        identities.append(identity)
+        if (
+            identity
+            != (index_artifact["requirementId"], index_artifact["selectorId"])
+            or artifact["archive"] != index_artifact["archive"]
+            or artifact["service"] != index_artifact["service"]
+        ):
+            raise ContractError(f"{path}: does not match ingested index")
+        _validate_entry(artifact["manifest"], f"{path}.manifest")
+        reports = artifact["verification"]
+        if not isinstance(reports, list) or not reports:
+            raise ContractError(f"{path}.verification: must not be empty")
+        profiles: list[str] = []
+        for report_index, raw_report in enumerate(reports):
+            report_path = f"{path}.verification[{report_index}]"
+            if not isinstance(raw_report, dict):
+                raise ContractError(f"{report_path}: must be an object")
+            profile = raw_report.get("profile")
+            entry = dict(raw_report)
+            entry.pop("profile", None)
+            report = _validate_entry(entry, report_path)
+            validate_verification(report, report_path)
+            if (
+                profile != report.get("profile")
+                or report.get("status") != "passed"
+                or report.get("checkpoint") != checkpoint
+                or report.get("workspaceFingerprint") != fingerprint
+            ):
+                raise ContractError(f"{report_path}: stale or failed report")
+            profiles.append(profile)
+        requirement = next(
+            item for item in request["requirements"] if item["id"] == identity[0]
+        )
+        if profiles != requirement["profiles"]:
+            raise ContractError(f"{path}.verification: profile coverage mismatch")
+    expected_identities = [
+        (requirement["id"], selector["id"])
+        for requirement in request["requirements"]
+        for selector in requirement["selectors"]
+    ]
+    if identities != expected_identities:
+        raise ContractError("receipt remote verification selector coverage mismatch")
+    required_evidence = contract.get("requiredEvidence", [])
+    if required_evidence != [item["id"] for item in request["requirements"]]:
+        raise ContractError("receipt remote requirements do not match contract")
+    state_remote = state.get("remoteVerification")
+    if (
+        not isinstance(state_remote, dict)
+        or state_remote.get("requiredEvidence") != required_evidence
+        or state_remote.get("request", {}).get("digest")
+        != remote["request"]["sourceDigest"]
+        or state_remote.get("evidence", {}).get("digest")
+        != remote["index"]["sourceDigest"]
+    ):
+        raise ContractError("receipt remote references do not match lifecycle state")
+
+
 def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     receipt = _read_receipt(path)
     _require_exact(
@@ -297,11 +486,30 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     artifacts = receipt["artifacts"]
     if not isinstance(artifacts, dict):
         raise ContractError("receipt.artifacts: must be an object")
-    _require_exact(
-        artifacts,
-        {"contract", "plan", "verification", "review", "completion"},
-        "receipt.artifacts",
-    )
+    required_artifacts = {
+        "contract",
+        "plan",
+        "verification",
+        "review",
+        "completion",
+    }
+    optional_artifacts = {"remoteVerification"}
+    missing_artifacts = required_artifacts - set(artifacts)
+    unknown_artifacts = set(artifacts) - required_artifacts - optional_artifacts
+    if missing_artifacts or unknown_artifacts:
+        raise ContractError(
+            "receipt.artifacts: invalid fields"
+            + (
+                "; missing " + ", ".join(sorted(missing_artifacts))
+                if missing_artifacts
+                else ""
+            )
+            + (
+                "; unknown " + ", ".join(sorted(unknown_artifacts))
+                if unknown_artifacts
+                else ""
+            )
+        )
     contract = _validate_entry(artifacts["contract"], "receipt.artifacts.contract")
     plan = _validate_entry(artifacts["plan"], "receipt.artifacts.plan")
     review = _validate_entry(artifacts["review"], "receipt.artifacts.review")
@@ -356,6 +564,19 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     profiles: list[str] = []
     checkpoint = receipt["checkpoint"]
     fingerprint = completion.get("workspaceFingerprint")
+    remote_required = bool(contract.get("requiredEvidence"))
+    if remote_required != ("remoteVerification" in artifacts):
+        raise ContractError(
+            "receipt remote verification presence does not match contract"
+        )
+    if remote_required:
+        _validate_remote_receipt(
+            artifacts["remoteVerification"],
+            state=state,
+            contract=contract,
+            checkpoint=checkpoint,
+            fingerprint=fingerprint,
+        )
     for index, raw_entry in enumerate(verification):
         if not isinstance(raw_entry, dict):
             raise ContractError(f"receipt.artifacts.verification[{index}]: must be an object")
@@ -390,6 +611,15 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
             raise ContractError(f"receipt completion reference for {name} is inconsistent")
     if completion.get("verification") != state.get("verification"):
         raise ContractError("receipt completion verification references are inconsistent")
+    expected_remote_completion = (
+        state["remoteVerification"]["evidence"]
+        if state.get("remoteVerification") is not None
+        else None
+    )
+    if completion.get("remoteVerification") != expected_remote_completion:
+        raise ContractError(
+            "receipt completion remote verification reference is inconsistent"
+        )
     state_refs = {
         "contract": state.get("contract"),
         "plan": state.get("plan"),

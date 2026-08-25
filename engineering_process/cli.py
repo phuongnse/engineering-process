@@ -14,6 +14,7 @@ from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
     ContractError,
+    canonical_json_digest,
     derive_release_version,
     read_json,
     validate_adoption_migration,
@@ -33,6 +34,8 @@ from .contracts import (
     validate_recommendation_resolution,
     validate_recommendation_review,
     validate_recommendation_review_assignment,
+    validate_remote_verification_evidence,
+    validate_remote_verification_request,
     validate_release,
     validate_release_change,
     validate_review,
@@ -74,7 +77,9 @@ from .lifecycle import (
     finish_change,
     lifecycle_environment_issues,
     lifecycle_status,
+    ingest_remote_verification,
     register_plan,
+    request_remote_verification,
     start_change,
     start_review,
     submit_review,
@@ -294,6 +299,8 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "recommendation-resolution": validate_recommendation_resolution,
         "recommendation-review": validate_recommendation_review,
         "recommendation-review-assignment": validate_recommendation_review_assignment,
+        "remote-verification-evidence": validate_remote_verification_evidence,
+        "remote-verification-request": validate_remote_verification_request,
         "release": validate_release,
         "release-change": validate_release_change,
         "review": validate_review,
@@ -663,6 +670,53 @@ def command_change_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_change_remote_request(args: argparse.Namespace) -> int:
+    project = _lifecycle_project(args)
+    state, request = request_remote_verification(
+        args.project_root,
+        project,
+        args.change_id,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change remote request",
+            state,
+            checkpoint=request["checkpoint"],
+            comparisonBase=request["comparisonBase"],
+            request=state["remoteVerification"]["request"]["path"],
+            requestSha256=canonical_json_digest(request),
+        ),
+    )
+    return 0
+
+
+def command_change_remote_ingest(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    state, evidence = ingest_remote_verification(
+        args.project_root,
+        args.change_id,
+        args.evidence,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change remote ingest",
+            state,
+            checkpoint=evidence["checkpoint"],
+            evidence=state["remoteVerification"]["evidence"]["path"],
+            artifactCount=len(evidence["artifacts"]),
+        ),
+    )
+    return 0
+
+
 def command_change_review_start(args: argparse.Namespace) -> int:
     _lifecycle_project(args)
     state, assignment = start_review(
@@ -736,6 +790,7 @@ def command_change_status(args: argparse.Namespace) -> int:
         plan=state["plan"],
         implementationActors=state["implementationActors"],
         verification=state["verification"],
+        remoteVerification=state.get("remoteVerification"),
         pendingFindings=state["pendingFindings"],
         reviewAssignment=state["reviewAssignment"],
         review=state["review"],
@@ -1546,6 +1601,8 @@ def build_parser() -> argparse.ArgumentParser:
             "recommendation-resolution",
             "recommendation-review",
             "recommendation-review-assignment",
+            "remote-verification-evidence",
+            "remote-verification-request",
             "release",
             "release-change",
             "review",
@@ -2320,6 +2377,29 @@ def build_parser() -> argparse.ArgumentParser:
     change_verify.add_argument("--change-id", required=True)
     change_verify.add_argument("--profile", required=True)
     change_verify.set_defaults(handler=command_change_verify)
+
+    change_remote = change_commands.add_parser(
+        "remote", help="Bind required exact-checkpoint remote verification"
+    )
+    remote_commands = change_remote.add_subparsers(
+        dest="change_remote_command", required=True
+    )
+    remote_request = remote_commands.add_parser(
+        "request", help="Create an exact no-authority remote verification request"
+    )
+    _add_lifecycle_common(remote_request)
+    _add_actor(remote_request)
+    remote_request.add_argument("--change-id", required=True)
+    remote_request.set_defaults(handler=command_change_remote_request)
+
+    remote_ingest = remote_commands.add_parser(
+        "ingest", help="Validate and bind a complete remote evidence set"
+    )
+    _add_lifecycle_common(remote_ingest)
+    _add_actor(remote_ingest)
+    remote_ingest.add_argument("--change-id", required=True)
+    remote_ingest.add_argument("--evidence", type=Path, required=True)
+    remote_ingest.set_defaults(handler=command_change_remote_ingest)
 
     change_review = change_commands.add_parser(
         "review", help="Run the independent-review gate"

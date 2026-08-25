@@ -412,10 +412,20 @@ class SelfHostingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn(
-            "ref: ${{ github.event.pull_request.head.sha || github.sha }}",
+            "ref: ${{ inputs.remote_source_ref || github.event.pull_request.head.sha || github.sha }}",
             workflow,
         )
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("remote_request_sha256:", workflow)
+        self.assertIn("Validate exact remote verification dispatch", workflow)
+        self.assertIn(
+            'git show "$REMOTE_WORKFLOW_SHA:verification/validate_remote_verification_dispatch.py"',
+            workflow,
+        )
+        self.assertIn(
+            "CI_CHECKPOINT: ${{ inputs.remote_checkpoint || github.event.pull_request.head.sha || github.sha }}",
+            workflow,
+        )
         self.assertIn(
             "if: github.event_name == 'pull_request'",
             workflow,

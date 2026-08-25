@@ -158,6 +158,26 @@ Signal, disposition, producer completion, pre-release candidate, resolution, and
 reproduction are distinct authority boundaries. Portable core reads and writes local
 artifacts only. Transports preserve exact bytes and cannot mutate either repository.
 
+## Exact remote verification
+
+Projects own named remote-evidence requirements in their manifest: local profiles,
+provider execution identity, and bounded platform/runtime selectors. A schema-3
+change selects requirement ids without embedding transport mechanics. On a clean
+immutable implementation checkpoint, `change remote request` binds the change,
+cycle, source, comparison base, workspace fingerprint, requirement expansion, and
+base-owned workflow checkpoint while granting no review or delivery authority.
+
+The provider adapter transports only that exact checkpoint through a non-review
+verification object, obtains bounded supplemental bundles, preserves service ids and
+digests, and calls `change remote ingest` locally. Core performs no network work and
+trusts neither a job conclusion nor adapter prose: it verifies one-to-one selector
+coverage, archive bytes, service digest, manifest/report hashes, execution identity,
+clean diagnostics, bounds, and exact source identity. Missing, stale, failed,
+duplicate, truncated, redirected, or mismatched evidence keeps the lifecycle
+implementing. The adapter removes its ephemeral verification object on success,
+failure, timeout, and interrupt after preserving evidence. Review cannot begin until
+the complete required local and remote set passes.
+
 ## Independent review
 
 Review begins only after all baseline and change-required profiles pass on one clean

@@ -38,6 +38,28 @@
       }
     ]
   },
+  "remoteVerification": {
+    "requirements": [
+      {
+        "id": "supported-python-platforms",
+        "profiles": ["development", "review"],
+        "execution": {
+          "provider": "example-actions",
+          "repository": "example/sample-project",
+          "workflow": "CI",
+          "workflowRef": "example/sample-project/.ci/verify.yml@refs/heads/main"
+        },
+        "selectors": [
+          {
+            "id": "linux-python-3-11",
+            "runnerOs": "Linux",
+            "implementation": "CPython",
+            "pythonMinor": "3.11"
+          }
+        ]
+      }
+    ]
+  },
   "environment": {
     "defaultProfile": "development",
     "foregroundOnly": true,

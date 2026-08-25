@@ -493,8 +493,30 @@ resolution records a selected valid option but grants no lifecycle completion, m
 release, deployment, or adoption authority. Those owning gates remain separate. The
 accepted decision is recorded before dependent work resumes.
 
+When a schema-3 change selects a project-owned `requiredEvidence` id, local profiles
+alone do not advance it to review. Create the exact no-authority request, run the
+project adapter, and ingest the complete supplemental set first:
+
+~~~text
+processctl change remote request --project-root . --change-id issue-123 \
+  --actor worker --context worker-session --actor-kind agent
+python verification/run_remote_verification.py --project-root . \
+  --change-id issue-123 --actor worker --context worker-session \
+  --actor-kind agent --repository owner/repository \
+  --failure-output /durable/receipts/issue-123-remote-failure.json
+processctl change status --project-root . --change-id issue-123
+~~~
+
+The adapter publishes a uniquely named exact-checkpoint verification tag, never a
+branch or PR, dispatches the protected-base workflow, validates service and bundle
+digests, calls `change remote ingest`, and deletes the tag in every terminal path.
+Downloaded temporary archives are deleted after ingestion; failed evidence is moved
+to the explicit durable failure location before cleanup. Remote artifacts and their
+service ids remain lifecycle evidence, not merge, release, deployment, or adoption
+authority.
+
 The canonical publication order is stricter than a PR-first workflow: implementation
-and every required profile pass on a clean checkpoint; a consumer-selected independent
+and every required local and remote profile pass on a clean checkpoint; a consumer-selected independent
 agent or human semantically reviews that checkpoint; findings repeat implementation,
 complete verification, and fresh review until approved; `change finish` records
 completion; only then may automation push and create the PR. Static policy/secret/pin
