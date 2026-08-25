@@ -111,6 +111,7 @@ jobs:
           "$RUNNER_TEMP/process-authority/bin/python" \
             verification/validate_release_completion_identity.py \
             --summary "$RUNNER_TEMP/completion-summary.json" \
+            --evidence "$RUNNER_TEMP/completion-evidence.json" \
             --release-change .release/change.json \
             --process-lock .process/process.lock \
             --expected-checkpoint "$HEAD_SHA" \

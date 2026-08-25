@@ -23,9 +23,18 @@ class ReleaseCompletionIdentityTests(unittest.TestCase):
             "status": "passed",
             "changeId": "release-0-5-0",
             "checkpoint": "c" * 40,
-            "comparisonBase": "b" * 40,
             "processVersion": "0.4.0",
             "processDigest": f"sha256:{'d' * 64}",
+            "project": "engineering-process",
+        }
+        evidence = {
+            "changeId": "release-0-5-0",
+            "checkpoint": "c" * 40,
+            "comparisonBase": "b" * 40,
+            "process": {
+                "version": "0.4.0",
+                "digest": f"sha256:{'d' * 64}",
+            },
             "project": "engineering-process",
         }
         release_change = {
@@ -39,14 +48,15 @@ class ReleaseCompletionIdentityTests(unittest.TestCase):
                 "digest": f"sha256:{'d' * 64}",
             }
         }
-        return summary, release_change, process_lock
+        return summary, evidence, release_change, process_lock
 
     def test_accepts_a_lifecycle_base_distinct_from_the_candidate_parent(self):
-        summary, release_change, process_lock = self.documents()
+        summary, evidence, release_change, process_lock = self.documents()
         candidate_parent = "a" * 40
 
         result = validate_release_completion_identity(
             completion_summary=summary,
+            completion_evidence=evidence,
             release_change=release_change,
             process_lock=process_lock,
             expected_checkpoint="c" * 40,
@@ -57,33 +67,45 @@ class ReleaseCompletionIdentityTests(unittest.TestCase):
         self.assertEqual("valid", result["status"])
 
     def test_rejects_each_identity_mismatch(self):
-        mutations = {
+        summary_mutations = {
             "changeId": "other-change",
             "checkpoint": "e" * 40,
-            "comparisonBase": "e" * 40,
             "processVersion": "0.3.0",
             "processDigest": f"sha256:{'e' * 64}",
             "project": "other-project",
         }
-        for field, value in mutations.items():
+        for field, value in summary_mutations.items():
             with self.subTest(field=field):
-                summary, release_change, process_lock = self.documents()
+                summary, evidence, release_change, process_lock = self.documents()
                 summary[field] = value
                 with self.assertRaisesRegex(ContractError, field):
                     validate_release_completion_identity(
                         completion_summary=summary,
+                        completion_evidence=evidence,
                         release_change=release_change,
                         process_lock=process_lock,
                         expected_checkpoint="c" * 40,
                     )
 
+        summary, evidence, release_change, process_lock = self.documents()
+        evidence["comparisonBase"] = "e" * 40
+        with self.assertRaisesRegex(ContractError, "comparisonBase"):
+            validate_release_completion_identity(
+                completion_summary=summary,
+                completion_evidence=evidence,
+                release_change=release_change,
+                process_lock=process_lock,
+                expected_checkpoint="c" * 40,
+            )
+
     def test_cli_boundary_reads_the_owned_documents(self):
-        summary, release_change, process_lock = self.documents()
+        summary, evidence, release_change, process_lock = self.documents()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             paths = {}
             for name, document in (
                 ("summary", summary),
+                ("evidence", evidence),
                 ("change", release_change),
                 ("lock", process_lock),
             ):
@@ -97,6 +119,8 @@ class ReleaseCompletionIdentityTests(unittest.TestCase):
                     str(VALIDATOR),
                     "--summary",
                     str(paths["summary"]),
+                    "--evidence",
+                    str(paths["evidence"]),
                     "--release-change",
                     str(paths["change"]),
                     "--process-lock",

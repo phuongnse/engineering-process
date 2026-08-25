@@ -63,6 +63,7 @@ def _read_object(path: Path, *, label: str) -> dict[str, Any]:
 def validate_release_completion_identity(
     *,
     completion_summary: dict[str, Any],
+    completion_evidence: dict[str, Any],
     release_change: dict[str, Any],
     process_lock: dict[str, Any],
     expected_checkpoint: str,
@@ -99,19 +100,40 @@ def validate_release_completion_identity(
     if not isinstance(process_digest, str) or DIGEST_PATTERN.fullmatch(process_digest) is None:
         raise ContractError("process lock digest must be a SHA-256 identity")
 
-    expected = {
+    summary_expected = {
         "changeId": change_id,
         "checkpoint": expected_checkpoint,
-        "comparisonBase": lifecycle_base,
         "processVersion": process_version,
         "processDigest": process_digest,
         "project": projects[0],
     }
-    for field, value in expected.items():
+    for field, value in summary_expected.items():
         if completion_summary.get(field) != value:
             raise ContractError(
-                f"completion evidence {field} does not match its release owner"
+                f"completion summary {field} does not match its release owner"
             )
+    evidence_expected = {
+        "changeId": change_id,
+        "checkpoint": expected_checkpoint,
+        "comparisonBase": lifecycle_base,
+        "project": projects[0],
+    }
+    for field, value in evidence_expected.items():
+        if completion_evidence.get(field) != value:
+            raise ContractError(
+                f"validated completion evidence {field} does not match its release owner"
+            )
+    evidence_process = completion_evidence.get("process")
+    if not isinstance(evidence_process, dict):
+        raise ContractError("validated completion evidence lacks its process identity")
+    if evidence_process.get("version") != process_version:
+        raise ContractError(
+            "validated completion evidence processVersion does not match its release owner"
+        )
+    if evidence_process.get("digest") != process_digest:
+        raise ContractError(
+            "validated completion evidence processDigest does not match its release owner"
+        )
     return {
         "changeId": change_id,
         "checkpoint": expected_checkpoint,
@@ -126,6 +148,7 @@ def validate_release_completion_identity(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--release-change", type=Path, required=True)
     parser.add_argument("--process-lock", type=Path, required=True)
     parser.add_argument("--expected-checkpoint", required=True)
@@ -134,6 +157,9 @@ def main() -> int:
         result = validate_release_completion_identity(
             completion_summary=_read_object(
                 arguments.summary, label="completion evidence summary"
+            ),
+            completion_evidence=_read_object(
+                arguments.evidence, label="validated completion evidence"
             ),
             release_change=_read_object(
                 arguments.release_change, label="release lifecycle contract"

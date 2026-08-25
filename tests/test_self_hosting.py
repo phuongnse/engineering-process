@@ -85,6 +85,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("verification/validate_release_completion_identity.py", approval)
         self.assertIn("processctl evidence validate", approval)
         self.assertIn("--release-change .release/change.json", approval)
+        self.assertIn('--evidence "$RUNNER_TEMP/completion-evidence.json"', approval)
         self.assertIn("--process-lock .process/process.lock", approval)
         self.assertIn('--expected-checkpoint "$HEAD_SHA"', approval)
         self.assertNotIn(
