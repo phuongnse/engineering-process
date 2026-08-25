@@ -50,6 +50,8 @@ REQUIRED_SUFFIXES = {
     "schemas/improvement-signal.schema.json",
     "schemas/release-change.schema.json",
     "schemas/release.schema.json",
+    "schemas/remote-verification-evidence.schema.json",
+    "schemas/remote-verification-request.schema.json",
     "schemas/supplemental-verification.schema.json",
 }
 

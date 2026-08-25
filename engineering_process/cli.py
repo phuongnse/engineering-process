@@ -14,6 +14,7 @@ from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
     ContractError,
+    canonical_json_digest,
     derive_release_version,
     read_json,
     validate_adoption_migration,
@@ -29,6 +30,12 @@ from .contracts import (
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_recommendation,
+    validate_recommendation_resolution,
+    validate_recommendation_review,
+    validate_recommendation_review_assignment,
+    validate_remote_verification_evidence,
+    validate_remote_verification_request,
     validate_release,
     validate_release_change,
     validate_review,
@@ -70,7 +77,9 @@ from .lifecycle import (
     finish_change,
     lifecycle_environment_issues,
     lifecycle_status,
+    ingest_remote_verification,
     register_plan,
+    request_remote_verification,
     start_change,
     start_review,
     submit_review,
@@ -89,6 +98,11 @@ from .publication import (
     validate_evidence_publication,
 )
 from .process_graph import load_process_graph, process_root_from_skills
+from .recommendation import (
+    create_recommendation_resolution,
+    start_recommendation_review,
+    validate_recommendation_chain,
+)
 from .release import validate_release_checkpoint
 from .release_candidate import prepare_release_candidate, render_release_pull_request
 from .skills import validate_skills
@@ -281,6 +295,12 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "improvement-resolution": validate_improvement_resolution,
         "improvement-signal": validate_improvement_signal,
         "plan": validate_plan,
+        "recommendation": validate_recommendation,
+        "recommendation-resolution": validate_recommendation_resolution,
+        "recommendation-review": validate_recommendation_review,
+        "recommendation-review-assignment": validate_recommendation_review_assignment,
+        "remote-verification-evidence": validate_remote_verification_evidence,
+        "remote-verification-request": validate_remote_verification_request,
         "release": validate_release,
         "release-change": validate_release_change,
         "review": validate_review,
@@ -294,6 +314,56 @@ def command_contract_validate(args: argparse.Namespace) -> int:
             path=str(args.path),
         ),
     )
+    return 0
+
+
+def command_recommendation_validate_chain(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = validate_recommendation_chain(
+        args.project_root,
+        args.recommendation,
+        args.assignment,
+        args.review,
+        args.resolution,
+    )
+    status = "passed" if result["allowed"] else "blocked"
+    _emit(
+        args,
+        _result("recommendation validate-chain", status=status, **result),
+    )
+    return 0 if result["allowed"] else 1
+
+
+def command_recommendation_review_start(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = start_recommendation_review(
+        args.project_root,
+        args.recommendation,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+        method=args.method,
+        attested_by=args.attested_by,
+        evidence=args.attestation_evidence,
+    )
+    _emit(args, _result("recommendation review start", **result))
+    return 0
+
+
+def command_recommendation_resolution(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    result = create_recommendation_resolution(
+        args.project_root,
+        args.recommendation,
+        args.assignment,
+        args.review,
+        selected_option_id=args.selected_option,
+        owner_id=args.owner_id,
+        owner_evidence_sha256=args.owner_evidence_sha256,
+        selection_rationale_sha256=args.selection_rationale_sha256,
+        output=args.output,
+    )
+    _emit(args, _result("recommendation resolution", **result))
     return 0
 
 
@@ -600,6 +670,53 @@ def command_change_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_change_remote_request(args: argparse.Namespace) -> int:
+    project = _lifecycle_project(args)
+    state, request = request_remote_verification(
+        args.project_root,
+        project,
+        args.change_id,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change remote request",
+            state,
+            checkpoint=request["checkpoint"],
+            comparisonBase=request["comparisonBase"],
+            request=state["remoteVerification"]["request"]["path"],
+            requestSha256=canonical_json_digest(request),
+        ),
+    )
+    return 0
+
+
+def command_change_remote_ingest(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    state, evidence = ingest_remote_verification(
+        args.project_root,
+        args.change_id,
+        args.evidence,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change remote ingest",
+            state,
+            checkpoint=evidence["checkpoint"],
+            evidence=state["remoteVerification"]["evidence"]["path"],
+            artifactCount=len(evidence["artifacts"]),
+        ),
+    )
+    return 0
+
+
 def command_change_review_start(args: argparse.Namespace) -> int:
     _lifecycle_project(args)
     state, assignment = start_review(
@@ -673,6 +790,7 @@ def command_change_status(args: argparse.Namespace) -> int:
         plan=state["plan"],
         implementationActors=state["implementationActors"],
         verification=state["verification"],
+        remoteVerification=state.get("remoteVerification"),
         pendingFindings=state["pendingFindings"],
         reviewAssignment=state["reviewAssignment"],
         review=state["review"],
@@ -1479,6 +1597,12 @@ def build_parser() -> argparse.ArgumentParser:
             "improvement-resolution",
             "improvement-signal",
             "plan",
+            "recommendation",
+            "recommendation-resolution",
+            "recommendation-review",
+            "recommendation-review-assignment",
+            "remote-verification-evidence",
+            "remote-verification-request",
             "release",
             "release-change",
             "review",
@@ -1488,6 +1612,81 @@ def build_parser() -> argparse.ArgumentParser:
     contract_validate.add_argument("path", type=Path)
     _add_json(contract_validate)
     contract_validate.set_defaults(handler=command_contract_validate)
+
+    recommendation = commands.add_parser(
+        "recommendation",
+        help="Validate evidence-valid recommendations and owner resolutions",
+    )
+    recommendation_commands = recommendation.add_subparsers(
+        dest="recommendation_command", required=True
+    )
+    recommendation_validate = recommendation_commands.add_parser(
+        "validate-chain",
+        help="Validate recommendation validity and its independent challenge",
+    )
+    _add_project_root(recommendation_validate)
+    _add_process_root(recommendation_validate)
+    recommendation_validate.add_argument(
+        "--recommendation", type=Path, required=True
+    )
+    recommendation_validate.add_argument("--assignment", type=Path, required=True)
+    recommendation_validate.add_argument("--review", type=Path, required=True)
+    recommendation_validate.add_argument("--resolution", type=Path)
+    _add_json(recommendation_validate)
+    recommendation_validate.set_defaults(
+        handler=command_recommendation_validate_chain
+    )
+    recommendation_review = recommendation_commands.add_parser(
+        "review", help="Register an independent recommendation reviewer"
+    )
+    recommendation_review_commands = recommendation_review.add_subparsers(
+        dest="recommendation_review_command", required=True
+    )
+    recommendation_review_start = recommendation_review_commands.add_parser(
+        "start",
+        help="Reserve a fresh project-global context and create an assignment",
+    )
+    _add_project_root(recommendation_review_start)
+    _add_process_root(recommendation_review_start)
+    _add_actor(recommendation_review_start)
+    recommendation_review_start.add_argument(
+        "--recommendation", type=Path, required=True
+    )
+    recommendation_review_start.add_argument(
+        "--method", choices=("isolated-context", "separate-person"), required=True
+    )
+    recommendation_review_start.add_argument("--attested-by", required=True)
+    recommendation_review_start.add_argument(
+        "--attestation-evidence", required=True
+    )
+    _add_json(recommendation_review_start)
+    recommendation_review_start.set_defaults(
+        handler=command_recommendation_review_start
+    )
+    recommendation_resolution = recommendation_commands.add_parser(
+        "resolution",
+        help="Create a non-authorizing owner resolution for an approved chain",
+    )
+    _add_project_root(recommendation_resolution)
+    _add_process_root(recommendation_resolution)
+    recommendation_resolution.add_argument(
+        "--recommendation", type=Path, required=True
+    )
+    recommendation_resolution.add_argument("--assignment", type=Path, required=True)
+    recommendation_resolution.add_argument("--review", type=Path, required=True)
+    recommendation_resolution.add_argument("--selected-option", required=True)
+    recommendation_resolution.add_argument("--owner-id", required=True)
+    recommendation_resolution.add_argument(
+        "--owner-evidence-sha256", required=True
+    )
+    recommendation_resolution.add_argument(
+        "--selection-rationale-sha256", required=True
+    )
+    recommendation_resolution.add_argument("--output", type=Path, required=True)
+    _add_json(recommendation_resolution)
+    recommendation_resolution.set_defaults(
+        handler=command_recommendation_resolution
+    )
 
     skills = commands.add_parser("skills", help="Validate portable Agent Skills")
     skills_commands = skills.add_subparsers(dest="skills_command", required=True)
@@ -2178,6 +2377,29 @@ def build_parser() -> argparse.ArgumentParser:
     change_verify.add_argument("--change-id", required=True)
     change_verify.add_argument("--profile", required=True)
     change_verify.set_defaults(handler=command_change_verify)
+
+    change_remote = change_commands.add_parser(
+        "remote", help="Bind required exact-checkpoint remote verification"
+    )
+    remote_commands = change_remote.add_subparsers(
+        dest="change_remote_command", required=True
+    )
+    remote_request = remote_commands.add_parser(
+        "request", help="Create an exact no-authority remote verification request"
+    )
+    _add_lifecycle_common(remote_request)
+    _add_actor(remote_request)
+    remote_request.add_argument("--change-id", required=True)
+    remote_request.set_defaults(handler=command_change_remote_request)
+
+    remote_ingest = remote_commands.add_parser(
+        "ingest", help="Validate and bind a complete remote evidence set"
+    )
+    _add_lifecycle_common(remote_ingest)
+    _add_actor(remote_ingest)
+    remote_ingest.add_argument("--change-id", required=True)
+    remote_ingest.add_argument("--evidence", type=Path, required=True)
+    remote_ingest.set_defaults(handler=command_change_remote_ingest)
 
     change_review = change_commands.add_parser(
         "review", help="Run the independent-review gate"

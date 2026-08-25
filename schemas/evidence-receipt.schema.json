@@ -50,7 +50,8 @@
           "minItems": 1,
           "maxItems": 64,
           "items": {"$ref": "#/$defs/verificationArtifact"}
-        }
+        },
+        "remoteVerification": {"$ref": "#/$defs/remoteVerification"}
       }
     }
   },
@@ -76,6 +77,40 @@
         "sourceDigest": {"$ref": "#/$defs/digest"},
         "canonicalDigest": {"$ref": "#/$defs/digest"},
         "sourceText": {"type": "string", "maxLength": 1000000}
+      }
+    },
+    "remoteVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "index", "sourceEvidence", "artifacts"],
+      "properties": {
+        "request": {"$ref": "#/$defs/artifact"},
+        "index": {"$ref": "#/$defs/artifact"},
+        "sourceEvidence": {"$ref": "#/$defs/artifact"},
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/remoteArtifact"}
+        }
+      }
+    },
+    "remoteArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirementId", "selectorId", "archive", "service", "manifest", "verification"],
+      "properties": {
+        "requirementId": {"$ref": "#/$defs/id"},
+        "selectorId": {"$ref": "#/$defs/id"},
+        "archive": {"type": "object"},
+        "service": {"type": "object"},
+        "manifest": {"$ref": "#/$defs/artifact"},
+        "verification": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/verificationArtifact"}
+        }
       }
     }
   }

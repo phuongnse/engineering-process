@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-remote-verification-evidence",
+  "requestSha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "capturedAt": "2026-01-01T00:05:00Z",
+  "artifacts": [
+    {
+      "requirementId": "supported-python-platforms",
+      "selectorId": "linux-python-3-11",
+      "archive": {
+        "path": "linux-python-3-11.zip",
+        "bytes": 1024,
+        "sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "service": {
+        "artifactId": "1234",
+        "name": "example-service-ci-evidence-linux-python-3-11",
+        "sizeInBytes": 1024,
+        "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "runId": "5678",
+        "runAttempt": 1,
+        "runUrl": "https://example.invalid/example/example-service/actions/runs/5678"
+      }
+    }
+  ]
+}

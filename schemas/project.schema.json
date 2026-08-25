@@ -61,6 +61,9 @@
     },
     "impact": {
       "$ref": "#/$defs/impact"
+    },
+    "remoteVerification": {
+      "$ref": "#/$defs/remoteVerification"
     }
   },
   "allOf": [
@@ -70,7 +73,8 @@
         "not": {
           "anyOf": [
             {"required": ["environment"]},
-            {"required": ["impact"]}
+            {"required": ["impact"]},
+            {"required": ["remoteVerification"]}
           ]
         },
         "properties": {
@@ -89,7 +93,12 @@
       "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
       "then": {
         "required": ["environment"],
-        "not": {"required": ["impact"]},
+        "not": {
+          "anyOf": [
+            {"required": ["impact"]},
+            {"required": ["remoteVerification"]}
+          ]
+        },
         "properties": {
           "lifecycle": {
             "not": {"required": ["qualityExtensions"]}
@@ -245,6 +254,87 @@
     }
   ],
   "$defs": {
+    "remoteVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirements"],
+      "properties": {
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/remoteVerificationRequirement"}
+        }
+      }
+    },
+    "remoteVerificationRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "profiles", "execution", "selectors"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "repository", "workflow", "workflowRef"],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$"
+            },
+            "repository": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+            },
+            "workflow": {"type": "string", "minLength": 1, "maxLength": 256},
+            "workflowRef": {"type": "string", "minLength": 1, "maxLength": 512}
+          }
+        },
+        "selectors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/remoteVerificationSelector"}
+        }
+      }
+    },
+    "remoteVerificationSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "runnerOs", "implementation", "pythonMinor"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "runnerOs": {"type": "string", "minLength": 1, "maxLength": 64},
+        "runnerArch": {"type": "string", "minLength": 1, "maxLength": 64},
+        "implementation": {"type": "string", "minLength": 1, "maxLength": 64},
+        "pythonMinor": {
+          "type": "string",
+          "pattern": "^3\\.(?:11|12|13|14)$"
+        }
+      }
+    },
     "check": {
       "type": "object",
       "additionalProperties": false,

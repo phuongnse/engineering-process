@@ -446,12 +446,77 @@ may authorize installing that policy but never substitutes for a missing policy.
 When new evidence exposes multiple materially valid directions or would change
 accepted scope, owner, trust boundary, authority, compatibility, rollout, or
 lifecycle order, the coordinator stops dependent mutation and asks the project owner.
-It presents evidence, the invariant, real options, trade-offs, and a recommendation;
-the accepted decision is recorded before work resumes. Bounded implementation details
+Before presenting a material recommendation, it records every hard invariant,
+assumption, and option in a bounded recommendation artifact. `processctl` derives the
+valid, invalid, and unproven sets; cost or minimal-change optimization applies only to
+the complete valid set. A distinct actor and fresh context independently challenge
+assumption evidence, invariant tracing, option classification, and terminal ordering.
+If the exact digest-bound chain is not approved or contains no valid option, the
+result is blocked rather than a recommendation. Bounded implementation details
 already decided by the contract continue autonomously.
 
+Validate the recommendation, challenge, and optional owner resolution as one chain:
+
+~~~text
+processctl contract validate --kind recommendation recommendation.json
+processctl recommendation review start --project-root . \
+  --recommendation recommendation.json \
+  --actor <reviewer> --context <fresh-context> --actor-kind agent \
+  --method isolated-context --attested-by <host> \
+  --attestation-evidence <bounded-attestation>
+processctl contract validate --kind recommendation-review-assignment \
+  .process/runs/recommendations/<decision-id>/review-request-<ids>.json
+processctl contract validate --kind recommendation-review recommendation-review.json
+processctl recommendation validate-chain --project-root . \
+  --recommendation recommendation.json \
+  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
+  --review recommendation-review.json
+processctl recommendation resolution --project-root . \
+  --recommendation recommendation.json \
+  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
+  --review recommendation-review.json \
+  --selected-option <valid-option-id> --owner-id <owner-id> \
+  --owner-evidence-sha256 sha256:<digest> \
+  --selection-rationale-sha256 sha256:<digest> \
+  --output recommendation-resolution.json
+processctl recommendation validate-chain --project-root . \
+  --recommendation recommendation.json \
+  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
+  --review recommendation-review.json \
+  --resolution recommendation-resolution.json
+~~~
+
+The review-start command reserves the context across lifecycle and recommendation
+reviews before emitting its exact assignment. Resolution creation refuses symlinked,
+existing, or concurrently created output instead of redirecting or replacing it. The
+resolution records a selected valid option but grants no lifecycle completion, merge,
+release, deployment, or adoption authority. Those owning gates remain separate. The
+accepted decision is recorded before dependent work resumes.
+
+When a schema-3 change selects a project-owned `requiredEvidence` id, local profiles
+alone do not advance it to review. Create the exact no-authority request, run the
+project adapter, and ingest the complete supplemental set first:
+
+~~~text
+processctl change remote request --project-root . --change-id issue-123 \
+  --actor worker --context worker-session --actor-kind agent
+python verification/run_remote_verification.py --project-root . \
+  --change-id issue-123 --actor worker --context worker-session \
+  --actor-kind agent --repository owner/repository \
+  --failure-output /durable/receipts/issue-123-remote-failure.json
+processctl change status --project-root . --change-id issue-123
+~~~
+
+The adapter publishes a uniquely named exact-checkpoint verification tag, never a
+branch or PR, dispatches the protected-base workflow, validates service and bundle
+digests, calls `change remote ingest`, and deletes the tag in every terminal path.
+Downloaded temporary archives are deleted after ingestion; failed evidence is moved
+to the explicit durable failure location before cleanup. Remote artifacts and their
+service ids remain lifecycle evidence, not merge, release, deployment, or adoption
+authority.
+
 The canonical publication order is stricter than a PR-first workflow: implementation
-and every required profile pass on a clean checkpoint; a consumer-selected independent
+and every required local and remote profile pass on a clean checkpoint; a consumer-selected independent
 agent or human semantically reviews that checkpoint; findings repeat implementation,
 complete verification, and fresh review until approved; `change finish` records
 completion; only then may automation push and create the PR. Static policy/secret/pin
@@ -683,7 +748,8 @@ fingerprint, source tree, or publication range.
   exclusively by their hash-locked `requirements/process.txt`. The action invokes the
   producer-owned installer from its immutable action checkout and never downloads or
   executes helper source from the consumer branch.
-- Versioned JSON schemas define change, plan, verification, review, lifecycle,
+- Versioned JSON schemas define change, plan, verification, review, recommendation,
+  independent recommendation assignment and challenge, owner resolution, lifecycle,
   completion-related artifacts, release-change fragments, and the release
   classification contract. The generated Release PR gate binds that contract to the
   exact SemVer increment, package version, latest reachable prior tag, reviewed head,

@@ -71,6 +71,16 @@ are preserved with review evidence. These reports supplement the public N-1
 lifecycle authority; code under verification never promotes itself to lifecycle
 authority.
 
+Projects declare named remote requirements and their exact profile and
+platform/runtime selector sets; change contracts select requirement ids. A lifecycle
+request binds those expanded requirements to one clean checkpoint, comparison base,
+workspace fingerprint, and immutable base-owned workflow checkpoint without granting
+review or delivery authority. Provider adapters remain project-owned and transport
+only the exact request. Core ingests local artifact bytes, verifies service and
+content digests plus one-to-one selector coverage, and keeps the lifecycle
+implementing until every local profile and remote requirement passes. A provider job
+conclusion or later PR check is not lifecycle evidence by itself.
+
 ## Failure to invariant
 
 A validated command, gate, release, adoption, or external-integration failure must
@@ -96,6 +106,27 @@ attempts are bounded, idempotent, diagnostic-preserving, and stop on determinist
 failure. Source, branch, version, credentials, and controls are never changed merely
 to cause another attempt. Independent review treats violation of these ownership and
 evidence boundaries as completion-blocking.
+
+## Recommendation validity
+
+A material owner decision derives recommendation eligibility before optimization.
+Every option assesses every governing hard invariant and references only proven or
+explicitly unproven assumptions. Any violated invariant makes the option invalid; any
+unproven invariant or referenced assumption makes it unproven. Only the complete
+derived valid set may enter cost, convenience, minimal-change, rollout, or other
+secondary ranking.
+
+High-risk recommendations require a process-created digest-bound review assignment.
+Before review, the reviewer method must match its actor kind, a non-participant host
+must attest independence, and the context is atomically reserved in the same
+project-global registry used by lifecycle review. The assigned independent
+adversarial review covers assumption evidence, invariant tracing, option
+classification, and terminal ordering.
+A missing, stale, incomplete, self-attested, context-reused, changes-requested,
+invalid, or unproven chain cannot produce a recommendation. When no valid option
+exists, the outcome is `decision-required`, not an optimized compromise. Owner
+resolution may select only a valid option and grants no lifecycle completion, merge,
+release, deployment, or adoption authority.
 
 ## Resource and generated-state policy
 

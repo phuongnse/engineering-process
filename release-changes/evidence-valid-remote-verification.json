@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "evidence-valid-remote-verification",
+  "type": "breaking",
+  "surfaces": [
+    "cli",
+    "governance",
+    "lifecycle",
+    "recommendation",
+    "schema",
+    "skills",
+    "verification"
+  ],
+  "rationale": "Require evidence-derived valid recommendations with stateful independent challenge, and add project-owned exact-checkpoint remote evidence requests whose complete selector set must be ingested before review or completion.",
+  "schemaImpact": "additive",
+  "migration": "After immutable release and adoption, route every new material owner decision through recommendation review and resolution. Projects that need remote claims separately add named remoteVerification requirements to the target-version project manifest and select them through requiredEvidence on new change contracts; historical decisions and completed lifecycles require no backfill."
+}

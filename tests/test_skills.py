@@ -85,6 +85,37 @@ class SkillTests(unittest.TestCase):
         self.assertNotIn("human merge boundary", run_change.lower())
         self.assertNotIn("do not merge on behalf", publish.lower())
 
+    def test_material_recommendations_validate_invariants_before_optimization(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        execution = (skills / "run-change" / "references" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+        assess = (skills / "assess-design" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        production = (PROCESS_ROOT / "PRODUCTION_STANDARD.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (execution, assess, production):
+            normalized = " ".join(text.lower().split())
+            self.assertIn("invariant", normalized)
+            self.assertIn("optimization", normalized)
+            self.assertIn("invalid", normalized)
+            self.assertIn("unproven", normalized)
+            self.assertIn("independent adversarial", normalized)
+        normalized_execution = " ".join(execution.split())
+        self.assertIn(
+            "processctl recommendation validate-chain", normalized_execution
+        )
+        self.assertIn(
+            "processctl recommendation review start", normalized_execution
+        )
+        self.assertIn("project-global context", normalized_execution)
+        self.assertIn(
+            "grants no lifecycle completion", " ".join(production.split())
+        )
+
     def test_digest_changes_with_instruction_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

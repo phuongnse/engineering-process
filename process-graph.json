@@ -36,7 +36,7 @@
       "id": "implementing",
       "ownerSkill": "verify-change",
       "actor": "automation",
-      "commands": ["change implement", "change verify"],
+      "commands": ["change implement", "change remote ingest", "change remote request", "change verify"],
       "transitions": [
         {"result": "profile-passed", "nextState": "implementing", "nextSkill": "verify-change"},
         {"result": "all-required-passed", "nextState": "verified", "nextSkill": "review-change"},

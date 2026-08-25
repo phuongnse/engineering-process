@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from .contracts import (
     validate_improvement_catalog,
     validate_improvement_disposition,
     validate_plan,
+    validate_remote_verification_request,
     validate_review,
     validate_verification,
 )
@@ -33,6 +35,11 @@ from .environment import require_environment_profile
 from .git import run_git
 from .lifecycle_routes import INTERNAL_PHASES, lifecycle_next_state
 from .runner import run_profile, source_state
+from .remote_verification import (
+    build_remote_verification_request,
+    read_remote_evidence_document,
+    validate_remote_evidence_set,
+)
 
 
 PHASES = set(INTERNAL_PHASES)
@@ -243,11 +250,11 @@ def _write_atomic(path: Path, document: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def _reserve_review_context(
+def reserve_review_context(
     project_root: Path,
     state: dict[str, Any],
     reviewer: dict[str, str],
-) -> None:
+) -> dict[str, Any]:
     context_digest = hashlib.sha256(
         reviewer["contextId"].encode("utf-8")
     ).hexdigest()
@@ -300,6 +307,58 @@ def _reserve_review_context(
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+    return record
+
+
+def review_context_reservation(
+    project_root: Path,
+    context_id: str,
+) -> dict[str, Any]:
+    if not context_id or context_id != context_id.strip() or len(context_id) > 256:
+        raise ContractError("review context id must be a bounded non-empty value")
+    context_digest = hashlib.sha256(context_id.encode("utf-8")).hexdigest()
+    path = _runs_root(project_root) / ".review-contexts" / f"{context_digest}.json"
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{path}: cannot inspect review context reservation: {error}"
+        ) from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise ContractError("review context reservation must be a regular file")
+    document = read_json(path)
+    try:
+        after = path.lstat()
+    except OSError as error:
+        raise ContractError(
+            f"{path}: cannot recheck review context reservation: {error}"
+        ) from error
+    if (
+        after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+    ):
+        raise ContractError("review context reservation changed while reading")
+    if not isinstance(document, dict):
+        raise ContractError("review context reservation must be an object")
+    expected_keys = {
+        "schemaVersion",
+        "contextDigest",
+        "actorId",
+        "kind",
+        "changeId",
+        "cycle",
+        "reservedAt",
+    }
+    if set(document) != expected_keys:
+        raise ContractError("review context reservation has an unexpected contract")
+    if document["schemaVersion"] != 1:
+        raise ContractError("review context reservation schemaVersion must be 1")
+    if document["contextDigest"] != f"sha256:{context_digest}":
+        raise ContractError("review context reservation digest does not match context")
+    return document
 
 
 def _copy_document(
@@ -374,7 +433,9 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         "history",
     }
     missing = sorted(required - set(state))
-    extra = sorted(set(state) - required - {"improvements"})
+    extra = sorted(
+        set(state) - required - {"improvements", "remoteVerification"}
+    )
     if missing or extra:
         detail = []
         if missing:
@@ -394,6 +455,42 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         raise ContractError(f"{path}.history: must not be empty")
     if not isinstance(state["pendingFindings"], list):
         raise ContractError(f"{path}.pendingFindings: must be an array")
+    remote = state.get("remoteVerification")
+    if remote is not None:
+        if not isinstance(remote, dict) or set(remote) != {
+            "requiredEvidence",
+            "request",
+            "evidence",
+        }:
+            raise ContractError(f"{path}.remoteVerification: invalid fields")
+        required_evidence = remote["requiredEvidence"]
+        if (
+            not isinstance(required_evidence, list)
+            or not required_evidence
+            or required_evidence != sorted(set(required_evidence))
+            or any(
+                not isinstance(identifier, str)
+                or PROFILE_PATTERN.fullmatch(identifier) is None
+                for identifier in required_evidence
+            )
+        ):
+            raise ContractError(
+                f"{path}.remoteVerification.requiredEvidence: invalid requirements"
+            )
+        for field in ("request", "evidence"):
+            reference = remote[field]
+            if reference is None:
+                continue
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"path", "digest"}
+                or not isinstance(reference["path"], str)
+                or not isinstance(reference["digest"], str)
+                or DIGEST_PATTERN.fullmatch(reference["digest"]) is None
+            ):
+                raise ContractError(
+                    f"{path}.remoteVerification.{field}: invalid artifact reference"
+                )
     improvements = state.get("improvements", [])
     if not isinstance(improvements, list) or len(improvements) > 256:
         raise ContractError(f"{path}.improvements: must contain at most 256 cases")
@@ -1109,6 +1206,27 @@ def _start_change_unlocked(
             f"change {change_id} omits project lifecycle profiles: "
             f"{', '.join(missing_baseline)}"
         )
+    required_evidence = document.get("requiredEvidence", [])
+    available_remote = project.remote_verification or {}
+    unknown_evidence = sorted(set(required_evidence) - set(available_remote))
+    if unknown_evidence:
+        raise ContractError(
+            f"change {change_id} requires undefined remote evidence: "
+            + ", ".join(unknown_evidence)
+        )
+    remote_profile_gaps = sorted(
+        {
+            profile
+            for requirement_id in required_evidence
+            for profile in available_remote[requirement_id].profiles
+            if profile not in document["requiredProfiles"]
+        }
+    )
+    if remote_profile_gaps:
+        raise ContractError(
+            f"change {change_id} remote evidence uses omitted profiles: "
+            + ", ".join(remote_profile_gaps)
+        )
     assessed_dimensions = {
         assessment["dimension"] for assessment in document["quality"]["assessments"]
     }
@@ -1139,6 +1257,15 @@ def _start_change_unlocked(
         "plan": None,
         "implementationActors": [],
         "verification": [],
+        "remoteVerification": (
+            {
+                "requiredEvidence": list(required_evidence),
+                "request": None,
+                "evidence": None,
+            }
+            if required_evidence
+            else None
+        ),
         "pendingFindings": [],
         "reviewAssignment": None,
         "review": None,
@@ -1270,6 +1397,9 @@ def _begin_implementation_unlocked(
         state["cycle"] += 1
         state["implementationActors"] = []
         state["verification"] = []
+        if state.get("remoteVerification") is not None:
+            state["remoteVerification"]["request"] = None
+            state["remoteVerification"]["evidence"] = None
         state["reviewAssignment"] = None
         state["review"] = None
         _event(
@@ -1287,6 +1417,9 @@ def _begin_implementation_unlocked(
         state["cycle"] += 1
         state["implementationActors"] = []
         state["verification"] = []
+        if state.get("remoteVerification") is not None:
+            state["remoteVerification"]["request"] = None
+            state["remoteVerification"]["evidence"] = None
         state["reviewAssignment"] = None
         state["review"] = None
     if actor not in state["implementationActors"]:
@@ -1318,6 +1451,352 @@ def _verification_eligibility_issues(report: dict[str, Any]) -> list[str]:
     if report["workspaceFingerprint"] != report["completedWorkspaceFingerprint"]:
         issues.append("workspace-fingerprint-changed-during-verification")
     return issues
+
+
+def _required_profiles_current(
+    state: dict[str, Any], contract: dict[str, Any]
+) -> bool:
+    required = set(contract["requiredProfiles"])
+    if {item["profile"] for item in state["verification"]} != required:
+        return False
+    checkpoints = {item["checkpoint"] for item in state["verification"]}
+    fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
+    return len(checkpoints) == 1 and len(fingerprints) == 1
+
+
+def _remote_evidence_ready(
+    project_root: Path,
+    state: dict[str, Any],
+    *,
+    source: dict[str, Any] | None = None,
+) -> bool:
+    remote = state.get("remoteVerification")
+    if remote is None:
+        return True
+    request_reference = remote.get("request")
+    evidence_reference = remote.get("evidence")
+    if not isinstance(request_reference, dict) or not isinstance(
+        evidence_reference, dict
+    ):
+        return False
+    request = read_json(_artifact_path(project_root, request_reference))
+    validate_remote_verification_request(request, "registered remote request")
+    evidence = read_json(_artifact_path(project_root, evidence_reference))
+    required_keys = {
+        "schemaVersion",
+        "kind",
+        "requestSha256",
+        "checkpoint",
+        "comparisonBase",
+        "workspaceFingerprint",
+        "sourceEvidence",
+        "artifacts",
+    }
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != required_keys
+        or evidence["schemaVersion"] != 1
+        or evidence["kind"]
+        != "engineering-process-ingested-remote-verification"
+        or evidence["requestSha256"] != canonical_json_digest(request)
+        or evidence["checkpoint"] != request["checkpoint"]
+        or evidence["comparisonBase"] != request["comparisonBase"]
+        or evidence["workspaceFingerprint"] != request["workspaceFingerprint"]
+    ):
+        raise ContractError("registered remote verification evidence is stale")
+    _artifact_path(project_root, evidence["sourceEvidence"])
+    expected = {
+        (requirement["id"], selector["id"])
+        for requirement in request["requirements"]
+        for selector in requirement["selectors"]
+    }
+    artifacts = evidence["artifacts"]
+    if not isinstance(artifacts, list):
+        raise ContractError("registered remote verification artifacts are invalid")
+    provided: set[tuple[str, str]] = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "requirementId",
+            "selectorId",
+            "archive",
+            "service",
+            "manifest",
+            "verification",
+        }:
+            raise ContractError("registered remote verification artifact is invalid")
+        provided.add((artifact["requirementId"], artifact["selectorId"]))
+        _artifact_path(project_root, artifact["manifest"])
+        verification = artifact["verification"]
+        if not isinstance(verification, list):
+            raise ContractError(
+                "registered remote verification report references are invalid"
+            )
+        for reference in verification:
+            report = read_json(_artifact_path(project_root, reference))
+            validate_verification(report, "registered remote verification report")
+            if (
+                report.get("status") != "passed"
+                or report.get("checkpoint") != request["checkpoint"]
+                or report.get("workspaceFingerprint")
+                != request["workspaceFingerprint"]
+            ):
+                raise ContractError(
+                    "registered remote verification report is stale or failed"
+                )
+    if provided != expected:
+        raise ContractError("registered remote verification coverage is incomplete")
+    if source is None:
+        source = source_state(project_root)
+    if (
+        source.get("dirty") is not False
+        or source.get("checkpoint") != request["checkpoint"]
+        or source.get("fingerprint") != request["workspaceFingerprint"]
+    ):
+        raise ContractError("registered remote verification source is stale")
+    return True
+
+
+def _request_remote_verification_unlocked(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "implementing")
+    contract = _contract(project_root, state)
+    _plan(project_root, state)
+    actor = _actor(actor_id, context_id, kind)
+    if actor not in state["implementationActors"]:
+        raise ContractError(
+            "only a registered implementation actor may request remote verification"
+        )
+    remote = state.get("remoteVerification")
+    if remote is None:
+        raise ContractError(f"change {change_id} requires no remote evidence")
+    source = source_state(project_root)
+    if (
+        source.get("dirty") is not False
+        or source.get("checkpoint") is None
+        or source.get("fingerprint") is None
+    ):
+        raise ContractError(
+            "remote verification requires a clean immutable source checkpoint"
+        )
+    request = build_remote_verification_request(
+        project,
+        contract,
+        cycle=state["cycle"],
+        checkpoint=source["checkpoint"],
+        comparison_base=state["comparisonBase"],
+        workspace_fingerprint=source["fingerprint"],
+    )
+    existing = remote.get("request")
+    if isinstance(existing, dict):
+        current = read_json(_artifact_path(project_root, existing))
+        validate_remote_verification_request(current, "registered remote request")
+        current_identity = {
+            name: current[name]
+            for name in (
+                "changeId",
+                "cycle",
+                "project",
+                "checkpoint",
+                "comparisonBase",
+                "workspaceFingerprint",
+                "requirements",
+                "controls",
+            )
+        }
+        request_identity = {
+            name: request[name]
+            for name in current_identity
+        }
+        if current_identity == request_identity:
+            return state, current
+    destination = (
+        _run_root(project_root, change_id)
+        / "remote-verification"
+        / f"cycle-{state['cycle']}-request.json"
+    )
+    _write_atomic(destination, request)
+    reference = {
+        "path": _relative(project_root, destination),
+        "digest": _digest_file(destination),
+    }
+    remote["request"] = reference
+    remote["evidence"] = None
+    _event(
+        state,
+        "remote-verification-requested",
+        actor,
+        cycle=state["cycle"],
+        request=reference,
+        checkpoint=request["checkpoint"],
+        requiredEvidence=remote["requiredEvidence"],
+    )
+    _save_state(project_root, state)
+    return state, request
+
+
+def _ingest_remote_verification_unlocked(
+    project_root: Path,
+    change_id: str,
+    evidence_path: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "implementing")
+    contract = _contract(project_root, state)
+    _plan(project_root, state)
+    actor = _actor(actor_id, context_id, kind)
+    if actor not in state["implementationActors"]:
+        raise ContractError(
+            "only a registered implementation actor may ingest remote verification"
+        )
+    remote = state.get("remoteVerification")
+    if remote is None or not isinstance(remote.get("request"), dict):
+        raise ContractError("remote verification request is missing")
+    request = read_json(_artifact_path(project_root, remote["request"]))
+    validate_remote_verification_request(request, "registered remote request")
+    source = source_state(project_root)
+    if (
+        source.get("dirty") is not False
+        or source.get("checkpoint") != request["checkpoint"]
+        or source.get("fingerprint") != request["workspaceFingerprint"]
+    ):
+        raise ContractError("remote verification request is stale for current source")
+    observed_evidence = read_remote_evidence_document(evidence_path)
+    try:
+        source_evidence, bundles = validate_remote_evidence_set(
+            request, evidence_path
+        )
+    except ContractError as error:
+        rejection = {
+            "schemaVersion": 1,
+            "kind": "engineering-process-remote-verification-rejection",
+            "observedAt": _timestamp(),
+            "requestSha256": canonical_json_digest(request),
+            "sourceEvidenceSha256": canonical_json_digest(observed_evidence),
+            "failureSha256": _digest_bytes(str(error).encode("utf-8")),
+            "controls": {
+                "grantsLifecycleCompletion": False,
+                "grantsMerge": False,
+                "grantsRelease": False,
+                "grantsReview": False,
+            },
+        }
+        rejection_path = (
+            _run_root(project_root, change_id)
+            / "improvements"
+            / "evidence"
+            / (
+                f"remote-cycle-{state['cycle']}-"
+                f"{rejection['failureSha256'].removeprefix('sha256:')[:16]}.json"
+            )
+        )
+        _write_atomic(rejection_path, rejection)
+        evidence_reference = {
+            "path": _relative(project_root, rejection_path),
+            "digest": _digest_file(rejection_path),
+        }
+        case = _observe_improvement_case(
+            state,
+            trigger="external-integration",
+            evidence=evidence_reference,
+            identity=(
+                f"remote:{canonical_json_digest(request)}:"
+                f"{rejection['failureSha256']}"
+            ),
+        )
+        _event(
+            state,
+            "remote-verification-rejected",
+            actor,
+            cycle=state["cycle"],
+            evidence=evidence_reference,
+            improvementCase=case["id"],
+        )
+        _transition_phase(state, "failure")
+        _save_state(project_root, state)
+        raise
+    root = (
+        _run_root(project_root, change_id)
+        / "remote-verification"
+        / f"cycle-{state['cycle']}"
+    )
+    source_path = root / "source-evidence.json"
+    _write_atomic(source_path, source_evidence)
+    source_reference = {
+        "path": _relative(project_root, source_path),
+        "digest": _digest_file(source_path),
+    }
+    stored_artifacts: list[dict[str, Any]] = []
+    for bundle in bundles:
+        bundle_root = root / bundle["requirementId"] / bundle["selectorId"]
+        manifest_path = bundle_root / "manifest.json"
+        _write_atomic(manifest_path, bundle["manifest"])
+        manifest_reference = {
+            "path": _relative(project_root, manifest_path),
+            "digest": _digest_file(manifest_path),
+        }
+        reports: list[dict[str, Any]] = []
+        for name, report in sorted(bundle["reports"].items()):
+            report_path = bundle_root / name
+            _write_atomic(report_path, report)
+            reports.append(
+                {
+                    "profile": report["profile"],
+                    "path": _relative(project_root, report_path),
+                    "digest": _digest_file(report_path),
+                }
+            )
+        stored_artifacts.append(
+            {
+                "requirementId": bundle["requirementId"],
+                "selectorId": bundle["selectorId"],
+                "archive": bundle["archive"],
+                "service": bundle["service"],
+                "manifest": manifest_reference,
+                "verification": reports,
+            }
+        )
+    index = {
+        "schemaVersion": 1,
+        "kind": "engineering-process-ingested-remote-verification",
+        "requestSha256": canonical_json_digest(request),
+        "checkpoint": request["checkpoint"],
+        "comparisonBase": request["comparisonBase"],
+        "workspaceFingerprint": request["workspaceFingerprint"],
+        "sourceEvidence": source_reference,
+        "artifacts": stored_artifacts,
+    }
+    index_path = root / "index.json"
+    _write_atomic(index_path, index)
+    reference = {
+        "path": _relative(project_root, index_path),
+        "digest": _digest_file(index_path),
+    }
+    remote["evidence"] = reference
+    if _required_profiles_current(state, contract):
+        _transition_phase(state, "all-required-passed")
+    _event(
+        state,
+        "remote-verification-ingested",
+        actor,
+        cycle=state["cycle"],
+        evidence=reference,
+        artifactCount=len(stored_artifacts),
+        phase=state["phase"],
+    )
+    _save_state(project_root, state)
+    return state, index
 
 
 def _verify_change_unlocked(
@@ -1425,7 +1904,12 @@ def _verify_change_unlocked(
     required_profiles = set(contract["requiredProfiles"])
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
-    if required_profiles <= current_profiles and len(checkpoints) == 1 and len(fingerprints) == 1:
+    if (
+        required_profiles <= current_profiles
+        and len(checkpoints) == 1
+        and len(fingerprints) == 1
+        and _remote_evidence_ready(project_root, state)
+    ):
         _transition_phase(state, "all-required-passed")
     else:
         _transition_phase(state, "profile-passed")
@@ -1499,6 +1983,10 @@ def _start_review_unlocked(
         or fingerprints != {source["fingerprint"]}
     ):
         raise ContractError("review cannot start because verification evidence is stale")
+    if not _remote_evidence_ready(project_root, state, source=source):
+        raise ContractError(
+            "review cannot start before required remote verification evidence passes"
+        )
     assignment = {
         "changeId": change_id,
         "cycle": state["cycle"],
@@ -1514,9 +2002,10 @@ def _start_review_unlocked(
         "contract": state["contract"],
         "plan": state["plan"],
         "verification": state["verification"],
+        "remoteVerification": state.get("remoteVerification"),
         "pendingFindings": state["pendingFindings"],
     }
-    _reserve_review_context(project_root, state, reviewer)
+    reserve_review_context(project_root, state, reviewer)
     assignment_path = _run_root(project_root, change_id) / f"review-request-{state['cycle']}.json"
     _write_atomic(assignment_path, assignment)
     assignment["path"] = _relative(project_root, assignment_path)
@@ -1682,6 +2171,10 @@ def _finish_change_unlocked(
         or source["fingerprint"] != review["workspaceFingerprint"]
     ):
         raise ContractError("approved review is stale for the current source")
+    if not _remote_evidence_ready(project_root, state, source=source):
+        raise ContractError(
+            "completion requires current passing remote verification evidence"
+        )
     for case in state["improvements"]:
         _require_producer_catalog_activation(project_root, state, case)
     required = set(contract["requiredProfiles"])
@@ -1710,6 +2203,11 @@ def _finish_change_unlocked(
         "contract": state["contract"],
         "plan": state["plan"],
         "verification": state["verification"],
+        "remoteVerification": (
+            state["remoteVerification"]["evidence"]
+            if state.get("remoteVerification") is not None
+            else None
+        ),
         "review": state["review"],
         "improvements": [
             {
@@ -1764,6 +2262,16 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
             _artifact_path(project_root, evidence)
         except ContractError as error:
             issues.append(str(error))
+    remote = state.get("remoteVerification")
+    if remote is not None:
+        for name in ("request", "evidence"):
+            artifact = remote.get(name)
+            if artifact is None:
+                continue
+            try:
+                _artifact_path(project_root, artifact)
+            except ContractError as error:
+                issues.append(str(error))
     improvement_cases: list[dict[str, Any]] = []
     for case in state["improvements"]:
         try:
@@ -1841,6 +2349,11 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
             or fingerprints != {source["fingerprint"]}
         ):
             issues.append("current source no longer matches lifecycle verification")
+        try:
+            if not _remote_evidence_ready(project_root, state, source=source):
+                issues.append("required remote verification evidence is missing")
+        except ContractError as error:
+            issues.append(str(error))
     return {
         **state,
         "current": not issues,
@@ -2400,6 +2913,46 @@ def verify_change(
             project,
             change_id,
             profile,
+            actor_id=actor_id,
+            context_id=context_id,
+            kind=kind,
+        )
+
+
+def request_remote_verification(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with _change_lock(project_root, change_id):
+        return _request_remote_verification_unlocked(
+            project_root,
+            project,
+            change_id,
+            actor_id=actor_id,
+            context_id=context_id,
+            kind=kind,
+        )
+
+
+def ingest_remote_verification(
+    project_root: Path,
+    change_id: str,
+    evidence_path: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with _change_lock(project_root, change_id):
+        return _ingest_remote_verification_unlocked(
+            project_root,
+            change_id,
+            evidence_path,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,

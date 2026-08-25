@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-recommendation-review",
+  "decisionId": "remote-evidence-ordering",
+  "recommendationSha256": "sha256:137a6ce0094d5bbefce305c264d4523edb392d213be91095f78517e8fed15ed7",
+  "assignmentSha256": "sha256:dd4a80061fa1816e10851b996ae4055f0aaecb40ef448b190b0bc9ab42a94115",
+  "reviewer": {
+    "actorId": "independent-decision-reviewer",
+    "contextId": "fresh-decision-review-context",
+    "kind": "agent"
+  },
+  "challengeAssessments": [
+    {
+      "category": "assumption-evidence",
+      "status": "verified",
+      "evidence": "Every referenced assumption is proven and evidence-bound."
+    },
+    {
+      "category": "invariant-trace",
+      "status": "verified",
+      "evidence": "Both options assess every governing invariant exactly once."
+    },
+    {
+      "category": "option-classification",
+      "status": "verified",
+      "evidence": "The completion-first option is invalid and the evidence-first option is valid."
+    },
+    {
+      "category": "terminal-ordering",
+      "status": "verified",
+      "evidence": "The recommended path places platform evidence before review and completion."
+    }
+  ],
+  "invariantAssessments": [
+    {
+      "invariantId": "acceptance-evidence-before-terminal-claim",
+      "status": "verified",
+      "evidence": "The invariant is authoritative and correctly traced to both options."
+    },
+    {
+      "invariantId": "recommendation-validity-before-optimization",
+      "status": "verified",
+      "evidence": "Only the complete derived valid option set is eligible."
+    }
+  ],
+  "optionAssessments": [
+    {
+      "optionId": "complete-before-remote-evidence",
+      "status": "verified",
+      "evidence": "Its terminal ordering directly violates the evidence invariant."
+    },
+    {
+      "optionId": "verify-before-completion",
+      "status": "verified",
+      "evidence": "It satisfies both invariants with a proven transport assumption."
+    }
+  ],
+  "verdict": "approved",
+  "findings": []
+}

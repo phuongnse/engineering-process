@@ -51,7 +51,12 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
     "implementing": {
         "ownerSkill": "verify-change",
         "actor": "automation",
-        "commands": ["change implement", "change verify"],
+        "commands": [
+            "change implement",
+            "change remote ingest",
+            "change remote request",
+            "change verify",
+        ],
         "transitions": {
             "all-required-passed": "review-change",
             "failure": "evolve-process",

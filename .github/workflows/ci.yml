@@ -7,6 +7,35 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      remote_source_ref:
+        description: Exact verification tag; empty keeps the ordinary main run
+        required: false
+        type: string
+      remote_change_id:
+        description: Exact lifecycle change id
+        required: false
+        type: string
+      remote_checkpoint:
+        description: Exact candidate checkpoint
+        required: false
+        type: string
+      remote_comparison_base:
+        description: Exact protected workflow/base checkpoint
+        required: false
+        type: string
+      remote_request_sha256:
+        description: Canonical remote verification request digest
+        required: false
+        type: string
+      remote_workflow_sha:
+        description: Exact protected workflow checkpoint expected by the request
+        required: false
+        type: string
+      remote_bootstrap_authorization_sha256:
+        description: One-time owner-decision digest for the scoped introduction bootstrap
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -44,7 +73,41 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.remote_source_ref || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Validate exact remote verification dispatch
+        if: ${{ inputs.remote_source_ref != '' }}
+        env:
+          REMOTE_SOURCE_REF: ${{ inputs.remote_source_ref }}
+          REMOTE_CHANGE_ID: ${{ inputs.remote_change_id }}
+          REMOTE_CHECKPOINT: ${{ inputs.remote_checkpoint }}
+          REMOTE_COMPARISON_BASE: ${{ inputs.remote_comparison_base }}
+          REMOTE_REQUEST_SHA256: ${{ inputs.remote_request_sha256 }}
+          REMOTE_WORKFLOW_SHA: ${{ inputs.remote_workflow_sha }}
+          ACTUAL_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REMOTE_BOOTSTRAP_AUTHORIZATION_SHA256: ${{ inputs.remote_bootstrap_authorization_sha256 }}
+        run: |
+          git show "$REMOTE_WORKFLOW_SHA:verification/validate_remote_verification_dispatch.py" \
+            > "$RUNNER_TEMP/validate-remote-verification-dispatch.py"
+          bootstrap_args=()
+          if test -n "$REMOTE_BOOTSTRAP_AUTHORIZATION_SHA256"; then
+            bootstrap_args=(
+              --bootstrap-authorization-sha256
+              "$REMOTE_BOOTSTRAP_AUTHORIZATION_SHA256"
+            )
+          fi
+          python "$RUNNER_TEMP/validate-remote-verification-dispatch.py" \
+            --project-root . \
+            --source-ref "$REMOTE_SOURCE_REF" \
+            --change-id "$REMOTE_CHANGE_ID" \
+            --checkpoint "$REMOTE_CHECKPOINT" \
+            --comparison-base "$REMOTE_COMPARISON_BASE" \
+            --request-sha256 "$REMOTE_REQUEST_SHA256" \
+            --expected-workflow-sha "$REMOTE_WORKFLOW_SHA" \
+            --actual-workflow-sha "$ACTUAL_WORKFLOW_SHA" \
+            --event-name "$EVENT_NAME" \
+            "${bootstrap_args[@]}"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -177,8 +240,8 @@ jobs:
           --runner-arch "$RUNNER_ARCH"
           --triggered-by "$GITHUB_ACTOR"
         env:
-          CI_CHECKPOINT: ${{ github.event.pull_request.head.sha || github.sha }}
-          CI_COMPARISON_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_CHECKPOINT: ${{ inputs.remote_checkpoint || github.event.pull_request.head.sha || github.sha }}
+          CI_COMPARISON_BASE: ${{ inputs.remote_comparison_base || github.event.pull_request.base.sha || github.event.before }}
           CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
 
       - name: Upload supplemental verification evidence
