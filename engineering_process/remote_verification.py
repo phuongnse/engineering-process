@@ -390,7 +390,6 @@ def _validated_bundle(
             or report["sourceChangedDuringVerification"] is not False
             or any(
                 check["status"] != "passed"
-                or check["outputTruncated"] is not False
                 or check["streamOutputTruncated"] is not False
                 or check["diagnostics"] != {
                     "policy": "forbid-warning-error",

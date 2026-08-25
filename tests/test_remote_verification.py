@@ -250,6 +250,8 @@ class RemoteVerificationTests(unittest.TestCase):
         reports: dict[str, dict],
         *,
         diagnostics_failure: bool = False,
+        output_truncated: bool = False,
+        stream_truncated: bool = False,
     ) -> Path:
         requirement = request["requirements"][0]
         selector = requirement["selectors"][0]
@@ -259,6 +261,8 @@ class RemoteVerificationTests(unittest.TestCase):
         entries = []
         for profile_name in requirement["profiles"]:
             report = json.loads(json.dumps(reports[profile_name]))
+            report["checks"][0]["outputTruncated"] = output_truncated
+            report["checks"][0]["streamOutputTruncated"] = stream_truncated
             if diagnostics_failure:
                 report["checks"][0]["diagnostics"] = {
                     "policy": "forbid-warning-error",
@@ -423,7 +427,9 @@ class RemoteVerificationTests(unittest.TestCase):
                     attested_by="test-host",
                     evidence="The test host created a fresh read-only context.",
                 )
-            evidence_path = self.write_evidence(inputs, request, reports)
+            evidence_path = self.write_evidence(
+                inputs, request, reports, output_truncated=True
+            )
             state, _ = ingest_remote_verification(
                 root,
                 "remote-change",
@@ -528,6 +534,30 @@ class RemoteVerificationTests(unittest.TestCase):
             archive.rename(real_archive)
             archive.symlink_to(real_archive.name)
             with self.assertRaisesRegex(ContractError, "non-symlink"):
+                ingest_remote_verification(
+                    root,
+                    "remote-change",
+                    evidence_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_remote_evidence_rejects_truncated_diagnostic_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            _, request, reports = self.prepare_implementing(root, inputs)
+            evidence_path = self.write_evidence(
+                inputs, request, reports, stream_truncated=True
+            )
+            with self.assertRaisesRegex(
+                ContractError, "report is not clean and passing"
+            ):
                 ingest_remote_verification(
                     root,
                     "remote-change",
