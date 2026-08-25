@@ -126,6 +126,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('"requirements/process.in"', generator)
         self.assertIn('"requirements/process.txt"', generator)
         self.assertIn("verification/classify_release_preparation.py", generator)
+        self.assertIn("verification/validate_release_candidate_commit.py", generator)
         self.assertIn('".github/workflows/release-pr.yml"', generator)
         self.assertNotIn("gh pr create", generator)
         self.assertNotIn("gh pr ready", generator)
@@ -134,6 +135,17 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("unpublished-release-candidate", generator)
         self.assertIn("Detect pending release changes", generator)
         self.assertIn("No pending release changes", generator)
+        self.assertIn("git add --all", generator)
+        self.assertNotIn("git add --all --", generator)
+        self.assertIn("release-candidate-commit.json", generator)
+        self.assertLess(
+            generator.index("git commit"),
+            generator.index("validate_release_candidate_commit.py", generator.index("git commit")),
+        )
+        self.assertLess(
+            generator.index("validate_release_candidate_commit.py", generator.index("git commit")),
+            generator.index("git bundle create"),
+        )
         self.assertIn('gh workflow run release-candidate.yml', generator)
         self.assertIn("policy-verification:", ci)
         self.assertIn(

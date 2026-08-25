@@ -12,6 +12,7 @@ on:
       - "requirements/process.in"
       - "requirements/process.txt"
       - "verification/classify_release_preparation.py"
+      - "verification/validate_release_candidate_commit.py"
 
 permissions:
   actions: write
@@ -74,15 +75,17 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add --all -- .release release-changes release.json pyproject.toml engineering_process/__init__.py
+          git add --all
           git diff --cached --quiet && {
             echo 'release candidate did not change the repository' >&2
             exit 1
           }
           git commit -m "chore(release): prepare v$RELEASE_VERSION"
-          head_sha="$(git rev-parse HEAD)"
-          base_sha="$(git rev-parse HEAD^)"
-          test "$base_sha" = "$GITHUB_SHA"
+          python verification/validate_release_candidate_commit.py \
+            --project-root . --expected-base "$GITHUB_SHA" \
+            > "$RUNNER_TEMP/release-candidate-commit.json"
+          head_sha="$(jq -er .headSha "$RUNNER_TEMP/release-candidate-commit.json")"
+          base_sha="$(jq -er .baseSha "$RUNNER_TEMP/release-candidate-commit.json")"
           mkdir -p "$RUNNER_TEMP/unpublished-candidate"
           git bundle create "$RUNNER_TEMP/unpublished-candidate/source.bundle" HEAD "^$base_sha"
           jq -n \

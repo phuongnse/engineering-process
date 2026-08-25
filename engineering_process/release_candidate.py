@@ -371,7 +371,15 @@ def _release_lifecycle_documents(
             {
                 "id": "work-release",
                 "outcome": "Verify and publish the exact generated release candidate",
-                "affectedPaths": ["release.json", "pyproject.toml", "engineering_process/__init__.py"],
+                "affectedPaths": [
+                    ".release/change.json",
+                    ".release/plan.json",
+                    "engineering_process/__init__.py",
+                    "improvement-catalog.json",
+                    "pyproject.toml",
+                    "release-changes/",
+                    "release.json",
+                ],
                 "verificationProfiles": ["development", "review"],
             }
         ],

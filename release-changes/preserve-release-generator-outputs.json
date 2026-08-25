@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "preserve-release-generator-outputs",
+  "type": "fix",
+  "surfaces": [
+    "publication",
+    "workflow"
+  ],
+  "rationale": "Commit every deterministic prepare-release output, declare the complete generated path set in the release lifecycle plan, and fail before bundling when tracked, staged, or untracked candidate residue remains.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

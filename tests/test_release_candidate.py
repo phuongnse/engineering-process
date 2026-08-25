@@ -270,6 +270,18 @@ class ReleaseCandidateTests(unittest.TestCase):
             self.assertEqual("release-0-2-0", change["id"])
             self.assertEqual(3, change["schemaVersion"])
             self.assertEqual(2, plan["schemaVersion"])
+            self.assertEqual(
+                [
+                    ".release/change.json",
+                    ".release/plan.json",
+                    "engineering_process/__init__.py",
+                    "improvement-catalog.json",
+                    "pyproject.toml",
+                    "release-changes/",
+                    "release.json",
+                ],
+                plan["workItems"][0]["affectedPaths"],
+            )
             assessments = change["quality"]["assessments"]
             self.assertEqual(
                 [
