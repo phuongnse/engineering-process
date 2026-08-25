@@ -1,58 +1,67 @@
 {
-  "schemaVersion": 1,
-  "kind": "engineering-process-improvement-catalog",
-  "producer": {
-    "project": "engineering-process",
-    "repository": "phuongnse/engineering-process"
-  },
   "entries": [
     {
+      "activeChangeId": null,
       "id": "deterministic-cross-platform-test-environment",
-      "reusableClass": "portability-gap",
-      "status": "active",
+      "lastResolution": {
+        "changeId": "fix-windows-verification-boundary",
+        "version": "0.5.0"
+      },
       "publicSurfaces": [
         "cross-platform-tests",
         "verification-evidence"
       ],
-      "lastResolution": null,
-      "activeChangeId": "fix-windows-verification-boundary"
+      "reusableClass": "portability-gap",
+      "status": "resolved"
     },
     {
+      "activeChangeId": null,
       "id": "failure-to-invariant-disposition-enforcement",
-      "reusableClass": "deterministic-enforcement",
-      "status": "active",
+      "lastResolution": {
+        "changeId": "federated-process-improvement",
+        "version": "0.5.0"
+      },
       "publicSurfaces": [
         "governance",
         "lifecycle",
         "skills"
       ],
-      "lastResolution": {
-        "changeId": "failure-to-invariant",
-        "version": "0.4.0"
-      },
-      "activeChangeId": "federated-process-improvement"
+      "reusableClass": "deterministic-enforcement",
+      "status": "resolved"
     },
     {
+      "activeChangeId": null,
       "id": "producer-improvement-route-completeness",
-      "reusableClass": "deterministic-enforcement",
-      "status": "active",
+      "lastResolution": {
+        "changeId": "federated-process-improvement",
+        "version": "0.5.0"
+      },
       "publicSurfaces": [
         "catalog",
         "lifecycle"
       ],
-      "lastResolution": null,
-      "activeChangeId": "federated-process-improvement"
+      "reusableClass": "deterministic-enforcement",
+      "status": "resolved"
     },
     {
+      "activeChangeId": null,
       "id": "single-windows-helper-protocol",
-      "reusableClass": "deterministic-enforcement",
-      "status": "active",
+      "lastResolution": {
+        "changeId": "fix-windows-verification-boundary",
+        "version": "0.5.0"
+      },
       "publicSurfaces": [
         "command-execution",
         "windows-supervision"
       ],
-      "lastResolution": null,
-      "activeChangeId": "fix-windows-verification-boundary"
+      "reusableClass": "deterministic-enforcement",
+      "status": "resolved"
     }
-  ]
+  ],
+  "kind": "engineering-process-improvement-catalog",
+  "producer": {
+    "project": "engineering-process",
+    "repository": "phuongnse/engineering-process"
+  },
+  "schemaVersion": 1
 }
