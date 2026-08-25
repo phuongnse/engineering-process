@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/recommendation-resolution.schema.json",
+  "title": "Owner recommendation resolution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "decisionId",
+    "recommendationSha256",
+    "reviewSha256",
+    "selectedOptionId",
+    "owner",
+    "selectionRationaleSha256",
+    "controls"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-recommendation-resolution"},
+    "decisionId": {"$ref": "#/$defs/id"},
+    "recommendationSha256": {"$ref": "#/$defs/digest"},
+    "reviewSha256": {"$ref": "#/$defs/digest"},
+    "selectedOptionId": {"$ref": "#/$defs/id"},
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ownerId", "evidenceSha256"],
+      "properties": {
+        "ownerId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "evidenceSha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "selectionRationaleSha256": {"$ref": "#/$defs/digest"},
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grantsAdoption", "grantsDeployment", "grantsLifecycleCompletion", "grantsMerge", "grantsRelease"],
+      "properties": {
+        "grantsAdoption": {"const": false},
+        "grantsDeployment": {"const": false},
+        "grantsLifecycleCompletion": {"const": false},
+        "grantsMerge": {"const": false},
+        "grantsRelease": {"const": false}
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

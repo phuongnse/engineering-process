@@ -81,13 +81,26 @@ lifecycle order, or external mutation, stop dependent mutation and:
 
 1. Separate a discoverable implementation detail already inside accepted scope from
    a project-owner decision. Continue autonomously only for the former.
-2. Preserve the evidence and state the invariant that every valid option must keep.
-3. Present the genuinely valid options, their trade-offs, and one evidence-backed
-   recommendation. Do not manufacture a weak option to make the recommendation look
-   inevitable.
-4. Request an explicit owner decision and record it in the owning contract, plan, or
-   durable project decision before continuing dependent work.
-5. If a failed attempt disproves an assumption and the next direction changes one of
+2. Preserve the evidence and enumerate every governing hard invariant and material
+   assumption before ranking any option.
+3. Create a bounded recommendation artifact. Assess every option against every
+   invariant, bind proven assumptions to evidence, and derive the complete `valid`,
+   `invalid`, and `unproven` sets. Cost, convenience, minimal change, and other
+   secondary optimization apply only within the derived valid set. Never promote an
+   invalid or unproven option because it changes fewer boundaries.
+4. For every material recommendation, obtain a digest-bound independent adversarial
+   review from a distinct actor and fresh context. The reviewer must challenge
+   assumption evidence, invariant tracing, option classification, and terminal
+   ordering. Run `processctl recommendation validate-chain`; do not present a
+   recommendation unless the exact chain is approved and allowed.
+5. If no valid option exists, report `decision-required` with the missing evidence or
+   authority instead of manufacturing a recommendation. Otherwise present the valid
+   options, their trade-offs, and the reviewed recommendation without inventing a
+   weak alternative to make it look inevitable.
+6. Request an explicit owner decision and create a digest-bound recommendation
+   resolution selecting only a valid option. The resolution records the choice but
+   grants no lifecycle completion, merge, release, deployment, or adoption authority.
+7. If a failed attempt disproves an assumption and the next direction changes one of
    these boundaries, return to this protocol instead of trying another architecture,
    trust path, command, or workflow loop autonomously.
 

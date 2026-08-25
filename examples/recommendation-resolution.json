@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-recommendation-resolution",
+  "decisionId": "remote-evidence-ordering",
+  "recommendationSha256": "sha256:137a6ce0094d5bbefce305c264d4523edb392d213be91095f78517e8fed15ed7",
+  "reviewSha256": "sha256:4e72a5786cda3d82260320698c22269762e053a6d97365adc3a4f2b910a403de",
+  "selectedOptionId": "verify-before-completion",
+  "owner": {
+    "ownerId": "project-owner",
+    "evidenceSha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "selectionRationaleSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "controls": {
+    "grantsAdoption": false,
+    "grantsDeployment": false,
+    "grantsLifecycleCompletion": false,
+    "grantsMerge": false,
+    "grantsRelease": false
+  }
+}

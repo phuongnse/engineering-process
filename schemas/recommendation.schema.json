@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/recommendation.schema.json",
+  "title": "Evidence-valid owner-decision recommendation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "decisionId",
+    "summary",
+    "risk",
+    "coordinator",
+    "invariants",
+    "assumptions",
+    "options",
+    "validOptionIds",
+    "recommendation"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-recommendation"},
+    "decisionId": {"$ref": "#/$defs/id"},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "risk": {"enum": ["medium", "high"]},
+    "coordinator": {"$ref": "#/$defs/actor"},
+    "invariants": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "statement", "source", "evidenceSha256"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "source": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "evidenceSha256": {"$ref": "#/$defs/digest"}
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "statement", "status", "evidenceSha256"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "status": {"enum": ["proven", "unproven"]},
+          "evidenceSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "proven"}}, "required": ["status"]},
+            "then": {"properties": {"evidenceSha256": {"$ref": "#/$defs/digest"}}}
+          },
+          {
+            "if": {"properties": {"status": {"const": "unproven"}}, "required": ["status"]},
+            "then": {"properties": {"evidenceSha256": {"type": "null"}}}
+          }
+        ]
+      }
+    },
+    "options": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "summary",
+          "tradeoffs",
+          "assumptionIds",
+          "invariantAssessments",
+          "classification"
+        ],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "tradeoffs": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+          },
+          "assumptionIds": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/id"}
+          },
+          "invariantAssessments": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["invariantId", "status", "evidenceSha256"],
+              "properties": {
+                "invariantId": {"$ref": "#/$defs/id"},
+                "status": {"enum": ["satisfied", "violated", "unproven"]},
+                "evidenceSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]}
+              },
+              "allOf": [
+                {
+                  "if": {"properties": {"status": {"enum": ["satisfied", "violated"]}}, "required": ["status"]},
+                  "then": {"properties": {"evidenceSha256": {"$ref": "#/$defs/digest"}}}
+                },
+                {
+                  "if": {"properties": {"status": {"const": "unproven"}}, "required": ["status"]},
+                  "then": {"properties": {"evidenceSha256": {"type": "null"}}}
+                }
+              ]
+            }
+          },
+          "classification": {"enum": ["valid", "invalid", "unproven"]}
+        }
+      }
+    },
+    "validOptionIds": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "optionId", "rationaleSha256", "optimizationCriteria"],
+      "properties": {
+        "status": {"enum": ["recommended", "blocked"]},
+        "optionId": {"anyOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "rationaleSha256": {"$ref": "#/$defs/digest"},
+        "optimizationCriteria": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "priority", "rationaleSha256"],
+            "properties": {
+              "id": {"$ref": "#/$defs/id"},
+              "priority": {"type": "integer", "minimum": 1, "maximum": 256},
+              "rationaleSha256": {"$ref": "#/$defs/digest"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    }
+  }
+}
