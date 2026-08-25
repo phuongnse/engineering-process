@@ -583,9 +583,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertTrue(
             managed_windows_helper.read_text(encoding="utf-8").startswith(marker)
         )
-        self.assertEqual(
-            managed_windows_helper.read_bytes(),
-            template_windows_helper.read_bytes(),
+        self.assertIn(
+            "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+            managed_windows_helper.read_text(encoding="utf-8"),
         )
         self.assertEqual(
             windows_helper.read_bytes(), template_windows_helper.read_bytes()

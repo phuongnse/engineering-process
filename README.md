@@ -57,9 +57,10 @@ distribution: the POSIX backend owns a new process session/group and the Windows
 backend owns a kill-on-close Job Object. Consumer manifests, evidence, and exit codes
 do not branch by operating system. If an outer Windows Job applies incompatible
 nesting or UI limits, target creation fails closed instead of running uncontained.
-After a command root exits, both backends allow at most 250 milliseconds for child
-accounting to drain naturally. A process still present after that bound is terminated
-and makes the command fail; commands with no remaining child return immediately.
+After a command root exits, the POSIX backend allows at most 250 milliseconds and the
+Windows Job Object backend allows at most 5 seconds for child accounting to drain
+naturally. A process still present after its platform bound is terminated and makes
+the command fail; commands with no remaining child return immediately.
 
 This task boundary intentionally separates finite commands from services and
 interactive protocols. `processctl exec`, requirement probes, setup command actions,

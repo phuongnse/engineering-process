@@ -15,6 +15,7 @@ from typing import Mapping, Protocol
 
 
 NATURAL_DRAIN_GRACE_MILLISECONDS = 250
+WINDOWS_NATURAL_DRAIN_GRACE_MILLISECONDS = 5_000
 
 
 @dataclass(frozen=True)
