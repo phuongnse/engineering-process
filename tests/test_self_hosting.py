@@ -83,6 +83,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("completion_evidence_gzip_base64", approval)
         self.assertIn("verification/decode_completion_evidence.py", approval)
         self.assertIn("verification/validate_release_completion_identity.py", approval)
+        self.assertIn(
+            "cp verification/validate_release_completion_identity.py", approval
+        )
+        self.assertIn(
+            '"$RUNNER_TEMP/validate-release-completion-identity.py"', approval
+        )
         self.assertIn("processctl evidence validate", approval)
         self.assertIn("--release-change .release/change.json", approval)
         self.assertIn('--evidence "$RUNNER_TEMP/completion-evidence.json"', approval)
@@ -96,6 +102,17 @@ class SelfHostingTests(unittest.TestCase):
             'test "$(jq -r .baseSha "$RUNNER_TEMP/verified-candidate/candidate.json")" = "${{ inputs.comparison_base }}"',
             approval,
         )
+        current_base_gate = (
+            'test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"'
+        )
+        self.assertEqual(2, approval.count(current_base_gate))
+        preserve_adapter = approval.index(
+            "Validate current protected candidate base and preserve base-owned adapters"
+        )
+        restore_candidate = approval.index("Restore the exact unpublished candidate")
+        validate_completion = approval.index("Decode and validate host completion evidence")
+        self.assertLess(preserve_adapter, restore_candidate)
+        self.assertLess(restore_candidate, validate_completion)
         self.assertIn("publication validate-evidence-source", approval)
         self.assertLess(
             approval.index("publication validate-evidence-source"),
@@ -129,10 +146,11 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn('gh pr merge "$pr_number"', approval)
         self.assertIn('--auto "--$merge_method" --match-head-commit "$HEAD_SHA"', approval)
         self.assertLess(approval.index("gh pr create"), approval.index("gh pr merge"))
-        self.assertLess(
-            approval.index('if test "$action" = merged; then'),
-            approval.index("git ls-remote origin refs/heads/main"),
+        merged_terminal = approval.index('if test "$action" = merged; then')
+        post_reconciliation_base_gate = approval.index(
+            current_base_gate, merged_terminal
         )
+        self.assertLess(merged_terminal, post_reconciliation_base_gate)
         self.assertIn("Project-specific: Completion evidence", approval)
         self.assertIn("release-changes/*.json", generator)
         self.assertIn('".process/process.lock"', generator)

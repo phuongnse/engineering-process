@@ -651,6 +651,8 @@ The callback `comparison_base` is the candidate source base: the immediate prote
 range. The receipt's lifecycle comparison base is independently owned by
 `.release/change.json` and normally identifies the previous immutable release tag;
 the publication boundary validates both identities against their respective owners.
+An older callback whose candidate source base is no longer current fails before any
+candidate-owned publication adapter is invoked.
 
 A bootstrap-authority release uses `evidence export-bootstrap` and
 `--evidence-kind bootstrap-authorization`. The adapter rejects oversized or malformed
