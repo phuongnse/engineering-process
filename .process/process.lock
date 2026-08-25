@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "process": {
-    "version": "0.5.1",
-    "digest": "sha256:a39b8f0385e21aeff5efd249428383442578836e8ecda92128e211f099a08bd6"
+    "version": "0.6.0",
+    "digest": "sha256:1391e75fa9dc5f113c35125ca103ca7e693969f3e342b8a5a3e0b123e9efa8a9"
   },
   "skills": [
     "assess-design",
