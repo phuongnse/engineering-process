@@ -208,12 +208,12 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("lifecycle comparison base", readme)
         self.assertNotIn("No workflow invokes merge", readme)
 
-    def test_renovate_cannot_publish_before_a_completed_lifecycle(self):
+    def test_renovate_consumer_intent_keeps_authority_adoption_disabled(self):
         renovate = json.loads(
             (PROCESS_ROOT / ".github" / "renovate.json").read_text(encoding="utf-8")
         )
 
-        self.assertFalse(renovate["enabled"])
+        self.assertTrue(renovate["enabled"])
         self.assertFalse(renovate["automerge"])
         self.assertFalse(renovate["dependencyDashboard"])
         self.assertNotIn("draftPR", renovate)
