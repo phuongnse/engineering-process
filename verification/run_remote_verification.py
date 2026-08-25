@@ -32,7 +32,7 @@ MAX_COMMAND_OUTPUT = 64_000
 MAX_ARTIFACTS = 64
 MAX_DOWNLOAD_BYTES = 4_000_000
 MAX_TOTAL_DOWNLOAD_BYTES = 64_000_000
-TAG_PREFIX = "engineering-process-verification"
+TAG_PREFIX = "epv"
 SAFE_WORKFLOW = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 BOOTSTRAP_CHANGE = "evidence-valid-remote-verification"
 BOOTSTRAP_CYCLE = 1
@@ -163,9 +163,10 @@ def _json_result(result: subprocess.CompletedProcess[bytes], *, label: str) -> d
 def verification_tag(request: dict[str, Any]) -> str:
     validate_remote_verification_request(request)
     request_digest = canonical_json_digest(request).removeprefix("sha256:")
+    change_digest = hashlib.sha256(request["changeId"].encode("utf-8")).hexdigest()[:16]
     return (
-        f"{TAG_PREFIX}/{request['changeId']}/cycle-{request['cycle']}/"
-        f"{request['comparisonBase']}/{request['checkpoint']}/{request_digest}"
+        f"{TAG_PREFIX}/{change_digest}/c{request['cycle']}/"
+        f"{request['comparisonBase'][:16]}/{request['checkpoint']}/{request_digest}"
     )
 
 
@@ -285,6 +286,7 @@ def _dispatch(
         "ref": dispatch_ref,
         "inputs": {
             "remote_source_ref": source_ref,
+            "remote_change_id": request["changeId"],
             "remote_checkpoint": request["checkpoint"],
             "remote_comparison_base": request["comparisonBase"],
             "remote_request_sha256": canonical_json_digest(request),

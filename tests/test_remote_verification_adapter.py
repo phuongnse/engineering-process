@@ -68,12 +68,13 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
         tag = verification_tag(request)
         self.assertEqual(
             (
-                "engineering-process-verification/issue-123/cycle-1/"
-                f"{request['comparisonBase']}/{request['checkpoint']}/"
+                "epv/a9233c4908a3d579/c1/"
+                f"{request['comparisonBase'][:16]}/{request['checkpoint']}/"
                 f"{canonical_json_digest(request).removeprefix('sha256:')}"
             ),
             tag,
         )
+        self.assertLessEqual(len(f"refs/tags/{tag}.lock"), 180)
 
     def test_dispatch_validator_requires_exact_tag_source_and_base_workflow(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -93,6 +94,7 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
             result = validate_dispatch(
                 root,
                 source_ref=source_ref,
+                change_id=request["changeId"],
                 checkpoint=head,
                 comparison_base=base,
                 request_sha256=digest,
@@ -105,6 +107,7 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
                 validate_dispatch(
                     root,
                     source_ref=source_ref,
+                    change_id=request["changeId"],
                     checkpoint=head,
                     comparison_base=base,
                     request_sha256=digest,
@@ -137,9 +140,8 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
         head = "1" * 40
         request_digest = "sha256:" + "2" * 64
         source_ref = (
-            "refs/tags/engineering-process-verification/"
-            "evidence-valid-remote-verification/cycle-1/"
-            f"{BOOTSTRAP_BASE}/{head}/{request_digest.removeprefix('sha256:')}"
+            "refs/tags/epv/f95b05a102367b6f/c1/"
+            f"{BOOTSTRAP_BASE[:16]}/{head}/{request_digest.removeprefix('sha256:')}"
         )
 
         def git_result(_root, arguments):
@@ -155,6 +157,7 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
             result = validate_dispatch(
                 Path.cwd(),
                 source_ref=source_ref,
+                change_id="evidence-valid-remote-verification",
                 checkpoint=head,
                 comparison_base=BOOTSTRAP_BASE,
                 request_sha256=request_digest,
@@ -168,6 +171,7 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
                 validate_dispatch(
                     Path.cwd(),
                     source_ref=source_ref,
+                    change_id="evidence-valid-remote-verification",
                     checkpoint=head,
                     comparison_base=BOOTSTRAP_BASE,
                     request_sha256=request_digest,

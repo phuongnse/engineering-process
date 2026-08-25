@@ -12,6 +12,10 @@ on:
         description: Exact verification tag; empty keeps the ordinary main run
         required: false
         type: string
+      remote_change_id:
+        description: Exact lifecycle change id
+        required: false
+        type: string
       remote_checkpoint:
         description: Exact candidate checkpoint
         required: false
@@ -75,6 +79,7 @@ jobs:
         if: ${{ inputs.remote_source_ref != '' }}
         env:
           REMOTE_SOURCE_REF: ${{ inputs.remote_source_ref }}
+          REMOTE_CHANGE_ID: ${{ inputs.remote_change_id }}
           REMOTE_CHECKPOINT: ${{ inputs.remote_checkpoint }}
           REMOTE_COMPARISON_BASE: ${{ inputs.remote_comparison_base }}
           REMOTE_REQUEST_SHA256: ${{ inputs.remote_request_sha256 }}
@@ -95,6 +100,7 @@ jobs:
           python "$RUNNER_TEMP/validate-remote-verification-dispatch.py" \
             --project-root . \
             --source-ref "$REMOTE_SOURCE_REF" \
+            --change-id "$REMOTE_CHANGE_ID" \
             --checkpoint "$REMOTE_CHECKPOINT" \
             --comparison-base "$REMOTE_COMPARISON_BASE" \
             --request-sha256 "$REMOTE_REQUEST_SHA256" \
