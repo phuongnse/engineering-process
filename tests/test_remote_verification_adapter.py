@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +13,7 @@ from verification.run_remote_verification import (
     AdapterError,
     _artifact_manifest,
     _selector_identity,
+    run_adapter,
     verification_tag,
 )
 from verification.validate_remote_verification_dispatch import validate_dispatch
@@ -135,6 +137,178 @@ class RemoteVerificationAdapterTests(unittest.TestCase):
             with zipfile.ZipFile(empty, "w") as archive:
                 archive.writestr("other.json", "{}")
             _artifact_manifest(empty.getvalue(), artifact_id=2)
+
+        oversized = io.BytesIO()
+        with zipfile.ZipFile(
+            oversized, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.writestr("manifest.json", " " * 1_000_001)
+        with self.assertRaisesRegex(AdapterError, "safe expansion boundary"):
+            _artifact_manifest(oversized.getvalue(), artifact_id=3)
+
+    def adapter_arguments(self, root: Path, failure_output: Path) -> Namespace:
+        return Namespace(
+            project_root=root,
+            processctl="processctl",
+            change_id="issue-123",
+            actor="worker",
+            context="worker-context",
+            actor_kind="agent",
+            repository="example/example-service",
+            remote="origin",
+            workflow="ci.yml",
+            dispatch_ref="main",
+            bootstrap_request=None,
+            bootstrap_authorization_sha256=None,
+            evidence_output=None,
+            timeout_seconds=120,
+            poll_seconds=2,
+            failure_output=failure_output,
+        )
+
+    def test_failed_run_never_ingests_lifecycle_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            root.mkdir()
+            request = self.request()
+
+            def download(*_args, **kwargs):
+                path = kwargs["output_root"] / "remote-evidence.json"
+                path.write_text("{}\n", encoding="utf-8")
+                return path
+
+            failed_run = {
+                "id": 10,
+                "html_url": "https://example.invalid/run/10",
+                "status": "completed",
+                "conclusion": "failure",
+            }
+            with (
+                mock.patch(
+                    "verification.run_remote_verification._request",
+                    return_value=(request, base / "request.json"),
+                ),
+                mock.patch("verification.run_remote_verification._publish_tag"),
+                mock.patch(
+                    "verification.run_remote_verification._dispatch",
+                    return_value={"workflow_run_id": 10},
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._wait_run",
+                    return_value=failed_run,
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._download_evidence",
+                    side_effect=download,
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._ingest"
+                ) as ingest,
+                mock.patch(
+                    "verification.run_remote_verification._delete_tag"
+                ) as cleanup,
+                mock.patch("verification.run_remote_verification._write_failure"),
+            ):
+                with self.assertRaisesRegex(AdapterError, "concluded failure"):
+                    run_adapter(
+                        self.adapter_arguments(base / "project", base / "failure.json")
+                    )
+            ingest.assert_not_called()
+            cleanup.assert_called_once()
+
+    def test_timeout_and_interrupt_both_cleanup_without_ingest(self):
+        for failure in (
+            AdapterError("workflow timed out"),
+            KeyboardInterrupt(),
+        ):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                root = base / "project"
+                root.mkdir()
+                request = self.request()
+                with (
+                    mock.patch(
+                        "verification.run_remote_verification._request",
+                        return_value=(request, base / "request.json"),
+                    ),
+                    mock.patch("verification.run_remote_verification._publish_tag"),
+                    mock.patch(
+                        "verification.run_remote_verification._dispatch",
+                        return_value={"workflow_run_id": 10},
+                    ),
+                    mock.patch(
+                        "verification.run_remote_verification._wait_run",
+                        side_effect=failure,
+                    ),
+                    mock.patch(
+                        "verification.run_remote_verification._ingest"
+                    ) as ingest,
+                    mock.patch(
+                        "verification.run_remote_verification._delete_tag"
+                    ) as cleanup,
+                    mock.patch("verification.run_remote_verification._write_failure"),
+                ):
+                    with self.assertRaises(AdapterError):
+                        run_adapter(
+                            self.adapter_arguments(root, base / "failure.json")
+                        )
+                ingest.assert_not_called()
+                cleanup.assert_called_once()
+
+    def test_cleanup_failure_prevents_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            root.mkdir()
+            request = self.request()
+
+            def download(*_args, **kwargs):
+                path = kwargs["output_root"] / "remote-evidence.json"
+                path.write_text("{}\n", encoding="utf-8")
+                return path
+
+            success_run = {
+                "id": 10,
+                "html_url": "https://example.invalid/run/10",
+                "status": "completed",
+                "conclusion": "success",
+            }
+            with (
+                mock.patch(
+                    "verification.run_remote_verification._request",
+                    return_value=(request, base / "request.json"),
+                ),
+                mock.patch("verification.run_remote_verification._publish_tag"),
+                mock.patch(
+                    "verification.run_remote_verification._dispatch",
+                    return_value={"workflow_run_id": 10},
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._wait_run",
+                    return_value=success_run,
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._download_evidence",
+                    side_effect=download,
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._ingest",
+                    return_value={"artifactCount": 1, "phase": "verified"},
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._delete_tag",
+                    side_effect=AdapterError("cleanup failed"),
+                ),
+                mock.patch(
+                    "verification.run_remote_verification._write_failure"
+                ) as write_failure,
+            ):
+                with self.assertRaisesRegex(AdapterError, "cleanup failed"):
+                    run_adapter(self.adapter_arguments(root, base / "failure.json"))
+            failure_document = write_failure.call_args.args[1]
+            self.assertFalse(failure_document["tagCleaned"])
+            self.assertIsNotNone(failure_document["cleanupFailureSha256"])
 
     def test_bootstrap_workflow_exception_is_exactly_owner_scoped(self):
         head = "1" * 40

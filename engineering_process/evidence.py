@@ -28,6 +28,7 @@ from .contracts import (
     validate_verification,
 )
 from .lifecycle import _change_lock, _validate_state, load_state
+from .remote_verification import _report_summary
 
 
 MAX_RECEIPT_BYTES = 8_000_000
@@ -337,6 +338,14 @@ def _validate_remote_receipt(
         or index["workspaceFingerprint"] != fingerprint
     ):
         raise ContractError("receipt remote verification index is invalid")
+    if (
+        not isinstance(index["sourceEvidence"], dict)
+        or index["sourceEvidence"].get("digest")
+        != remote["sourceEvidence"]["sourceDigest"]
+    ):
+        raise ContractError(
+            "receipt remote source evidence does not match the ingested index"
+        )
     artifacts = remote["artifacts"]
     if not isinstance(artifacts, list) or not artifacts:
         raise ContractError("receipt remote verification artifacts are empty")
@@ -370,12 +379,38 @@ def _validate_remote_receipt(
             or artifact["service"] != index_artifact["service"]
         ):
             raise ContractError(f"{path}: does not match ingested index")
-        _validate_entry(artifact["manifest"], f"{path}.manifest")
+        manifest = _validate_entry(artifact["manifest"], f"{path}.manifest")
+        if (
+            not isinstance(index_artifact.get("manifest"), dict)
+            or artifact["manifest"]["sourceDigest"]
+            != index_artifact["manifest"].get("digest")
+        ):
+            raise ContractError(f"{path}.manifest: does not match ingested index")
+        if (
+            manifest.get("status") != "passed"
+            or manifest.get("checkpoint") != checkpoint
+            or manifest.get("comparisonBase") != state["comparisonBase"]
+            or manifest.get("workspaceFingerprint") != fingerprint
+        ):
+            raise ContractError(f"{path}.manifest: stale or failed manifest")
         reports = artifact["verification"]
         if not isinstance(reports, list) or not reports:
             raise ContractError(f"{path}.verification: must not be empty")
+        index_reports = index_artifact.get("verification")
+        manifest_reports = manifest.get("reports")
+        if (
+            not isinstance(index_reports, list)
+            or not isinstance(manifest_reports, list)
+            or len(reports) != len(index_reports)
+            or len(reports) != len(manifest_reports)
+        ):
+            raise ContractError(
+                f"{path}.verification: index or manifest coverage mismatch"
+            )
         profiles: list[str] = []
-        for report_index, raw_report in enumerate(reports):
+        for report_index, (raw_report, index_report, manifest_report) in enumerate(
+            zip(reports, index_reports, manifest_reports, strict=True)
+        ):
             report_path = f"{path}.verification[{report_index}]"
             if not isinstance(raw_report, dict):
                 raise ContractError(f"{report_path}: must be an object")
@@ -386,11 +421,27 @@ def _validate_remote_receipt(
             validate_verification(report, report_path)
             if (
                 profile != report.get("profile")
+                or not isinstance(index_report, dict)
+                or profile != index_report.get("profile")
+                or not isinstance(index_report.get("path"), str)
+                or not isinstance(index_report.get("digest"), str)
+                or raw_report.get("sourceDigest") != index_report.get("digest")
                 or report.get("status") != "passed"
                 or report.get("checkpoint") != checkpoint
                 or report.get("workspaceFingerprint") != fingerprint
             ):
                 raise ContractError(f"{report_path}: stale or failed report")
+            source_bytes = raw_report["sourceText"].encode("utf-8")
+            expected_manifest_report = {
+                "path": Path(index_report["path"]).name,
+                "bytes": len(source_bytes),
+                "sha256": f"sha256:{hashlib.sha256(source_bytes).hexdigest()}",
+                **_report_summary(report),
+            }
+            if manifest_report != expected_manifest_report:
+                raise ContractError(
+                    f"{report_path}: does not match the remote manifest"
+                )
             profiles.append(profile)
         requirement = next(
             item for item in request["requirements"] if item["id"] == identity[0]

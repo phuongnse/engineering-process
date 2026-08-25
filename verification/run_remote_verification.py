@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import io
 import json
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -21,9 +23,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from engineering_process.contracts import (  # noqa: E402
     ContractError,
+    MAX_JSON_BYTES,
     canonical_json_digest,
     read_json,
     validate_remote_verification_request,
+)
+from engineering_process.remote_verification import (  # noqa: E402
+    MAX_REMOTE_BUNDLE_FILES,
+    _validated_bundle,
+    _zip_documents,
+    read_remote_evidence_document,
 )
 
 
@@ -362,10 +371,30 @@ def _artifact_manifest(content: bytes, *, artifact_id: int) -> dict[str, Any]:
         raise AdapterError(f"artifact {artifact_id} exceeds {MAX_DOWNLOAD_BYTES} bytes")
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            names = archive.namelist()
-            if "manifest.json" not in names:
+            infos = archive.infolist()
+            if not 1 <= len(infos) <= MAX_REMOTE_BUNDLE_FILES:
+                raise AdapterError(
+                    f"artifact {artifact_id} exceeds the archive entry bound"
+                )
+            manifests = [info for info in infos if info.filename == "manifest.json"]
+            if len(manifests) != 1:
                 raise AdapterError(f"artifact {artifact_id} lacks manifest.json")
-            data = archive.read("manifest.json")
+            info = manifests[0]
+            mode = info.external_attr >> 16
+            if (
+                info.is_dir()
+                or info.flag_bits & 0x1
+                or (mode and stat.S_ISLNK(mode))
+                or info.file_size < 1
+                or info.file_size > MAX_JSON_BYTES
+                or info.compress_size > MAX_DOWNLOAD_BYTES
+            ):
+                raise AdapterError(
+                    f"artifact {artifact_id} manifest exceeds its safe expansion boundary"
+                )
+            data = archive.read(info)
+            if len(data) != info.file_size:
+                raise AdapterError(f"artifact {artifact_id} manifest size changed")
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise AdapterError(f"artifact {artifact_id} is not a valid evidence ZIP") from error
     try:
@@ -375,6 +404,137 @@ def _artifact_manifest(content: bytes, *, artifact_id: int) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise AdapterError(f"artifact {artifact_id} manifest is not an object")
     return manifest
+
+
+def _write_json_exclusive(path: Path, document: dict[str, Any]) -> None:
+    data = (
+        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _validate_bootstrap_evidence(
+    request: dict[str, Any],
+    evidence_path: Path,
+    *,
+    repository: str,
+    workflow: str,
+    source_ref: str,
+) -> dict[str, Any]:
+    if not source_ref.startswith("refs/tags/"):
+        raise AdapterError("bootstrap source ref is not a tag")
+    evidence = read_remote_evidence_document(evidence_path)
+    request_digest = canonical_json_digest(request)
+    if evidence["requestSha256"] != request_digest:
+        raise AdapterError("bootstrap evidence request digest mismatch")
+    tag = source_ref.removeprefix("refs/tags/")
+    expected_workflow_ref = (
+        f"{repository}/.github/workflows/{workflow}@refs/tags/{tag}"
+    )
+    requirements = {
+        requirement["id"]: requirement
+        for requirement in request["requirements"]
+    }
+    expected = {
+        (requirement["id"], selector["id"])
+        for requirement in request["requirements"]
+        for selector in requirement["selectors"]
+    }
+    observed: set[tuple[str, str]] = set()
+    artifacts: list[dict[str, Any]] = []
+    for item in evidence["artifacts"]:
+        identity = (item["requirementId"], item["selectorId"])
+        if identity in observed:
+            raise AdapterError("bootstrap evidence contains a duplicate selector")
+        observed.add(identity)
+        archive_path = evidence_path.parent / item["archive"]["path"]
+        content = archive_path.read_bytes()
+        digest = f"sha256:{hashlib.sha256(content).hexdigest()}"
+        if (
+            len(content) != item["archive"]["bytes"]
+            or len(content) != item["service"]["sizeInBytes"]
+            or digest != item["archive"]["sha256"]
+            or digest != item["service"]["digest"]
+        ):
+            raise AdapterError("bootstrap archive service identity mismatch")
+        documents = _zip_documents(
+            content, label=f"bootstrap evidence {identity[0]}/{identity[1]}"
+        )
+        requirement = copy.deepcopy(requirements.get(identity[0]))
+        if not isinstance(requirement, dict):
+            raise AdapterError("bootstrap evidence uses an unknown requirement")
+        requirement["execution"]["workflowRef"] = expected_workflow_ref
+        selector = next(
+            (
+                selector
+                for selector in requirement["selectors"]
+                if selector["id"] == identity[1]
+            ),
+            None,
+        )
+        if selector is None:
+            raise AdapterError("bootstrap evidence uses an unknown selector")
+        manifest, reports = _validated_bundle(
+            documents,
+            request=request,
+            requirement=requirement,
+            selector=selector,
+            service=item["service"],
+            label=f"bootstrap evidence {identity[0]}/{identity[1]}",
+        )
+        if manifest["execution"]["workflowRef"] != expected_workflow_ref:
+            raise AdapterError("bootstrap manifest workflow ref mismatch")
+        artifacts.append(
+            {
+                "requirementId": identity[0],
+                "selectorId": identity[1],
+                "artifactId": item["service"]["artifactId"],
+                "archiveSha256": digest,
+                "manifestSha256": canonical_json_digest(manifest),
+                "reportSha256": {
+                    name: canonical_json_digest(report)
+                    for name, report in sorted(reports.items())
+                },
+            }
+        )
+    if observed != expected:
+        raise AdapterError("bootstrap evidence selector coverage mismatch")
+    return {
+        "schemaVersion": 1,
+        "kind": "engineering-process-bootstrap-remote-evidence-audit",
+        "status": "passed",
+        "changeId": request["changeId"],
+        "cycle": request["cycle"],
+        "checkpoint": request["checkpoint"],
+        "comparisonBase": request["comparisonBase"],
+        "workspaceFingerprint": request["workspaceFingerprint"],
+        "requestSha256": request_digest,
+        "workflowRef": expected_workflow_ref,
+        "workflowSha": request["checkpoint"],
+        "artifacts": sorted(
+            artifacts,
+            key=lambda item: (item["requirementId"], item["selectorId"]),
+        ),
+        "controls": {
+            "grantsLifecycleCompletion": False,
+            "grantsMerge": False,
+            "grantsRelease": False,
+            "grantsReview": False,
+        },
+    }
 
 
 def _selector_identity(request: dict[str, Any], manifest: dict[str, Any]) -> tuple[str, str]:
@@ -713,13 +873,27 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
                 request=request,
                 output_root=temporary_path,
             )
+            if run.get("conclusion") != "success":
+                raise AdapterError(
+                    f"remote verification run concluded {run.get('conclusion')}"
+                )
+            audit_digest: str | None = None
             if bootstrap:
-                if run.get("conclusion") != "success":
-                    raise AdapterError(
-                        f"remote verification run concluded {run.get('conclusion')}"
-                    )
+                audit = _validate_bootstrap_evidence(
+                    request,
+                    evidence_path,
+                    repository=args.repository,
+                    workflow=args.workflow,
+                    source_ref=source_ref,
+                )
+                audit["runId"] = str(run["id"])
+                audit["runUrl"] = run["html_url"]
+                audit["ownerDecisionSha256"] = BOOTSTRAP_AUTHORIZATION
+                audit_path = temporary_path / "bootstrap-audit.json"
+                _write_json_exclusive(audit_path, audit)
+                audit_digest = canonical_json_digest(audit)
                 assert evidence_output is not None
-                if evidence_output.exists():
+                if os.path.lexists(evidence_output):
                     raise AdapterError(
                         f"bootstrap evidence output already exists: {evidence_output}"
                     )
@@ -742,10 +916,6 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
                     actor_kind=args.actor_kind,
                     evidence_path=evidence_path,
                 )
-                if run.get("conclusion") != "success":
-                    raise AdapterError(
-                        f"remote verification run concluded {run.get('conclusion')}"
-                    )
             outcome = {
                 "schemaVersion": 1,
                 "kind": "engineering-process-remote-verification-operation",
@@ -758,6 +928,7 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
                 "artifactCount": ingestion["artifactCount"],
                 "lifecyclePhase": ingestion["phase"],
                 "evidenceOutput": str(evidence_output) if bootstrap else None,
+                "bootstrapAuditSha256": audit_digest,
             }
         except (AdapterError, ContractError, OSError, ValueError) as error:
             failure = error

@@ -18,8 +18,13 @@ from engineering_process.contracts import (
     RemoteVerificationSelector,
     canonical_json_digest,
     read_json,
+    validate_remote_verification_evidence,
 )
-from engineering_process.evidence import export_receipt, validate_receipt
+from engineering_process.evidence import (
+    _canonical_digest,
+    export_receipt,
+    validate_receipt,
+)
 from engineering_process.lifecycle import (
     begin_implementation,
     finish_change,
@@ -33,6 +38,11 @@ from engineering_process.lifecycle import (
     verify_change,
 )
 from engineering_process.supplemental import _check_summaries, _impact_summary
+from engineering_process.remote_verification import validate_remote_evidence_set
+from verification.run_remote_verification import (
+    _validate_bootstrap_evidence,
+    verification_tag,
+)
 
 
 class RemoteVerificationTests(unittest.TestCase):
@@ -252,6 +262,7 @@ class RemoteVerificationTests(unittest.TestCase):
         diagnostics_failure: bool = False,
         output_truncated: bool = False,
         stream_truncated: bool = False,
+        workflow_ref: str | None = None,
     ) -> Path:
         requirement = request["requirements"][0]
         selector = requirement["selectors"][0]
@@ -320,7 +331,9 @@ class RemoteVerificationTests(unittest.TestCase):
                 "repository": requirement["execution"]["repository"],
                 "event": "workflow_dispatch",
                 "workflow": requirement["execution"]["workflow"],
-                "workflowRef": requirement["execution"]["workflowRef"],
+                "workflowRef": (
+                    workflow_ref or requirement["execution"]["workflowRef"]
+                ),
                 "workflowSha": requirement["execution"]["workflowSha"],
                 "runId": run_id,
                 "runAttempt": 1,
@@ -404,6 +417,35 @@ class RemoteVerificationTests(unittest.TestCase):
                 for dimension in CORE_QUALITY_DIMENSIONS
             ],
         }
+
+    def rewrite_manifest(self, evidence_path: Path, mutate) -> None:
+        evidence = read_json(evidence_path)
+        artifact = evidence["artifacts"][0]
+        archive_path = evidence_path.parent / artifact["archive"]["path"]
+        with zipfile.ZipFile(archive_path) as source:
+            entries = {name: source.read(name) for name in source.namelist()}
+        manifest = json.loads(entries["manifest.json"])
+        mutate(manifest)
+        entries["manifest.json"] = (
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n"
+        ).encode("utf-8")
+        with zipfile.ZipFile(
+            archive_path, "w", compression=zipfile.ZIP_DEFLATED
+        ) as destination:
+            for name, content in sorted(entries.items()):
+                destination.writestr(name, content)
+        content = archive_path.read_bytes()
+        digest = f"sha256:{hashlib.sha256(content).hexdigest()}"
+        artifact["archive"]["bytes"] = len(content)
+        artifact["archive"]["sha256"] = digest
+        artifact["service"]["sizeInBytes"] = len(content)
+        artifact["service"]["digest"] = digest
+        evidence_path.write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
 
     def test_remote_evidence_blocks_review_then_completes_and_exports(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -491,6 +533,45 @@ class RemoteVerificationTests(unittest.TestCase):
             validated = validate_receipt(receipt_path)
             self.assertEqual("remote-change", validated["changeId"])
 
+            for target in ("manifest", "report"):
+                with self.subTest(target=target):
+                    receipt = read_json(receipt_path)
+                    remote_artifact = receipt["artifacts"]["remoteVerification"][
+                        "artifacts"
+                    ][0]
+                    entry = (
+                        remote_artifact["manifest"]
+                        if target == "manifest"
+                        else remote_artifact["verification"][0]
+                    )
+                    document = json.loads(entry["sourceText"])
+                    document["completedAt"] = "2026-01-01T00:00:01Z"
+                    source_text = (
+                        json.dumps(
+                            document,
+                            ensure_ascii=False,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                    entry["sourceText"] = source_text
+                    entry["sourceDigest"] = (
+                        "sha256:"
+                        + hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+                    )
+                    entry["canonicalDigest"] = _canonical_digest(document)
+                    tampered = inputs / f"tampered-{target}-receipt.json"
+                    tampered.write_text(
+                        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True)
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ContractError, "ingested index|stale or failed report"
+                    ):
+                        validate_receipt(tampered)
+
     def test_remote_evidence_rejects_failed_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -566,3 +647,187 @@ class RemoteVerificationTests(unittest.TestCase):
                     context_id="worker-context",
                     kind="agent",
                 )
+
+    def test_unknown_remote_requirement_is_rejected_at_change_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            self.write_contract(contract_path)
+            contract = read_json(contract_path)
+            contract["requiredEvidence"] = ["unknown-matrix"]
+            contract_path.write_text(
+                json.dumps(contract) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "undefined remote evidence"):
+                start_change(
+                    root,
+                    self.project(),
+                    contract_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_remote_selector_gap_duplicate_and_request_digest_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            _, request, reports = self.prepare_implementing(root, inputs)
+            evidence_path = self.write_evidence(inputs, request, reports)
+
+            gap_request = json.loads(json.dumps(request))
+            gap_request["requirements"][0]["selectors"].append(
+                {
+                    "id": "windows-python-3-14",
+                    "runnerOs": "Windows",
+                    "implementation": "CPython",
+                    "pythonMinor": "3.14",
+                }
+            )
+            gap_evidence = read_json(evidence_path)
+            gap_evidence["requestSha256"] = canonical_json_digest(gap_request)
+            gap_path = inputs / "gap-evidence.json"
+            gap_path.write_text(
+                json.dumps(gap_evidence) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "selector coverage mismatch"):
+                validate_remote_evidence_set(gap_request, gap_path)
+
+            duplicate = read_json(evidence_path)
+            duplicate["artifacts"].append(
+                json.loads(json.dumps(duplicate["artifacts"][0]))
+            )
+            with self.assertRaisesRegex(ContractError, "duplicate archive name"):
+                validate_remote_verification_evidence(duplicate)
+
+            wrong_digest = read_json(evidence_path)
+            wrong_digest["requestSha256"] = "sha256:" + "0" * 64
+            evidence_path.write_text(
+                json.dumps(wrong_digest) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "request digest mismatch"):
+                validate_remote_evidence_set(request, evidence_path)
+
+    def test_stale_remote_request_is_rejected_after_source_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            _, request, reports = self.prepare_implementing(root, inputs)
+            evidence_path = self.write_evidence(inputs, request, reports)
+            (root / "tracked.txt").write_text("newer\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "newer"], cwd=root, check=True
+            )
+            with self.assertRaisesRegex(ContractError, "request is stale"):
+                ingest_remote_verification(
+                    root,
+                    "remote-change",
+                    evidence_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_wrong_remote_source_and_workflow_identities_are_rejected(self):
+        mutations = {
+            "workflow": lambda manifest: manifest["execution"].__setitem__(
+                "workflowSha", "f" * 40
+            ),
+            "checkpoint": lambda manifest: manifest.__setitem__(
+                "checkpoint", "e" * 40
+            ),
+            "base": lambda manifest: manifest.__setitem__(
+                "comparisonBase", "d" * 40
+            ),
+            "fingerprint": lambda manifest: manifest.__setitem__(
+                "workspaceFingerprint", "sha256:" + "c" * 64
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                root = base / "project"
+                inputs = base / "inputs"
+                root.mkdir()
+                inputs.mkdir()
+                self.initialize_repository(root)
+                _, request, reports = self.prepare_implementing(root, inputs)
+                evidence_path = self.write_evidence(inputs, request, reports)
+                self.rewrite_manifest(evidence_path, mutate)
+                with self.assertRaisesRegex(
+                    ContractError, "identity or status mismatch|execution workflowSha mismatch"
+                ):
+                    validate_remote_evidence_set(request, evidence_path)
+
+    def test_expanded_remote_archive_is_bounded_before_ingestion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            _, request, reports = self.prepare_implementing(root, inputs)
+            evidence_path = self.write_evidence(inputs, request, reports)
+            evidence = read_json(evidence_path)
+            artifact = evidence["artifacts"][0]
+            archive_path = inputs / artifact["archive"]["path"]
+            with zipfile.ZipFile(archive_path, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("oversized.json", " " * 1_000_001)
+            content = archive_path.read_bytes()
+            digest = f"sha256:{hashlib.sha256(content).hexdigest()}"
+            artifact["archive"].update(
+                {"bytes": len(content), "sha256": digest}
+            )
+            artifact["service"].update(
+                {"sizeInBytes": len(content), "digest": digest}
+            )
+            evidence_path.write_text(
+                json.dumps(evidence) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ContractError, "unsafe or invalid entry"):
+                validate_remote_evidence_set(request, evidence_path)
+
+    def test_bootstrap_evidence_uses_full_semantic_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            _, request, reports = self.prepare_implementing(root, inputs)
+            source_ref = f"refs/tags/{verification_tag(request)}"
+            workflow_ref = (
+                "example/sample-project/.github/workflows/ci.yml@" + source_ref
+            )
+            evidence_path = self.write_evidence(
+                inputs,
+                request,
+                reports,
+                output_truncated=True,
+                workflow_ref=workflow_ref,
+            )
+            audit = _validate_bootstrap_evidence(
+                request,
+                evidence_path,
+                repository="example/sample-project",
+                workflow="ci.yml",
+                source_ref=source_ref,
+            )
+            self.assertEqual("passed", audit["status"])
+            self.assertEqual(workflow_ref, audit["workflowRef"])
