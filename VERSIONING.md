@@ -138,6 +138,22 @@ consumer reproduction after adoption. A read-only pre-release consumer candidate
 supplemental compatibility evidence only and cannot be committed as an unreleased
 dependency.
 
+## Recommendation-validity capability
+
+Recommendation, review-assignment, review, and owner-resolution schema-1 artifacts
+are additive serialized surfaces. Requiring every new material owner decision to use
+their invariant derivation, project-global fresh-context reservation, independent
+challenge, chain validation, and valid resolution changes managed workflow semantics.
+Before 1.0 this is therefore a breaking package change even though `schemaImpact`
+remains additive.
+
+After adoption, new material decisions use `recommendation review start` before the
+reviewer acts, validate the exact assignment-bound chain before presenting a
+recommendation, and record the selected valid option before dependent work resumes.
+Completed historical decisions retain their original evidence and require no
+backfill. A recommendation resolution is decision evidence only and never substitutes
+for lifecycle completion or delivery authority.
+
 ## Release and adoption boundary
 
 Release, self-adoption, and consumer adoption are separate changes:

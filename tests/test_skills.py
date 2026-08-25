@@ -98,12 +98,20 @@ class SkillTests(unittest.TestCase):
         )
 
         for text in (execution, assess, production):
-            self.assertIn("invariant", text.lower())
-            self.assertIn("optimization", text.lower())
-            self.assertIn("invalid", text.lower())
-            self.assertIn("unproven", text.lower())
-            self.assertIn("independent adversarial", text.lower())
-        self.assertIn("processctl recommendation validate-chain", execution)
+            normalized = " ".join(text.lower().split())
+            self.assertIn("invariant", normalized)
+            self.assertIn("optimization", normalized)
+            self.assertIn("invalid", normalized)
+            self.assertIn("unproven", normalized)
+            self.assertIn("independent adversarial", normalized)
+        normalized_execution = " ".join(execution.split())
+        self.assertIn(
+            "processctl recommendation validate-chain", normalized_execution
+        )
+        self.assertIn(
+            "processctl recommendation review start", normalized_execution
+        )
+        self.assertIn("project-global context", normalized_execution)
         self.assertIn(
             "grants no lifecycle completion", " ".join(production.split())
         )

@@ -106,13 +106,17 @@ unproven invariant or referenced assumption makes it unproven. Only the complete
 derived valid set may enter cost, convenience, minimal-change, rollout, or other
 secondary ranking.
 
-High-risk recommendations require a digest-bound independent adversarial review from
-a distinct actor and fresh context. The review covers assumption evidence, invariant
-tracing, option classification, and terminal ordering. A missing, stale, incomplete,
-self-reviewed, changes-requested, invalid, or unproven chain cannot produce a
-recommendation. When no valid option exists, the outcome is `decision-required`, not
-an optimized compromise. Owner resolution may select only a valid option and grants
-no lifecycle completion, merge, release, deployment, or adoption authority.
+High-risk recommendations require a process-created digest-bound review assignment.
+Before review, the reviewer method must match its actor kind, a non-participant host
+must attest independence, and the context is atomically reserved in the same
+project-global registry used by lifecycle review. The assigned independent
+adversarial review covers assumption evidence, invariant tracing, option
+classification, and terminal ordering.
+A missing, stale, incomplete, self-attested, context-reused, changes-requested,
+invalid, or unproven chain cannot produce a recommendation. When no valid option
+exists, the outcome is `decision-required`, not an optimized compromise. Owner
+resolution may select only a valid option and grants no lifecycle completion, merge,
+release, deployment, or adoption authority.
 
 ## Resource and generated-state policy
 

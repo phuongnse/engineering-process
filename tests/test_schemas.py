@@ -32,6 +32,7 @@ class SchemaTests(unittest.TestCase):
             "recommendation": "recommendation",
             "recommendation-resolution": "recommendation-resolution",
             "recommendation-review": "recommendation-review",
+            "recommendation-review-assignment": "recommendation-review-assignment",
             "release": "release",
             "release-change": "release-change",
             "review": "review",

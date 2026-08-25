@@ -88,11 +88,14 @@ lifecycle order, or external mutation, stop dependent mutation and:
    `invalid`, and `unproven` sets. Cost, convenience, minimal change, and other
    secondary optimization apply only within the derived valid set. Never promote an
    invalid or unproven option because it changes fewer boundaries.
-4. For every material recommendation, obtain a digest-bound independent adversarial
-   review from a distinct actor and fresh context. The reviewer must challenge
-   assumption evidence, invariant tracing, option classification, and terminal
-   ordering. Run `processctl recommendation validate-chain`; do not present a
-   recommendation unless the exact chain is approved and allowed.
+4. For every material recommendation, run `processctl recommendation review start`
+   before review. It creates a digest-bound assignment and atomically reserves a
+   project-global context unused by lifecycle or recommendation review. The assigned
+   independent adversarial reviewer uses a distinct actor and fresh context to
+   challenge assumption evidence, invariant tracing, option classification, and
+   terminal ordering. Run `processctl
+   recommendation validate-chain` with the exact assignment; do not present a
+   recommendation unless the complete chain is approved and allowed.
 5. If no valid option exists, report `decision-required` with the missing evidence or
    authority instead of manufacturing a recommendation. Otherwise present the valid
    options, their trade-offs, and the reviewed recommendation without inventing a

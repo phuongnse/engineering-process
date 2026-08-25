@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-recommendation-review-assignment",
+  "decisionId": "remote-evidence-ordering",
+  "recommendationSha256": "sha256:137a6ce0094d5bbefce305c264d4523edb392d213be91095f78517e8fed15ed7",
+  "coordinator": {
+    "actorId": "decision-coordinator",
+    "contextId": "decision-context-1",
+    "kind": "agent"
+  },
+  "reviewer": {
+    "actorId": "independent-decision-reviewer",
+    "contextId": "fresh-decision-review-context",
+    "kind": "agent"
+  },
+  "independence": {
+    "method": "isolated-context",
+    "attestedBy": "agent-host",
+    "evidence": "The host reserved a fresh project-global context that did not prepare the recommendation."
+  },
+  "contextReservationSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

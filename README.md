@@ -459,23 +459,39 @@ Validate the recommendation, challenge, and optional owner resolution as one cha
 
 ~~~text
 processctl contract validate --kind recommendation recommendation.json
+processctl recommendation review start --project-root . \
+  --recommendation recommendation.json \
+  --actor <reviewer> --context <fresh-context> --actor-kind agent \
+  --method isolated-context --attested-by <host> \
+  --attestation-evidence <bounded-attestation>
+processctl contract validate --kind recommendation-review-assignment \
+  .process/runs/recommendations/<decision-id>/review-request-<ids>.json
 processctl contract validate --kind recommendation-review recommendation-review.json
-processctl recommendation validate-chain \
-  --recommendation recommendation.json --review recommendation-review.json
-processctl recommendation resolution \
-  --recommendation recommendation.json --review recommendation-review.json \
+processctl recommendation validate-chain --project-root . \
+  --recommendation recommendation.json \
+  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
+  --review recommendation-review.json
+processctl recommendation resolution --project-root . \
+  --recommendation recommendation.json \
+  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
+  --review recommendation-review.json \
   --selected-option <valid-option-id> --owner-id <owner-id> \
   --owner-evidence-sha256 sha256:<digest> \
   --selection-rationale-sha256 sha256:<digest> \
   --output recommendation-resolution.json
-processctl recommendation validate-chain \
-  --recommendation recommendation.json --review recommendation-review.json \
+processctl recommendation validate-chain --project-root . \
+  --recommendation recommendation.json \
+  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
+  --review recommendation-review.json \
   --resolution recommendation-resolution.json
 ~~~
 
-The resolution records a selected valid option but grants no lifecycle completion,
-merge, release, deployment, or adoption authority. Those owning gates remain
-separate. The accepted decision is recorded before dependent work resumes.
+The review-start command reserves the context across lifecycle and recommendation
+reviews before emitting its exact assignment. Resolution creation refuses symlinked,
+existing, or concurrently created output instead of redirecting or replacing it. The
+resolution records a selected valid option but grants no lifecycle completion, merge,
+release, deployment, or adoption authority. Those owning gates remain separate. The
+accepted decision is recorded before dependent work resumes.
 
 The canonical publication order is stricter than a PR-first workflow: implementation
 and every required profile pass on a clean checkpoint; a consumer-selected independent
@@ -711,7 +727,7 @@ fingerprint, source tree, or publication range.
   producer-owned installer from its immutable action checkout and never downloads or
   executes helper source from the consumer branch.
 - Versioned JSON schemas define change, plan, verification, review, recommendation,
-  independent recommendation challenge, owner resolution, lifecycle,
+  independent recommendation assignment and challenge, owner resolution, lifecycle,
   completion-related artifacts, release-change fragments, and the release
   classification contract. The generated Release PR gate binds that contract to the
   exact SemVer increment, package version, latest reachable prior tag, reviewed head,

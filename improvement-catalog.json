@@ -15,7 +15,7 @@
       "status": "resolved"
     },
     {
-      "activeChangeId": "enforce-evidence-valid-recommendations",
+      "activeChangeId": "enforce-evidence-valid-recommendations-v2",
       "id": "failure-to-invariant-disposition-enforcement",
       "lastResolution": {
         "changeId": "federated-process-improvement",

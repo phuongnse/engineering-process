@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import stat
-import uuid
+import tempfile
 from typing import Any, Callable
 
 from .contracts import (
@@ -15,7 +15,9 @@ from .contracts import (
     validate_recommendation,
     validate_recommendation_resolution,
     validate_recommendation_review,
+    validate_recommendation_review_assignment,
 )
+from .lifecycle import reserve_review_context, review_context_reservation
 
 
 MAX_RECOMMENDATION_CHAIN_BYTES = 3_000_000
@@ -102,11 +104,15 @@ def _chain_size(paths: tuple[Path | None, ...]) -> None:
 
 
 def validate_recommendation_chain(
+    project_root: Path,
     recommendation_path: Path,
+    assignment_path: Path,
     review_path: Path,
     resolution_path: Path | None = None,
 ) -> dict[str, Any]:
-    _chain_size((recommendation_path, review_path, resolution_path))
+    _chain_size(
+        (recommendation_path, assignment_path, review_path, resolution_path)
+    )
     recommendation = _stable_document(
         recommendation_path,
         label="recommendation",
@@ -115,28 +121,60 @@ def validate_recommendation_chain(
     classifications = validate_recommendation(
         recommendation, str(recommendation_path)
     )
+    assignment = _stable_document(
+        assignment_path,
+        label="recommendation review assignment",
+        validator=validate_recommendation_review_assignment,
+    )
     review = _stable_document(
         review_path,
         label="recommendation review",
         validator=validate_recommendation_review,
     )
     recommendation_digest = canonical_json_digest(recommendation)
+    if assignment["decisionId"] != recommendation["decisionId"]:
+        raise ContractError("recommendation assignment decision id does not match")
+    if assignment["recommendationSha256"] != recommendation_digest:
+        raise ContractError(
+            "recommendation assignment does not bind the canonical recommendation digest"
+        )
+    if assignment["coordinator"] != recommendation["coordinator"]:
+        raise ContractError(
+            "recommendation assignment coordinator does not match recommendation"
+        )
+    reservation = review_context_reservation(
+        project_root, assignment["reviewer"]["contextId"]
+    )
+    if (
+        canonical_json_digest(reservation)
+        != assignment["contextReservationSha256"]
+    ):
+        raise ContractError(
+            "recommendation assignment does not bind the project context reservation"
+        )
+    if (
+        reservation["actorId"] != assignment["reviewer"]["actorId"]
+        or reservation["kind"] != assignment["reviewer"]["kind"]
+        or reservation["changeId"]
+        != f"recommendation-{recommendation['decisionId']}"
+        or reservation["cycle"] != 1
+    ):
+        raise ContractError(
+            "recommendation assignment reviewer does not match context reservation"
+        )
     if review["decisionId"] != recommendation["decisionId"]:
         raise ContractError("recommendation review decision id does not match")
     if review["recommendationSha256"] != recommendation_digest:
         raise ContractError(
             "recommendation review does not bind the canonical recommendation digest"
         )
-    coordinator = recommendation["coordinator"]
-    reviewer = review["reviewer"]
-    if coordinator["actorId"] == reviewer["actorId"]:
+    assignment_digest = canonical_json_digest(assignment)
+    if review["assignmentSha256"] != assignment_digest:
         raise ContractError(
-            "recommendation reviewer actor must differ from the coordinator"
+            "recommendation review does not bind the canonical assignment digest"
         )
-    if coordinator["contextId"] == reviewer["contextId"]:
-        raise ContractError(
-            "recommendation reviewer context must differ from the coordinator"
-        )
+    if review["reviewer"] != assignment["reviewer"]:
+        raise ContractError("recommendation review actor does not match assignment")
     expected_invariants = [item["id"] for item in recommendation["invariants"]]
     reviewed_invariants = [
         item["invariantId"] for item in review["invariantAssessments"]
@@ -166,6 +204,7 @@ def validate_recommendation_chain(
     result: dict[str, Any] = {
         "decisionId": recommendation["decisionId"],
         "recommendationSha256": recommendation_digest,
+        "assignmentSha256": assignment_digest,
         "reviewSha256": canonical_json_digest(review),
         "risk": recommendation["risk"],
         "validOptionIds": valid_options,
@@ -189,6 +228,10 @@ def validate_recommendation_chain(
         raise ContractError(
             "recommendation resolution does not bind the canonical recommendation digest"
         )
+    if resolution["assignmentSha256"] != assignment_digest:
+        raise ContractError(
+            "recommendation resolution does not bind the canonical assignment digest"
+        )
     review_digest = canonical_json_digest(review)
     if resolution["reviewSha256"] != review_digest:
         raise ContractError(
@@ -210,37 +253,163 @@ def validate_recommendation_chain(
     return result
 
 
-def _write_new_artifact(document: dict[str, Any], output: Path) -> str:
-    validate_recommendation_resolution(document, str(output))
+def _write_new_artifact(
+    document: dict[str, Any],
+    output: Path,
+    *,
+    label: str,
+    validator: Callable[[Any, str], Any],
+) -> tuple[str, Path]:
+    validator(document, str(output))
     data = (
         json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
     if len(data) > MAX_JSON_BYTES:
-        raise ContractError("recommendation resolution exceeds the JSON size limit")
-    output = output.resolve()
-    if output.exists():
-        raise ContractError(f"{output}: refusing to replace a recommendation resolution")
+        raise ContractError(f"{label} exceeds the JSON size limit")
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with temporary.open("xb") as stream:
+        parent = output.parent.resolve(strict=True)
+    except OSError as error:
+        raise ContractError(f"{label} parent cannot be resolved: {error}") from error
+    destination = parent / output.name
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise ContractError(f"{destination}: cannot inspect {label}: {error}") from error
+    else:
+        raise ContractError(f"{destination}: refusing to replace {label}")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        temporary.replace(output)
+        try:
+            os.link(temporary, destination, follow_symlinks=False)
+        except FileExistsError as error:
+            raise ContractError(
+                f"{destination}: refusing to replace concurrently created {label}"
+            ) from error
+        except OSError as error:
+            raise ContractError(
+                f"{destination}: cannot create exclusive {label}: {error}"
+            ) from error
     except OSError as error:
+        raise ContractError(f"{destination}: cannot write {label}: {error}") from error
+    finally:
         try:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
-        raise ContractError(
-            f"{output}: cannot write recommendation resolution: {error}"
-        ) from error
-    return canonical_json_digest(document)
+    return canonical_json_digest(document), destination
+
+
+def _actor(actor_id: str, context_id: str, kind: str) -> dict[str, str]:
+    for value, label in ((actor_id, "actor id"), (context_id, "context id")):
+        if not value or value != value.strip() or len(value) > 256:
+            raise ContractError(f"recommendation reviewer {label} is invalid")
+    if kind not in {"agent", "human"}:
+        raise ContractError("recommendation reviewer kind must be agent or human")
+    return {"actorId": actor_id, "contextId": context_id, "kind": kind}
+
+
+def start_recommendation_review(
+    project_root: Path,
+    recommendation_path: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+    method: str,
+    attested_by: str,
+    evidence: str,
+) -> dict[str, Any]:
+    recommendation = _stable_document(
+        recommendation_path,
+        label="recommendation",
+        validator=validate_recommendation,
+    )
+    reviewer = _actor(actor_id, context_id, kind)
+    coordinator = recommendation["coordinator"]
+    if kind == "agent" and method != "isolated-context":
+        raise ContractError("agent recommendation review requires isolated-context")
+    if kind == "human" and method != "separate-person":
+        raise ContractError("human recommendation review requires separate-person")
+    participants = {
+        coordinator["actorId"],
+        coordinator["contextId"],
+        reviewer["actorId"],
+        reviewer["contextId"],
+    }
+    if not attested_by or attested_by != attested_by.strip() or len(attested_by) > 256:
+        raise ContractError("recommendation review attester is invalid")
+    if attested_by in participants:
+        raise ContractError("recommendation review cannot be participant-attested")
+    if not evidence or evidence != evidence.strip() or len(evidence) > 2000:
+        raise ContractError("recommendation review independence evidence is invalid")
+    if coordinator["actorId"] == reviewer["actorId"]:
+        raise ContractError("recommendation reviewer actor must differ from coordinator")
+    if coordinator["contextId"] == reviewer["contextId"]:
+        raise ContractError("recommendation reviewer context must differ from coordinator")
+    decision_id = recommendation["decisionId"]
+    reservation = reserve_review_context(
+        project_root,
+        {"changeId": f"recommendation-{decision_id}", "cycle": 1},
+        reviewer,
+    )
+    recommendation_digest = canonical_json_digest(recommendation)
+    assignment = {
+        "schemaVersion": 1,
+        "kind": "engineering-process-recommendation-review-assignment",
+        "decisionId": decision_id,
+        "recommendationSha256": recommendation_digest,
+        "coordinator": coordinator,
+        "reviewer": reviewer,
+        "independence": {
+            "method": method,
+            "attestedBy": attested_by,
+            "evidence": evidence,
+        },
+        "contextReservationSha256": canonical_json_digest(reservation),
+    }
+    context_digest = reservation["contextDigest"].removeprefix("sha256:")
+    assignment_path = (
+        project_root
+        / ".process"
+        / "runs"
+        / "recommendations"
+        / decision_id
+        / (
+            "review-request-"
+            f"{recommendation_digest.removeprefix('sha256:')[:16]}-"
+            f"{context_digest[:16]}.json"
+        )
+    )
+    assignment_digest, written = _write_new_artifact(
+        assignment,
+        assignment_path,
+        label="recommendation review assignment",
+        validator=validate_recommendation_review_assignment,
+    )
+    return {
+        "decisionId": decision_id,
+        "recommendationSha256": recommendation_digest,
+        "assignmentSha256": assignment_digest,
+        "assignment": str(written.relative_to(project_root.resolve())),
+        "reviewer": reviewer,
+        "phase": "review-pending",
+    }
 
 
 def create_recommendation_resolution(
+    project_root: Path,
     recommendation_path: Path,
+    assignment_path: Path,
     review_path: Path,
     *,
     selected_option_id: str,
@@ -249,7 +418,9 @@ def create_recommendation_resolution(
     selection_rationale_sha256: str,
     output: Path,
 ) -> dict[str, Any]:
-    chain = validate_recommendation_chain(recommendation_path, review_path)
+    chain = validate_recommendation_chain(
+        project_root, recommendation_path, assignment_path, review_path
+    )
     if not chain["allowed"]:
         raise ContractError("blocked recommendation has no selectable option")
     if selected_option_id not in chain["validOptionIds"]:
@@ -259,6 +430,7 @@ def create_recommendation_resolution(
         "kind": "engineering-process-recommendation-resolution",
         "decisionId": chain["decisionId"],
         "recommendationSha256": chain["recommendationSha256"],
+        "assignmentSha256": chain["assignmentSha256"],
         "reviewSha256": chain["reviewSha256"],
         "selectedOptionId": selected_option_id,
         "owner": {
@@ -268,11 +440,16 @@ def create_recommendation_resolution(
         "selectionRationaleSha256": selection_rationale_sha256,
         "controls": dict(RECOMMENDATION_RESOLUTION_CONTROLS),
     }
-    digest = _write_new_artifact(document, output)
+    digest, written = _write_new_artifact(
+        document,
+        output,
+        label="recommendation resolution",
+        validator=validate_recommendation_resolution,
+    )
     return {
         "decisionId": chain["decisionId"],
         "selectedOptionId": selected_option_id,
         "resolutionSha256": digest,
-        "output": str(output.resolve()),
+        "output": str(written),
         "phase": "resolved",
     }
