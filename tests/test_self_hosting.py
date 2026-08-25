@@ -35,6 +35,16 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("process-action-smoke/Scripts/python.exe", ci)
         self.assertIn("process-action-smoke/bin/python", ci)
         self.assertIn("Verify shared install action authority", ci)
+        windows_job = ci.index("Verify real Windows Job Object boundary")
+        install_wheel = ci.index("Install built wheel")
+        windows_job_block = ci[windows_job:install_wheel]
+        self.assertIn("if: runner.os == 'Windows'", windows_job_block)
+        self.assertIn(
+            "run: python -m unittest tests.test_windows_job",
+            windows_job_block,
+        )
+        self.assertLess(ci.index("Build distributions"), windows_job)
+        self.assertLess(windows_job, install_wheel)
         create = ci.index("Create exact public N-1 release qualification environment")
         install = ci.index("Install exact public N-1 release qualification authority")
         dependencies = ci.index("Install release qualification dependencies")
@@ -583,9 +593,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertTrue(
             managed_windows_helper.read_text(encoding="utf-8").startswith(marker)
         )
-        self.assertEqual(
-            managed_windows_helper.read_bytes(),
-            template_windows_helper.read_bytes(),
+        self.assertIn(
+            "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+            managed_windows_helper.read_text(encoding="utf-8"),
         )
         self.assertEqual(
             windows_helper.read_bytes(), template_windows_helper.read_bytes()

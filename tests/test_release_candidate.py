@@ -20,6 +20,22 @@ from engineering_process.release_candidate import (
     render_release_pull_request,
 )
 class ReleaseCandidateTests(unittest.TestCase):
+    def assert_federated_migration_contract(
+        self, aggregate: str, federated_migration: str | None
+    ) -> None:
+        self.assertLessEqual(len(aggregate), 1_000)
+        if federated_migration is None:
+            return
+        for required in (
+            "Must adopt cross-repo-change",
+            "classify governed failures/findings",
+            "consumers await disposition",
+            "immutable release",
+            "exact reproduction",
+            "Released lifecycle/evidence readers retain historical meaning",
+        ):
+            self.assertIn(required, federated_migration)
+
     def test_source_release_migration_aggregate_fits_public_contract(self):
         changes_dir = Path(__file__).resolve().parent.parent / "release-changes"
         if not changes_dir.is_dir():
@@ -45,20 +61,14 @@ class ReleaseCandidateTests(unittest.TestCase):
                 )
             )
             aggregate = release.migration or ""
-            self.assertIn("federated-process-improvement:", aggregate)
-            federated_migration = aggregate
+            if "federated-process-improvement:" in aggregate:
+                federated_migration = aggregate
         else:
             aggregate = "; ".join(migrations)
-        self.assertLessEqual(len(aggregate), 1_000)
-        for required in (
-            "Must adopt cross-repo-change",
-            "classify governed failures/findings",
-            "consumers await disposition",
-            "immutable release",
-            "exact reproduction",
-            "Released lifecycle/evidence readers retain historical meaning",
-        ):
-            self.assertIn(required, federated_migration)
+        self.assert_federated_migration_contract(aggregate, federated_migration)
+
+    def test_migration_free_patch_has_no_legacy_guidance_requirement(self):
+        self.assert_federated_migration_contract("", None)
 
     def test_generated_release_closes_only_catalog_entries_in_its_change_set(self):
         with tempfile.TemporaryDirectory() as directory:

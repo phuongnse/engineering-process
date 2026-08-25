@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "extend-windows-natural-drain",
+  "type": "fix",
+  "surfaces": [
+    "command-execution",
+    "windows-supervision"
+  ],
+  "rationale": "Extend the Windows Job Object natural-drain bound from 250 milliseconds to 5 seconds so successful finite Cargo and Tauri commands can finish child accounting while commands that retain descendants beyond the bound remain terminated and fail closed.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

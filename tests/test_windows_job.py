@@ -12,7 +12,9 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process import _windows_job
-from engineering_process.supervision import NATURAL_DRAIN_GRACE_MILLISECONDS
+from engineering_process.supervision import (
+    WINDOWS_NATURAL_DRAIN_GRACE_MILLISECONDS,
+)
 
 
 class NativeCall:
@@ -240,9 +242,9 @@ class WindowsJobTests(unittest.TestCase):
         self.assertEqual(7, exit_code)
         self.assertTrue(json.loads(status)["descendantsFound"])
 
-    def test_natural_drain_uses_the_portable_supervision_bound(self):
+    def test_natural_drain_uses_the_windows_supervision_bound(self):
         self.assertEqual(
-            NATURAL_DRAIN_GRACE_MILLISECONDS,
+            WINDOWS_NATURAL_DRAIN_GRACE_MILLISECONDS,
             _windows_job.NATURAL_DRAIN_GRACE_MILLISECONDS,
         )
 
@@ -351,6 +353,49 @@ class WindowsJobTests(unittest.TestCase):
         self.assertEqual([202, 201, 101], kernel32.closed_handles)
 
     @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
+    def test_real_job_allows_a_short_lived_descendant_to_drain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            started = root / "started"
+            completed = root / "completed"
+            child = (
+                "from pathlib import Path; import sys, time; "
+                "Path(sys.argv[1]).write_text('started'); "
+                "time.sleep(1); Path(sys.argv[2]).write_text('completed')"
+            )
+            parent = (
+                "from pathlib import Path; import subprocess, sys, time; "
+                "subprocess.Popen([sys.executable, '-c', sys.argv[1], "
+                "sys.argv[2], sys.argv[3]]); "
+                "deadline=time.monotonic()+5; marker=Path(sys.argv[2]); "
+                "\nwhile not marker.exists() and time.monotonic() < deadline: "
+                "time.sleep(0.01)\n"
+                "raise SystemExit(0 if marker.exists() else 2)"
+            )
+
+            started_at = time.monotonic()
+            exit_code = _windows_job._run(
+                sys.executable,
+                [
+                    sys.executable,
+                    "-c",
+                    parent,
+                    child,
+                    str(started),
+                    str(completed),
+                ],
+            )
+            elapsed = time.monotonic() - started_at
+
+            self.assertEqual(0, exit_code)
+            self.assertTrue(completed.exists())
+            self.assertGreaterEqual(elapsed, 0.75)
+            self.assertLess(
+                elapsed,
+                WINDOWS_NATURAL_DRAIN_GRACE_MILLISECONDS / 1000 + 5,
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
     def test_real_job_terminates_a_descendant_left_by_the_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -359,7 +404,7 @@ class WindowsJobTests(unittest.TestCase):
             child = (
                 "from pathlib import Path; import sys, time; "
                 "Path(sys.argv[1]).write_text('started'); "
-                "time.sleep(1); Path(sys.argv[2]).write_text('survived')"
+                "time.sleep(30); Path(sys.argv[2]).write_text('survived')"
             )
             parent = (
                 "from pathlib import Path; import subprocess, sys, time; "
@@ -387,7 +432,7 @@ class WindowsJobTests(unittest.TestCase):
                     ]
                 )
 
-            time.sleep(1.25)
+            time.sleep(0.25)
             self.assertFalse(survived.exists())
 
 
