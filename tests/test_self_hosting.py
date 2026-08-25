@@ -82,7 +82,19 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("processctl change finish", approval)
         self.assertIn("completion_evidence_gzip_base64", approval)
         self.assertIn("verification/decode_completion_evidence.py", approval)
+        self.assertIn("verification/validate_release_completion_identity.py", approval)
         self.assertIn("processctl evidence validate", approval)
+        self.assertIn("--release-change .release/change.json", approval)
+        self.assertIn("--process-lock .process/process.lock", approval)
+        self.assertIn('--expected-checkpoint "$HEAD_SHA"', approval)
+        self.assertNotIn(
+            'jq -r .comparisonBase "$RUNNER_TEMP/completion-summary.json")" = "$BASE_SHA"',
+            approval,
+        )
+        self.assertIn(
+            'test "$(jq -r .baseSha "$RUNNER_TEMP/verified-candidate/candidate.json")" = "${{ inputs.comparison_base }}"',
+            approval,
+        )
         self.assertIn("publication validate-evidence-source", approval)
         self.assertLess(
             approval.index("publication validate-evidence-source"),
@@ -162,6 +174,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("host-review.json", approval)
         self.assertIn("enables exact-head protected auto-merge", readme)
         self.assertIn("No workflow bypasses branch protection", readme)
+        self.assertIn("candidate source base", readme)
+        self.assertIn("lifecycle comparison base", readme)
         self.assertNotIn("No workflow invokes merge", readme)
 
     def test_renovate_cannot_publish_before_a_completed_lifecycle(self):
