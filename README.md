@@ -446,9 +446,36 @@ may authorize installing that policy but never substitutes for a missing policy.
 When new evidence exposes multiple materially valid directions or would change
 accepted scope, owner, trust boundary, authority, compatibility, rollout, or
 lifecycle order, the coordinator stops dependent mutation and asks the project owner.
-It presents evidence, the invariant, real options, trade-offs, and a recommendation;
-the accepted decision is recorded before work resumes. Bounded implementation details
+Before presenting a material recommendation, it records every hard invariant,
+assumption, and option in a bounded recommendation artifact. `processctl` derives the
+valid, invalid, and unproven sets; cost or minimal-change optimization applies only to
+the complete valid set. A distinct actor and fresh context independently challenge
+assumption evidence, invariant tracing, option classification, and terminal ordering.
+If the exact digest-bound chain is not approved or contains no valid option, the
+result is blocked rather than a recommendation. Bounded implementation details
 already decided by the contract continue autonomously.
+
+Validate the recommendation, challenge, and optional owner resolution as one chain:
+
+~~~text
+processctl contract validate --kind recommendation recommendation.json
+processctl contract validate --kind recommendation-review recommendation-review.json
+processctl recommendation validate-chain \
+  --recommendation recommendation.json --review recommendation-review.json
+processctl recommendation resolution \
+  --recommendation recommendation.json --review recommendation-review.json \
+  --selected-option <valid-option-id> --owner-id <owner-id> \
+  --owner-evidence-sha256 sha256:<digest> \
+  --selection-rationale-sha256 sha256:<digest> \
+  --output recommendation-resolution.json
+processctl recommendation validate-chain \
+  --recommendation recommendation.json --review recommendation-review.json \
+  --resolution recommendation-resolution.json
+~~~
+
+The resolution records a selected valid option but grants no lifecycle completion,
+merge, release, deployment, or adoption authority. Those owning gates remain
+separate. The accepted decision is recorded before dependent work resumes.
 
 The canonical publication order is stricter than a PR-first workflow: implementation
 and every required profile pass on a clean checkpoint; a consumer-selected independent
@@ -683,7 +710,8 @@ fingerprint, source tree, or publication range.
   exclusively by their hash-locked `requirements/process.txt`. The action invokes the
   producer-owned installer from its immutable action checkout and never downloads or
   executes helper source from the consumer branch.
-- Versioned JSON schemas define change, plan, verification, review, lifecycle,
+- Versioned JSON schemas define change, plan, verification, review, recommendation,
+  independent recommendation challenge, owner resolution, lifecycle,
   completion-related artifacts, release-change fragments, and the release
   classification contract. The generated Release PR gate binds that contract to the
   exact SemVer increment, package version, latest reachable prior tag, reviewed head,

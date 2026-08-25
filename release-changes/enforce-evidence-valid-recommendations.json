@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "enforce-evidence-valid-recommendations",
+  "type": "capability",
+  "surfaces": [
+    "cli",
+    "governance",
+    "recommendation",
+    "schema",
+    "skills"
+  ],
+  "rationale": "Add bounded recommendation, independent challenge, and owner-resolution artifacts plus a deterministic chain gate so invalid or unproven options cannot be recommended through secondary optimization and high-risk decisions cannot self-approve.",
+  "schemaImpact": "additive",
+  "migration": null
+}

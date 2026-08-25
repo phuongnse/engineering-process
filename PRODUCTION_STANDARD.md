@@ -97,6 +97,23 @@ failure. Source, branch, version, credentials, and controls are never changed me
 to cause another attempt. Independent review treats violation of these ownership and
 evidence boundaries as completion-blocking.
 
+## Recommendation validity
+
+A material owner decision derives recommendation eligibility before optimization.
+Every option assesses every governing hard invariant and references only proven or
+explicitly unproven assumptions. Any violated invariant makes the option invalid; any
+unproven invariant or referenced assumption makes it unproven. Only the complete
+derived valid set may enter cost, convenience, minimal-change, rollout, or other
+secondary ranking.
+
+High-risk recommendations require a digest-bound independent adversarial review from
+a distinct actor and fresh context. The review covers assumption evidence, invariant
+tracing, option classification, and terminal ordering. A missing, stale, incomplete,
+self-reviewed, changes-requested, invalid, or unproven chain cannot produce a
+recommendation. When no valid option exists, the outcome is `decision-required`, not
+an optimized compromise. Owner resolution may select only a valid option and grants
+no lifecycle completion, merge, release, deployment, or adoption authority.
+
 ## Resource and generated-state policy
 
 Every operation over repository-controlled or remote input has explicit limits for

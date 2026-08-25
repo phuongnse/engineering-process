@@ -15,7 +15,7 @@
       "status": "resolved"
     },
     {
-      "activeChangeId": null,
+      "activeChangeId": "enforce-evidence-valid-recommendations",
       "id": "failure-to-invariant-disposition-enforcement",
       "lastResolution": {
         "changeId": "federated-process-improvement",
@@ -24,10 +24,11 @@
       "publicSurfaces": [
         "governance",
         "lifecycle",
+        "recommendation",
         "skills"
       ],
       "reusableClass": "deterministic-enforcement",
-      "status": "resolved"
+      "status": "active"
     },
     {
       "activeChangeId": null,

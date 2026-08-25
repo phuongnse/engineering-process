@@ -29,6 +29,9 @@ from .contracts import (
     validate_plan,
     validate_process_lock,
     validate_project,
+    validate_recommendation,
+    validate_recommendation_resolution,
+    validate_recommendation_review,
     validate_release,
     validate_release_change,
     validate_review,
@@ -89,6 +92,10 @@ from .publication import (
     validate_evidence_publication,
 )
 from .process_graph import load_process_graph, process_root_from_skills
+from .recommendation import (
+    create_recommendation_resolution,
+    validate_recommendation_chain,
+)
 from .release import validate_release_checkpoint
 from .release_candidate import prepare_release_candidate, render_release_pull_request
 from .skills import validate_skills
@@ -281,6 +288,9 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "improvement-resolution": validate_improvement_resolution,
         "improvement-signal": validate_improvement_signal,
         "plan": validate_plan,
+        "recommendation": validate_recommendation,
+        "recommendation-resolution": validate_recommendation_resolution,
+        "recommendation-review": validate_recommendation_review,
         "release": validate_release,
         "release-change": validate_release_change,
         "review": validate_review,
@@ -294,6 +304,34 @@ def command_contract_validate(args: argparse.Namespace) -> int:
             path=str(args.path),
         ),
     )
+    return 0
+
+
+def command_recommendation_validate_chain(args: argparse.Namespace) -> int:
+    result = validate_recommendation_chain(
+        args.recommendation,
+        args.review,
+        args.resolution,
+    )
+    status = "passed" if result["allowed"] else "blocked"
+    _emit(
+        args,
+        _result("recommendation validate-chain", status=status, **result),
+    )
+    return 0 if result["allowed"] else 1
+
+
+def command_recommendation_resolution(args: argparse.Namespace) -> int:
+    result = create_recommendation_resolution(
+        args.recommendation,
+        args.review,
+        selected_option_id=args.selected_option,
+        owner_id=args.owner_id,
+        owner_evidence_sha256=args.owner_evidence_sha256,
+        selection_rationale_sha256=args.selection_rationale_sha256,
+        output=args.output,
+    )
+    _emit(args, _result("recommendation resolution", **result))
     return 0
 
 
@@ -1479,6 +1517,9 @@ def build_parser() -> argparse.ArgumentParser:
             "improvement-resolution",
             "improvement-signal",
             "plan",
+            "recommendation",
+            "recommendation-resolution",
+            "recommendation-review",
             "release",
             "release-change",
             "review",
@@ -1488,6 +1529,48 @@ def build_parser() -> argparse.ArgumentParser:
     contract_validate.add_argument("path", type=Path)
     _add_json(contract_validate)
     contract_validate.set_defaults(handler=command_contract_validate)
+
+    recommendation = commands.add_parser(
+        "recommendation",
+        help="Validate evidence-valid recommendations and owner resolutions",
+    )
+    recommendation_commands = recommendation.add_subparsers(
+        dest="recommendation_command", required=True
+    )
+    recommendation_validate = recommendation_commands.add_parser(
+        "validate-chain",
+        help="Validate recommendation validity and its independent challenge",
+    )
+    recommendation_validate.add_argument(
+        "--recommendation", type=Path, required=True
+    )
+    recommendation_validate.add_argument("--review", type=Path, required=True)
+    recommendation_validate.add_argument("--resolution", type=Path)
+    _add_json(recommendation_validate)
+    recommendation_validate.set_defaults(
+        handler=command_recommendation_validate_chain
+    )
+    recommendation_resolution = recommendation_commands.add_parser(
+        "resolution",
+        help="Create a non-authorizing owner resolution for an approved chain",
+    )
+    recommendation_resolution.add_argument(
+        "--recommendation", type=Path, required=True
+    )
+    recommendation_resolution.add_argument("--review", type=Path, required=True)
+    recommendation_resolution.add_argument("--selected-option", required=True)
+    recommendation_resolution.add_argument("--owner-id", required=True)
+    recommendation_resolution.add_argument(
+        "--owner-evidence-sha256", required=True
+    )
+    recommendation_resolution.add_argument(
+        "--selection-rationale-sha256", required=True
+    )
+    recommendation_resolution.add_argument("--output", type=Path, required=True)
+    _add_json(recommendation_resolution)
+    recommendation_resolution.set_defaults(
+        handler=command_recommendation_resolution
+    )
 
     skills = commands.add_parser("skills", help="Validate portable Agent Skills")
     skills_commands = skills.add_subparsers(dest="skills_command", required=True)

@@ -55,6 +55,19 @@ MAX_PROJECT_PROFILES = 64
 MAX_CHECKS_PER_PROFILE = 256
 MAX_PROJECT_CHECKS = 1_024
 MAX_CONTRACT_ITEMS = 256
+RECOMMENDATION_CHALLENGE_CATEGORIES = (
+    "assumption-evidence",
+    "invariant-trace",
+    "option-classification",
+    "terminal-ordering",
+)
+RECOMMENDATION_RESOLUTION_CONTROLS = {
+    "grantsAdoption": False,
+    "grantsDeployment": False,
+    "grantsLifecycleCompletion": False,
+    "grantsMerge": False,
+    "grantsRelease": False,
+}
 MAX_AUTOMATION_PROPOSAL_PATHS = 1_000
 MAX_AUTOMATION_PROPOSAL_PATH_BYTES = 256_000
 PRODUCTION_STANDARD = "production-v1"
@@ -1854,6 +1867,604 @@ def validate_release_change(
         schema_impact=schema_impact,
         migration=migration,
     )
+
+
+def _recommendation_evidence_digest(
+    value: Any,
+    path: str,
+    *,
+    required: bool,
+) -> None:
+    if not required and value is None:
+        return
+    digest = _string(value, path, max_length=71)
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ContractError(f"{path}: must be a lowercase sha256 digest")
+
+
+def validate_recommendation(
+    document: Any, path: str = "recommendation"
+) -> dict[str, str]:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "decisionId",
+            "summary",
+            "risk",
+            "coordinator",
+            "invariants",
+            "assumptions",
+            "options",
+            "validOptionIds",
+            "recommendation",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["kind"] != "engineering-process-recommendation":
+        raise ContractError(f"{path}.kind: invalid recommendation kind")
+    decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
+    if PROFILE_PATTERN.fullmatch(decision_id) is None:
+        raise ContractError(f"{path}.decisionId: invalid decision id")
+    _string(value["summary"], f"{path}.summary", max_length=1000)
+    if value["risk"] not in {"medium", "high"}:
+        raise ContractError(f"{path}.risk: must be medium or high")
+    _validate_actor(value["coordinator"], f"{path}.coordinator")
+
+    invariants = value["invariants"]
+    if (
+        not isinstance(invariants, list)
+        or not invariants
+        or len(invariants) > MAX_CONTRACT_ITEMS
+    ):
+        raise ContractError(
+            f"{path}.invariants: must contain 1 to {MAX_CONTRACT_ITEMS} items"
+        )
+    invariant_ids: list[str] = []
+    for index, raw_invariant in enumerate(invariants):
+        invariant_path = f"{path}.invariants[{index}]"
+        invariant = _object(raw_invariant, invariant_path)
+        _exact_keys(
+            invariant,
+            required={"id", "statement", "source", "evidenceSha256"},
+            path=invariant_path,
+        )
+        identifier = _string(
+            invariant["id"], f"{invariant_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{invariant_path}.id: invalid invariant id")
+        invariant_ids.append(identifier)
+        _string(
+            invariant["statement"],
+            f"{invariant_path}.statement",
+            max_length=2000,
+        )
+        _string(invariant["source"], f"{invariant_path}.source", max_length=1000)
+        _recommendation_evidence_digest(
+            invariant["evidenceSha256"],
+            f"{invariant_path}.evidenceSha256",
+            required=True,
+        )
+    if invariant_ids != sorted(invariant_ids):
+        raise ContractError(f"{path}.invariants: must be sorted by id")
+    if len(invariant_ids) != len(set(invariant_ids)):
+        raise ContractError(f"{path}.invariants: duplicate ids are not allowed")
+
+    assumptions = value["assumptions"]
+    if not isinstance(assumptions, list) or len(assumptions) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.assumptions: must contain at most {MAX_CONTRACT_ITEMS} items"
+        )
+    assumption_ids: list[str] = []
+    assumption_statuses: dict[str, str] = {}
+    for index, raw_assumption in enumerate(assumptions):
+        assumption_path = f"{path}.assumptions[{index}]"
+        assumption = _object(raw_assumption, assumption_path)
+        _exact_keys(
+            assumption,
+            required={"id", "statement", "status", "evidenceSha256"},
+            path=assumption_path,
+        )
+        identifier = _string(
+            assumption["id"], f"{assumption_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{assumption_path}.id: invalid assumption id")
+        assumption_ids.append(identifier)
+        _string(
+            assumption["statement"],
+            f"{assumption_path}.statement",
+            max_length=2000,
+        )
+        status = assumption["status"]
+        if status not in {"proven", "unproven"}:
+            raise ContractError(f"{assumption_path}.status: invalid status")
+        assumption_statuses[identifier] = status
+        _recommendation_evidence_digest(
+            assumption["evidenceSha256"],
+            f"{assumption_path}.evidenceSha256",
+            required=status == "proven",
+        )
+        if status == "unproven" and assumption["evidenceSha256"] is not None:
+            raise ContractError(
+                f"{assumption_path}.evidenceSha256: unproven assumptions must use null"
+            )
+    if assumption_ids != sorted(assumption_ids):
+        raise ContractError(f"{path}.assumptions: must be sorted by id")
+    if len(assumption_ids) != len(set(assumption_ids)):
+        raise ContractError(f"{path}.assumptions: duplicate ids are not allowed")
+
+    options = value["options"]
+    if (
+        not isinstance(options, list)
+        or not options
+        or len(options) > MAX_CONTRACT_ITEMS
+    ):
+        raise ContractError(
+            f"{path}.options: must contain 1 to {MAX_CONTRACT_ITEMS} items"
+        )
+    option_ids: list[str] = []
+    classifications: dict[str, str] = {}
+    known_assumptions = set(assumption_ids)
+    for index, raw_option in enumerate(options):
+        option_path = f"{path}.options[{index}]"
+        option = _object(raw_option, option_path)
+        _exact_keys(
+            option,
+            required={
+                "id",
+                "summary",
+                "tradeoffs",
+                "assumptionIds",
+                "invariantAssessments",
+                "classification",
+            },
+            path=option_path,
+        )
+        identifier = _string(option["id"], f"{option_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{option_path}.id: invalid option id")
+        option_ids.append(identifier)
+        _string(option["summary"], f"{option_path}.summary", max_length=2000)
+        _string_list(
+            option["tradeoffs"],
+            f"{option_path}.tradeoffs",
+            minimum=0,
+            maximum=32,
+        )
+        selected_assumptions = _string_list(
+            option["assumptionIds"],
+            f"{option_path}.assumptionIds",
+            minimum=0,
+            maximum=MAX_CONTRACT_ITEMS,
+            pattern=PROFILE_PATTERN,
+        )
+        if selected_assumptions != sorted(selected_assumptions):
+            raise ContractError(f"{option_path}.assumptionIds: must be sorted")
+        unknown_assumptions = sorted(set(selected_assumptions) - known_assumptions)
+        if unknown_assumptions:
+            raise ContractError(
+                f"{option_path}.assumptionIds: unknown ids: "
+                + ", ".join(unknown_assumptions)
+            )
+        assessments = option["invariantAssessments"]
+        if not isinstance(assessments, list):
+            raise ContractError(f"{option_path}.invariantAssessments: must be an array")
+        assessed_ids: list[str] = []
+        assessment_statuses: list[str] = []
+        for assessment_index, raw_assessment in enumerate(assessments):
+            assessment_path = (
+                f"{option_path}.invariantAssessments[{assessment_index}]"
+            )
+            assessment = _object(raw_assessment, assessment_path)
+            _exact_keys(
+                assessment,
+                required={"invariantId", "status", "evidenceSha256"},
+                path=assessment_path,
+            )
+            invariant_id = _string(
+                assessment["invariantId"],
+                f"{assessment_path}.invariantId",
+                max_length=64,
+            )
+            assessed_ids.append(invariant_id)
+            assessment_status = assessment["status"]
+            if assessment_status not in {"satisfied", "violated", "unproven"}:
+                raise ContractError(f"{assessment_path}.status: invalid status")
+            assessment_statuses.append(assessment_status)
+            _recommendation_evidence_digest(
+                assessment["evidenceSha256"],
+                f"{assessment_path}.evidenceSha256",
+                required=assessment_status != "unproven",
+            )
+            if (
+                assessment_status == "unproven"
+                and assessment["evidenceSha256"] is not None
+            ):
+                raise ContractError(
+                    f"{assessment_path}.evidenceSha256: unproven assessments must use null"
+                )
+        if assessed_ids != invariant_ids:
+            raise ContractError(
+                f"{option_path}.invariantAssessments: must cover every invariant "
+                "exactly once in sorted order"
+            )
+        if "violated" in assessment_statuses:
+            derived = "invalid"
+        elif "unproven" in assessment_statuses or any(
+            assumption_statuses[assumption_id] == "unproven"
+            for assumption_id in selected_assumptions
+        ):
+            derived = "unproven"
+        else:
+            derived = "valid"
+        if option["classification"] != derived:
+            raise ContractError(
+                f"{option_path}.classification: must be derived as {derived}"
+            )
+        classifications[identifier] = derived
+    if option_ids != sorted(option_ids):
+        raise ContractError(f"{path}.options: must be sorted by id")
+    if len(option_ids) != len(set(option_ids)):
+        raise ContractError(f"{path}.options: duplicate ids are not allowed")
+
+    valid_option_ids = _string_list(
+        value["validOptionIds"],
+        f"{path}.validOptionIds",
+        minimum=0,
+        maximum=MAX_CONTRACT_ITEMS,
+        pattern=PROFILE_PATTERN,
+    )
+    expected_valid = sorted(
+        identifier
+        for identifier, classification in classifications.items()
+        if classification == "valid"
+    )
+    if valid_option_ids != expected_valid:
+        raise ContractError(
+            f"{path}.validOptionIds: must equal the complete derived valid option set"
+        )
+
+    recommendation = _object(value["recommendation"], f"{path}.recommendation")
+    _exact_keys(
+        recommendation,
+        required={
+            "status",
+            "optionId",
+            "rationaleSha256",
+            "optimizationCriteria",
+        },
+        path=f"{path}.recommendation",
+    )
+    _recommendation_evidence_digest(
+        recommendation["rationaleSha256"],
+        f"{path}.recommendation.rationaleSha256",
+        required=True,
+    )
+    criteria = recommendation["optimizationCriteria"]
+    if not isinstance(criteria, list) or len(criteria) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.recommendation.optimizationCriteria: exceeds "
+            f"{MAX_CONTRACT_ITEMS} items"
+        )
+    criterion_ids: set[str] = set()
+    for index, raw_criterion in enumerate(criteria):
+        criterion_path = f"{path}.recommendation.optimizationCriteria[{index}]"
+        criterion = _object(raw_criterion, criterion_path)
+        _exact_keys(
+            criterion,
+            required={"id", "priority", "rationaleSha256"},
+            path=criterion_path,
+        )
+        identifier = _string(criterion["id"], f"{criterion_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{criterion_path}.id: invalid criterion id")
+        if identifier in criterion_ids:
+            raise ContractError(
+                f"{path}.recommendation.optimizationCriteria: duplicate id {identifier}"
+            )
+        criterion_ids.add(identifier)
+        if criterion["priority"] != index + 1:
+            raise ContractError(
+                f"{criterion_path}.priority: must form a sequence starting at 1"
+            )
+        _recommendation_evidence_digest(
+            criterion["rationaleSha256"],
+            f"{criterion_path}.rationaleSha256",
+            required=True,
+        )
+    if expected_valid:
+        if recommendation["status"] != "recommended":
+            raise ContractError(
+                f"{path}.recommendation.status: valid options require recommended"
+            )
+        if recommendation["optionId"] not in expected_valid:
+            raise ContractError(
+                f"{path}.recommendation.optionId: must select a valid option"
+            )
+        if len(expected_valid) > 1 and not criteria:
+            raise ContractError(
+                f"{path}.recommendation.optimizationCriteria: multiple valid options "
+                "require secondary criteria"
+            )
+    else:
+        if recommendation["status"] != "blocked":
+            raise ContractError(
+                f"{path}.recommendation.status: no valid option requires blocked"
+            )
+        if recommendation["optionId"] is not None:
+            raise ContractError(
+                f"{path}.recommendation.optionId: blocked recommendations must use null"
+            )
+        if criteria:
+            raise ContractError(
+                f"{path}.recommendation.optimizationCriteria: blocked recommendations "
+                "cannot optimize invalid or unproven options"
+            )
+    return classifications
+
+
+def validate_recommendation_review(
+    document: Any, path: str = "recommendation-review"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "decisionId",
+            "recommendationSha256",
+            "reviewer",
+            "independence",
+            "challengeAssessments",
+            "invariantAssessments",
+            "optionAssessments",
+            "verdict",
+            "findings",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["kind"] != "engineering-process-recommendation-review":
+        raise ContractError(f"{path}.kind: invalid recommendation review kind")
+    decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
+    if PROFILE_PATTERN.fullmatch(decision_id) is None:
+        raise ContractError(f"{path}.decisionId: invalid decision id")
+    _recommendation_evidence_digest(
+        value["recommendationSha256"],
+        f"{path}.recommendationSha256",
+        required=True,
+    )
+    _validate_actor(value["reviewer"], f"{path}.reviewer")
+    independence = _object(value["independence"], f"{path}.independence")
+    _exact_keys(
+        independence,
+        required={"method", "attestedBy", "evidence"},
+        path=f"{path}.independence",
+    )
+    if independence["method"] not in {"isolated-context", "separate-person"}:
+        raise ContractError(f"{path}.independence.method: invalid method")
+    _string(
+        independence["attestedBy"],
+        f"{path}.independence.attestedBy",
+        max_length=256,
+    )
+    _string(
+        independence["evidence"],
+        f"{path}.independence.evidence",
+        max_length=2000,
+    )
+
+    failed_assessment = False
+    challenges = value["challengeAssessments"]
+    if not isinstance(challenges, list):
+        raise ContractError(f"{path}.challengeAssessments: must be an array")
+    challenge_categories: list[str] = []
+    for index, raw_assessment in enumerate(challenges):
+        assessment_path = f"{path}.challengeAssessments[{index}]"
+        assessment = _object(raw_assessment, assessment_path)
+        _exact_keys(
+            assessment,
+            required={"category", "status", "evidence"},
+            path=assessment_path,
+        )
+        challenge_categories.append(
+            _string(
+                assessment["category"],
+                f"{assessment_path}.category",
+                max_length=64,
+            )
+        )
+        if assessment["status"] not in {"verified", "failed"}:
+            raise ContractError(f"{assessment_path}.status: invalid status")
+        failed_assessment = failed_assessment or assessment["status"] == "failed"
+        _string(
+            assessment["evidence"],
+            f"{assessment_path}.evidence",
+            max_length=2000,
+        )
+    if challenge_categories != list(RECOMMENDATION_CHALLENGE_CATEGORIES):
+        raise ContractError(
+            f"{path}.challengeAssessments: must cover the fixed challenge categories "
+            "in sorted order"
+        )
+
+    for field, identifier_field in (
+        ("invariantAssessments", "invariantId"),
+        ("optionAssessments", "optionId"),
+    ):
+        assessments = value[field]
+        if (
+            not isinstance(assessments, list)
+            or not assessments
+            or len(assessments) > MAX_CONTRACT_ITEMS
+        ):
+            raise ContractError(
+                f"{path}.{field}: must contain 1 to {MAX_CONTRACT_ITEMS} items"
+            )
+        identifiers: list[str] = []
+        for index, raw_assessment in enumerate(assessments):
+            assessment_path = f"{path}.{field}[{index}]"
+            assessment = _object(raw_assessment, assessment_path)
+            _exact_keys(
+                assessment,
+                required={identifier_field, "status", "evidence"},
+                path=assessment_path,
+            )
+            identifier = _string(
+                assessment[identifier_field],
+                f"{assessment_path}.{identifier_field}",
+                max_length=64,
+            )
+            if PROFILE_PATTERN.fullmatch(identifier) is None:
+                raise ContractError(
+                    f"{assessment_path}.{identifier_field}: invalid id"
+                )
+            identifiers.append(identifier)
+            if assessment["status"] not in {"verified", "failed"}:
+                raise ContractError(f"{assessment_path}.status: invalid status")
+            failed_assessment = failed_assessment or assessment["status"] == "failed"
+            _string(
+                assessment["evidence"],
+                f"{assessment_path}.evidence",
+                max_length=2000,
+            )
+        if identifiers != sorted(identifiers):
+            raise ContractError(f"{path}.{field}: must be sorted by id")
+        if len(identifiers) != len(set(identifiers)):
+            raise ContractError(f"{path}.{field}: duplicate ids are not allowed")
+
+    verdict = value["verdict"]
+    if verdict not in {"approved", "changes-requested"}:
+        raise ContractError(f"{path}.verdict: invalid verdict")
+    findings = value["findings"]
+    if not isinstance(findings, list) or len(findings) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.findings: must contain at most {MAX_CONTRACT_ITEMS} items"
+        )
+    finding_ids: set[str] = set()
+    unresolved = 0
+    for index, raw_finding in enumerate(findings):
+        finding_path = f"{path}.findings[{index}]"
+        finding = _object(raw_finding, finding_path)
+        _exact_keys(
+            finding,
+            required={
+                "id",
+                "severity",
+                "summary",
+                "evidence",
+                "status",
+                "resolutionEvidence",
+            },
+            path=finding_path,
+        )
+        identifier = _string(finding["id"], f"{finding_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{finding_path}.id: invalid finding id")
+        if identifier in finding_ids:
+            raise ContractError(f"{path}.findings: duplicate id {identifier}")
+        finding_ids.add(identifier)
+        if finding["severity"] not in {"critical", "high", "medium", "low"}:
+            raise ContractError(f"{finding_path}.severity: invalid severity")
+        _string(finding["summary"], f"{finding_path}.summary", max_length=1000)
+        _string(finding["evidence"], f"{finding_path}.evidence", max_length=4000)
+        status = finding["status"]
+        if status not in {"open", "resolved", "deferred", "false-positive"}:
+            raise ContractError(f"{finding_path}.status: invalid status")
+        if status in {"open", "deferred"}:
+            unresolved += 1
+        if status == "open":
+            if finding["resolutionEvidence"] is not None:
+                raise ContractError(
+                    f"{finding_path}.resolutionEvidence: open findings require null"
+                )
+        else:
+            _string(
+                finding["resolutionEvidence"],
+                f"{finding_path}.resolutionEvidence",
+                max_length=4000,
+            )
+    if verdict == "approved" and (failed_assessment or unresolved):
+        raise ContractError(
+            f"{path}: approved review cannot have failed assessments or unresolved findings"
+        )
+    if verdict == "changes-requested" and (not failed_assessment or not unresolved):
+        raise ContractError(
+            f"{path}: changes-requested requires a failed assessment and unresolved finding"
+        )
+
+
+def validate_recommendation_resolution(
+    document: Any, path: str = "recommendation-resolution"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "decisionId",
+            "recommendationSha256",
+            "reviewSha256",
+            "selectedOptionId",
+            "owner",
+            "selectionRationaleSha256",
+            "controls",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["kind"] != "engineering-process-recommendation-resolution":
+        raise ContractError(f"{path}.kind: invalid recommendation resolution kind")
+    decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
+    selected_option_id = _string(
+        value["selectedOptionId"], f"{path}.selectedOptionId", max_length=64
+    )
+    if PROFILE_PATTERN.fullmatch(decision_id) is None:
+        raise ContractError(f"{path}.decisionId: invalid decision id")
+    if PROFILE_PATTERN.fullmatch(selected_option_id) is None:
+        raise ContractError(f"{path}.selectedOptionId: invalid option id")
+    for field in (
+        "recommendationSha256",
+        "reviewSha256",
+        "selectionRationaleSha256",
+    ):
+        _recommendation_evidence_digest(
+            value[field], f"{path}.{field}", required=True
+        )
+    owner = _object(value["owner"], f"{path}.owner")
+    _exact_keys(
+        owner,
+        required={"ownerId", "evidenceSha256"},
+        path=f"{path}.owner",
+    )
+    _string(owner["ownerId"], f"{path}.owner.ownerId", max_length=256)
+    _recommendation_evidence_digest(
+        owner["evidenceSha256"],
+        f"{path}.owner.evidenceSha256",
+        required=True,
+    )
+    controls = _object(value["controls"], f"{path}.controls")
+    _exact_keys(
+        controls,
+        required=set(RECOMMENDATION_RESOLUTION_CONTROLS),
+        path=f"{path}.controls",
+    )
+    for name, expected in RECOMMENDATION_RESOLUTION_CONTROLS.items():
+        if controls[name] is not expected:
+            raise ContractError(f"{path}.controls.{name}: must be false")
 
 
 def _automation_proposal_controls(
