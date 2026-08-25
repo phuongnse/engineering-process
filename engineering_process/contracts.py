@@ -1883,6 +1883,11 @@ def _recommendation_evidence_digest(
         raise ContractError(f"{path}: must be a lowercase sha256 digest")
 
 
+def _recommendation_schema_version(value: Any, path: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value != 1:
+        raise ContractError(f"{path}.schemaVersion: must be integer 1")
+
+
 def validate_recommendation(
     document: Any, path: str = "recommendation"
 ) -> dict[str, str]:
@@ -1905,8 +1910,7 @@ def validate_recommendation(
         optional={"$schema"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    _recommendation_schema_version(value["schemaVersion"], path)
     if value["kind"] != "engineering-process-recommendation":
         raise ContractError(f"{path}.kind: invalid recommendation kind")
     decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
@@ -2172,7 +2176,12 @@ def validate_recommendation(
                 f"{path}.recommendation.optimizationCriteria: duplicate id {identifier}"
             )
         criterion_ids.add(identifier)
-        if criterion["priority"] != index + 1:
+        priority = criterion["priority"]
+        if (
+            isinstance(priority, bool)
+            or not isinstance(priority, int)
+            or priority != index + 1
+        ):
             raise ContractError(
                 f"{criterion_path}.priority: must form a sequence starting at 1"
             )
@@ -2234,8 +2243,7 @@ def validate_recommendation_review(
         optional={"$schema"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    _recommendation_schema_version(value["schemaVersion"], path)
     if value["kind"] != "engineering-process-recommendation-review":
         raise ContractError(f"{path}.kind: invalid recommendation review kind")
     decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
@@ -2412,8 +2420,7 @@ def validate_recommendation_review_assignment(
         optional={"$schema"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    _recommendation_schema_version(value["schemaVersion"], path)
     if value["kind"] != "engineering-process-recommendation-review-assignment":
         raise ContractError(f"{path}.kind: invalid recommendation review assignment kind")
     decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)
@@ -2483,8 +2490,7 @@ def validate_recommendation_resolution(
         optional={"$schema"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
+    _recommendation_schema_version(value["schemaVersion"], path)
     if value["kind"] != "engineering-process-recommendation-resolution":
         raise ContractError(f"{path}.kind: invalid recommendation resolution kind")
     decision_id = _string(value["decisionId"], f"{path}.decisionId", max_length=64)

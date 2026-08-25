@@ -16,6 +16,8 @@ from engineering_process.contracts import (
     canonical_json_digest,
     validate_recommendation,
     validate_recommendation_resolution,
+    validate_recommendation_review,
+    validate_recommendation_review_assignment,
 )
 from engineering_process.recommendation import (
     create_recommendation_resolution,
@@ -140,6 +142,48 @@ class RecommendationTests(unittest.TestCase):
             validate_recommendation(self.recommendation)
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.Draft202012Validator(schema).validate(self.recommendation)
+
+    def test_schema_and_semantic_integer_types_reject_booleans(self):
+        first_option = self.recommendation["options"][0]
+        first_option["invariantAssessments"][0]["status"] = "satisfied"
+        first_option["classification"] = "valid"
+        self.recommendation["validOptionIds"] = [
+            "complete-before-remote-evidence",
+            "verify-before-completion",
+        ]
+        self.recommendation["recommendation"]["optimizationCriteria"] = [
+            {
+                "id": "minimum-workflow-cost",
+                "priority": True,
+                "rationaleSha256": f"sha256:{'f' * 64}",
+            }
+        ]
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "recommendation.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with self.assertRaisesRegex(ContractError, "sequence starting at 1"):
+            validate_recommendation(self.recommendation)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(schema).validate(self.recommendation)
+
+        for document, validator in (
+            (self.load_example("recommendation"), validate_recommendation),
+            (
+                self.load_example("recommendation-review-assignment"),
+                validate_recommendation_review_assignment,
+            ),
+            (self.load_example("recommendation-review"), validate_recommendation_review),
+            (
+                self.load_example("recommendation-resolution"),
+                validate_recommendation_resolution,
+            ),
+        ):
+            with self.subTest(kind=document["kind"]):
+                document["schemaVersion"] = True
+                with self.assertRaisesRegex(ContractError, "integer 1"):
+                    validator(document)
 
     def test_review_start_rejects_method_mismatch_and_participant_attester(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -370,18 +414,19 @@ class RecommendationTests(unittest.TestCase):
             root = Path(directory)
             recommendation_path, assignment_path, review_path = self.prepare_chain(root)
             output = root / "resolution.json"
-            real_link = os.link
+            real_open = os.open
 
-            def create_concurrent(source, destination, *, follow_symlinks):
-                Path(destination).write_text("concurrent\n", encoding="utf-8")
-                return real_link(
-                    source, destination, follow_symlinks=follow_symlinks
-                )
+            def create_concurrent(path, flags, mode=0o777, *, dir_fd=None):
+                if Path(path) == output:
+                    output.write_text("concurrent\n", encoding="utf-8")
+                if dir_fd is None:
+                    return real_open(path, flags, mode)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
 
             with patch(
-                "engineering_process.recommendation.os.link",
+                "engineering_process.recommendation.os.open",
                 side_effect=create_concurrent,
-            ), self.assertRaisesRegex(ContractError, "concurrently created"):
+            ), self.assertRaisesRegex(ContractError, "refusing to replace"):
                 create_recommendation_resolution(
                     root,
                     recommendation_path,
@@ -395,6 +440,46 @@ class RecommendationTests(unittest.TestCase):
                 )
 
             self.assertEqual("concurrent\n", output.read_text(encoding="utf-8"))
+
+    def test_resolution_output_detects_parent_identity_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recommendation_path, assignment_path, review_path = self.prepare_chain(root)
+            parent = root / "artifacts"
+            displaced = root / "artifacts-displaced"
+            parent.mkdir()
+            output = parent / "resolution.json"
+            real_open = os.open
+            swapped = False
+
+            def swap_parent(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal swapped
+                if Path(path) == output and not swapped:
+                    parent.rename(displaced)
+                    parent.mkdir()
+                    swapped = True
+                if dir_fd is None:
+                    return real_open(path, flags, mode)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with patch(
+                "engineering_process.recommendation.os.open",
+                side_effect=swap_parent,
+            ), self.assertRaisesRegex(ContractError, "parent identity changed"):
+                create_recommendation_resolution(
+                    root,
+                    recommendation_path,
+                    assignment_path,
+                    review_path,
+                    selected_option_id="verify-before-completion",
+                    owner_id="project-owner",
+                    owner_evidence_sha256=f"sha256:{'c' * 64}",
+                    selection_rationale_sha256=f"sha256:{'d' * 64}",
+                    output=output,
+                )
+
+            self.assertFalse(output.exists())
+            self.assertFalse((displaced / "resolution.json").exists())
 
     def test_cli_creates_exact_resolution_and_refuses_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
