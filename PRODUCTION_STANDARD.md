@@ -55,6 +55,12 @@ canonical command, or installing a consumer wrapper. Durable reports record only
 policy, severity, stream, line number, bounded count, truncation state, and line
 SHA-256. They never copy the diagnostic line into lifecycle evidence.
 
+The portable logical command `python` resolves to the exact absolute interpreter of
+the running immutable process authority across doctor, setup, execution, and
+verification. Ambient `PATH` cannot select another Python installation, managed tools
+cannot shadow the reserved binding, and evidence retains the logical command rather
+than a host-specific activation sequence.
+
 Missing, stale, truncated beyond a declared policy, blocked, or unverifiable evidence
 never becomes a pass. Independent review records each accepted dimension as
 `verified`, `failed`, or `not-applicable-confirmed`; lifecycle submission compares

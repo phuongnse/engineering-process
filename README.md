@@ -256,6 +256,14 @@ project-native dependency commands, dependency edges, and remediation. Project s
 does not carry a generic downloader, archive installer, doctor, or setup lifecycle.
 Host prerequisites with no safe automated setup action stay blocking.
 
+The exact logical executable `python` is reserved by the distribution and resolves to
+the absolute interpreter running the selected immutable process authority. This rule
+applies consistently to requirement probes, verification profiles, setup command
+actions, and `processctl exec`; callers do not activate a virtual environment or
+modify `PATH` first. Manifests and reports retain the portable logical token, managed
+tools cannot shadow it, and absolute executables plus non-Python commands keep their
+existing resolution behavior.
+
 Probe `readOnly`, foreground-only execution, and command-action mutation scopes are
 project-owner attestations, not an operating-system sandbox: `processctl` cannot infer
 arbitrary subprocess side effects. Commands must not daemonize, start a detached

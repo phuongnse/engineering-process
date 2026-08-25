@@ -1,7 +1,7 @@
 {
   "entries": [
     {
-      "activeChangeId": null,
+      "activeChangeId": "bind-authority-python-runtime-v2",
       "id": "deterministic-cross-platform-test-environment",
       "lastResolution": {
         "changeId": "extend-windows-natural-drain",
@@ -12,7 +12,7 @@
         "verification-evidence"
       ],
       "reusableClass": "portability-gap",
-      "status": "resolved"
+      "status": "active"
     },
     {
       "activeChangeId": null,
