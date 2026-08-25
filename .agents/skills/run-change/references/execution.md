@@ -81,13 +81,29 @@ lifecycle order, or external mutation, stop dependent mutation and:
 
 1. Separate a discoverable implementation detail already inside accepted scope from
    a project-owner decision. Continue autonomously only for the former.
-2. Preserve the evidence and state the invariant that every valid option must keep.
-3. Present the genuinely valid options, their trade-offs, and one evidence-backed
-   recommendation. Do not manufacture a weak option to make the recommendation look
-   inevitable.
-4. Request an explicit owner decision and record it in the owning contract, plan, or
-   durable project decision before continuing dependent work.
-5. If a failed attempt disproves an assumption and the next direction changes one of
+2. Preserve the evidence and enumerate every governing hard invariant and material
+   assumption before ranking any option.
+3. Create a bounded recommendation artifact. Assess every option against every
+   invariant, bind proven assumptions to evidence, and derive the complete `valid`,
+   `invalid`, and `unproven` sets. Cost, convenience, minimal change, and other
+   secondary optimization apply only within the derived valid set. Never promote an
+   invalid or unproven option because it changes fewer boundaries.
+4. For every material recommendation, run `processctl recommendation review start`
+   before review. It creates a digest-bound assignment and atomically reserves a
+   project-global context unused by lifecycle or recommendation review. The assigned
+   independent adversarial reviewer uses a distinct actor and fresh context to
+   challenge assumption evidence, invariant tracing, option classification, and
+   terminal ordering. Run `processctl
+   recommendation validate-chain` with the exact assignment; do not present a
+   recommendation unless the complete chain is approved and allowed.
+5. If no valid option exists, report `decision-required` with the missing evidence or
+   authority instead of manufacturing a recommendation. Otherwise present the valid
+   options, their trade-offs, and the reviewed recommendation without inventing a
+   weak alternative to make it look inevitable.
+6. Request an explicit owner decision and create a digest-bound recommendation
+   resolution selecting only a valid option. The resolution records the choice but
+   grants no lifecycle completion, merge, release, deployment, or adoption authority.
+7. If a failed attempt disproves an assumption and the next direction changes one of
    these boundaries, return to this protocol instead of trying another architecture,
    trust path, command, or workflow loop autonomously.
 
@@ -141,6 +157,26 @@ release resolution, and exact consumer reproduction all validate.
 Signal, disposition, producer completion, pre-release candidate, resolution, and
 reproduction are distinct authority boundaries. Portable core reads and writes local
 artifacts only. Transports preserve exact bytes and cannot mutate either repository.
+
+## Exact remote verification
+
+Projects own named remote-evidence requirements in their manifest: local profiles,
+provider execution identity, and bounded platform/runtime selectors. A schema-3
+change selects requirement ids without embedding transport mechanics. On a clean
+immutable implementation checkpoint, `change remote request` binds the change,
+cycle, source, comparison base, workspace fingerprint, requirement expansion, and
+base-owned workflow checkpoint while granting no review or delivery authority.
+
+The provider adapter transports only that exact checkpoint through a non-review
+verification object, obtains bounded supplemental bundles, preserves service ids and
+digests, and calls `change remote ingest` locally. Core performs no network work and
+trusts neither a job conclusion nor adapter prose: it verifies one-to-one selector
+coverage, archive bytes, service digest, manifest/report hashes, execution identity,
+clean diagnostics, bounds, and exact source identity. Missing, stale, failed,
+duplicate, truncated, redirected, or mismatched evidence keeps the lifecycle
+implementing. The adapter removes its ephemeral verification object on success,
+failure, timeout, and interrupt after preserving evidence. Review cannot begin until
+the complete required local and remote set passes.
 
 ## Independent review
 

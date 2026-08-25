@@ -106,5 +106,48 @@
       }
     ],
     "setupActions": []
+  },
+  "remoteVerification": {
+    "requirements": [
+      {
+        "id": "supported-python-platforms",
+        "profiles": [
+          "development",
+          "review"
+        ],
+        "execution": {
+          "provider": "github-actions",
+          "repository": "phuongnse/engineering-process",
+          "workflow": "CI",
+          "workflowRef": "phuongnse/engineering-process/.github/workflows/ci.yml@refs/heads/main"
+        },
+        "selectors": [
+          {
+            "id": "macos-python-3-14",
+            "runnerOs": "macOS",
+            "implementation": "CPython",
+            "pythonMinor": "3.14"
+          },
+          {
+            "id": "ubuntu-python-3-11",
+            "runnerOs": "Linux",
+            "implementation": "CPython",
+            "pythonMinor": "3.11"
+          },
+          {
+            "id": "ubuntu-python-3-14",
+            "runnerOs": "Linux",
+            "implementation": "CPython",
+            "pythonMinor": "3.14"
+          },
+          {
+            "id": "windows-python-3-14",
+            "runnerOs": "Windows",
+            "implementation": "CPython",
+            "pythonMinor": "3.14"
+          }
+        ]
+      }
+    ]
   }
 }
