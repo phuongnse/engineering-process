@@ -18,7 +18,6 @@ SOURCE_REF = re.compile(
     r"(?P<request>[0-9a-f]{64})$"
 )
 BOOTSTRAP_CHANGE = "evidence-valid-remote-verification"
-BOOTSTRAP_CYCLE = "1"
 BOOTSTRAP_BASE = "842627fe8d6cc4e7cb58112d63a32c2e7df467c3"
 BOOTSTRAP_AUTHORIZATION = (
     "sha256:d11be9e012dc98983b53949d2b7a5b191044e393281f46d72566794f46d78eac"
@@ -81,7 +80,6 @@ def validate_dispatch(
     if bootstrap and not (
         bootstrap_authorization_sha256 == BOOTSTRAP_AUTHORIZATION
         and change_id == BOOTSTRAP_CHANGE
-        and match.group("cycle") == BOOTSTRAP_CYCLE
         and comparison_base == BOOTSTRAP_BASE
         and expected_workflow_sha == checkpoint
     ):

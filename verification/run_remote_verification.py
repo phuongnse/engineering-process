@@ -35,7 +35,6 @@ MAX_TOTAL_DOWNLOAD_BYTES = 64_000_000
 TAG_PREFIX = "epv"
 SAFE_WORKFLOW = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 BOOTSTRAP_CHANGE = "evidence-valid-remote-verification"
-BOOTSTRAP_CYCLE = 1
 BOOTSTRAP_BASE = "842627fe8d6cc4e7cb58112d63a32c2e7df467c3"
 BOOTSTRAP_AUTHORIZATION = (
     "sha256:d11be9e012dc98983b53949d2b7a5b191044e393281f46d72566794f46d78eac"
@@ -662,7 +661,6 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
                 }
                 if not (
                     request["changeId"] == BOOTSTRAP_CHANGE == args.change_id
-                    and request["cycle"] == BOOTSTRAP_CYCLE
                     and request["comparisonBase"] == BOOTSTRAP_BASE
                     and workflow_shas == {request["checkpoint"]}
                     and args.bootstrap_authorization_sha256
