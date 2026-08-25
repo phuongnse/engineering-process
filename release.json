@@ -1,138 +1,46 @@
 {
   "schemaVersion": 3,
-  "previousVersion": "0.4.0",
-  "version": "0.5.0",
-  "classification": "minor",
-  "compatibility": "incompatible",
-  "schemaImpact": "breaking",
-  "migration": "fail-on-verification-diagnostics: Fix canonical-command warnings/errors. Emit verification schema 3 and supplemental schema 2; retain verification 1/2 and supplemental 1 only as history. Never suppress or down-convert.; federated-process-improvement: Must adopt cross-repo-change; classify governed failures/findings; consumers await disposition, immutable release, exact reproduction. Released lifecycle/evidence readers retain historical meaning.; restore-pre-pr-review-invariant: Adopt publish-change and process-graph validation. Require host semantic review before completion, validated evidence before PR publication, and old-authority introduction before trust-root cutover.; standing-gated-automation: Install .process/automation.json. Keep provider automerge off before completion; emit proposal policy/evidence schema 2 for standing merge. Schema 1 remains human-only. Enable auto-merge/exact checks; escalate unavailable capability.",
+  "previousVersion": "0.5.0",
+  "version": "0.5.1",
+  "classification": "patch",
+  "compatibility": "backward-compatible",
+  "schemaImpact": "unchanged",
+  "migration": null,
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.5.0",
-    "releaseName": "v0.5.0",
+    "tag": "v0.5.1",
+    "releaseName": "v0.5.1",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.5.0-py3-none-any.whl",
-      "engineering_process-0.5.0.tar.gz"
+      "engineering_process-0.5.1-py3-none-any.whl",
+      "engineering_process-0.5.1.tar.gz"
     ],
-    "receiptAsset": "engineering-process-v0.5.0-evidence.json",
+    "receiptAsset": "engineering-process-v0.5.1-evidence.json",
     "authorizationAsset": null
   },
   "provenance": {
     "mode": "governed",
     "statement": "The public N-1 lifecycle receipt and reviewed Release PR authorize this release.",
     "lifecycleReceipt": {
-      "asset": "engineering-process-v0.5.0-evidence.json",
+      "asset": "engineering-process-v0.5.1-evidence.json",
       "project": "engineering-process",
-      "changeId": "release-0-5-0",
+      "changeId": "release-0-5-1",
       "cycle": 1
     }
   },
   "changes": [
     {
-      "id": "configure-release-push-credentials",
-      "type": "fix",
-      "surfaces": [
-        "publication",
-        "workflow"
-      ],
-      "rationale": "Configure GitHub CLI as Git's credential helper only in the final publication step so the short-lived App token can push the exact reviewed candidate without persistent checkout credentials or token-bearing URLs, headers, arguments, or config values."
-    },
-    {
-      "id": "controlled-automation-proposals",
-      "type": "capability",
-      "surfaces": [
-        "cli",
-        "publication",
-        "schema",
-        "skills"
-      ],
-      "rationale": "Add an explicit strict-default policy contract for untrusted dependency proposals and an exact-head lifecycle-completion merge gate without granting proposal creation semantic or merge authority. Before enabling it, consumers must adopt the immutable capability release in a completed lifecycle, add the protected-base opt-in policy in a separate completed change, pin an immutable verifier, and require the canonical completion check."
-    },
-    {
-      "id": "fail-on-verification-diagnostics",
-      "type": "breaking",
-      "surfaces": [
-        "command-execution",
-        "supplemental-verification",
-        "verification-evidence"
-      ],
-      "rationale": "Process-owned commands now fail on classified warning or error diagnostics even when the child exits zero, and current verification and supplemental evidence require redacted diagnostic summaries."
-    },
-    {
-      "id": "federated-process-improvement",
-      "type": "breaking",
-      "surfaces": [
-        "cli",
-        "governance",
-        "lifecycle",
-        "schema",
-        "skills"
-      ],
-      "rationale": "Make evolve-process the mandatory owner of improvement-required, route shared consumer cases through improvement-pending, add a transport-neutral signal/disposition/resolution/reproduction chain and producer recurrence catalog, and block verification, completion, and publication until the applicable local or federated proof is explicit."
-    },
-    {
-      "id": "fix-windows-verification-boundary",
+      "id": "extend-windows-natural-drain",
       "type": "fix",
       "surfaces": [
         "command-execution",
-        "verification"
+        "windows-supervision"
       ],
-      "rationale": "Propagate typed Windows descendant-cleanup results through a private bounded helper channel, route the public-action installer and N+1 standalone adoption runner through the current protocol, and make every managed producer test fixture independent of inherited Git line-ending conversion policy."
-    },
-    {
-      "id": "preserve-release-generator-outputs",
-      "type": "fix",
-      "surfaces": [
-        "publication",
-        "workflow"
-      ],
-      "rationale": "Commit every deterministic prepare-release output, declare the complete generated path set in the release lifecycle plan, and fail before bundling when tracked, staged, or untracked candidate residue remains."
-    },
-    {
-      "id": "recover-published-release-evidence",
-      "type": "fix",
-      "surfaces": [
-        "publication",
-        "workflow"
-      ],
-      "rationale": "Keep the exact pre-publication completion artifact as the primary release evidence source, but let recovery of an already published immutable release restore the same declared evidence asset when that ephemeral artifact is absent; draft, mutable, incomplete, or invalid releases still fail closed."
-    },
-    {
-      "id": "restore-pre-pr-review-invariant",
-      "type": "breaking",
-      "surfaces": [
-        "cli",
-        "distribution",
-        "skills",
-        "workflow"
-      ],
-      "rationale": "Restore semantic checkpoint review before PR publication, prevent static checks from fabricating approval, make publication a mandatory core skill, add a runtime-bound process graph, and define safe self-hosted authority rotation."
-    },
-    {
-      "id": "separate-release-comparison-bases",
-      "type": "fix",
-      "surfaces": [
-        "publication",
-        "workflow"
-      ],
-      "rationale": "Validate the candidate's immediate protected-main parent against source publication while independently validating completion evidence against the previous-release comparison base owned by the generated lifecycle contract."
-    },
-    {
-      "id": "standing-gated-automation",
-      "type": "breaking",
-      "surfaces": [
-        "governance",
-        "publication",
-        "schema",
-        "skills",
-        "workflow"
-      ],
-      "rationale": "Replace the hard-coded human-only merge terminal with project-owned standing authorization for every routine post-gate operation, including exact-head merge, release, deployment, adoption, and ephemeral cleanup; escalation is limited to unavailable capability, exhausted bounded recovery, or a missing material decision."
+      "rationale": "Extend the Windows Job Object natural-drain bound from 250 milliseconds to 5 seconds so successful finite Cargo and Tauri commands can finish child accounting while commands that retain descendants beyond the bound remain terminated and fail closed."
     }
   ]
 }

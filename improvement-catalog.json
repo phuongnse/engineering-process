@@ -1,18 +1,18 @@
 {
   "entries": [
     {
-      "activeChangeId": "extend-windows-natural-drain",
+      "activeChangeId": null,
       "id": "deterministic-cross-platform-test-environment",
       "lastResolution": {
-        "changeId": "fix-windows-verification-boundary",
-        "version": "0.5.0"
+        "changeId": "extend-windows-natural-drain",
+        "version": "0.5.1"
       },
       "publicSurfaces": [
         "cross-platform-tests",
         "verification-evidence"
       ],
       "reusableClass": "portability-gap",
-      "status": "active"
+      "status": "resolved"
     },
     {
       "activeChangeId": null,
