@@ -3,7 +3,7 @@
   "extends": [
     "config:recommended"
   ],
-  "enabled": false,
+  "enabled": true,
   "automerge": false,
   "branchPrefix": "automation/renovate/",
   "dependencyDashboard": false,
