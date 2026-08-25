@@ -578,10 +578,14 @@ class SelfHostingTests(unittest.TestCase):
         marker = "# Managed by engineering-process; do not edit.\n"
         self.assertTrue(template.read_text(encoding="utf-8").startswith(marker))
         self.assertTrue(managed.read_text(encoding="utf-8").startswith(marker))
-        self.assertNotIn('"--status-handle"', managed.read_text(encoding="utf-8"))
+        self.assertEqual(managed.read_bytes(), template.read_bytes())
         self.assertIn('"--status-handle"', template.read_text(encoding="utf-8"))
         self.assertTrue(
             managed_windows_helper.read_text(encoding="utf-8").startswith(marker)
+        )
+        self.assertEqual(
+            managed_windows_helper.read_bytes(),
+            template_windows_helper.read_bytes(),
         )
         self.assertEqual(
             windows_helper.read_bytes(), template_windows_helper.read_bytes()
