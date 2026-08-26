@@ -1044,7 +1044,7 @@ def _bounded_yaml_structure(value: object, *, path: str) -> None:
     while stack:
         item = stack.pop()
         identity = id(item)
-        if isinstance(item, (dict, list)):
+        if isinstance(item, (dict, list, set, tuple, frozenset)):
             if identity in visited:
                 continue
             visited.add(identity)
@@ -1056,7 +1056,7 @@ def _bounded_yaml_structure(value: object, *, path: str) -> None:
         if isinstance(item, dict):
             stack.extend(item.keys())
             stack.extend(item.values())
-        elif isinstance(item, list):
+        elif isinstance(item, (list, set, tuple, frozenset)):
             stack.extend(item)
 
 
@@ -1066,7 +1066,13 @@ def _proposal_yaml_uses(
     try:
         document = yaml.load(text, Loader=_UniqueSafeLoader)
         _bounded_yaml_structure(document, path=path)
-    except (yaml.YAMLError, ContractError) as error:
+    except (
+        yaml.YAMLError,
+        ContractError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+    ) as error:
         return [], [f"Process-adoption workflow {path} has invalid YAML: {error}"]
     if not isinstance(document, dict):
         return [], [f"Process-adoption workflow {path} must be a YAML mapping"]

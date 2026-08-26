@@ -28,6 +28,7 @@ from engineering_process.publication import (
     validate_pull_request,
     validate_evidence_publication,
     _validate_process_adoption_producer_inputs,
+    _proposal_yaml_uses,
 )
 
 
@@ -64,6 +65,27 @@ Separate reviewer approved checkpoint abc123.
 
 
 class PublicationTests(unittest.TestCase):
+    def test_safe_yaml_loader_bounds_all_containers_and_normalizes_errors(self):
+        set_workflow = (
+            "extras: !!set\n"
+            + "".join(f"  value-{index}: null\n" for index in range(20_005))
+            + "jobs: {}\n"
+        )
+        _values, issues = _proposal_yaml_uses(
+            set_workflow,
+            path=".github/workflows/set.yml",
+        )
+        self.assertTrue(any("exceeds 20000 YAML values" in issue for issue in issues))
+
+        for scalar in ("9" * 5_000, "2026-99-99"):
+            with self.subTest(scalar=scalar[:20]):
+                values, issues = _proposal_yaml_uses(
+                    f"name: {scalar}\njobs: {{}}\n",
+                    path=".github/workflows/value.yml",
+                )
+                self.assertEqual([], values)
+                self.assertTrue(any("invalid YAML" in issue for issue in issues))
+
     def controlled_proposal_fixture(
         self,
         root: Path,
