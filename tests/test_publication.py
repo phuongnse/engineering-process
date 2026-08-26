@@ -86,6 +86,68 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual([], values)
                 self.assertTrue(any("invalid YAML" in issue for issue in issues))
 
+    def test_safe_yaml_loader_bounds_aliases_depth_recursion_and_deadline(self):
+        values, issues = _proposal_yaml_uses(
+            "shared: &shared\n"
+            f"  uses: actions/checkout@{'a' * 40}\n"
+            "jobs:\n"
+            "  verify:\n"
+            "    steps:\n"
+            "      - *shared\n",
+            path=".github/workflows/valid-alias.yml",
+        )
+        self.assertEqual(["actions/checkout@" + "a" * 40], values)
+        self.assertEqual([], issues)
+
+        alias_workflow = (
+            "shared: &shared [value]\n"
+            "aliases:\n"
+            + "".join("  - *shared\n" for _index in range(1_001))
+            + "jobs: {}\n"
+        )
+        _values, issues = _proposal_yaml_uses(
+            alias_workflow,
+            path=".github/workflows/aliases.yml",
+        )
+        self.assertTrue(
+            any("exceeds 1000 YAML aliases" in issue for issue in issues)
+        )
+
+        recursive = "recursive: &loop [*loop]\njobs: {}\n"
+        _values, issues = _proposal_yaml_uses(
+            recursive,
+            path=".github/workflows/recursive.yml",
+        )
+        self.assertTrue(any("recursive YAML alias" in issue for issue in issues))
+
+        nested = "nested: " + "[" * 101 + "value" + "]" * 101 + "\njobs: {}\n"
+        _values, issues = _proposal_yaml_uses(
+            nested,
+            path=".github/workflows/depth.yml",
+        )
+        self.assertTrue(any("nesting depth 100" in issue for issue in issues))
+
+        with mock.patch(
+            "engineering_process.publication.time.monotonic",
+            side_effect=[0.0, 11.0],
+        ):
+            _values, issues = _proposal_yaml_uses(
+                "jobs: {}\n",
+                path=".github/workflows/deadline.yml",
+            )
+        self.assertTrue(any("operation deadline" in issue for issue in issues))
+
+        for invalid in (
+            "jobs: {}\njobs: {}\n",
+            "? [unhashable, key]\n: value\njobs: {}\n",
+        ):
+            with self.subTest(invalid=invalid):
+                _values, issues = _proposal_yaml_uses(
+                    invalid,
+                    path=".github/workflows/mapping.yml",
+                )
+                self.assertTrue(any("invalid YAML" in issue for issue in issues))
+
     def controlled_proposal_fixture(
         self,
         root: Path,
@@ -373,6 +435,14 @@ class PublicationTests(unittest.TestCase):
             (
                 "--only-binary :all:\n\nengineering-process==0.8.0 \\\n"
                 "    --hash=sha256:" + "8" * 64 + "\n"
+                "markdown-it-py==4.2.0 \\\n"
+                "    --hash=sha256:" + "1" * 64 + "\n"
+                "mdurl==0.1.2 \\\n"
+                "    --hash=sha256:" + "2" * 64 + "\n"
+                "pyyaml==6.0.3 \\\n"
+                "    --hash=sha256:" + "3" * 64 + "\n"
+                "regex==2026.7.19 \\\n"
+                "    --hash=sha256:" + "4" * 64 + "\n"
             ).encode("utf-8")
         )
         subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -880,6 +950,86 @@ class PublicationTests(unittest.TestCase):
 
             self.assertTrue(
                 any("hashes do not equal" in issue for issue in issues)
+            )
+
+    def test_process_adoption_rejects_unrelated_requirement_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, _head_sha = self.process_adoption_fixture(root)
+            requirement_input = root / "requirements" / "process.in"
+            requirement_lock = root / "requirements" / "process.txt"
+            requirement_input.write_text(
+                requirement_input.read_text(encoding="utf-8")
+                + "zz-unrelated==9.9.9\n",
+                encoding="utf-8",
+            )
+            requirement_lock.write_text(
+                requirement_lock.read_text(encoding="utf-8")
+                + "zz-unrelated==9.9.9 \\\n"
+                + "    --hash=sha256:"
+                + "9" * 64
+                + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", "requirements/process.in", "requirements/process.txt"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "test: inject unrelated requirement"],
+                cwd=root,
+                check=True,
+            )
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            input_bytes = subprocess.check_output(
+                ["git", "show", f"{head_sha}:requirements/process.in"], cwd=root
+            )
+            lock_bytes = subprocess.check_output(
+                ["git", "show", f"{head_sha}:requirements/process.txt"], cwd=root
+            )
+            adoption = copy.deepcopy(proposal.process_adoption)
+            adoption["requirements"]["inputSha256"] = (
+                "sha256:" + hashlib.sha256(input_bytes).hexdigest()
+            )
+            lock_digest = "sha256:" + hashlib.sha256(lock_bytes).hexdigest()
+            adoption["requirements"]["lockSha256"] = lock_digest
+            adoption["producerRelease"]["materialization"][
+                "requirementsLockSha256"
+            ] = lock_digest
+            proposal = replace(
+                proposal,
+                head_sha=head_sha,
+                process_adoption=adoption,
+            )
+
+            issues = self.validate_process_adoption(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("source-to-target authority pin" in issue for issue in issues)
+            )
+            self.assertTrue(
+                any("complete exact target dependency graph" in issue for issue in issues)
             )
 
     def test_process_adoption_rejects_inferred_project_migration(self):

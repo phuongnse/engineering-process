@@ -6,9 +6,11 @@ import hashlib
 import json
 import re
 import stat
+import time
 from pathlib import Path
 
 import yaml
+from yaml.events import AliasEvent
 
 from .contracts import (
     AutomationProposal,
@@ -35,6 +37,10 @@ from .markdown import (
 CONVENTIONAL_SUBJECT_MAX_LENGTH = 72
 MAX_PULL_REQUEST_BODY_BYTES = 65_536
 MAX_PROPOSAL_CHANGED_PATH_BYTES = 600_000
+MAX_PROPOSAL_YAML_ALIASES = 1_000
+MAX_PROPOSAL_YAML_DEPTH = 100
+MAX_PROPOSAL_YAML_PARSE_SECONDS = 10.0
+MAX_PROPOSAL_YAML_VALUES = 20_000
 PROTECTED_AUTOMATION_PROPOSAL_PATHS = {
     ".github/CODEOWNERS",
     "AGENTS.md",
@@ -1001,7 +1007,54 @@ def _proposal_workflow_tree(
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
-    pass
+    def __init__(self, stream: str, *, deadline: float) -> None:
+        self._workflow_deadline = deadline
+        self._workflow_aliases = 0
+        self._workflow_depth = 0
+        self._workflow_values = 0
+        super().__init__(stream)
+
+    def _require_workflow_budget(self) -> None:
+        if time.monotonic() > self._workflow_deadline:
+            raise yaml.YAMLError(
+                "workflow YAML parsing exceeded its operation deadline"
+            )
+
+    def check_event(self, *choices: type[yaml.events.Event]) -> bool:
+        self._require_workflow_budget()
+        result = super().check_event(*choices)
+        self._require_workflow_budget()
+        return result
+
+    def compose_node(
+        self, parent: yaml.Node | None, index: int | None
+    ) -> yaml.Node:
+        self._require_workflow_budget()
+        self._workflow_values += 1
+        if self._workflow_values > MAX_PROPOSAL_YAML_VALUES:
+            raise yaml.YAMLError(
+                f"workflow exceeds {MAX_PROPOSAL_YAML_VALUES} YAML values"
+            )
+        alias = self.check_event(AliasEvent)
+        if alias:
+            self._workflow_aliases += 1
+            if self._workflow_aliases > MAX_PROPOSAL_YAML_ALIASES:
+                raise yaml.YAMLError(
+                    f"workflow exceeds {MAX_PROPOSAL_YAML_ALIASES} YAML aliases"
+                )
+        else:
+            self._workflow_depth += 1
+            if self._workflow_depth > MAX_PROPOSAL_YAML_DEPTH:
+                raise yaml.YAMLError(
+                    f"workflow YAML exceeds nesting depth {MAX_PROPOSAL_YAML_DEPTH}"
+                )
+        try:
+            node = super().compose_node(parent, index)
+            self._require_workflow_budget()
+            return node
+        finally:
+            if not alias:
+                self._workflow_depth -= 1
 
 
 def _construct_unique_yaml_mapping(
@@ -1038,33 +1091,60 @@ _UniqueSafeLoader.add_constructor(
 
 
 def _bounded_yaml_structure(value: object, *, path: str) -> None:
-    stack = [value]
+    stack: list[tuple[object, int, bool]] = [(value, 1, False)]
     visited: set[int] = set()
+    active: set[int] = set()
     nodes = 0
     while stack:
-        item = stack.pop()
+        item, depth, leaving = stack.pop()
         identity = id(item)
-        if isinstance(item, (dict, list, set, tuple, frozenset)):
+        container = isinstance(item, (dict, list, set, tuple, frozenset))
+        if leaving:
+            active.remove(identity)
+            continue
+        nodes += 1
+        if nodes > MAX_PROPOSAL_YAML_VALUES:
+            raise ContractError(
+                f"Process-adoption workflow {path} exceeds "
+                f"{MAX_PROPOSAL_YAML_VALUES} YAML values"
+            )
+        if depth > MAX_PROPOSAL_YAML_DEPTH:
+            raise ContractError(
+                f"Process-adoption workflow {path} exceeds YAML nesting depth "
+                f"{MAX_PROPOSAL_YAML_DEPTH}"
+            )
+        if container:
+            if identity in active:
+                raise ContractError(
+                    f"Process-adoption workflow {path} contains a recursive YAML alias"
+                )
             if identity in visited:
                 continue
             visited.add(identity)
-        nodes += 1
-        if nodes > 20_000:
-            raise ContractError(
-                f"Process-adoption workflow {path} exceeds 20000 YAML values"
-            )
+            active.add(identity)
+            stack.append((item, depth, True))
         if isinstance(item, dict):
-            stack.extend(item.keys())
-            stack.extend(item.values())
+            stack.extend((child, depth + 1, False) for child in item.keys())
+            stack.extend((child, depth + 1, False) for child in item.values())
         elif isinstance(item, (list, set, tuple, frozenset)):
-            stack.extend(item)
+            stack.extend((child, depth + 1, False) for child in item)
 
 
 def _proposal_yaml_uses(
-    text: str, *, path: str
+    text: str, *, path: str, deadline: float | None = None
 ) -> tuple[list[str], list[str]]:
     try:
-        document = yaml.load(text, Loader=_UniqueSafeLoader)
+        operation_deadline = (
+            deadline
+            if deadline is not None
+            else time.monotonic() + MAX_PROPOSAL_YAML_PARSE_SECONDS
+        )
+        loader = _UniqueSafeLoader(text, deadline=operation_deadline)
+        try:
+            document = loader.get_single_data()
+            loader._require_workflow_budget()
+        finally:
+            loader.dispose()
         _bounded_yaml_structure(document, path=path)
     except (
         yaml.YAMLError,
@@ -1125,28 +1205,116 @@ def _proposal_yaml_uses(
     return values, issues
 
 
-def _proposal_requirement_hashes(
-    lock_text: str, *, version: str
-) -> set[str] | None:
+_PROPOSAL_REQUIREMENT_PIN = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;\\]+)$"
+)
+_PROPOSAL_LOCK_PIN = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)=="
+    r"(?P<version>[^\s;\\]+)[ \t]+\\$"
+)
+_PROPOSAL_LOCK_HASH = re.compile(
+    r"^--hash=(?P<digest>sha256:[0-9a-f]{64})"
+    r"(?P<continuation>[ \t]+\\)?$"
+)
+
+
+def _normalized_requirement_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _proposal_producer_runtime_pins(producer_root: Path) -> dict[str, str]:
+    content = _proposal_external_bytes(
+        producer_root / "engineering_process" / "requirements-runtime.txt",
+        maximum=MAX_JSON_BYTES,
+        label="producer runtime requirements",
+    )
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError("producer runtime requirements must be UTF-8") from error
+    pins: dict[str, str] = {}
+    for line_number, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _PROPOSAL_REQUIREMENT_PIN.fullmatch(line)
+        if match is None:
+            raise ContractError(
+                "producer runtime requirements must contain only exact name==version "
+                f"pins; invalid line {line_number}"
+            )
+        name = _normalized_requirement_name(match.group("name"))
+        if name in pins or name == "engineering-process":
+            raise ContractError(
+                "producer runtime requirements contain a duplicate or recursive "
+                f"dependency: {name}"
+            )
+        pins[name] = match.group("version")
+    if not pins:
+        raise ContractError("producer runtime requirements must not be empty")
+    return pins
+
+
+def _proposal_requirement_lock(
+    lock_text: str,
+) -> dict[str, tuple[str, set[str]]] | None:
     lines = lock_text.splitlines()
-    pin = re.compile(
-        rf"^engineering-process=={re.escape(version)}[ \t]+\\$"
-    )
-    indexes = [index for index, line in enumerate(lines) if pin.fullmatch(line)]
-    if len(indexes) != 1:
-        return None
-    hashes: set[str] = set()
-    hash_line = re.compile(
-        r"^--hash=(?P<digest>sha256:[0-9a-f]{64})(?:[ \t]+\\)?$"
-    )
-    for line in lines[indexes[0] + 1 :]:
-        if not line.startswith((" ", "\t")):
-            break
+    entries: dict[str, tuple[str, set[str]]] = {}
+    order: list[str] = []
+    only_binary = 0
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         stripped = line.strip()
-        match = hash_line.fullmatch(stripped)
-        if match is not None:
-            hashes.add(match.group("digest"))
-    return hashes
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+        if line == "--only-binary :all:":
+            only_binary += 1
+            index += 1
+            continue
+        if line.startswith((" ", "\t")):
+            return None
+        pin = _PROPOSAL_LOCK_PIN.fullmatch(line)
+        if pin is None:
+            return None
+        name = _normalized_requirement_name(pin.group("name"))
+        if name in entries:
+            return None
+        version = pin.group("version")
+        index += 1
+        hashes: list[tuple[str, bool]] = []
+        comments_started = False
+        while index < len(lines) and lines[index].startswith((" ", "\t")):
+            continuation = lines[index].strip()
+            if not continuation or continuation.startswith("#"):
+                comments_started = True
+                index += 1
+                continue
+            if comments_started:
+                return None
+            hash_match = _PROPOSAL_LOCK_HASH.fullmatch(continuation)
+            if hash_match is None:
+                return None
+            hashes.append(
+                (
+                    hash_match.group("digest"),
+                    hash_match.group("continuation") is not None,
+                )
+            )
+            index += 1
+        if not hashes or any(not continued for _digest, continued in hashes[:-1]):
+            return None
+        if hashes[-1][1]:
+            return None
+        hash_values = {digest for digest, _continued in hashes}
+        if len(hash_values) != len(hashes):
+            return None
+        entries[name] = (version, hash_values)
+        order.append(name)
+    if only_binary != 1 or order != sorted(order):
+        return None
+    return entries
 
 
 def _validate_process_adoption_workflows(
@@ -1163,6 +1331,7 @@ def _validate_process_adoption_workflows(
     producer_repository = str(action_pins[0]["repository"])
     base_tree = _proposal_workflow_tree(project_root, commit=base_commit)
     head_tree = _proposal_workflow_tree(project_root, commit=head_commit)
+    workflow_deadline = time.monotonic() + MAX_PROPOSAL_YAML_PARSE_SECONDS
     observed_paths: set[str] = set()
     decoded: dict[tuple[str, str], str] = {}
     usages: dict[tuple[str, str], list[str]] = {}
@@ -1174,7 +1343,11 @@ def _validate_process_adoption_workflows(
                 issues.append(f"Process-adoption workflow {path} must be UTF-8")
                 continue
             decoded[(tree_name, path)] = text
-            values, yaml_issues = _proposal_yaml_uses(text, path=path)
+            values, yaml_issues = _proposal_yaml_uses(
+                text,
+                path=path,
+                deadline=workflow_deadline,
+            )
             issues.extend(yaml_issues)
             matches: list[str] = []
             producer_prefix = producer_repository + "@"
@@ -1411,29 +1584,71 @@ def _validate_process_adoption_candidate(
 
     input_content = blob_cache[str(requirements["inputPath"])]
     lock_content = blob_cache[str(requirements["lockPath"])]
-    target_version = re.escape(str(target_authority["version"]))
-    direct_pin = re.compile(
-        rf"(?m)^engineering-process=={target_version}$"
+    base_input_content = _proposal_git_blob(
+        project_root,
+        commit=base_commit,
+        path=str(requirements["inputPath"]),
+        label="process-adoption protected-base requirements input",
     )
     try:
         input_text = input_content.decode("utf-8")
         lock_text = lock_content.decode("utf-8")
+        base_input_text = base_input_content.decode("utf-8")
     except UnicodeDecodeError:
         issues.append("Process-adoption requirements must be UTF-8")
     else:
-        if len(direct_pin.findall(input_text)) != 1:
-            issues.append(
-                "Process-adoption requirements input must contain one exact target pin"
-            )
-        requirement_hashes = _proposal_requirement_hashes(
-            lock_text,
-            version=str(target_authority["version"]),
+        source_pin = f"engineering-process=={source_authority['version']}"
+        target_pin = f"engineering-process=={target_authority['version']}"
+        expected_input, replacements = re.subn(
+            rf"(?m)^{re.escape(source_pin)}$",
+            target_pin,
+            base_input_text,
         )
-        if not requirement_hashes:
+        meaningful_input = [
+            line.strip()
+            for line in input_text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if (
+            replacements != 1
+            or input_text != expected_input
+            or meaningful_input != [target_pin]
+        ):
             issues.append(
-                "Process-adoption requirements lock must contain one exact hash-locked "
-                "target pin"
+                "Process-adoption requirements input must contain only the exact "
+                "source-to-target authority pin transformation"
             )
+        try:
+            runtime_pins = _proposal_producer_runtime_pins(producer_root)
+        except ContractError as error:
+            runtime_pins = {}
+            issues.append(
+                "Process-adoption producer runtime requirements are invalid: "
+                + str(error)
+            )
+        expected_pins = {
+            "engineering-process": str(target_authority["version"]),
+            **runtime_pins,
+        }
+        requirement_entries = _proposal_requirement_lock(lock_text)
+        observed_pins = (
+            {
+                name: version
+                for name, (version, _hashes) in requirement_entries.items()
+            }
+            if requirement_entries is not None
+            else None
+        )
+        if observed_pins != expected_pins:
+            issues.append(
+                "Process-adoption requirements lock must contain only the complete "
+                "exact target dependency graph with binary-only hash blocks"
+            )
+        requirement_hashes = (
+            requirement_entries.get("engineering-process", ("", set()))[1]
+            if requirement_entries is not None
+            else set()
+        )
         attestation = json.loads(
             producer_release["distributionAttestation"]["content"]
         )
