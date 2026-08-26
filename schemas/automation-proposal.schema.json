@@ -5,29 +5,17 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schemaVersion",
-    "kind",
-    "status",
-    "repository",
-    "proposalKind",
-    "automationOwner",
-    "branch",
-    "targetBranch",
-    "baseSha",
-    "headSha",
-    "title",
-    "bodySha256",
-    "changedPaths",
-    "optIn",
-    "verifier",
+    "schemaVersion", "kind", "status", "repository", "proposalKind",
+    "automationOwner", "branch", "targetBranch", "baseSha", "headSha",
+    "title", "bodySha256", "changedPaths", "optIn", "verifier",
     "observedControls"
   ],
   "properties": {
-    "schemaVersion": {"enum": [1, 2]},
+    "schemaVersion": {"enum": [1, 2, 3]},
     "kind": {"const": "engineering-process-controlled-automation-proposal"},
     "status": {"const": "passed"},
     "repository": {"$ref": "#/$defs/repository"},
-    "proposalKind": {"const": "dependency-update"},
+    "proposalKind": {"enum": ["dependency-update", "process-adoption"]},
     "automationOwner": {"$ref": "#/$defs/name"},
     "branch": {
       "type": "string",
@@ -57,20 +45,22 @@
         "document": {"$ref": "#/$defs/policy"}
       }
     },
-    "verifier": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["repository", "commit"],
-      "properties": {
-        "repository": {"$ref": "#/$defs/repository"},
-        "commit": {"$ref": "#/$defs/gitOid"}
-      }
+    "verifier": {"$ref": "#/$defs/verifier"},
+    "observedControls": {
+      "oneOf": [
+        {"$ref": "#/$defs/legacyControls"},
+        {"$ref": "#/$defs/adoptionControls"}
+      ]
     },
-    "observedControls": {"$ref": "#/$defs/controls"}
+    "processAdoption": {"$ref": "#/$defs/processAdoption"}
   },
   "$defs": {
     "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
     "name": {
       "type": "string",
       "minLength": 1,
@@ -95,24 +85,23 @@
       "maxLength": 256,
       "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
     },
-    "controls": {
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "commit": {"$ref": "#/$defs/gitOid"}
+      }
+    },
+    "legacyControls": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "automerge",
-        "scripts",
-        "plugins",
-        "shellExecution",
-        "privilegedCi",
-        "writeCapableChecks",
-        "processAuthorityChanges",
-        "workflowChanges",
-        "releaseChanges",
-        "deploymentChanges",
-        "securityPolicyChanges",
-        "trustRootChanges",
-        "upToDateBeforeMerge",
-        "humanMergeRequired"
+        "automerge", "scripts", "plugins", "shellExecution", "privilegedCi",
+        "writeCapableChecks", "processAuthorityChanges", "workflowChanges",
+        "releaseChanges", "deploymentChanges", "securityPolicyChanges",
+        "trustRootChanges", "upToDateBeforeMerge", "humanMergeRequired"
       ],
       "properties": {
         "automerge": {"const": false},
@@ -131,22 +120,44 @@
         "humanMergeRequired": {"type": "boolean"}
       }
     },
+    "adoptionControls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automerge", "scripts", "plugins", "shellExecution", "privilegedCi",
+        "writeCapableChecks", "processAuthorityChanges", "workflowChanges",
+        "releaseChanges", "deploymentChanges", "securityPolicyChanges",
+        "trustRootChanges", "upToDateBeforeMerge", "consumerOwnerMergeRequired",
+        "postMergeMutation"
+      ],
+      "properties": {
+        "automerge": {"const": false},
+        "scripts": {"const": false},
+        "plugins": {"const": false},
+        "shellExecution": {"const": false},
+        "privilegedCi": {"const": false},
+        "writeCapableChecks": {"const": false},
+        "processAuthorityChanges": {"const": true},
+        "workflowChanges": {"const": true},
+        "releaseChanges": {"const": false},
+        "deploymentChanges": {"const": false},
+        "securityPolicyChanges": {"const": false},
+        "trustRootChanges": {"const": false},
+        "upToDateBeforeMerge": {"const": true},
+        "consumerOwnerMergeRequired": {"const": true},
+        "postMergeMutation": {"const": false}
+      }
+    },
     "policy": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "schemaVersion",
-        "kind",
-        "enabled",
-        "targetBranch",
-        "branchPrefix",
-        "completionCheck",
-        "allowedAutomationOwners",
-        "allowedProposalKinds",
+        "schemaVersion", "kind", "enabled", "targetBranch", "branchPrefix",
+        "completionCheck", "allowedAutomationOwners", "allowedProposalKinds",
         "requiredControls"
       ],
       "properties": {
-        "schemaVersion": {"enum": [1, 2]},
+        "schemaVersion": {"enum": [1, 2, 3]},
         "kind": {"const": "engineering-process-automation-proposal-policy"},
         "enabled": {"const": true},
         "targetBranch": {"$ref": "#/$defs/ref"},
@@ -155,67 +166,265 @@
           "pattern": "^automation/[a-z0-9]+(?:-[a-z0-9]+)*/$",
           "maxLength": 128
         },
-        "completionCheck": {"const": "lifecycle-completion"},
+        "completionCheck": {"enum": ["lifecycle-completion", "consumer-owner-merge"]},
         "allowedAutomationOwners": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 1,
-          "uniqueItems": true,
+          "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
           "items": {"$ref": "#/$defs/name"}
         },
         "allowedProposalKinds": {
+          "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+          "items": {"enum": ["dependency-update", "process-adoption"]}
+        },
+        "requiredControls": {
+          "oneOf": [
+            {"$ref": "#/$defs/legacyControls"},
+            {"$ref": "#/$defs/adoptionControls"}
+          ]
+        },
+        "producerRepository": {"$ref": "#/$defs/repository"},
+        "verifier": {"$ref": "#/$defs/verifier"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["producerRepository"]},
+                {"required": ["verifier"]}
+              ]
+            },
+            "properties": {
+              "completionCheck": {"const": "lifecycle-completion"},
+              "allowedProposalKinds": {"items": {"const": "dependency-update"}},
+              "requiredControls": {
+                "allOf": [
+                  {"$ref": "#/$defs/legacyControls"},
+                  {"properties": {"humanMergeRequired": {"const": true}}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["producerRepository"]},
+                {"required": ["verifier"]}
+              ]
+            },
+            "properties": {
+              "completionCheck": {"const": "lifecycle-completion"},
+              "allowedProposalKinds": {"items": {"const": "dependency-update"}},
+              "requiredControls": {
+                "allOf": [
+                  {"$ref": "#/$defs/legacyControls"},
+                  {"properties": {"humanMergeRequired": {"const": false}}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+          "then": {
+            "required": ["producerRepository", "verifier"],
+            "properties": {
+              "completionCheck": {"const": "consumer-owner-merge"},
+              "branchPrefix": {"const": "automation/renovate/"},
+              "allowedAutomationOwners": {"items": {"const": "renovate"}},
+              "allowedProposalKinds": {"items": {"const": "process-adoption"}},
+              "requiredControls": {"$ref": "#/$defs/adoptionControls"}
+            }
+          }
+        }
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "processDigest"],
+      "properties": {
+        "version": {"$ref": "#/$defs/version"},
+        "processDigest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "processAdoption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "producerRelease", "sourceAuthority", "targetAuthority", "requirements",
+        "processLock", "projectMigration", "managedFiles",
+        "managedDistributionSha256", "actionPins", "materialization"
+      ],
+      "properties": {
+        "producerRelease": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository", "version", "tag", "commit", "releaseContract",
+            "distributionAttestation", "materialization"
+          ],
+          "properties": {
+            "repository": {"$ref": "#/$defs/repository"},
+            "version": {"$ref": "#/$defs/version"},
+            "tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+            "commit": {"$ref": "#/$defs/gitOid"},
+            "releaseContract": {"$ref": "#/$defs/jsonEvidence"},
+            "distributionAttestation": {"$ref": "#/$defs/jsonEvidence"},
+            "materialization": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status", "requirementsLockSha256", "processDigest",
+                "managedDistributionSha256"
+              ],
+              "properties": {
+                "status": {"const": "passed"},
+                "requirementsLockSha256": {"$ref": "#/$defs/digest"},
+                "processDigest": {"$ref": "#/$defs/digest"},
+                "managedDistributionSha256": {"$ref": "#/$defs/digest"}
+              }
+            }
+          }
+        },
+        "sourceAuthority": {"$ref": "#/$defs/authority"},
+        "targetAuthority": {"$ref": "#/$defs/authority"},
+        "requirements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["inputPath", "inputSha256", "lockPath", "lockSha256"],
+          "properties": {
+            "inputPath": {"const": "requirements/process.in"},
+            "inputSha256": {"$ref": "#/$defs/digest"},
+            "lockPath": {"const": "requirements/process.txt"},
+            "lockSha256": {"$ref": "#/$defs/digest"}
+          }
+        },
+        "processLock": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"const": ".process/process.lock"},
+            "sha256": {"$ref": "#/$defs/digest"}
+          }
+        },
+        "projectMigration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "path", "sha256", "projectPath", "projectSha256"],
+          "properties": {
+            "status": {"enum": ["applied", "not-required"]},
+            "path": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+            "sha256": {"oneOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+            "projectPath": {"const": ".process/project.json"},
+            "projectSha256": {"$ref": "#/$defs/digest"}
+          }
+        },
+        "managedFiles": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 1,
-          "uniqueItems": true,
-          "items": {"const": "dependency-update"}
+          "maxItems": 1000,
+          "items": {"$ref": "#/$defs/fileBinding"}
         },
-        "requiredControls": {"$ref": "#/$defs/controls"}
+        "managedDistributionSha256": {"$ref": "#/$defs/digest"},
+        "actionPins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/actionPin"}
+        },
+        "materialization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "postMergeActions"],
+          "properties": {
+            "status": {"const": "passed"},
+            "postMergeActions": {"type": "array", "maxItems": 0}
+          }
+        }
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "jsonEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "content"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/digest"},
+        "content": {"type": "string", "minLength": 2, "maxLength": 1000000}
+      }
+    },
+    "actionPin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path", "repository", "previousCommit", "targetCommit",
+        "previousReleaseTag", "targetReleaseTag"
+      ],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "repository": {"$ref": "#/$defs/repository"},
+        "previousCommit": {"$ref": "#/$defs/gitOid"},
+        "targetCommit": {"$ref": "#/$defs/gitOid"},
+        "previousReleaseTag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "targetReleaseTag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"}
       }
     }
   },
   "allOf": [
     {
-      "if": {
-        "properties": {"schemaVersion": {"const": 1}},
-        "required": ["schemaVersion"]
-      },
+      "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
       "then": {
+        "not": {"required": ["processAdoption"]},
         "properties": {
+          "proposalKind": {"const": "dependency-update"},
           "observedControls": {
-            "properties": {"humanMergeRequired": {"const": true}}
+            "allOf": [
+              {"$ref": "#/$defs/legacyControls"},
+              {"properties": {"humanMergeRequired": {"const": true}}}
+            ]
           },
-          "optIn": {
-            "properties": {
-              "document": {
-                "properties": {
-                  "schemaVersion": {"const": 1},
-                  "requiredControls": {
-                    "properties": {"humanMergeRequired": {"const": true}}
-                  }
-                }
-              }
-            }
-          }
+          "optIn": {"properties": {"document": {"properties": {"schemaVersion": {"const": 1}}}}}
         }
-      },
-      "else": {
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {
+        "not": {"required": ["processAdoption"]},
         "properties": {
+          "proposalKind": {"const": "dependency-update"},
           "observedControls": {
-            "properties": {"humanMergeRequired": {"const": false}}
+            "allOf": [
+              {"$ref": "#/$defs/legacyControls"},
+              {"properties": {"humanMergeRequired": {"const": false}}}
+            ]
           },
-          "optIn": {
-            "properties": {
-              "document": {
-                "properties": {
-                  "schemaVersion": {"const": 2},
-                  "requiredControls": {
-                    "properties": {"humanMergeRequired": {"const": false}}
-                  }
-                }
-              }
-            }
-          }
+          "optIn": {"properties": {"document": {"properties": {"schemaVersion": {"const": 2}}}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["processAdoption"],
+        "properties": {
+          "proposalKind": {"const": "process-adoption"},
+          "automationOwner": {"const": "renovate"},
+          "observedControls": {"$ref": "#/$defs/adoptionControls"},
+          "optIn": {"properties": {"document": {"properties": {"schemaVersion": {"const": 3}}}}}
         }
       }
     }

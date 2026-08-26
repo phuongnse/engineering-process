@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from engineering_process import skills as skill_module
 from engineering_process.contracts import ContractError
 from engineering_process.skills import skill_digest, validate_skills
 
@@ -10,6 +12,35 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SkillTests(unittest.TestCase):
+    def test_selected_skill_validation_is_bounded_and_does_not_scan_unselected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = root / "sample-skill"
+            selected.mkdir()
+            document = (
+                "---\n"
+                "name: sample-skill\n"
+                "description: Validate one selected skill.\n"
+                "---\n\n"
+                "# Sample\n"
+            )
+            (selected / "SKILL.md").write_bytes(document.encode("utf-8"))
+            with mock.patch.object(
+                skill_module,
+                "skill_directories",
+                side_effect=AssertionError("must not enumerate unselected skills"),
+            ):
+                self.assertEqual(
+                    [],
+                    skill_module.validate_skills(root, ("sample-skill",)),
+                )
+
+            (selected / "SKILL.md").write_bytes(
+                b"x" * (skill_module.MAX_SKILL_DOCUMENT_BYTES + 1)
+            )
+            issues = skill_module.validate_skills(root, ("sample-skill",))
+            self.assertTrue(any("exceeds 256000 bytes" in issue for issue in issues))
+
     def test_failure_to_invariant_protocol_is_distribution_owned(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"
         execution = (skills / "run-change" / "references" / "execution.md").read_text(
@@ -43,7 +74,24 @@ class SkillTests(unittest.TestCase):
             validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []
         )
 
-    def test_controlled_proposals_remain_untrusted_until_exact_completion(self):
+    def test_process_requires_dependency_reuse_before_custom_standard_logic(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        implement = (skills / "implement-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        evolve = (skills / "evolve-process" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        production = (PROCESS_ROOT / "PRODUCTION_STANDARD.md").read_text(
+            encoding="utf-8"
+        )
+        for text in (implement, evolve, production):
+            self.assertIn("maintained dependenc", text.lower())
+            self.assertIn("managed", text.lower())
+            self.assertIn("custom", text.lower())
+        self.assertIn("Do not recreate a mature standard", production)
+
+    def test_controlled_proposals_preserve_versioned_merge_boundaries(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"
         execution = (skills / "run-change" / "references" / "execution.md").read_text(
             encoding="utf-8"
@@ -51,6 +99,10 @@ class SkillTests(unittest.TestCase):
         publish = (skills / "publish-change" / "SKILL.md").read_text(
             encoding="utf-8"
         )
+        run_change = (skills / "run-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        versioning = (PROCESS_ROOT / "VERSIONING.md").read_text(encoding="utf-8")
 
         for text in (execution, publish):
             normalized = text.lower().replace("-", " ")
@@ -60,6 +112,19 @@ class SkillTests(unittest.TestCase):
             self.assertIn("automerge", text)
             self.assertIn("process-authority", text)
         self.assertIn("Missing or disabled base policy fails closed", execution)
+        for text in (execution, publish):
+            self.assertIn("consumerOwnerMergeRequired", text)
+            self.assertIn("consumer owner", text.lower())
+            self.assertIn("merge is terminal", text.lower())
+            self.assertIn("agent-host", text.lower())
+            self.assertIn("reviewer host", text.lower())
+        self.assertIn("standing auto-merge authority does not apply", publish)
+        self.assertIn("may retain standing automation", publish)
+        self.assertIn("default agent-host route", publish)
+        self.assertIn("explicit exception", publish)
+        self.assertIn("default agent-host route", run_change.lower())
+        self.assertIn("default agent-host completion-first route", versioning)
+        self.assertIn("explicit exception", versioning)
 
     def test_standing_policy_continues_automation_and_escalates_only_exceptions(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"

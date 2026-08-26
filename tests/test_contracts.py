@@ -294,8 +294,161 @@ class ProjectContractTests(unittest.TestCase):
 
         proposal["schemaVersion"] = True
         proposal["optIn"]["document"]["schemaVersion"] = True
-        with self.assertRaisesRegex(ContractError, "schemaVersion: must be 1 or 2"):
+        with self.assertRaisesRegex(ContractError, "schemaVersion: must be 1, 2, or 3"):
             validate_automation_proposal(proposal)
+
+    def test_process_adoption_proposal_requires_consumer_owner_merge(self):
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        proposal = validate_automation_proposal(document)
+
+        self.assertEqual(3, proposal.schema_version)
+        self.assertEqual("process-adoption", proposal.proposal_kind)
+        self.assertIsNone(proposal.human_merge_required)
+        self.assertTrue(proposal.consumer_owner_merge_required)
+        self.assertEqual("consumer-owner-merge", proposal.completion_check)
+
+        document["observedControls"]["automerge"] = True
+        with self.assertRaisesRegex(ContractError, "automerge: must be false"):
+            validate_automation_proposal(document)
+
+    def test_process_adoption_proposal_rejects_merge_escalation_and_partial_evidence(self):
+        source = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        cases = []
+        completion = copy.deepcopy(source)
+        completion["optIn"]["document"]["completionCheck"] = "lifecycle-completion"
+        completion["optIn"]["sha256"] = canonical_json_digest(
+            completion["optIn"]["document"]
+        )
+        cases.append((completion, "consumer-owner-merge"))
+
+        post_merge = copy.deepcopy(source)
+        post_merge["processAdoption"]["materialization"]["postMergeActions"] = [
+            "synchronize"
+        ]
+        cases.append((post_merge, "merge is terminal"))
+
+        omitted = copy.deepcopy(source)
+        omitted["processAdoption"]["managedFiles"] = omitted[
+            "processAdoption"
+        ]["managedFiles"][1:]
+        omitted["processAdoption"]["managedDistributionSha256"] = canonical_json_digest(
+            omitted["processAdoption"]["managedFiles"]
+        )
+        cases.append((omitted, "complete fixed"))
+
+        verifier = copy.deepcopy(source)
+        verifier["verifier"]["commit"] = "9" * 40
+        cases.append((verifier, "protected-base opt-in verifier"))
+
+        for document, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ContractError, message):
+                    validate_automation_proposal(document)
+
+    def test_process_adoption_policy_does_not_use_human_actor_language(self):
+        policy = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-policy.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        validated = validate_automation_proposal_policy(policy)
+
+        self.assertNotIn("humanMergeRequired", validated["requiredControls"])
+        self.assertTrue(
+            validated["requiredControls"]["consumerOwnerMergeRequired"]
+        )
+        self.assertFalse(validated["requiredControls"]["postMergeMutation"])
+
+    def test_process_adoption_rejects_invented_producer_release_evidence(self):
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        binding = document["processAdoption"]["producerRelease"][
+            "distributionAttestation"
+        ]
+        attestation = json.loads(binding["content"])
+        attestation["checkpoint"] = "4" * 40
+        binding["content"] = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        binding["sha256"] = "sha256:" + hashlib.sha256(
+            binding["content"].encode("utf-8")
+        ).hexdigest()
+
+        with self.assertRaisesRegex(ContractError, "attestation identity"):
+            validate_automation_proposal(document)
+
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        binding = document["processAdoption"]["producerRelease"][
+            "distributionAttestation"
+        ]
+        attestation = json.loads(binding["content"])
+        attestation["lifecycleReceipt"]["changeId"] = "different-release"
+        attestation["lifecycleReceipt"]["cycle"] = 9
+        binding["content"] = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        binding["sha256"] = "sha256:" + hashlib.sha256(
+            binding["content"].encode("utf-8")
+        ).hexdigest()
+        with self.assertRaisesRegex(ContractError, "lifecycle provenance"):
+            validate_automation_proposal(document)
+
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["processAdoption"]["producerRelease"]["materialization"][
+            "processDigest"
+        ] = f"sha256:{'0' * 64}"
+        with self.assertRaisesRegex(ContractError, "exact target"):
+            validate_automation_proposal(document)
+
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["processAdoption"]["producerRelease"]["repository"] = (
+            "attacker/process"
+        )
+        document["processAdoption"]["actionPins"][0]["repository"] = (
+            "attacker/process"
+        )
+        with self.assertRaisesRegex(ContractError, "protected-base producer"):
+            validate_automation_proposal(document)
 
     def test_automation_proposal_bounds_and_canonicalizes_changed_paths(self):
         document = json.loads(

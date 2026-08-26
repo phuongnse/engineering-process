@@ -164,6 +164,15 @@ release, deployment, or adoption authority.
 
 ## Resource and generated-state policy
 
+Before implementing a standard format, protocol, parser, serializer, cryptographic
+primitive, or platform integration, evaluate maintained dependencies and supported
+tools at the owning boundary. Prefer a mature dependency when it materially reduces
+custom semantics and satisfies compatibility, licensing, supply-chain, portability,
+and resource-bound requirements; add it through the project's managed dependency and
+lock flow. A custom implementation requires concrete evidence that available
+dependencies cannot meet the accepted contract. Do not recreate a mature standard
+merely to avoid proposing or installing a useful dependency.
+
 Every operation over repository-controlled or remote input has explicit limits for
 time, count, individual item size, aggregate size, output, and process descendants.
 Limits fail closed and have regression coverage for success, failure, timeout, and
@@ -176,6 +185,30 @@ bounded, contains no executable command, validates under the installed target
 authority, and shares one rollback boundary with the process lock and managed assets.
 Optional capabilities are never inferred, while configuration required by the target
 authority blocks adoption when it is missing or invalid.
+
+Proposal merge authority derives from proposal origin and publication state. An
+agent-host review object created only after full lifecycle completion may use standing
+policy auto-merge for its exact approved head. A Renovate `process-adoption` proposal
+is created before consumer-owner review and must instead fix automerge false,
+`consumerOwnerMergeRequired` true, and post-merge mutation false. Lifecycle
+completion, standing policy, provider state, and successful static checks never move
+that proposal onto the agent-host route. The consumer owns review and manually
+authorizes merge; merge is the terminal cutover.
+
+Before candidate-owned commands, a protected-base immutable verifier independently
+binds the actual base and exact head, producer release/tag/commit/attestation, source
+and target process identities, requirements bytes, process lock, migration result,
+complete selected managed-file set, grouped full-SHA action-pin-only workflow delta,
+and verifier identity. Producer and verifier repositories are protected-base owned;
+report-controlled release claims never authenticate themselves. A separately supplied
+clean tagged producer checkout, artifacts, receipt, and attestation pass the existing
+release/attestation validators and exact target synchronization. Base must be
+an ancestor of head, and every producer use in the regular-workflow tree moves as one
+unchanged-mode pin group. Partial, stale, inferred, unauthorized, or post-merge-dependent
+candidates fail closed. This portable boundary reuses ordinary Renovate generation,
+managed adoption, consumer CI, review and branch protection. It does not introduce a
+reviewer host, daemon, scheduler, generic workflow engine, dynamically generated
+approval chain, meta-assessment, or reviewer-of-reviewer layer.
 
 Released serialized contracts are never tightened in place. A new resource bound or
 meaning-changing requirement uses a new integer schema major with explicit migration;

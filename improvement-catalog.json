@@ -47,6 +47,18 @@
       "status": "resolved"
     },
     {
+      "activeChangeId": "govern-process-adoption-proposals",
+      "id": "process-adoption-origin-merge-authority",
+      "lastResolution": null,
+      "publicSurfaces": [
+        "automation-proposal",
+        "process-adoption",
+        "publication"
+      ],
+      "reusableClass": "deterministic-enforcement",
+      "status": "active"
+    },
+    {
       "activeChangeId": null,
       "id": "producer-improvement-route-completeness",
       "lastResolution": {

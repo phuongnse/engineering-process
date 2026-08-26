@@ -2,11 +2,36 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from engineering_process import distribution
+from engineering_process.contracts import ContractError, read_json, validate_process_lock
 from engineering_process.distribution import distribution_digest
 
 
 class DistributionDigestTests(unittest.TestCase):
+    def test_selected_graph_distribution_does_not_enumerate_unselected_skills(self):
+        process_root = Path(__file__).resolve().parent.parent
+        lock = validate_process_lock(
+            read_json(process_root / ".process" / "process.lock")
+        )
+        with (
+            mock.patch(
+                "engineering_process.process_graph.skill_directories",
+                side_effect=AssertionError("must not enumerate unselected skills"),
+            ),
+            mock.patch(
+                "engineering_process.bundles.skill_directories",
+                side_effect=AssertionError("must not enumerate unselected skills"),
+            ),
+        ):
+            digest = distribution_digest(
+                process_root,
+                lock.skills,
+                package_root=process_root / "engineering_process",
+            )
+        self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+
     def prepare_distribution(self, root: Path) -> tuple[str, ...]:
         skill = root / "process_assets" / "skills" / "sample-skill"
         skill.mkdir(parents=True)
@@ -114,6 +139,43 @@ class DistributionDigestTests(unittest.TestCase):
                 baseline,
                 distribution_digest(root, selected, package_root=package),
             )
+
+    def test_digest_bounds_producer_files_entries_and_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = self.prepare_distribution(root)
+            package = root / "runtime"
+            package.mkdir()
+            oversized = package / "module.py"
+            oversized.write_bytes(
+                b"x" * (distribution.MAX_DISTRIBUTION_FILE_BYTES + 1)
+            )
+            with self.assertRaisesRegex(ContractError, "file exceeds"):
+                distribution_digest(root, selected, package_root=package)
+
+            oversized.write_bytes(b"VALUE = 1\n")
+            (package / "second.py").write_bytes(b"VALUE = 2\n")
+            with (
+                mock.patch.object(distribution, "MAX_DISTRIBUTION_FILES", 1),
+                self.assertRaisesRegex(ContractError, "files"),
+            ):
+                distribution_digest(root, selected, package_root=package)
+
+            with (
+                mock.patch.object(distribution, "MAX_DISTRIBUTION_ENTRIES", 1),
+                self.assertRaisesRegex(ContractError, "entries"),
+            ):
+                distribution_digest(root, selected, package_root=package)
+
+            with (
+                mock.patch.object(
+                    distribution,
+                    "DISTRIBUTION_TRAVERSAL_TIMEOUT_SECONDS",
+                    -1.0,
+                ),
+                self.assertRaisesRegex(ContractError, "exceeded 10 seconds"),
+            ):
+                distribution_digest(root, selected, package_root=package)
 
 
 if __name__ == "__main__":

@@ -219,6 +219,35 @@ class SyncTests(unittest.TestCase):
                 synchronized_state(project_root, PROCESS_ROOT, lock),
                 [],
             )
+            target_authority_issues = synchronized_state(
+                project_root,
+                PROCESS_ROOT,
+                lock,
+                authority_version="9.9.9",
+            )
+            self.assertTrue(
+                any("but processctl is 9.9.9" in issue for issue in target_authority_issues)
+            )
+            producer_package = PROCESS_ROOT / "engineering_process"
+            with mock.patch.object(
+                syncing,
+                "distribution_digest",
+                return_value=lock.digest,
+            ) as digest:
+                self.assertEqual(
+                    [],
+                    synchronized_state(
+                        project_root,
+                        PROCESS_ROOT,
+                        lock,
+                        package_root=producer_package,
+                    ),
+                )
+            digest.assert_called_once_with(
+                PROCESS_ROOT,
+                lock.skills,
+                package_root=producer_package,
+            )
             attributes = (project_root / ".agents" / ".gitattributes").read_text(
                 encoding="utf-8"
             )
@@ -239,6 +268,31 @@ class SyncTests(unittest.TestCase):
                     for issue in synchronized_state(project_root, PROCESS_ROOT, lock)
                 )
             )
+
+    def test_synchronized_state_applies_one_aggregate_skill_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            self.prepare_project(project_root)
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            lock = validate_process_lock(
+                read_json(project_root / ".process" / "process.lock")
+            )
+
+            with mock.patch.object(syncing, "MAX_SYNC_SKILL_ENTRIES", 1):
+                issues = synchronized_state(project_root, PROCESS_ROOT, lock)
+            self.assertTrue(
+                any("synchronization entry count" in issue for issue in issues)
+            )
+
+            with mock.patch.object(syncing, "SYNC_SKILL_TIMEOUT_SECONDS", -1.0):
+                issues = synchronized_state(project_root, PROCESS_ROOT, lock)
+            self.assertTrue(any("synchronization exceeded" in issue for issue in issues))
+
+            with (
+                mock.patch.object(syncing, "MAX_SYNC_SKILL_BYTES", 1),
+                self.assertRaisesRegex(ContractError, "synchronization bytes"),
+            ):
+                synchronized_state(project_root, PROCESS_ROOT, lock)
 
     def test_sync_manages_adoption_runner_and_refuses_unmanaged_collision(self):
         with tempfile.TemporaryDirectory() as directory:

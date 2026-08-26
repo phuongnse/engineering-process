@@ -256,8 +256,9 @@ replace semantic review. By default, no branch or pull/merge review object is cr
 earlier.
 
 A project may explicitly opt into a controlled automation-proposal contract on its
-protected base. This is a narrow exception for an untrusted dependency proposal, not
-source publication or a lifecycle transition. Before exposing the proposal, the
+protected base. Schemas 1 and 2 preserve the narrow untrusted dependency-proposal
+route. Schema 3 separately governs a Renovate `process-adoption` proposal; neither is
+source publication or a lifecycle transition. Before exposing a dependency proposal, the
 project-owned adapter must produce bounded policy evidence for the exact base, head,
 changed paths, automation owner, title/body, immutable verifier, and required controls,
 resolve the actual protected-base commit independently from the provider event, then
@@ -280,6 +281,28 @@ its historical human-only meaning. Schema 2 keeps provider automerge disabled be
 completion, then permits exact-head merge only through the protected-base standing
 policy. Existing consumers remain on schema 1 until a separately completed opt-in
 change is merged.
+
+For schema-3 process adoption, the protected-base policy fixes Renovate, the producer
+repository, the immutable verifier repository/commit, `consumer-owner-merge`, automerge false,
+`consumerOwnerMergeRequired` true, and post-merge mutation false. The verifier binds
+the actual base independently plus the exact producer release/tag/commit/attestation,
+source and target authority identities, requirements bytes, process lock, complete
+selected managed distribution, declared migration, bounded raw release/attestation
+bytes and artifact hashes, every producer use in the unchanged-mode regular-workflow
+tree, head/path set, and metadata. Report bytes do not authenticate themselves: supply
+a separate clean tagged producer checkout, release artifacts, receipt, and attestation
+to the existing release validators, then compare exact target synchronization. Base
+must be an ancestor of head. Candidate-owned commands run only after
+that validation. The consumer then owns project checks, review choice, and the manual
+merge decision. Merge is terminal; do not create lifecycle-completion for this route,
+apply standing auto-merge, or schedule synchronization after merge.
+
+Keep origin routes distinct. An agent-host candidate published only after exact
+lifecycle completion remains eligible for standing-policy auto-merge. A Renovate
+process-adoption proposal is created before consumer-owner review and can never inherit
+that authority, even if later checks or lifecycle work pass. Reuse managed adoption,
+ordinary consumer CI/review, and branch protection; do not build a reviewer host,
+daemon, scheduler, dynamic approval chain, meta-assessment, or generic workflow engine.
 
 After completion, standing consumer policy may automate branch push and review-object
 creation, required-check waiting, exact-head merge, release, deployment, adoption, and

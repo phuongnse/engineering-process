@@ -21,6 +21,8 @@ class SchemaTests(unittest.TestCase):
             "automation-policy": "automation-policy",
             "automation-proposal-policy": "automation-proposal-policy",
             "automation-proposal": "automation-proposal",
+            "automation-process-adoption-policy": "automation-proposal-policy",
+            "automation-process-adoption-proposal": "automation-proposal",
             "change": "change",
             "improvement-catalog": "improvement-catalog",
             "improvement-disposition": "improvement-disposition",
@@ -81,6 +83,14 @@ class SchemaTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
         )
         jsonschema.Draft202012Validator(policy_schema).validate(policy)
+        historical_with_new_owner = dict(policy)
+        historical_with_new_owner["producerRepository"] = (
+            "phuongnse/engineering-process"
+        )
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.Draft202012Validator(policy_schema).validate(
+                historical_with_new_owner
+            )
 
         proposal = json.loads(
             (PROCESS_ROOT / "examples" / "automation-proposal.json").read_text(

@@ -121,9 +121,17 @@ AUTOMATION_PROPOSAL_BASE_CONTROLS = {
     "workflowChanges": False,
     "writeCapableChecks": False,
 }
+AUTOMATION_PROCESS_ADOPTION_CONTROLS = {
+    **AUTOMATION_PROPOSAL_BASE_CONTROLS,
+    "consumerOwnerMergeRequired": True,
+    "postMergeMutation": False,
+    "processAuthorityChanges": True,
+    "workflowChanges": True,
+}
 AUTOMATION_PROPOSAL_CONTROLS = {
     1: {**AUTOMATION_PROPOSAL_BASE_CONTROLS, "humanMergeRequired": True},
     2: {**AUTOMATION_PROPOSAL_BASE_CONTROLS, "humanMergeRequired": False},
+    3: AUTOMATION_PROCESS_ADOPTION_CONTROLS,
 }
 STANDING_AUTOMATION_ACTIONS = (
     "adopt",
@@ -416,9 +424,11 @@ class AutomationProposal:
     opt_in_sha256: str
     opt_in_document: dict[str, Any]
     completion_check: str
-    human_merge_required: bool
+    human_merge_required: bool | None
+    consumer_owner_merge_required: bool
     verifier_repository: str
     verifier_commit: str
+    process_adoption: dict[str, Any] | None
 
 
 def read_json(path: Path) -> Any:
@@ -3210,26 +3220,596 @@ def _automation_proposal_controls(
     return dict(controls)
 
 
-def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
-    policy = _object(value, path)
+def _automation_proposal_digest(value: Any, path: str) -> str:
+    digest = _string(value, path, max_length=71)
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ContractError(f"{path}: must be a SHA-256 digest")
+    return digest
+
+
+def _automation_proposal_git_oid(value: Any, path: str) -> str:
+    oid = _string(value, path, max_length=40)
+    if re.fullmatch(r"[0-9a-f]{40}", oid) is None:
+        raise ContractError(f"{path}: must be a full lowercase Git SHA")
+    return oid
+
+
+def _automation_proposal_version(value: Any, path: str) -> str:
+    version = _string(value, path, max_length=64)
+    if FINAL_SEMVER_PATTERN.fullmatch(version) is None:
+        raise ContractError(f"{path}: must be final SemVer X.Y.Z")
+    return version
+
+
+def _automation_proposal_repository(value: Any, path: str) -> str:
+    repository = _string(value, path, max_length=256)
+    if REPOSITORY_PATTERN.fullmatch(repository) is None:
+        raise ContractError(f"{path}: invalid repository identity")
+    return repository
+
+
+def _automation_proposal_json_content(
+    value: Any, path: str, *, maximum_bytes: int
+) -> tuple[bytes, dict[str, Any]]:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ContractError(f"{path}: must contain non-empty JSON bytes")
+    content = value
+    encoded = content.encode("utf-8")
+    if len(encoded) > maximum_bytes:
+        raise ContractError(f"{path}: exceeds {maximum_bytes} bytes")
+    if encoded.startswith(b"\xef\xbb\xbf"):
+        raise ContractError(f"{path}: UTF-8 BOM is not allowed")
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        document: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in document:
+                raise ContractError(f"{path}: duplicate JSON key {key!r}")
+            document[key] = item
+        return document
+    try:
+        document = json.loads(content, object_pairs_hook=reject_duplicates)
+    except json.JSONDecodeError as error:
+        raise ContractError(f"{path}: must contain valid JSON") from error
+    if not isinstance(document, dict):
+        raise ContractError(f"{path}: must contain a JSON object")
+    return encoded, document
+
+
+def _automation_proposal_verifier(value: Any, path: str) -> dict[str, str]:
+    verifier = _object(value, path)
+    _exact_keys(verifier, required={"repository", "commit"}, path=path)
+    return {
+        "repository": _automation_proposal_repository(
+            verifier["repository"], f"{path}.repository"
+        ),
+        "commit": _automation_proposal_git_oid(
+            verifier["commit"], f"{path}.commit"
+        ),
+    }
+
+
+def _automation_process_adoption(value: Any, path: str) -> dict[str, Any]:
+    adoption = _object(value, path)
     _exact_keys(
-        policy,
+        adoption,
         required={
-            "schemaVersion",
-            "kind",
-            "enabled",
-            "targetBranch",
-            "branchPrefix",
-            "completionCheck",
-            "allowedAutomationOwners",
-            "allowedProposalKinds",
-            "requiredControls",
+            "producerRelease",
+            "sourceAuthority",
+            "targetAuthority",
+            "requirements",
+            "processLock",
+            "projectMigration",
+            "managedFiles",
+            "managedDistributionSha256",
+            "actionPins",
+            "materialization",
         },
         path=path,
     )
-    schema_version = policy["schemaVersion"]
+
+    producer_path = f"{path}.producerRelease"
+    producer = _object(adoption["producerRelease"], producer_path)
+    _exact_keys(
+        producer,
+        required={
+            "repository",
+            "version",
+            "tag",
+            "commit",
+            "releaseContract",
+            "distributionAttestation",
+            "materialization",
+        },
+        path=producer_path,
+    )
+    producer_repository = _automation_proposal_repository(
+        producer["repository"], f"{producer_path}.repository"
+    )
+    producer_version = _automation_proposal_version(
+        producer["version"], f"{producer_path}.version"
+    )
+    if producer["tag"] != f"v{producer_version}":
+        raise ContractError(f"{producer_path}.tag: must be v{producer_version}")
+    producer_commit = _automation_proposal_git_oid(
+        producer["commit"], f"{producer_path}.commit"
+    )
+
+    release_binding_path = f"{producer_path}.releaseContract"
+    release_binding = _object(producer["releaseContract"], release_binding_path)
+    _exact_keys(
+        release_binding,
+        required={"sha256", "content"},
+        path=release_binding_path,
+    )
+    release_content, release_document = _automation_proposal_json_content(
+        release_binding["content"],
+        f"{release_binding_path}.content",
+        maximum_bytes=MAX_JSON_BYTES,
+    )
+    release_sha256 = _automation_proposal_digest(
+        release_binding["sha256"], f"{release_binding_path}.sha256"
+    )
+    if release_sha256 != f"sha256:{hashlib.sha256(release_content).hexdigest()}":
+        raise ContractError(
+            f"{release_binding_path}.sha256: does not match release contract bytes"
+        )
+    release = validate_release(release_document, f"{release_binding_path}.content")
+    if (
+        release.version != producer_version
+        or release.tag != producer["tag"]
+        or release.release_name != producer["tag"]
+        or release.package_name != "engineering-process"
+        or release.distribution_name != "engineering_process"
+        or release.provenance_mode != "governed"
+        or release.receipt_asset is None
+        or len(release.artifacts) != 2
+    ):
+        raise ContractError(
+            f"{release_binding_path}.content: does not describe the exact governed "
+            "engineering-process release"
+        )
+
+    attestation_binding_path = f"{producer_path}.distributionAttestation"
+    attestation_binding = _object(
+        producer["distributionAttestation"], attestation_binding_path
+    )
+    _exact_keys(
+        attestation_binding,
+        required={"sha256", "content"},
+        path=attestation_binding_path,
+    )
+    attestation_content, attestation = _automation_proposal_json_content(
+        attestation_binding["content"],
+        f"{attestation_binding_path}.content",
+        maximum_bytes=256_000,
+    )
+    attestation_sha256 = _automation_proposal_digest(
+        attestation_binding["sha256"], f"{attestation_binding_path}.sha256"
+    )
+    if attestation_sha256 != (
+        f"sha256:{hashlib.sha256(attestation_content).hexdigest()}"
+    ):
+        raise ContractError(
+            f"{attestation_binding_path}.sha256: does not match attestation bytes"
+        )
+    _exact_keys(
+        attestation,
+        required={
+            "schemaVersion",
+            "kind",
+            "checkpoint",
+            "release",
+            "lifecycleReceipt",
+            "bootstrapAuthorization",
+            "artifacts",
+        },
+        path=f"{attestation_binding_path}.content",
+    )
+    if (
+        attestation["schemaVersion"] != 1
+        or attestation["kind"] != "engineering-process-distribution-attestation"
+        or attestation["checkpoint"] != producer_commit
+        or attestation["bootstrapAuthorization"] is not None
+    ):
+        raise ContractError(
+            f"{attestation_binding_path}.content: invalid governed attestation identity"
+        )
+    attested_release_path = f"{attestation_binding_path}.content.release"
+    attested_release = _object(attestation["release"], attested_release_path)
+    _exact_keys(
+        attested_release,
+        required={
+            "contractSha256",
+            "package",
+            "version",
+            "tag",
+            "releaseName",
+            "artifacts",
+        },
+        path=attested_release_path,
+    )
+    if attested_release != {
+        "contractSha256": release_sha256,
+        "package": release.package_name,
+        "version": release.version,
+        "tag": release.tag,
+        "releaseName": release.release_name,
+        "artifacts": list(release.artifacts),
+    }:
+        raise ContractError(
+            f"{attested_release_path}: does not match release contract bytes"
+        )
+
+    receipt_path = f"{attestation_binding_path}.content.lifecycleReceipt"
+    receipt = _object(attestation["lifecycleReceipt"], receipt_path)
+    _exact_keys(
+        receipt,
+        required={
+            "asset",
+            "sha256",
+            "processVersion",
+            "processDigest",
+            "project",
+            "changeId",
+            "cycle",
+            "checkpoint",
+        },
+        path=receipt_path,
+    )
+    if receipt["asset"] != release.receipt_asset:
+        raise ContractError(f"{receipt_path}.asset: does not match release contract")
+    _automation_proposal_digest(receipt["sha256"], f"{receipt_path}.sha256")
+    _automation_proposal_version(
+        receipt["processVersion"], f"{receipt_path}.processVersion"
+    )
+    _automation_proposal_digest(
+        receipt["processDigest"], f"{receipt_path}.processDigest"
+    )
+    if receipt["project"] != "engineering-process":
+        raise ContractError(f"{receipt_path}.project: must be engineering-process")
+    change_id = _string(
+        receipt["changeId"], f"{receipt_path}.changeId", max_length=64
+    )
+    if PROFILE_PATTERN.fullmatch(change_id) is None:
+        raise ContractError(f"{receipt_path}.changeId: invalid change id")
+    if (
+        type(receipt["cycle"]) is not int
+        or receipt["cycle"] < 1
+        or re.fullmatch(r"[0-9a-f]{40}", str(receipt["checkpoint"])) is None
+    ):
+        raise ContractError(f"{receipt_path}: invalid lifecycle identity")
+    if (
+        change_id != release.receipt_change_id
+        or receipt["cycle"] != release.receipt_cycle
+    ):
+        raise ContractError(
+            f"{receipt_path}: does not match release lifecycle provenance"
+        )
+
+    artifact_path = f"{attestation_binding_path}.content.artifacts"
+    artifacts = attestation["artifacts"]
+    if not isinstance(artifacts, list) or len(artifacts) != 2:
+        raise ContractError(f"{artifact_path}: must contain exactly two artifacts")
+    artifact_names: list[str] = []
+    artifact_total = 0
+    for index, raw_artifact in enumerate(artifacts):
+        item_path = f"{artifact_path}[{index}]"
+        item = _object(raw_artifact, item_path)
+        _exact_keys(
+            item, required={"name", "sizeBytes", "sha256"}, path=item_path
+        )
+        name = _string(item["name"], f"{item_path}.name", max_length=200)
+        if (
+            type(item["sizeBytes"]) is not int
+            or not 1 <= item["sizeBytes"] <= 128_000_000
+        ):
+            raise ContractError(f"{item_path}.sizeBytes: invalid artifact size")
+        artifact_total += item["sizeBytes"]
+        _automation_proposal_digest(item["sha256"], f"{item_path}.sha256")
+        artifact_names.append(name)
+    if (
+        artifact_total > 256_000_000
+        or artifact_names != list(release.artifacts)
+        or artifact_names != sorted(set(artifact_names))
+    ):
+        raise ContractError(
+            f"{artifact_path}: does not match the complete release artifact set"
+        )
+
+    producer_materialization_path = f"{producer_path}.materialization"
+    producer_materialization = _object(
+        producer["materialization"], producer_materialization_path
+    )
+    _exact_keys(
+        producer_materialization,
+        required={
+            "status",
+            "requirementsLockSha256",
+            "processDigest",
+            "managedDistributionSha256",
+        },
+        path=producer_materialization_path,
+    )
+    if producer_materialization["status"] != "passed":
+        raise ContractError(
+            f"{producer_materialization_path}.status: must be passed"
+        )
+    for field in (
+        "requirementsLockSha256",
+        "processDigest",
+        "managedDistributionSha256",
+    ):
+        _automation_proposal_digest(
+            producer_materialization[field],
+            f"{producer_materialization_path}.{field}",
+        )
+
+    authorities: dict[str, dict[str, str]] = {}
+    for name in ("sourceAuthority", "targetAuthority"):
+        authority_path = f"{path}.{name}"
+        authority = _object(adoption[name], authority_path)
+        _exact_keys(
+            authority,
+            required={"version", "processDigest"},
+            path=authority_path,
+        )
+        authorities[name] = {
+            "version": _automation_proposal_version(
+                authority["version"], f"{authority_path}.version"
+            ),
+            "processDigest": _automation_proposal_digest(
+                authority["processDigest"], f"{authority_path}.processDigest"
+            ),
+        }
+    if authorities["targetAuthority"]["version"] != producer_version:
+        raise ContractError(
+            f"{path}.targetAuthority.version: must match producer release version"
+        )
+    source_version = tuple(
+        int(part) for part in authorities["sourceAuthority"]["version"].split(".")
+    )
+    target_version = tuple(int(part) for part in producer_version.split("."))
+    if target_version <= source_version:
+        raise ContractError(
+            f"{path}.targetAuthority.version: must be newer than source authority"
+        )
+    if (
+        authorities["sourceAuthority"]["processDigest"]
+        == authorities["targetAuthority"]["processDigest"]
+    ):
+        raise ContractError(
+            f"{path}.targetAuthority.processDigest: must differ from source authority"
+        )
+    if (
+        release.previous_version != authorities["sourceAuthority"]["version"]
+        or receipt["processVersion"] != authorities["sourceAuthority"]["version"]
+        or receipt["processDigest"]
+        != authorities["sourceAuthority"]["processDigest"]
+    ):
+        raise ContractError(
+            f"{producer_path}: release provenance does not bind the source authority"
+        )
+
+    requirements_path = f"{path}.requirements"
+    requirements = _object(adoption["requirements"], requirements_path)
+    _exact_keys(
+        requirements,
+        required={"inputPath", "inputSha256", "lockPath", "lockSha256"},
+        path=requirements_path,
+    )
+    if requirements["inputPath"] != "requirements/process.in":
+        raise ContractError(
+            f"{requirements_path}.inputPath: must be requirements/process.in"
+        )
+    if requirements["lockPath"] != "requirements/process.txt":
+        raise ContractError(
+            f"{requirements_path}.lockPath: must be requirements/process.txt"
+        )
+    _automation_proposal_digest(
+        requirements["inputSha256"], f"{requirements_path}.inputSha256"
+    )
+    _automation_proposal_digest(
+        requirements["lockSha256"], f"{requirements_path}.lockSha256"
+    )
+
+    process_lock_path = f"{path}.processLock"
+    process_lock = _object(adoption["processLock"], process_lock_path)
+    _exact_keys(
+        process_lock, required={"path", "sha256"}, path=process_lock_path
+    )
+    if process_lock["path"] != ".process/process.lock":
+        raise ContractError(
+            f"{process_lock_path}.path: must be .process/process.lock"
+        )
+    _automation_proposal_digest(
+        process_lock["sha256"], f"{process_lock_path}.sha256"
+    )
+
+    migration_path = f"{path}.projectMigration"
+    migration = _object(adoption["projectMigration"], migration_path)
+    _exact_keys(
+        migration,
+        required={"status", "path", "sha256", "projectPath", "projectSha256"},
+        path=migration_path,
+    )
+    if migration["status"] not in {"applied", "not-required"}:
+        raise ContractError(
+            f"{migration_path}.status: must be applied or not-required"
+        )
+    if migration["projectPath"] != ".process/project.json":
+        raise ContractError(
+            f"{migration_path}.projectPath: must be .process/project.json"
+        )
+    _automation_proposal_digest(
+        migration["projectSha256"], f"{migration_path}.projectSha256"
+    )
+    if migration["status"] == "applied":
+        expected_path = f".process/adoption-migrations/{producer_version}.json"
+        if migration["path"] != expected_path:
+            raise ContractError(f"{migration_path}.path: must be {expected_path}")
+        _automation_proposal_digest(
+            migration["sha256"], f"{migration_path}.sha256"
+        )
+    elif migration["path"] is not None or migration["sha256"] is not None:
+        raise ContractError(
+            f"{migration_path}: not-required migration path and sha256 must be null"
+        )
+
+    raw_managed_files = adoption["managedFiles"]
+    if (
+        not isinstance(raw_managed_files, list)
+        or not raw_managed_files
+        or len(raw_managed_files) > MAX_AUTOMATION_PROPOSAL_PATHS
+    ):
+        raise ContractError(
+            f"{path}.managedFiles: must contain between 1 and "
+            f"{MAX_AUTOMATION_PROPOSAL_PATHS} files"
+        )
+    managed_paths: list[str] = []
+    for index, raw_file in enumerate(raw_managed_files):
+        file_path = f"{path}.managedFiles[{index}]"
+        file = _object(raw_file, file_path)
+        _exact_keys(file, required={"path", "sha256"}, path=file_path)
+        managed_paths.append(
+            _relative_tool_path(file["path"], f"{file_path}.path", strict_portable=True)
+        )
+        _automation_proposal_digest(file["sha256"], f"{file_path}.sha256")
+    if managed_paths != sorted(set(managed_paths)):
+        raise ContractError(f"{path}.managedFiles: paths must be sorted and unique")
+    fixed_managed_paths = {
+        ".agents/.gitattributes",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".process/adopt-process-windows-job.py",
+        ".process/adopt-process.py",
+        "AGENTS.md",
+    }
+    if not fixed_managed_paths.issubset(managed_paths) or not any(
+        item.startswith(".agents/skills/") for item in managed_paths
+    ):
+        raise ContractError(
+            f"{path}.managedFiles: must include the complete fixed and selected-skill "
+            "managed distribution"
+        )
+    managed_distribution_digest = _automation_proposal_digest(
+        adoption["managedDistributionSha256"],
+        f"{path}.managedDistributionSha256",
+    )
+    if managed_distribution_digest != canonical_json_digest(raw_managed_files):
+        raise ContractError(
+            f"{path}.managedDistributionSha256: does not match managedFiles"
+        )
+    if producer_materialization != {
+        "status": "passed",
+        "requirementsLockSha256": requirements["lockSha256"],
+        "processDigest": authorities["targetAuthority"]["processDigest"],
+        "managedDistributionSha256": managed_distribution_digest,
+    }:
+        raise ContractError(
+            f"{producer_materialization_path}: does not bind the exact target "
+            "requirements, process, and managed distribution"
+        )
+
+    raw_pins = adoption["actionPins"]
+    if not isinstance(raw_pins, list) or not raw_pins or len(raw_pins) > 32:
+        raise ContractError(f"{path}.actionPins: must contain between 1 and 32 pins")
+    pin_identities: list[tuple[str, str]] = []
+    source_tag = f"v{authorities['sourceAuthority']['version']}"
+    target_tag = f"v{producer_version}"
+    for index, raw_pin in enumerate(raw_pins):
+        pin_path = f"{path}.actionPins[{index}]"
+        pin = _object(raw_pin, pin_path)
+        _exact_keys(
+            pin,
+            required={
+                "path",
+                "repository",
+                "previousCommit",
+                "targetCommit",
+                "previousReleaseTag",
+                "targetReleaseTag",
+            },
+            path=pin_path,
+        )
+        workflow_path = _relative_tool_path(
+            pin["path"], f"{pin_path}.path", strict_portable=True
+        )
+        if (
+            not workflow_path.startswith(".github/workflows/")
+            or not workflow_path.endswith((".yml", ".yaml"))
+        ):
+            raise ContractError(
+                f"{pin_path}.path: must be a GitHub workflow YAML path"
+            )
+        repository = _automation_proposal_repository(
+            pin["repository"], f"{pin_path}.repository"
+        )
+        if repository != producer_repository:
+            raise ContractError(
+                f"{pin_path}.repository: must match producer release repository"
+            )
+        previous_commit = _automation_proposal_git_oid(
+            pin["previousCommit"], f"{pin_path}.previousCommit"
+        )
+        target_commit = _automation_proposal_git_oid(
+            pin["targetCommit"], f"{pin_path}.targetCommit"
+        )
+        if previous_commit == target_commit:
+            raise ContractError(f"{pin_path}: previous and target commits must differ")
+        if target_commit != producer_commit:
+            raise ContractError(
+                f"{pin_path}.targetCommit: must match producer release commit"
+            )
+        if pin["previousReleaseTag"] != source_tag:
+            raise ContractError(
+                f"{pin_path}.previousReleaseTag: must be {source_tag}"
+            )
+        if pin["targetReleaseTag"] != target_tag:
+            raise ContractError(f"{pin_path}.targetReleaseTag: must be {target_tag}")
+        pin_identities.append((workflow_path, repository))
+    if pin_identities != sorted(set(pin_identities)):
+        raise ContractError(
+            f"{path}.actionPins: path/repository identities must be sorted and unique"
+        )
+
+    materialization_path = f"{path}.materialization"
+    materialization = _object(adoption["materialization"], materialization_path)
+    _exact_keys(
+        materialization,
+        required={"status", "postMergeActions"},
+        path=materialization_path,
+    )
+    if materialization["status"] != "passed":
+        raise ContractError(f"{materialization_path}.status: must be passed")
+    if materialization["postMergeActions"] != []:
+        raise ContractError(
+            f"{materialization_path}.postMergeActions: must be empty; merge is terminal"
+        )
+    return dict(adoption)
+
+
+def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
+    policy = _object(value, path)
+    schema_version = policy.get("schemaVersion")
     if type(schema_version) is not int or schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
+    required_keys = {
+        "schemaVersion",
+        "kind",
+        "enabled",
+        "targetBranch",
+        "branchPrefix",
+        "completionCheck",
+        "allowedAutomationOwners",
+        "allowedProposalKinds",
+        "requiredControls",
+    }
+    if schema_version == 3:
+        required_keys.update({"producerRepository", "verifier"})
+    _exact_keys(
+        policy,
+        required=required_keys,
+        path=path,
+    )
     if policy["kind"] != "engineering-process-automation-proposal-policy":
         raise ContractError(f"{path}.kind: invalid policy kind")
     if policy["enabled"] is not True:
@@ -3251,9 +3831,12 @@ def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
         raise ContractError(
             f"{path}.branchPrefix: must use automation/<owner>/ format"
         )
-    if policy["completionCheck"] != "lifecycle-completion":
+    expected_completion = (
+        "consumer-owner-merge" if schema_version == 3 else "lifecycle-completion"
+    )
+    if policy["completionCheck"] != expected_completion:
         raise ContractError(
-            f"{path}.completionCheck: must be lifecycle-completion"
+            f"{path}.completionCheck: must be {expected_completion}"
         )
     owners = _string_list(
         policy["allowedAutomationOwners"],
@@ -3263,21 +3846,33 @@ def _automation_proposal_policy(value: Any, path: str) -> dict[str, Any]:
     )
     if owners != sorted(owners):
         raise ContractError(f"{path}.allowedAutomationOwners: must be sorted")
+    if schema_version == 3 and owners != ["renovate"]:
+        raise ContractError(
+            f"{path}.allowedAutomationOwners: schema 3 must contain only renovate"
+        )
     proposal_kinds = _string_list(
         policy["allowedProposalKinds"],
         f"{path}.allowedProposalKinds",
         maximum=1,
         pattern=PROFILE_PATTERN,
     )
-    if proposal_kinds != ["dependency-update"]:
+    expected_kinds = [
+        "process-adoption" if schema_version == 3 else "dependency-update"
+    ]
+    if proposal_kinds != expected_kinds:
         raise ContractError(
-            f"{path}.allowedProposalKinds: must contain only dependency-update"
+            f"{path}.allowedProposalKinds: must contain only {expected_kinds[0]}"
         )
     _automation_proposal_controls(
         policy["requiredControls"],
         f"{path}.requiredControls",
         schema_version=schema_version,
     )
+    if schema_version == 3:
+        _automation_proposal_repository(
+            policy["producerRepository"], f"{path}.producerRepository"
+        )
+        _automation_proposal_verifier(policy["verifier"], f"{path}.verifier")
     return dict(policy)
 
 
@@ -3352,41 +3947,49 @@ def validate_automation_proposal(
     document: Any, path: str = "automation-proposal"
 ) -> AutomationProposal:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if type(schema_version) is not int or schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
+    required_keys = {
+        "schemaVersion",
+        "kind",
+        "status",
+        "repository",
+        "proposalKind",
+        "automationOwner",
+        "branch",
+        "targetBranch",
+        "baseSha",
+        "headSha",
+        "title",
+        "bodySha256",
+        "changedPaths",
+        "optIn",
+        "verifier",
+        "observedControls",
+    }
+    if schema_version == 3:
+        required_keys.add("processAdoption")
     _exact_keys(
         value,
-        required={
-            "schemaVersion",
-            "kind",
-            "status",
-            "repository",
-            "proposalKind",
-            "automationOwner",
-            "branch",
-            "targetBranch",
-            "baseSha",
-            "headSha",
-            "title",
-            "bodySha256",
-            "changedPaths",
-            "optIn",
-            "verifier",
-            "observedControls",
-        },
+        required=required_keys,
         optional={"$schema"},
         path=path,
     )
-    schema_version = value["schemaVersion"]
-    if type(schema_version) is not int or schema_version not in AUTOMATION_PROPOSAL_CONTROLS:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     if value["kind"] != "engineering-process-controlled-automation-proposal":
         raise ContractError(f"{path}.kind: invalid proposal evidence kind")
     if value["status"] != "passed":
         raise ContractError(f"{path}.status: must be passed")
-    repository = _string(value["repository"], f"{path}.repository", max_length=256)
-    if REPOSITORY_PATTERN.fullmatch(repository) is None:
-        raise ContractError(f"{path}.repository: invalid repository identity")
-    if value["proposalKind"] != "dependency-update":
-        raise ContractError(f"{path}.proposalKind: must be dependency-update")
+    repository = _automation_proposal_repository(
+        value["repository"], f"{path}.repository"
+    )
+    expected_proposal_kind = (
+        "process-adoption" if schema_version == 3 else "dependency-update"
+    )
+    if value["proposalKind"] != expected_proposal_kind:
+        raise ContractError(
+            f"{path}.proposalKind: must be {expected_proposal_kind}"
+        )
     proposal_kind = value["proposalKind"]
     automation_owner = _string(
         value["automationOwner"], f"{path}.automationOwner", max_length=64
@@ -3487,23 +4090,27 @@ def validate_automation_proposal(
             f"{path}.observedControls: does not match opt-in required controls"
         )
 
-    verifier = _object(value["verifier"], f"{path}.verifier")
-    _exact_keys(
-        verifier,
-        required={"repository", "commit"},
-        path=f"{path}.verifier",
-    )
-    verifier_repository = _string(
-        verifier["repository"], f"{path}.verifier.repository", max_length=256
-    )
-    if REPOSITORY_PATTERN.fullmatch(verifier_repository) is None:
-        raise ContractError(f"{path}.verifier.repository: invalid repository identity")
-    verifier_commit = _string(
-        verifier["commit"], f"{path}.verifier.commit", max_length=40
-    )
-    if re.fullmatch(r"[0-9a-f]{40}", verifier_commit) is None:
+    verifier = _automation_proposal_verifier(value["verifier"], f"{path}.verifier")
+    verifier_repository = verifier["repository"]
+    verifier_commit = verifier["commit"]
+    if schema_version == 3 and verifier != policy["verifier"]:
         raise ContractError(
-            f"{path}.verifier.commit: must be a full lowercase Git SHA"
+            f"{path}.verifier: must match the protected-base opt-in verifier"
+        )
+    process_adoption = (
+        _automation_process_adoption(
+            value["processAdoption"], f"{path}.processAdoption"
+        )
+        if schema_version == 3
+        else None
+    )
+    if schema_version == 3 and (
+        process_adoption["producerRelease"]["repository"]
+        != policy["producerRepository"]
+    ):
+        raise ContractError(
+            f"{path}.processAdoption.producerRelease.repository: must match the "
+            "protected-base producer repository"
         )
     return AutomationProposal(
         schema_version=schema_version,
@@ -3521,9 +4128,13 @@ def validate_automation_proposal(
         opt_in_sha256=opt_in_sha256,
         opt_in_document=policy,
         completion_check=policy["completionCheck"],
-        human_merge_required=policy["requiredControls"]["humanMergeRequired"],
+        human_merge_required=policy["requiredControls"].get("humanMergeRequired"),
+        consumer_owner_merge_required=policy["requiredControls"].get(
+            "consumerOwnerMergeRequired", False
+        ),
         verifier_repository=verifier_repository,
         verifier_commit=verifier_commit,
+        process_adoption=process_adoption,
     )
 
 

@@ -118,6 +118,49 @@ base, so a base advance forces a new head and invalidates the old completion che
 The producer capability must be released immutably before a consumer pins and enables
 it; no consumer may depend on the producer working tree.
 
+## Process-adoption proposal capability
+
+Automation-proposal schema 3 is a separate `process-adoption` contract. The consumer
+must first merge a completed opt-in policy that fixes Renovate as the proposal owner,
+fixes an immutable protected-base verifier repository and commit, requires
+`consumer-owner-merge`, and structurally sets `automerge` false,
+`consumerOwnerMergeRequired` true, and `postMergeMutation` false. Schema 1 and schema
+2 dependency proposals retain their released fields and completion routes.
+
+The protected-base policy fixes both producer and verifier repositories. The verifier
+binds one complete candidate to the immutable producer release, tag,
+commit and attestation; source and target authority identities; exact requirements
+input and complete hash lock bytes; target process lock; complete selected managed
+distribution; declared project migration; grouped full-SHA action-pin replacements;
+and exact repository, protected base, head, path set, metadata and verifier identity.
+The actual protected base is supplied independently of Renovate evidence. The report
+binds bounded raw release-contract and distribution-attestation bytes, the lifecycle
+receipt identity, complete artifact hashes, and exact target materialization. Those
+report-controlled bytes grant no authority alone. The protected-base adapter supplies
+a separate clean exact-tag producer checkout, release artifacts, receipt, and
+attestation; existing release/attestation validators resolve tag ancestry, receipt,
+artifact bytes, process digest, and complete consumer synchronization. The
+independently resolved base must be an ancestor of the head;
+every producer action use in the bounded regular-workflow tree must move as one group
+with unchanged mode, and the verified wheel hash must occur in the lock. Missing or
+stale identity, a partial pin, an omitted lock or managed file, an inferred migration,
+an unrelated workflow/path change, or a post-merge action fails closed before
+candidate-owned project commands run.
+
+Renovate creates this complete PR before consumer-owner review and never merges it.
+The consumer owns its project migration, commands, checks, review choice and merge
+decision. Manual consumer-owner merge is the terminal adoption cutover; neither
+proposal validation, lifecycle completion, standing automation nor provider state can
+escalate it to automatic merge, and no synchronization follows merge. This boundary
+does not affect an agent-host PR created only after full lifecycle completion: that
+exact head retains standing-policy auto-merge.
+
+The producer ships and self-adopts this capability before any repository enables
+schema 3 or before Renovate operations allow its exact post-upgrade command. Capability
+release, consumer opt-in and Renovate operations activation are separate reviewed
+changes; same-release activation and dependence on a producer working tree are
+forbidden.
+
 ## Federated process-improvement capability
 
 Improvement signals, dispositions, resolutions, reproductions, and the producer
@@ -191,24 +234,30 @@ process semantics.
 
 ## Release and adoption boundary
 
-Release, self-adoption, and consumer adoption are separate changes:
+Release, self-adoption, and consumer adoption are separate changes. The numbered
+sequence below is the default agent-host completion-first route:
 
 1. Release N governs and verifies the source of N+1.
 2. N+1 is published as an immutable release and its public hashes are verified.
 3. Consumer-owned automation prepares an unpublished local candidate artifact,
    updates the direct pin, regenerates the hash-locked dependency graph, and runs the
-   managed adoption runner. Renovate must not publish a process-authority branch or
-   PR because its normal PR-first execution cannot satisfy this lifecycle boundary.
+   managed adoption runner. On this agent-host route, no process-authority branch or
+   PR is published before lifecycle completion.
 4. Required profiles validate the immutable candidate. The consumer-selected host
    supplies an independent semantic agent or human review; findings repeat candidate
    generation and full verification until lifecycle completion. Each
    platform/runtime job publishes a bounded supplemental evidence bundle bound to the
    source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
-   Only after completion may automation push the candidate branch and create the PR
+   Only after completion may the agent host push the candidate branch and create the PR
    containing the process lock and every selected managed asset. A valid consumer
    standing policy may merge that exact checkpoint automatically after required
    checks; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the merged adoption checkpoint.
+
+An opted-in schema-3 Renovate `process-adoption` proposal is the explicit exception to
+steps 3-4: after complete materialization and protected-base proposal validation,
+Renovate may publish it before consumer-owner review. It never receives agent-host
+completion or standing auto-merge authority; consumer-owner manual merge is terminal.
 
 The repository-root GitHub Action and Python package are two surfaces of the same
 governed release checkpoint. A consumer invocation pins the action by the release
@@ -224,13 +273,12 @@ and managed bootstrap snapshots required before a target version is installed. A
 clean-cutover PR may delete an obsolete local helper only after it pins an immutable
 public action checkpoint; no compatibility shim or dual execution path is retained.
 
-Process-authority adoption candidates are not controlled dependency proposals and
-cannot use that exception. PR creation is blocked until the adoption candidate has
-current completion evidence.
-Provider automerge before completion is forbidden for process-authority updates. A
-completed exact adoption candidate may merge automatically only under the consumer's
-standing policy. A PR that changes only a requirement pin, omits generated hashes or
-managed assets, or requires a post-merge step must fail closed.
+Process-authority adoption is not a controlled dependency proposal. An opted-in
+schema-3 consumer may receive a complete Renovate `process-adoption` PR before review,
+but it is permanently excluded from provider automerge. A separate agent-host
+candidate created after exact lifecycle completion remains on the standing-policy
+auto-merge route. A PR that changes only a requirement pin, omits generated hashes or
+managed assets, or requires a post-merge step fails closed on either route.
 
 `requirements/process.in` owns the direct public pin and `requirements/process.txt`
 is its pip-compile hash lock. The lock generator is pinned, and the committed lock must
@@ -281,9 +329,10 @@ falling back to a partial proposal.
   derived identity surface without writing protected `main` directly.
 - `processctl` derives and validates classification, compatibility, identity, reviewed
   tree equivalence, and authorization evidence.
-- Consumer automation may prepare complete unpublished adoption candidates before
-  completion; the lifecycle host publishes and, under standing policy, merges them
-  only after exact completion and protected checks.
+- Renovate may publish a complete schema-3 process-adoption proposal before owner
+  review, but only the consumer owner may merge it and merge is terminal. Agent-host
+  candidates published after exact lifecycle completion retain standing-policy
+  auto-merge.
 - Independent review verifies the exact Release PR classification, migration,
   verification, and evidence checkpoint.
 - The repository's standing policy authorizes the exact completed Release PR and each

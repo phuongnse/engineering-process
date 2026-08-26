@@ -28,6 +28,7 @@ class RuntimeDependencyTests(unittest.TestCase):
             "requirements-runtime.txt": [
                 "markdown-it-py==4.2.0",
                 "mdurl==0.1.2",
+                "pyyaml==6.0.3",
                 "regex==2026.7.19",
             ],
         }
@@ -65,12 +66,23 @@ class RuntimeDependencyTests(unittest.TestCase):
                 self.assertRegex(
                     lines[line_index + 1], r"^    --hash=sha256:[0-9a-f]{64}$"
                 )
+        release_names = {
+            requirement.split("==", 1)[0] for requirement in requirements[1:]
+        }
+        self.assertLessEqual(set(runtime_dependency_pins()), release_names)
+        pyyaml = lines.index("pyyaml==6.0.3 \\")
+        self.assertEqual(
+            "    --hash=sha256:"
+            "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5",
+            lines[pyyaml + 1],
+        )
 
     def test_runtime_dependency_lock_contains_exact_parser_graph(self):
         self.assertEqual(
             {
                 "markdown-it-py": "4.2.0",
                 "mdurl": "0.1.2",
+                "pyyaml": "6.0.3",
                 "regex": "2026.7.19",
             },
             runtime_dependency_pins(),
@@ -80,6 +92,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         actual = {
             "markdown-it-py": "3.0.0",
             "mdurl": "0.1.2",
+            "pyyaml": "6.0.3",
             "regex": "2026.7.19",
         }
         with mock.patch(

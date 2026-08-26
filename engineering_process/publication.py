@@ -5,7 +5,12 @@ import binascii
 import hashlib
 import json
 import re
+import stat
+import time
 from pathlib import Path
+
+import yaml
+from yaml.events import AliasEvent
 
 from .contracts import (
     AutomationProposal,
@@ -13,9 +18,13 @@ from .contracts import (
     MAX_AUTOMATION_PROPOSAL_PATHS,
     MAX_JSON_BYTES,
     canonical_json_digest,
+    validate_adoption_migration,
     validate_automation_policy,
+    validate_process_lock,
 )
 from .git import portable_git_path, run_git
+from .artifact_attestation import validate_distribution_attestation
+from .release import validate_release_checkpoint
 from .markdown import (
     COMMENT_RE,
     contains_raw_html,
@@ -28,6 +37,10 @@ from .markdown import (
 CONVENTIONAL_SUBJECT_MAX_LENGTH = 72
 MAX_PULL_REQUEST_BODY_BYTES = 65_536
 MAX_PROPOSAL_CHANGED_PATH_BYTES = 600_000
+MAX_PROPOSAL_YAML_ALIASES = 1_000
+MAX_PROPOSAL_YAML_DEPTH = 100
+MAX_PROPOSAL_YAML_PARSE_SECONDS = 10.0
+MAX_PROPOSAL_YAML_VALUES = 20_000
 PROTECTED_AUTOMATION_PROPOSAL_PATHS = {
     ".github/CODEOWNERS",
     "AGENTS.md",
@@ -582,7 +595,7 @@ def validate_evidence_publication(
 
 
 def _proposal_changed_paths(
-    project_root: Path, *, base_sha: str, head_sha: str
+    project_root: Path, *, base_sha: str, head_sha: str, exact_base: bool = False
 ) -> tuple[str, ...]:
     result = run_git(
         project_root,
@@ -592,7 +605,7 @@ def _proposal_changed_paths(
             "-z",
             "--find-renames",
             "--diff-filter=ACMRDT",
-            f"{base_sha}...{head_sha}",
+            f"{base_sha}{'..' if exact_base else '...'}{head_sha}",
             "--",
         ],
         label="inspect controlled automation proposal paths",
@@ -644,6 +657,27 @@ def _proposal_changed_paths(
     return ordered_paths
 
 
+def _proposal_base_is_ancestor(
+    project_root: Path, *, base_sha: str, head_sha: str
+) -> bool:
+    result = run_git(
+        project_root,
+        ["merge-base", "--is-ancestor", base_sha, head_sha],
+        label="validate process-adoption base ancestry",
+        timeout_seconds=30,
+        max_stdout_bytes=128,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = result.stderr.decode("utf-8", errors="replace").strip()
+    raise ContractError(
+        "cannot validate process-adoption base ancestry"
+        + (f": {detail}" if detail else "")
+    )
+
+
 def _proposal_base_policy(
     project_root: Path, *, base_sha: str, policy_path: str
 ) -> dict[str, object]:
@@ -669,6 +703,1034 @@ def _proposal_base_policy(
     return document
 
 
+def _proposal_git_blob(
+    project_root: Path, *, commit: str, path: str, label: str
+) -> bytes:
+    result = run_git(
+        project_root,
+        ["show", f"{commit}:{path}"],
+        label=label,
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_JSON_BYTES,
+    )
+    if result.returncode != 0:
+        raise ContractError(f"{label} is missing from {commit[:12]}")
+    return result.stdout
+
+
+def _proposal_external_bytes(path: Path, *, maximum: int, label: str) -> bytes:
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ContractError(f"{label} must be a regular non-symlink file")
+        if before.st_size > maximum:
+            raise ContractError(f"{label} exceeds {maximum} bytes")
+        content = path.read_bytes()
+        after = path.lstat()
+    except OSError as error:
+        raise ContractError(f"cannot read {label}: {error}") from error
+    if (
+        len(content) != before.st_size
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+    ):
+        raise ContractError(f"{label} changed while reading")
+    return content
+
+
+def _proposal_external_path(
+    project_root: Path, path: Path, *, label: str, directory: bool
+) -> Path:
+    try:
+        supplied_metadata = path.lstat()
+        if stat.S_ISLNK(supplied_metadata.st_mode):
+            raise ContractError(f"{label} must not be a symlink")
+        resolved = path.resolve(strict=True)
+        project = project_root.resolve(strict=True)
+        metadata = resolved.lstat()
+    except OSError as error:
+        raise ContractError(f"cannot resolve {label}: {error}") from error
+    if resolved.is_symlink() or (
+        directory and not stat.S_ISDIR(metadata.st_mode)
+    ) or (not directory and not stat.S_ISREG(metadata.st_mode)):
+        expected = "directory" if directory else "regular file"
+        raise ContractError(f"{label} must be a non-symlink {expected}")
+    try:
+        resolved.relative_to(project)
+    except ValueError:
+        return resolved
+    raise ContractError(f"{label} must stay outside the consumer checkout")
+
+
+def _proposal_producer_repository(project_root: Path) -> str:
+    result = run_git(
+        project_root,
+        ["remote", "get-url", "origin"],
+        label="resolve process-adoption producer repository",
+        timeout_seconds=30,
+        max_stdout_bytes=2048,
+    )
+    if result.returncode != 0:
+        raise ContractError("producer checkout requires an origin remote")
+    try:
+        url = result.stdout.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise ContractError("producer origin URL must be UTF-8") from error
+    match = re.fullmatch(
+        r"(?:https://github\.com/|git@github\.com:)(?P<repository>"
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?",
+        url,
+    )
+    if match is None:
+        raise ContractError("producer origin must be an exact GitHub repository URL")
+    return match.group("repository")
+
+
+def _validate_process_adoption_producer_inputs(
+    project_root: Path,
+    *,
+    proposal: AutomationProposal,
+    producer_inputs: dict[str, Path] | None,
+) -> Path:
+    if proposal.process_adoption is None:
+        raise ContractError("process-adoption evidence is missing")
+    if producer_inputs is None:
+        raise ContractError(
+            "process-adoption requires independently supplied producer checkout, "
+            "artifacts, receipt, and attestation"
+        )
+    expected_keys = {"root", "artifacts", "receipt", "attestation"}
+    if set(producer_inputs) != expected_keys:
+        raise ContractError(
+            "process-adoption producer inputs must contain root, artifacts, receipt, "
+            "and attestation"
+        )
+    producer_root = _proposal_external_path(
+        project_root,
+        producer_inputs["root"],
+        label="producer checkout",
+        directory=True,
+    )
+    artifact_root = _proposal_external_path(
+        project_root,
+        producer_inputs["artifacts"],
+        label="producer artifact root",
+        directory=True,
+    )
+    receipt_path = _proposal_external_path(
+        project_root,
+        producer_inputs["receipt"],
+        label="producer lifecycle receipt",
+        directory=False,
+    )
+    attestation_path = _proposal_external_path(
+        project_root,
+        producer_inputs["attestation"],
+        label="producer distribution attestation",
+        directory=False,
+    )
+    adoption = proposal.process_adoption
+    producer = adoption["producerRelease"]
+    if _proposal_producer_repository(producer_root) != producer["repository"]:
+        raise ContractError(
+            "producer checkout origin does not match protected-base policy"
+        )
+    release_bytes = _proposal_external_bytes(
+        producer_root / "release.json",
+        maximum=MAX_JSON_BYTES,
+        label="producer release contract",
+    )
+    release_binding = producer["releaseContract"]
+    if (
+        release_bytes != release_binding["content"].encode("utf-8")
+        or _proposal_blob_digest(release_bytes) != release_binding["sha256"]
+    ):
+        raise ContractError(
+            "independent producer release contract does not match proposal evidence"
+        )
+    attestation_bytes = _proposal_external_bytes(
+        attestation_path,
+        maximum=256_000,
+        label="producer distribution attestation",
+    )
+    attestation_binding = producer["distributionAttestation"]
+    if (
+        attestation_bytes != attestation_binding["content"].encode("utf-8")
+        or _proposal_blob_digest(attestation_bytes) != attestation_binding["sha256"]
+    ):
+        raise ContractError(
+            "independent producer attestation does not match proposal evidence"
+        )
+    release_result = validate_release_checkpoint(
+        producer_root,
+        tag=producer["tag"],
+        release_name=producer["tag"],
+        commit=producer["commit"],
+        main_ref="origin/main",
+        receipt_path=receipt_path,
+        authorization_path=None,
+        reviewed_commit=None,
+    )
+    if (
+        release_result["checkpoint"] != producer["commit"]
+        or release_result["version"] != producer["version"]
+        or release_result["tag"] != producer["tag"]
+    ):
+        raise ContractError("independent producer release identity is mismatched")
+    validated_attestation = validate_distribution_attestation(
+        producer_root,
+        artifact_root,
+        attestation_path,
+        receipt_path=receipt_path,
+        authorization_path=None,
+        checkpoint=producer["commit"],
+    )
+    if validated_attestation != json.loads(attestation_binding["content"]):
+        raise ContractError(
+            "independent producer artifact validation does not match proposal evidence"
+        )
+    return producer_root
+
+
+def _proposal_blob_digest(content: bytes) -> str:
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _proposal_json_blob(content: bytes, *, label: str) -> dict[str, object]:
+    try:
+        document = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"{label} must be valid UTF-8 JSON") from error
+    if not isinstance(document, dict):
+        raise ContractError(f"{label} must be a JSON object")
+    return document
+
+
+def _proposal_managed_tree_paths(
+    project_root: Path, *, commit: str, skills: tuple[str, ...]
+) -> tuple[str, ...]:
+    roots = [
+        "AGENTS.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".process/adopt-process.py",
+        ".process/adopt-process-windows-job.py",
+        ".agents/.gitattributes",
+        *(f".agents/skills/{skill}" for skill in skills),
+    ]
+    result = run_git(
+        project_root,
+        ["ls-tree", "-r", "-z", commit, "--", *roots],
+        label="inspect process-adoption managed tree",
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_PROPOSAL_CHANGED_PATH_BYTES,
+    )
+    if result.returncode != 0:
+        raise ContractError("cannot inspect process-adoption managed tree")
+    paths: list[str] = []
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, encoded_path = record.partition(b"\t")
+        parts = metadata.split(b" ")
+        if not separator or len(parts) != 3 or parts[1] != b"blob":
+            raise ContractError("process-adoption managed tree contains an invalid entry")
+        if parts[0] not in {b"100644", b"100755"}:
+            raise ContractError(
+                "process-adoption managed files must be regular Git blobs"
+            )
+        paths.append(
+            portable_git_path(
+                encoded_path,
+                label="process-adoption managed path",
+            )
+        )
+    ordered = tuple(sorted(paths))
+    if len(ordered) > MAX_AUTOMATION_PROPOSAL_PATHS:
+        raise ContractError("process-adoption managed tree exceeds the file bound")
+    return ordered
+
+
+def _proposal_workflow_tree(
+    project_root: Path, *, commit: str
+) -> dict[str, tuple[str, bytes]]:
+    result = run_git(
+        project_root,
+        ["ls-tree", "-r", "-z", commit, "--", ".github/workflows"],
+        label="inspect process-adoption workflow tree",
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_PROPOSAL_CHANGED_PATH_BYTES,
+    )
+    if result.returncode != 0:
+        raise ContractError("cannot inspect process-adoption workflow tree")
+    entries: dict[str, tuple[str, bytes]] = {}
+    total_bytes = 0
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, encoded_path = record.partition(b"\t")
+        parts = metadata.split(b" ")
+        if not separator or len(parts) != 3:
+            raise ContractError("process-adoption workflow tree has an invalid entry")
+        path = portable_git_path(
+            encoded_path,
+            label="process-adoption workflow path",
+        )
+        if not path.endswith((".yml", ".yaml")):
+            continue
+        if len(entries) >= MAX_AUTOMATION_PROPOSAL_PATHS:
+            raise ContractError("process-adoption workflow tree exceeds the file bound")
+        content = _proposal_git_blob(
+            project_root,
+            commit=commit,
+            path=path,
+            label=f"process-adoption workflow {path}",
+        )
+        total_bytes += len(content)
+        if total_bytes > 8_000_000:
+            raise ContractError(
+                "process-adoption workflow tree exceeds 8000000 bytes"
+            )
+        try:
+            mode = parts[0].decode("ascii")
+            object_type = parts[1].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ContractError(
+                "process-adoption workflow metadata must be ASCII"
+            ) from error
+        if object_type != "blob":
+            raise ContractError(
+                f"process-adoption workflow {path} must be a Git blob"
+            )
+        entries[path] = (mode, content)
+    return entries
+
+
+class _UniqueSafeLoader(yaml.SafeLoader):
+    def __init__(self, stream: str, *, deadline: float) -> None:
+        self._workflow_deadline = deadline
+        self._workflow_aliases = 0
+        self._workflow_depth = 0
+        self._workflow_values = 0
+        super().__init__(stream)
+
+    def _require_workflow_budget(self) -> None:
+        if time.monotonic() > self._workflow_deadline:
+            raise yaml.YAMLError(
+                "workflow YAML parsing exceeded its operation deadline"
+            )
+
+    def check_event(self, *choices: type[yaml.events.Event]) -> bool:
+        self._require_workflow_budget()
+        result = super().check_event(*choices)
+        self._require_workflow_budget()
+        return result
+
+    def compose_node(
+        self, parent: yaml.Node | None, index: int | None
+    ) -> yaml.Node:
+        self._require_workflow_budget()
+        self._workflow_values += 1
+        if self._workflow_values > MAX_PROPOSAL_YAML_VALUES:
+            raise yaml.YAMLError(
+                f"workflow exceeds {MAX_PROPOSAL_YAML_VALUES} YAML values"
+            )
+        alias = self.check_event(AliasEvent)
+        if alias:
+            self._workflow_aliases += 1
+            if self._workflow_aliases > MAX_PROPOSAL_YAML_ALIASES:
+                raise yaml.YAMLError(
+                    f"workflow exceeds {MAX_PROPOSAL_YAML_ALIASES} YAML aliases"
+                )
+        else:
+            self._workflow_depth += 1
+            if self._workflow_depth > MAX_PROPOSAL_YAML_DEPTH:
+                raise yaml.YAMLError(
+                    f"workflow YAML exceeds nesting depth {MAX_PROPOSAL_YAML_DEPTH}"
+                )
+        try:
+            node = super().compose_node(parent, index)
+            self._require_workflow_budget()
+            return node
+        finally:
+            if not alias:
+                self._workflow_depth -= 1
+
+
+def _construct_unique_yaml_mapping(
+    loader: _UniqueSafeLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[object, object]:
+    loader.flatten_mapping(node)
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as error:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a workflow mapping",
+                node.start_mark,
+                "workflow mapping key must be hashable",
+                key_node.start_mark,
+            ) from error
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a workflow mapping",
+                node.start_mark,
+                f"duplicate workflow key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueSafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_yaml_mapping,
+)
+
+
+def _bounded_yaml_structure(value: object, *, path: str) -> None:
+    stack: list[tuple[object, int, bool]] = [(value, 1, False)]
+    visited: set[int] = set()
+    active: set[int] = set()
+    nodes = 0
+    while stack:
+        item, depth, leaving = stack.pop()
+        identity = id(item)
+        container = isinstance(item, (dict, list, set, tuple, frozenset))
+        if leaving:
+            active.remove(identity)
+            continue
+        nodes += 1
+        if nodes > MAX_PROPOSAL_YAML_VALUES:
+            raise ContractError(
+                f"Process-adoption workflow {path} exceeds "
+                f"{MAX_PROPOSAL_YAML_VALUES} YAML values"
+            )
+        if depth > MAX_PROPOSAL_YAML_DEPTH:
+            raise ContractError(
+                f"Process-adoption workflow {path} exceeds YAML nesting depth "
+                f"{MAX_PROPOSAL_YAML_DEPTH}"
+            )
+        if container:
+            if identity in active:
+                raise ContractError(
+                    f"Process-adoption workflow {path} contains a recursive YAML alias"
+                )
+            if identity in visited:
+                continue
+            visited.add(identity)
+            active.add(identity)
+            stack.append((item, depth, True))
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1, False) for child in item.keys())
+            stack.extend((child, depth + 1, False) for child in item.values())
+        elif isinstance(item, (list, set, tuple, frozenset)):
+            stack.extend((child, depth + 1, False) for child in item)
+
+
+def _proposal_yaml_uses(
+    text: str, *, path: str, deadline: float | None = None
+) -> tuple[list[str], list[str]]:
+    try:
+        operation_deadline = (
+            deadline
+            if deadline is not None
+            else time.monotonic() + MAX_PROPOSAL_YAML_PARSE_SECONDS
+        )
+        loader = _UniqueSafeLoader(text, deadline=operation_deadline)
+        try:
+            document = loader.get_single_data()
+            loader._require_workflow_budget()
+        finally:
+            loader.dispose()
+        _bounded_yaml_structure(document, path=path)
+    except (
+        yaml.YAMLError,
+        ContractError,
+        ValueError,
+        OverflowError,
+        RecursionError,
+    ) as error:
+        return [], [f"Process-adoption workflow {path} has invalid YAML: {error}"]
+    if not isinstance(document, dict):
+        return [], [f"Process-adoption workflow {path} must be a YAML mapping"]
+    jobs = document.get("jobs")
+    if jobs is None:
+        return [], []
+    if not isinstance(jobs, dict):
+        return [], [f"Process-adoption workflow {path}.jobs must be a mapping"]
+    values: list[str] = []
+    issues: list[str] = []
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict):
+            issues.append(
+                f"Process-adoption workflow {path} job {job_name!r} must be a mapping"
+            )
+            continue
+        job_uses = job.get("uses")
+        if job_uses is not None:
+            if isinstance(job_uses, str):
+                values.append(job_uses)
+            else:
+                issues.append(
+                    f"Process-adoption workflow {path} job {job_name!r} uses must be a string"
+                )
+        steps = job.get("steps")
+        if steps is None:
+            continue
+        if not isinstance(steps, list):
+            issues.append(
+                f"Process-adoption workflow {path} job {job_name!r} steps must be a list"
+            )
+            continue
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                issues.append(
+                    f"Process-adoption workflow {path} job {job_name!r} step {index} "
+                    "must be a mapping"
+                )
+                continue
+            uses = step.get("uses")
+            if uses is None:
+                continue
+            if isinstance(uses, str):
+                values.append(uses)
+            else:
+                issues.append(
+                    f"Process-adoption workflow {path} job {job_name!r} step {index} "
+                    "uses must be a string"
+                )
+    return values, issues
+
+
+_PROPOSAL_REQUIREMENT_PIN = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;\\]+)$"
+)
+_PROPOSAL_LOCK_PIN = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)=="
+    r"(?P<version>[^\s;\\]+)[ \t]+\\$"
+)
+_PROPOSAL_LOCK_HASH = re.compile(
+    r"^--hash=(?P<digest>sha256:[0-9a-f]{64})"
+    r"(?P<continuation>[ \t]+\\)?$"
+)
+
+
+def _normalized_requirement_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _proposal_producer_runtime_pins(producer_root: Path) -> dict[str, str]:
+    content = _proposal_external_bytes(
+        producer_root / "engineering_process" / "requirements-runtime.txt",
+        maximum=MAX_JSON_BYTES,
+        label="producer runtime requirements",
+    )
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError("producer runtime requirements must be UTF-8") from error
+    pins: dict[str, str] = {}
+    for line_number, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _PROPOSAL_REQUIREMENT_PIN.fullmatch(line)
+        if match is None:
+            raise ContractError(
+                "producer runtime requirements must contain only exact name==version "
+                f"pins; invalid line {line_number}"
+            )
+        name = _normalized_requirement_name(match.group("name"))
+        if name in pins or name == "engineering-process":
+            raise ContractError(
+                "producer runtime requirements contain a duplicate or recursive "
+                f"dependency: {name}"
+            )
+        pins[name] = match.group("version")
+    if not pins:
+        raise ContractError("producer runtime requirements must not be empty")
+    return pins
+
+
+def _proposal_requirement_lock(
+    lock_text: str,
+) -> dict[str, tuple[str, set[str]]] | None:
+    lines = lock_text.splitlines()
+    entries: dict[str, tuple[str, set[str]]] = {}
+    order: list[str] = []
+    only_binary = 0
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+        if line == "--only-binary :all:":
+            only_binary += 1
+            index += 1
+            continue
+        if line.startswith((" ", "\t")):
+            return None
+        pin = _PROPOSAL_LOCK_PIN.fullmatch(line)
+        if pin is None:
+            return None
+        name = _normalized_requirement_name(pin.group("name"))
+        if name in entries:
+            return None
+        version = pin.group("version")
+        index += 1
+        hashes: list[tuple[str, bool]] = []
+        comments_started = False
+        while index < len(lines) and lines[index].startswith((" ", "\t")):
+            continuation = lines[index].strip()
+            if not continuation or continuation.startswith("#"):
+                comments_started = True
+                index += 1
+                continue
+            if comments_started:
+                return None
+            hash_match = _PROPOSAL_LOCK_HASH.fullmatch(continuation)
+            if hash_match is None:
+                return None
+            hashes.append(
+                (
+                    hash_match.group("digest"),
+                    hash_match.group("continuation") is not None,
+                )
+            )
+            index += 1
+        if not hashes or any(not continued for _digest, continued in hashes[:-1]):
+            return None
+        if hashes[-1][1]:
+            return None
+        hash_values = {digest for digest, _continued in hashes}
+        if len(hash_values) != len(hashes):
+            return None
+        entries[name] = (version, hash_values)
+        order.append(name)
+    if only_binary != 1 or order != sorted(order):
+        return None
+    return entries
+
+
+def _validate_process_adoption_workflows(
+    project_root: Path,
+    *,
+    base_commit: str,
+    head_commit: str,
+    action_pins: list[dict[str, object]],
+) -> list[str]:
+    issues: list[str] = []
+    pins_by_path: dict[str, list[dict[str, object]]] = {}
+    for pin in action_pins:
+        pins_by_path.setdefault(str(pin["path"]), []).append(pin)
+    producer_repository = str(action_pins[0]["repository"])
+    base_tree = _proposal_workflow_tree(project_root, commit=base_commit)
+    head_tree = _proposal_workflow_tree(project_root, commit=head_commit)
+    workflow_deadline = time.monotonic() + MAX_PROPOSAL_YAML_PARSE_SECONDS
+    observed_paths: set[str] = set()
+    decoded: dict[tuple[str, str], str] = {}
+    usages: dict[tuple[str, str], list[str]] = {}
+    for tree_name, tree in (("base", base_tree), ("head", head_tree)):
+        for path, (_mode, content) in tree.items():
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                issues.append(f"Process-adoption workflow {path} must be UTF-8")
+                continue
+            decoded[(tree_name, path)] = text
+            values, yaml_issues = _proposal_yaml_uses(
+                text,
+                path=path,
+                deadline=workflow_deadline,
+            )
+            issues.extend(yaml_issues)
+            matches: list[str] = []
+            producer_prefix = producer_repository + "@"
+            normalized_producer_prefix = producer_prefix.casefold()
+            for uses in values:
+                if not uses.casefold().startswith(normalized_producer_prefix):
+                    if producer_repository.casefold() in uses.casefold():
+                        issues.append(
+                            f"Process-adoption workflow {path} contains an unsupported "
+                            "producer action identity"
+                        )
+                    continue
+                observed_paths.add(path)
+                if not uses.startswith(producer_prefix):
+                    issues.append(
+                        f"Process-adoption workflow {path} changes the protected "
+                        "producer repository spelling"
+                    )
+                matches.append(uses[len(producer_prefix) :])
+            if matches:
+                usages[(tree_name, path)] = matches
+    declared_paths = set(pins_by_path)
+    omitted_paths = sorted(observed_paths - declared_paths)
+    extra_paths = sorted(declared_paths - observed_paths)
+    if omitted_paths:
+        issues.append(
+            "Process-adoption actionPins omits producer workflow: "
+            + omitted_paths[0]
+        )
+    if extra_paths:
+        issues.append(
+            "Process-adoption actionPins declares a workflow without the producer "
+            "action: "
+            + extra_paths[0]
+        )
+    for path, pins in pins_by_path.items():
+        base_entry = base_tree.get(path)
+        head_entry = head_tree.get(path)
+        if base_entry is None or head_entry is None:
+            issues.append(
+                f"Process-adoption workflow {path} must exist on base and head"
+            )
+            continue
+        base_mode, _base = base_entry
+        head_mode, _head = head_entry
+        if (
+            base_mode not in {"100644", "100755"}
+            or head_mode != base_mode
+        ):
+            issues.append(
+                f"Process-adoption workflow {path} must remain a regular blob with "
+                "unchanged mode"
+            )
+        expected = decoded.get(("base", path))
+        head_text = decoded.get(("head", path))
+        if expected is None or head_text is None:
+            continue
+        for pin in pins:
+            previous_identity = str(pin["previousCommit"])
+            target_identity = str(pin["targetCommit"])
+            if any(
+                identity != previous_identity
+                for identity in usages.get(("base", path), [])
+            ):
+                issues.append(
+                    f"Process-adoption base workflow {path} contains an undeclared "
+                    "producer action identity"
+                )
+            if any(
+                identity != target_identity
+                for identity in usages.get(("head", path), [])
+            ):
+                issues.append(
+                    f"Process-adoption candidate workflow {path} retains a stale or "
+                    "unverified producer action identity"
+                )
+            pattern = re.compile(
+                rf"(?m)(uses[ \t]*:[ \t]*(?P<quote>['\"]?)"
+                rf"{re.escape(str(pin['repository']))}@)"
+                rf"{re.escape(str(pin['previousCommit']))}"
+                rf"(?P=quote)([ \t]+#[ \t]*)"
+                rf"{re.escape(str(pin['previousReleaseTag']))}"
+                r"([ \t]*)$"
+            )
+            expected, replacements = pattern.subn(
+                lambda match: (
+                    match.group(1)
+                    + str(pin["targetCommit"])
+                    + match.group("quote")
+                    + match.group(3)
+                    + str(pin["targetReleaseTag"])
+                    + match.group(4)
+                ),
+                expected,
+            )
+            if replacements == 0:
+                issues.append(
+                    f"Process-adoption workflow {path} does not contain the exact "
+                    "declared previous action pin"
+                )
+        if expected != head_text:
+            issues.append(
+                f"Process-adoption workflow {path} contains changes beyond the "
+                "declared immutable action-pin replacements"
+            )
+    return issues
+
+
+def _validate_process_adoption_candidate(
+    project_root: Path,
+    *,
+    base_commit: str,
+    proposal: AutomationProposal,
+    changed_paths: tuple[str, ...],
+    producer_inputs: dict[str, Path] | None,
+) -> list[str]:
+    if proposal.process_adoption is None:
+        return ["Process-adoption evidence is missing"]
+    adoption = proposal.process_adoption
+    issues: list[str] = []
+    try:
+        producer_root = _validate_process_adoption_producer_inputs(
+            project_root,
+            proposal=proposal,
+            producer_inputs=producer_inputs,
+        )
+    except ContractError as error:
+        return [f"Process-adoption producer evidence is invalid: {error}"]
+    producer_release = adoption["producerRelease"]
+    source_authority = adoption["sourceAuthority"]
+    target_authority = adoption["targetAuthority"]
+    requirements = adoption["requirements"]
+    process_lock_binding = adoption["processLock"]
+    migration = adoption["projectMigration"]
+    managed_files = adoption["managedFiles"]
+    action_pins = adoption["actionPins"]
+
+    bindings = [
+        (requirements["inputPath"], requirements["inputSha256"], "requirements input"),
+        (requirements["lockPath"], requirements["lockSha256"], "requirements lock"),
+        (process_lock_binding["path"], process_lock_binding["sha256"], "process lock"),
+        (migration["projectPath"], migration["projectSha256"], "project manifest"),
+        *(
+            [(migration["path"], migration["sha256"], "adoption migration")]
+            if migration["status"] == "applied"
+            else []
+        ),
+        *((item["path"], item["sha256"], "managed file") for item in managed_files),
+    ]
+    blob_cache: dict[str, bytes] = {}
+    total_managed_bytes = 0
+    for bound_path, digest, label in bindings:
+        content = blob_cache.setdefault(
+            str(bound_path),
+            _proposal_git_blob(
+                project_root,
+                commit=proposal.head_sha,
+                path=str(bound_path),
+                label=f"process-adoption {label} {bound_path}",
+            ),
+        )
+        if label == "managed file":
+            total_managed_bytes += len(content)
+            if total_managed_bytes > 8_000_000:
+                raise ContractError(
+                    "process-adoption managed distribution exceeds 8000000 bytes"
+                )
+        if _proposal_blob_digest(content) != digest:
+            issues.append(
+                f"Process-adoption {label} {bound_path} digest does not match evidence"
+            )
+
+    process_lock_content = blob_cache[str(process_lock_binding["path"])]
+    process_lock = validate_process_lock(
+        _proposal_json_blob(process_lock_content, label="process-adoption process lock"),
+        "process-adoption process lock",
+    )
+    if (
+        process_lock.version != target_authority["version"]
+        or process_lock.digest != target_authority["processDigest"]
+    ):
+        issues.append(
+            "Process-adoption process lock does not match the target authority"
+        )
+
+    base_lock_content = _proposal_git_blob(
+        project_root,
+        commit=base_commit,
+        path=str(process_lock_binding["path"]),
+        label="process-adoption protected-base process lock",
+    )
+    base_lock = validate_process_lock(
+        _proposal_json_blob(base_lock_content, label="protected-base process lock"),
+        "protected-base process lock",
+    )
+    if (
+        base_lock.version != source_authority["version"]
+        or base_lock.digest != source_authority["processDigest"]
+    ):
+        issues.append(
+            "Process-adoption protected-base process lock does not match the "
+            "source authority"
+        )
+    dropped_skills = sorted(set(base_lock.skills) - set(process_lock.skills))
+    if dropped_skills:
+        issues.append(
+            "Process-adoption process lock drops a selected source skill: "
+            + dropped_skills[0]
+        )
+    from .syncing import synchronized_state
+
+    issues.extend(
+        "Process-adoption target materialization is invalid: " + issue
+        for issue in synchronized_state(
+            project_root,
+            producer_root,
+            process_lock,
+            authority_version=str(producer_release["version"]),
+            package_root=producer_root / "engineering_process",
+        )
+    )
+
+    expected_managed_paths = _proposal_managed_tree_paths(
+        project_root,
+        commit=proposal.head_sha,
+        skills=process_lock.skills,
+    )
+    declared_managed_paths = tuple(item["path"] for item in managed_files)
+    if declared_managed_paths != expected_managed_paths:
+        issues.append(
+            "Process-adoption managedFiles does not describe the complete selected "
+            "managed distribution"
+        )
+
+    input_content = blob_cache[str(requirements["inputPath"])]
+    lock_content = blob_cache[str(requirements["lockPath"])]
+    base_input_content = _proposal_git_blob(
+        project_root,
+        commit=base_commit,
+        path=str(requirements["inputPath"]),
+        label="process-adoption protected-base requirements input",
+    )
+    try:
+        input_text = input_content.decode("utf-8")
+        lock_text = lock_content.decode("utf-8")
+        base_input_text = base_input_content.decode("utf-8")
+    except UnicodeDecodeError:
+        issues.append("Process-adoption requirements must be UTF-8")
+    else:
+        source_pin = f"engineering-process=={source_authority['version']}"
+        target_pin = f"engineering-process=={target_authority['version']}"
+        expected_input, replacements = re.subn(
+            rf"(?m)^{re.escape(source_pin)}$",
+            target_pin,
+            base_input_text,
+        )
+        meaningful_input = [
+            line.strip()
+            for line in input_text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if (
+            replacements != 1
+            or input_text != expected_input
+            or meaningful_input != [target_pin]
+        ):
+            issues.append(
+                "Process-adoption requirements input must contain only the exact "
+                "source-to-target authority pin transformation"
+            )
+        try:
+            runtime_pins = _proposal_producer_runtime_pins(producer_root)
+        except ContractError as error:
+            runtime_pins = {}
+            issues.append(
+                "Process-adoption producer runtime requirements are invalid: "
+                + str(error)
+            )
+        expected_pins = {
+            "engineering-process": str(target_authority["version"]),
+            **runtime_pins,
+        }
+        requirement_entries = _proposal_requirement_lock(lock_text)
+        observed_pins = (
+            {
+                name: version
+                for name, (version, _hashes) in requirement_entries.items()
+            }
+            if requirement_entries is not None
+            else None
+        )
+        if observed_pins != expected_pins:
+            issues.append(
+                "Process-adoption requirements lock must contain only the complete "
+                "exact target dependency graph with binary-only hash blocks"
+            )
+        requirement_hashes = (
+            requirement_entries.get("engineering-process", ("", set()))[1]
+            if requirement_entries is not None
+            else set()
+        )
+        attestation = json.loads(
+            producer_release["distributionAttestation"]["content"]
+        )
+        wheel_artifacts = [
+            item
+            for item in attestation["artifacts"]
+            if item["name"].endswith(".whl")
+        ]
+        verified_wheel_hash = (
+            wheel_artifacts[0]["sha256"] if len(wheel_artifacts) == 1 else None
+        )
+        if requirement_hashes != {verified_wheel_hash}:
+            issues.append(
+                "Process-adoption target requirement hashes do not equal the verified "
+                "producer wheel hash"
+            )
+
+    head_project = blob_cache[str(migration["projectPath"])]
+    base_project = _proposal_git_blob(
+        project_root,
+        commit=base_commit,
+        path=str(migration["projectPath"]),
+        label="process-adoption protected-base project manifest",
+    )
+    if migration["status"] == "not-required":
+        if head_project != base_project:
+            issues.append(
+                "Process-adoption project manifest changed without an applied migration"
+            )
+    else:
+        migration_document = _proposal_json_blob(
+            blob_cache[str(migration["path"])],
+            label="process-adoption migration",
+        )
+        validate_adoption_migration(
+            migration_document, "process-adoption migration"
+        )
+        if (
+            migration_document["fromProcessVersion"] != source_authority["version"]
+            or migration_document["toProcessVersion"] != target_authority["version"]
+            or migration_document["sourceProjectDigest"]
+            != _proposal_blob_digest(base_project)
+            or migration_document["targetProjectDigest"]
+            != _proposal_blob_digest(head_project)
+        ):
+            issues.append(
+                "Process-adoption migration does not bind the exact source and target"
+            )
+
+    required_changed_paths = {
+        str(requirements["inputPath"]),
+        str(requirements["lockPath"]),
+        str(process_lock_binding["path"]),
+        *(str(pin["path"]) for pin in action_pins),
+    }
+    if migration["status"] == "applied":
+        required_changed_paths.update(
+            {str(migration["path"]), str(migration["projectPath"])}
+        )
+    allowed_changed_paths = required_changed_paths | set(declared_managed_paths)
+    missing = sorted(required_changed_paths - set(changed_paths))
+    unauthorized = sorted(set(changed_paths) - allowed_changed_paths)
+    if missing:
+        issues.append(
+            "Process-adoption proposal omits required materialized path: " + missing[0]
+        )
+    if unauthorized:
+        issues.append(
+            "Process-adoption proposal contains an unauthorized path: "
+            + unauthorized[0]
+        )
+    issues.extend(
+        _validate_process_adoption_workflows(
+            project_root,
+            base_commit=base_commit,
+            head_commit=proposal.head_sha,
+            action_pins=action_pins,
+        )
+    )
+    return issues
+
+
 def validate_controlled_automation_proposal(
     project_root: Path,
     *,
@@ -684,6 +1746,7 @@ def validate_controlled_automation_proposal(
     verifier_commit: str,
     proposal: AutomationProposal,
     source: dict[str, object],
+    producer_inputs: dict[str, Path] | None = None,
 ) -> list[str]:
     issues = validate_pull_request(
         title=title,
@@ -728,30 +1791,6 @@ def validate_controlled_automation_proposal(
     if branch == target_branch:
         issues.append("Automation proposal branch must differ from its target")
 
-    changed_paths = _proposal_changed_paths(
-        project_root,
-        base_sha=base_commit,
-        head_sha=proposal.head_sha,
-    )
-    if changed_paths != proposal.changed_paths:
-        issues.append("Automation proposal changed paths do not match policy evidence")
-    protected_paths = [
-        path
-        for path in changed_paths
-        if path in PROTECTED_AUTOMATION_PROPOSAL_PATHS
-        or path.startswith(PROTECTED_AUTOMATION_PROPOSAL_PREFIXES)
-    ]
-    if protected_paths:
-        issues.append(
-            "Controlled automation proposals cannot change process, workflow, "
-            "release, security-policy, or trust-root paths: "
-            + protected_paths[0]
-            + (
-                f" (+{len(protected_paths) - 1} more)"
-                if len(protected_paths) > 1
-                else ""
-            )
-        )
     base_policy = _proposal_base_policy(
         project_root,
         base_sha=base_commit,
@@ -761,6 +1800,54 @@ def validate_controlled_automation_proposal(
         issues.append("Automation proposal base opt-in digest does not match evidence")
     if base_policy != proposal.opt_in_document:
         issues.append("Automation proposal base opt-in document does not match evidence")
+
+    exact_base = proposal.proposal_kind == "process-adoption"
+    if exact_base and not _proposal_base_is_ancestor(
+        project_root,
+        base_sha=base_commit,
+        head_sha=proposal.head_sha,
+    ):
+        issues.append(
+            "Process-adoption protected base must be an ancestor of the proposal head"
+        )
+        return issues
+
+    changed_paths = _proposal_changed_paths(
+        project_root,
+        base_sha=base_commit,
+        head_sha=proposal.head_sha,
+        exact_base=exact_base,
+    )
+    if changed_paths != proposal.changed_paths:
+        issues.append("Automation proposal changed paths do not match policy evidence")
+    if proposal.proposal_kind == "process-adoption":
+        issues.extend(
+            _validate_process_adoption_candidate(
+                project_root,
+                base_commit=base_commit,
+                proposal=proposal,
+                changed_paths=changed_paths,
+                producer_inputs=producer_inputs,
+            )
+        )
+    else:
+        protected_paths = [
+            path
+            for path in changed_paths
+            if path in PROTECTED_AUTOMATION_PROPOSAL_PATHS
+            or path.startswith(PROTECTED_AUTOMATION_PROPOSAL_PREFIXES)
+        ]
+        if protected_paths:
+            issues.append(
+                "Controlled automation proposals cannot change process, workflow, "
+                "release, security-policy, or trust-root paths: "
+                + protected_paths[0]
+                + (
+                    f" (+{len(protected_paths) - 1} more)"
+                    if len(protected_paths) > 1
+                    else ""
+                )
+            )
     return issues
 
 
@@ -780,7 +1867,29 @@ def validate_controlled_automation_proposal_completion(
     proposal: AutomationProposal,
     evidence: dict[str, object],
     source: dict[str, object],
+    producer_inputs: dict[str, Path] | None = None,
 ) -> list[str]:
+    if proposal.proposal_kind == "process-adoption":
+        return [
+            *validate_controlled_automation_proposal(
+                project_root,
+                repository=repository,
+                title=title,
+                body=body,
+                branch=branch,
+                target_branch=target_branch,
+                base_commit=base_commit,
+                state="ready",
+                commit=commit,
+                verifier_repository=verifier_repository,
+                verifier_commit=verifier_commit,
+                proposal=proposal,
+                source=source,
+                producer_inputs=producer_inputs,
+            ),
+            "Process-adoption proposals do not use lifecycle completion or standing "
+            "automation merge escalation; consumer-owner manual merge is required",
+        ]
     issues = validate_controlled_automation_proposal(
         project_root,
         repository=repository,
@@ -795,6 +1904,7 @@ def validate_controlled_automation_proposal_completion(
         verifier_commit=verifier_commit,
         proposal=proposal,
         source=source,
+        producer_inputs=producer_inputs,
     )
     issues.extend(
         validate_evidence_publication(

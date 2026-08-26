@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
+import stat
+import time
 
 from .contracts import ContractError, SKILL_PATTERN
 
@@ -23,18 +26,122 @@ FORBIDDEN_CORE_TERMS = (
     "subagent",
 )
 MARKER_NAME = ".engineering-process.json"
+MAX_SKILL_ROOT_ENTRIES = 4_096
+MAX_SELECTED_SKILLS = 256
+MAX_SKILL_DOCUMENT_BYTES = 256_000
+SKILL_ENUMERATION_TIMEOUT_SECONDS = 5.0
 
 
 def skill_directories(root: Path) -> list[Path]:
-    if not root.is_dir():
+    if root.is_symlink() or not root.is_dir():
         raise ContractError(f"{root}: skills root does not exist")
-    return sorted(
-        path for path in root.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()
-    )
+    deadline = time.monotonic() + SKILL_ENUMERATION_TIMEOUT_SECONDS
+    directories: list[Path] = []
+    try:
+        with os.scandir(root) as iterator:
+            for index, item in enumerate(iterator, start=1):
+                if time.monotonic() >= deadline:
+                    raise ContractError("skill enumeration exceeded 5 seconds")
+                if index > MAX_SKILL_ROOT_ENTRIES:
+                    raise ContractError(
+                        f"skill root exceeds {MAX_SKILL_ROOT_ENTRIES} entries"
+                    )
+                metadata = item.stat(follow_symlinks=False)
+                if stat.S_ISLNK(metadata.st_mode):
+                    raise ContractError(
+                        f"skill root entry must not be a symlink: {item.path}"
+                    )
+                if not stat.S_ISDIR(metadata.st_mode):
+                    continue
+                skill = Path(item.path) / "SKILL.md"
+                try:
+                    skill_metadata = skill.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISLNK(skill_metadata.st_mode):
+                    raise ContractError(f"skill document must not be a symlink: {skill}")
+                if stat.S_ISREG(skill_metadata.st_mode):
+                    directories.append(Path(item.path))
+    except OSError as error:
+        raise ContractError(f"cannot enumerate skill root {root}: {error}") from error
+    return sorted(directories)
+
+
+def _selected_skill_directories(
+    root: Path, selected: tuple[str, ...] | None
+) -> dict[str, Path]:
+    if root.is_symlink() or not root.is_dir():
+        raise ContractError(f"{root}: skills root does not exist")
+    if selected is None:
+        return {path.name: path for path in skill_directories(root)}
+    if len(selected) > MAX_SELECTED_SKILLS:
+        raise ContractError(
+            f"selected skills exceed {MAX_SELECTED_SKILLS} items"
+        )
+    directories: dict[str, Path] = {}
+    deadline = time.monotonic() + SKILL_ENUMERATION_TIMEOUT_SECONDS
+    for name in selected:
+        if time.monotonic() >= deadline:
+            raise ContractError("selected skill inspection exceeded 5 seconds")
+        directory = root / name
+        skill = directory / "SKILL.md"
+        try:
+            directory_metadata = directory.lstat()
+            skill_metadata = skill.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise ContractError(f"cannot inspect selected skill {directory}: {error}") from error
+        if (
+            stat.S_ISDIR(directory_metadata.st_mode)
+            and not stat.S_ISLNK(directory_metadata.st_mode)
+            and stat.S_ISREG(skill_metadata.st_mode)
+            and not stat.S_ISLNK(skill_metadata.st_mode)
+        ):
+            directories[name] = directory
+    return directories
+
+
+def _read_skill_text(path: Path) -> str:
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ContractError(f"{path}: must be a regular non-symlink file")
+        if before.st_size > MAX_SKILL_DOCUMENT_BYTES:
+            raise ContractError(
+                f"{path}: exceeds {MAX_SKILL_DOCUMENT_BYTES} bytes"
+            )
+        with path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_dev != before.st_dev
+                or opened.st_ino != before.st_ino
+            ):
+                raise ContractError(f"{path}: changed while opening")
+            content = stream.read(MAX_SKILL_DOCUMENT_BYTES + 1)
+        after = path.lstat()
+    except OSError as error:
+        raise ContractError(f"{path}: cannot read: {error}") from error
+    if (
+        len(content) != before.st_size
+        or len(content) > MAX_SKILL_DOCUMENT_BYTES
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+        or after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+    ):
+        raise ContractError(f"{path}: changed while reading")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError(f"{path}: cannot read UTF-8 content: {error}") from error
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def validate_skills(root: Path, selected: tuple[str, ...] | None = None) -> list[str]:
-    directories = {path.name: path for path in skill_directories(root)}
+    directories = _selected_skill_directories(root, selected)
     names = tuple(sorted(directories)) if selected is None else selected
     issues: list[str] = []
     missing = sorted(set(names) - set(directories))
@@ -49,9 +156,9 @@ def validate_skills(root: Path, selected: tuple[str, ...] | None = None) -> list
             issues.append(f"{directory}: invalid skill directory name")
         path = directory / "SKILL.md"
         try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            issues.append(f"{path}: cannot read UTF-8 content: {error}")
+            text = _read_skill_text(path)
+        except ContractError as error:
+            issues.append(str(error))
             continue
         if text.startswith("\ufeff"):
             issues.append(f"{path}: UTF-8 BOM is not allowed")
@@ -102,7 +209,7 @@ def skill_digest(root: Path, selected: tuple[str, ...] | None = None) -> str:
     issues = validate_skills(root, selected)
     if issues:
         raise ContractError("\n".join(issues))
-    directories = {path.name: path for path in skill_directories(root)}
+    directories = _selected_skill_directories(root, selected)
     names = tuple(sorted(directories)) if selected is None else selected
     digest = hashlib.sha256()
     for name in names:

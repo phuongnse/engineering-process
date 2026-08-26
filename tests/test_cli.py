@@ -423,6 +423,7 @@ class CliTests(unittest.TestCase):
             automation_owner="renovate",
             base_sha="a" * 40,
             completion_check="lifecycle-completion",
+            consumer_owner_merge_required=False,
             opt_in_sha256=f"sha256:{'e' * 64}",
             proposal_kind="dependency-update",
         )

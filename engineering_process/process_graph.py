@@ -211,8 +211,16 @@ def load_process_graph(
     )
     if document["schemaVersion"] != 1:
         raise ContractError(f"{path}.schemaVersion: must be 1")
-    available_skills = {directory.name for directory in skill_directories(skills_root)}
-    bundles = load_bundles(process_root, skills_root)
+    available_skills = (
+        {directory.name for directory in skill_directories(skills_root)}
+        if selected_skills is None
+        else set(selected_skills)
+    )
+    bundles = load_bundles(
+        process_root,
+        skills_root,
+        selected_skills=selected_skills,
+    )
     core_skills = set(bundles["core"])
     if selected_skills is not None:
         missing_selected = sorted(core_skills - set(selected_skills))
