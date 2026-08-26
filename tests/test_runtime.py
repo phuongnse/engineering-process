@@ -66,6 +66,16 @@ class RuntimeDependencyTests(unittest.TestCase):
                 self.assertRegex(
                     lines[line_index + 1], r"^    --hash=sha256:[0-9a-f]{64}$"
                 )
+        release_names = {
+            requirement.split("==", 1)[0] for requirement in requirements[1:]
+        }
+        self.assertLessEqual(set(runtime_dependency_pins()), release_names)
+        pyyaml = lines.index("pyyaml==6.0.3 \\")
+        self.assertEqual(
+            "    --hash=sha256:"
+            "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5",
+            lines[pyyaml + 1],
+        )
 
     def test_runtime_dependency_lock_contains_exact_parser_graph(self):
         self.assertEqual(
