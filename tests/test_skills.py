@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from engineering_process import skills as skill_module
 from engineering_process.contracts import ContractError
 from engineering_process.skills import skill_digest, validate_skills
 
@@ -10,6 +12,35 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SkillTests(unittest.TestCase):
+    def test_selected_skill_validation_is_bounded_and_does_not_scan_unselected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = root / "sample-skill"
+            selected.mkdir()
+            document = (
+                "---\n"
+                "name: sample-skill\n"
+                "description: Validate one selected skill.\n"
+                "---\n\n"
+                "# Sample\n"
+            )
+            (selected / "SKILL.md").write_bytes(document.encode("utf-8"))
+            with mock.patch.object(
+                skill_module,
+                "skill_directories",
+                side_effect=AssertionError("must not enumerate unselected skills"),
+            ):
+                self.assertEqual(
+                    [],
+                    skill_module.validate_skills(root, ("sample-skill",)),
+                )
+
+            (selected / "SKILL.md").write_bytes(
+                b"x" * (skill_module.MAX_SKILL_DOCUMENT_BYTES + 1)
+            )
+            issues = skill_module.validate_skills(root, ("sample-skill",))
+            self.assertTrue(any("exceeds 256000 bytes" in issue for issue in issues))
+
     def test_failure_to_invariant_protocol_is_distribution_owned(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"
         execution = (skills / "run-change" / "references" / "execution.md").read_text(

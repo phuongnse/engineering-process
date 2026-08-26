@@ -140,10 +140,16 @@ class DistributionDigestTests(unittest.TestCase):
                 distribution_digest(root, selected, package_root=package)
 
             with (
+                mock.patch.object(distribution, "MAX_DISTRIBUTION_ENTRIES", 1),
+                self.assertRaisesRegex(ContractError, "entries"),
+            ):
+                distribution_digest(root, selected, package_root=package)
+
+            with (
                 mock.patch.object(
-                    distribution.time,
-                    "monotonic",
-                    side_effect=[0.0, 11.0],
+                    distribution,
+                    "DISTRIBUTION_TRAVERSAL_TIMEOUT_SECONDS",
+                    -1.0,
                 ),
                 self.assertRaisesRegex(ContractError, "exceeded 10 seconds"),
             ):

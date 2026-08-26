@@ -998,6 +998,97 @@ def _proposal_workflow_tree(
     return entries
 
 
+YAML_USES_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]*)?uses[ \t]*:")
+YAML_USES_LINE_RE = re.compile(
+    r"^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*"
+    r"(?P<scalar>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[^#\r\n]*?)"
+    r"[ \t]*(?:#[ \t]*(?P<tag>\S+))?[ \t]*$"
+)
+
+
+def _decode_yaml_double_quoted_scalar(value: str) -> str:
+    result: list[str] = []
+    index = 0
+    simple = {
+        "0": "\0",
+        "a": "\a",
+        "b": "\b",
+        "t": "\t",
+        "n": "\n",
+        "v": "\v",
+        "f": "\f",
+        "r": "\r",
+        "e": "\x1b",
+        " ": " ",
+        '"': '"',
+        "/": "/",
+        "\\": "\\",
+        "N": "\u0085",
+        "_": "\u00a0",
+        "L": "\u2028",
+        "P": "\u2029",
+    }
+    while index < len(value):
+        character = value[index]
+        if character != "\\":
+            result.append(character)
+            index += 1
+            continue
+        index += 1
+        if index >= len(value):
+            raise ContractError("unterminated YAML escape")
+        escape = value[index]
+        index += 1
+        if escape in simple:
+            result.append(simple[escape])
+            continue
+        digits = {"x": 2, "u": 4, "U": 8}.get(escape)
+        if digits is None or index + digits > len(value):
+            raise ContractError("unsupported YAML escape")
+        encoded = value[index : index + digits]
+        if re.fullmatch(r"[0-9A-Fa-f]+", encoded) is None:
+            raise ContractError("invalid YAML Unicode escape")
+        codepoint = int(encoded, 16)
+        if codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+            raise ContractError("invalid YAML Unicode codepoint")
+        result.append(chr(codepoint))
+        index += digits
+    return "".join(result)
+
+
+def _proposal_yaml_uses(
+    text: str, *, path: str
+) -> tuple[list[tuple[str, str, str | None]], list[str]]:
+    values: list[tuple[str, str, str | None]] = []
+    issues: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if YAML_USES_KEY_RE.match(line) is None:
+            continue
+        match = YAML_USES_LINE_RE.fullmatch(line)
+        if match is None:
+            issues.append(
+                f"Process-adoption workflow {path}:{line_number} has an unsupported "
+                "uses scalar"
+            )
+            continue
+        raw = match.group("scalar").strip()
+        try:
+            if raw.startswith('"'):
+                decoded = _decode_yaml_double_quoted_scalar(raw[1:-1])
+            elif raw.startswith("'"):
+                decoded = raw[1:-1].replace("''", "'")
+            else:
+                decoded = raw
+        except ContractError as error:
+            issues.append(
+                f"Process-adoption workflow {path}:{line_number} has an invalid "
+                f"uses scalar: {error}"
+            )
+            continue
+        values.append((raw, decoded, match.group("tag")))
+    return values, issues
+
+
 def _validate_process_adoption_workflows(
     project_root: Path,
     *,
@@ -1010,12 +1101,6 @@ def _validate_process_adoption_workflows(
     for pin in action_pins:
         pins_by_path.setdefault(str(pin["path"]), []).append(pin)
     producer_repository = str(action_pins[0]["repository"])
-    producer_use = re.compile(
-        rf"(?m)^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*"
-        rf"(?P<quote>['\"]?){re.escape(producer_repository)}@"
-        r"(?P<commit>[^ \t\r\n#'\"]+)(?P=quote)"
-        r"(?:[ \t]+#[ \t]*(?P<tag>[^ \t\r\n]+))?[ \t]*\r?$"
-    )
     base_tree = _proposal_workflow_tree(project_root, commit=base_commit)
     head_tree = _proposal_workflow_tree(project_root, commit=head_commit)
     observed_paths: set[str] = set()
@@ -1029,17 +1114,34 @@ def _validate_process_adoption_workflows(
                 issues.append(f"Process-adoption workflow {path} must be UTF-8")
                 continue
             decoded[(tree_name, path)] = text
-            matches = [
-                (match.group("commit"), match.group("tag"))
-                for match in producer_use.finditer(text)
-            ]
-            if text.count(producer_repository + "@") != len(matches):
+            values, scalar_issues = _proposal_yaml_uses(text, path=path)
+            issues.extend(scalar_issues)
+            matches: list[tuple[str, str | None]] = []
+            producer_prefix = producer_repository + "@"
+            recognized_literal_occurrences = 0
+            for raw, scalar, tag in values:
+                if not scalar.startswith(producer_prefix):
+                    if producer_repository in scalar:
+                        issues.append(
+                            f"Process-adoption workflow {path} contains an unsupported "
+                            "producer action identity"
+                        )
+                    continue
+                observed_paths.add(path)
+                if producer_prefix not in raw:
+                    issues.append(
+                        f"Process-adoption workflow {path} escapes the producer "
+                        "repository; use its literal protected-base identity"
+                    )
+                else:
+                    recognized_literal_occurrences += 1
+                matches.append((scalar.removeprefix(producer_prefix), tag))
+            if text.count(producer_repository) != recognized_literal_occurrences:
                 issues.append(
-                    f"Process-adoption workflow {path} contains an unsupported "
-                    "producer action spelling"
+                    f"Process-adoption workflow {path} contains the producer "
+                    "repository outside a supported literal uses scalar"
                 )
             if matches:
-                observed_paths.add(path)
                 usages[(tree_name, path)] = matches
     declared_paths = set(pins_by_path)
     omitted_paths = sorted(observed_paths - declared_paths)

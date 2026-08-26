@@ -61,16 +61,24 @@ def _files(
         directory = stack.pop()
         try:
             with os.scandir(directory) as iterator:
-                children = sorted(iterator, key=lambda item: item.name)
+                children = []
+                for child in iterator:
+                    if time.monotonic() >= deadline:
+                        raise ContractError(
+                            "distribution traversal exceeded 10 seconds"
+                        )
+                    budget["entries"] += 1
+                    if budget["entries"] > MAX_DISTRIBUTION_ENTRIES:
+                        raise ContractError(
+                            "distribution traversal exceeds "
+                            f"{MAX_DISTRIBUTION_ENTRIES} entries"
+                        )
+                    children.append(child)
+                children.sort(key=lambda item: item.name)
         except OSError as error:
             raise ContractError(f"cannot enumerate distribution path {directory}: {error}") from error
         directories: list[Path] = []
         for child in children:
-            budget["entries"] += 1
-            if budget["entries"] > MAX_DISTRIBUTION_ENTRIES:
-                raise ContractError(
-                    f"distribution traversal exceeds {MAX_DISTRIBUTION_ENTRIES} entries"
-                )
             try:
                 metadata = child.stat(follow_symlinks=False)
             except OSError as error:

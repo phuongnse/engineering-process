@@ -157,6 +157,7 @@ class PublicationTests(unittest.TestCase):
         second_workflow: bool = False,
         quoted_second_workflow: bool = False,
         primary_quote: str = "",
+        escaped_second_workflow: str | None = None,
     ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
@@ -231,12 +232,15 @@ class PublicationTests(unittest.TestCase):
             ),
             "AGENTS.md": "Managed agent contract\n",
         }
-        if second_workflow or quoted_second_workflow:
-            action = (
-                '"phuongnse/engineering-process@' + "6" * 40 + '"'
-                if quoted_second_workflow
-                else "phuongnse/engineering-process@" + "6" * 40
-            )
+        if second_workflow or quoted_second_workflow or escaped_second_workflow:
+            if escaped_second_workflow == "hex":
+                action = '"\\x70huongnse/engineering-process@' + "6" * 40 + '"'
+            elif escaped_second_workflow == "unicode":
+                action = '"\\u0070huongnse/engineering-process@' + "6" * 40 + '"'
+            elif quoted_second_workflow:
+                action = '"phuongnse/engineering-process@' + "6" * 40 + '"'
+            else:
+                action = "phuongnse/engineering-process@" + "6" * 40
             files[".github/workflows/review.yml"] = (
                 "steps:\n"
                 "  - uses: " + action + " # v0.7.0\n"
@@ -920,6 +924,38 @@ class PublicationTests(unittest.TestCase):
                 )
 
                 self.assertEqual([], issues)
+
+    def test_process_adoption_rejects_escaped_producer_action_pin(self):
+        for escape in ("hex", "unicode"):
+            with self.subTest(escape=escape), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                proposal, body, title, head_sha = self.process_adoption_fixture(
+                    root, escaped_second_workflow=escape
+                )
+
+                issues = self.validate_process_adoption(
+                    root,
+                    repository="example/project",
+                    title=title,
+                    body=body,
+                    branch=proposal.branch,
+                    target_branch="main",
+                    base_commit=proposal.base_sha,
+                    state="draft",
+                    commit=head_sha,
+                    verifier_repository=proposal.verifier_repository,
+                    verifier_commit=proposal.verifier_commit,
+                    proposal=proposal,
+                    source={
+                        "dirty": False,
+                        "checkpoint": head_sha,
+                        "fingerprint": f"sha256:{'9' * 64}",
+                    },
+                )
+
+                self.assertTrue(
+                    any("escapes the producer repository" in issue for issue in issues)
+                )
 
     def test_process_adoption_rejects_workflow_symlink_mode(self):
         with tempfile.TemporaryDirectory() as directory:
