@@ -25,6 +25,12 @@ the canonical verification and review lifecycle.
 3. Implement work items in dependency order. Add or update proving tests at the lowest
    reliable boundary and keep generated artifacts, migrations, callers, and docs in
    the same accepted slice.
+   Before implementing a standard parser, protocol, serializer, cryptographic
+   primitive, or platform adapter, evaluate maintained dependencies and supported
+   project tools. Prefer a suitable dependency through the managed lock flow; write a
+   custom implementation only with evidence that available dependencies cannot meet
+   the accepted compatibility, licensing, supply-chain, portability, or resource
+   contract.
    Preserve declared resource bounds, observability, cleanup, trust boundaries, and
    release identity as implementation invariants rather than end-of-cycle additions.
 4. Run focused project checks while editing. These checks diagnose implementation but
@@ -42,6 +48,8 @@ the canonical verification and review lifecycle.
   unresolved plan-decision evidence.
 - Do not expand product behavior, compatibility, dependencies, or trust boundaries
   without returning to specification and planning.
+- Do not recreate a mature standard or protocol merely to avoid proposing or
+  installing a useful managed dependency.
 - The implementation actor cannot perform or approve independent review for a cycle
   in which it implemented source.
 

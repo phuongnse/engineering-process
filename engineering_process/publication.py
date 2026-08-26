@@ -8,6 +8,8 @@ import re
 import stat
 from pathlib import Path
 
+import yaml
+
 from .contracts import (
     AutomationProposal,
     ContractError,
@@ -998,142 +1000,122 @@ def _proposal_workflow_tree(
     return entries
 
 
-YAML_MAPPING_LINE_RE = re.compile(
-    r"^[ \t]*(?:-[ \t]*)?"
-    r"(?P<key>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)"
-    r"[ \t]*:[ \t]*"
-    r"(?P<scalar>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[^#\r\n]*?)"
-    r"[ \t]*(?:#[ \t]*(?P<tag>\S+))?[ \t]*$"
-)
-YAML_MAPPING_KEY_PREFIX_RE = re.compile(
-    r"^[ \t]*(?:-[ \t]*)?"
-    r"(?P<key>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)"
-    r"[ \t]*:"
+class _UniqueSafeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_unique_yaml_mapping(
+    loader: _UniqueSafeLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[object, object]:
+    loader.flatten_mapping(node)
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as error:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a workflow mapping",
+                node.start_mark,
+                "workflow mapping key must be hashable",
+                key_node.start_mark,
+            ) from error
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a workflow mapping",
+                node.start_mark,
+                f"duplicate workflow key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueSafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_yaml_mapping,
 )
 
 
-def _decode_yaml_double_quoted_scalar(value: str) -> str:
-    result: list[str] = []
-    index = 0
-    simple = {
-        "0": "\0",
-        "a": "\a",
-        "b": "\b",
-        "t": "\t",
-        "n": "\n",
-        "v": "\v",
-        "f": "\f",
-        "r": "\r",
-        "e": "\x1b",
-        " ": " ",
-        '"': '"',
-        "/": "/",
-        "\\": "\\",
-        "N": "\u0085",
-        "_": "\u00a0",
-        "L": "\u2028",
-        "P": "\u2029",
-    }
-    while index < len(value):
-        character = value[index]
-        if character != "\\":
-            result.append(character)
-            index += 1
-            continue
-        index += 1
-        if index >= len(value):
-            raise ContractError("unterminated YAML escape")
-        escape = value[index]
-        index += 1
-        if escape in simple:
-            result.append(simple[escape])
-            continue
-        digits = {"x": 2, "u": 4, "U": 8}.get(escape)
-        if digits is None or index + digits > len(value):
-            raise ContractError("unsupported YAML escape")
-        encoded = value[index : index + digits]
-        if re.fullmatch(r"[0-9A-Fa-f]+", encoded) is None:
-            raise ContractError("invalid YAML Unicode escape")
-        codepoint = int(encoded, 16)
-        if codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
-            raise ContractError("invalid YAML Unicode codepoint")
-        result.append(chr(codepoint))
-        index += digits
-    return "".join(result)
+def _bounded_yaml_structure(value: object, *, path: str) -> None:
+    stack = [value]
+    visited: set[int] = set()
+    nodes = 0
+    while stack:
+        item = stack.pop()
+        identity = id(item)
+        if isinstance(item, (dict, list)):
+            if identity in visited:
+                continue
+            visited.add(identity)
+        nodes += 1
+        if nodes > 20_000:
+            raise ContractError(
+                f"Process-adoption workflow {path} exceeds 20000 YAML values"
+            )
+        if isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
 
 
 def _proposal_yaml_uses(
     text: str, *, path: str
-) -> tuple[list[tuple[str, str, str | None]], list[str]]:
-    values: list[tuple[str, str, str | None]] = []
+) -> tuple[list[str], list[str]]:
+    try:
+        document = yaml.load(text, Loader=_UniqueSafeLoader)
+        _bounded_yaml_structure(document, path=path)
+    except (yaml.YAMLError, ContractError) as error:
+        return [], [f"Process-adoption workflow {path} has invalid YAML: {error}"]
+    if not isinstance(document, dict):
+        return [], [f"Process-adoption workflow {path} must be a YAML mapping"]
+    jobs = document.get("jobs")
+    if jobs is None:
+        return [], []
+    if not isinstance(jobs, dict):
+        return [], [f"Process-adoption workflow {path}.jobs must be a mapping"]
+    values: list[str] = []
     issues: list[str] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        match = YAML_MAPPING_LINE_RE.fullmatch(line)
-        if match is None:
-            prefix = YAML_MAPPING_KEY_PREFIX_RE.match(line)
-            if prefix is not None:
-                raw_key = prefix.group("key")
-                try:
-                    if raw_key.startswith('"'):
-                        key = _decode_yaml_double_quoted_scalar(raw_key[1:-1])
-                    elif raw_key.startswith("'"):
-                        key = raw_key[1:-1].replace("''", "'")
-                    else:
-                        key = raw_key
-                except ContractError:
-                    key = None
-                if key == "uses":
-                    issues.append(
-                        f"Process-adoption workflow {path}:{line_number} uses a "
-                        "multiline or unsupported scalar; use one literal line"
-                    )
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict):
+            issues.append(
+                f"Process-adoption workflow {path} job {job_name!r} must be a mapping"
+            )
             continue
-        raw_key = match.group("key")
-        try:
-            if raw_key.startswith('"'):
-                key = _decode_yaml_double_quoted_scalar(raw_key[1:-1])
-            elif raw_key.startswith("'"):
-                key = raw_key[1:-1].replace("''", "'")
+        job_uses = job.get("uses")
+        if job_uses is not None:
+            if isinstance(job_uses, str):
+                values.append(job_uses)
             else:
-                key = raw_key
-        except ContractError as error:
+                issues.append(
+                    f"Process-adoption workflow {path} job {job_name!r} uses must be a string"
+                )
+        steps = job.get("steps")
+        if steps is None:
+            continue
+        if not isinstance(steps, list):
             issues.append(
-                f"Process-adoption workflow {path}:{line_number} has an invalid "
-                f"mapping key: {error}"
+                f"Process-adoption workflow {path} job {job_name!r} steps must be a list"
             )
             continue
-        if key != "uses":
-            continue
-        raw = match.group("scalar").strip()
-        if (
-            (raw.startswith(('"', "'")) and not raw.endswith(raw[0]))
-            or raw.endswith("\\")
-        ):
-            issues.append(
-                f"Process-adoption workflow {path}:{line_number} uses a multiline "
-                "or unsupported scalar; use one literal line"
-            )
-            continue
-        if raw in {"|", "|-", "|+", ">", ">-", ">+"}:
-            issues.append(
-                f"Process-adoption workflow {path}:{line_number} uses a multiline "
-                "scalar; use one literal line"
-            )
-            continue
-        try:
-            if raw.startswith('"'):
-                decoded = _decode_yaml_double_quoted_scalar(raw[1:-1])
-            elif raw.startswith("'"):
-                decoded = raw[1:-1].replace("''", "'")
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                issues.append(
+                    f"Process-adoption workflow {path} job {job_name!r} step {index} "
+                    "must be a mapping"
+                )
+                continue
+            uses = step.get("uses")
+            if uses is None:
+                continue
+            if isinstance(uses, str):
+                values.append(uses)
             else:
-                decoded = raw
-        except ContractError as error:
-            issues.append(
-                f"Process-adoption workflow {path}:{line_number} has an invalid "
-                f"uses scalar: {error}"
-            )
-            continue
-        values.append((raw, decoded, match.group("tag")))
+                issues.append(
+                    f"Process-adoption workflow {path} job {job_name!r} step {index} "
+                    "uses must be a string"
+                )
     return values, issues
 
 
@@ -1177,7 +1159,7 @@ def _validate_process_adoption_workflows(
     head_tree = _proposal_workflow_tree(project_root, commit=head_commit)
     observed_paths: set[str] = set()
     decoded: dict[tuple[str, str], str] = {}
-    usages: dict[tuple[str, str], list[tuple[str, str | None]]] = {}
+    usages: dict[tuple[str, str], list[str]] = {}
     for tree_name, tree in (("base", base_tree), ("head", head_tree)):
         for path, (_mode, content) in tree.items():
             try:
@@ -1186,39 +1168,26 @@ def _validate_process_adoption_workflows(
                 issues.append(f"Process-adoption workflow {path} must be UTF-8")
                 continue
             decoded[(tree_name, path)] = text
-            values, scalar_issues = _proposal_yaml_uses(text, path=path)
-            issues.extend(scalar_issues)
-            matches: list[tuple[str, str | None]] = []
+            values, yaml_issues = _proposal_yaml_uses(text, path=path)
+            issues.extend(yaml_issues)
+            matches: list[str] = []
             producer_prefix = producer_repository + "@"
             normalized_producer_prefix = producer_prefix.casefold()
-            recognized_literal_occurrences = 0
-            for raw, scalar, tag in values:
-                if not scalar.casefold().startswith(normalized_producer_prefix):
-                    if producer_repository.casefold() in scalar.casefold():
+            for uses in values:
+                if not uses.casefold().startswith(normalized_producer_prefix):
+                    if producer_repository.casefold() in uses.casefold():
                         issues.append(
                             f"Process-adoption workflow {path} contains an unsupported "
                             "producer action identity"
                         )
                     continue
                 observed_paths.add(path)
-                if not scalar.startswith(producer_prefix):
+                if not uses.startswith(producer_prefix):
                     issues.append(
                         f"Process-adoption workflow {path} changes the protected "
                         "producer repository spelling"
                     )
-                if producer_prefix not in raw:
-                    issues.append(
-                        f"Process-adoption workflow {path} escapes the producer "
-                        "repository; use its literal protected-base identity"
-                    )
-                else:
-                    recognized_literal_occurrences += 1
-                matches.append((scalar[len(producer_prefix) :], tag))
-            if text.count(producer_repository) != recognized_literal_occurrences:
-                issues.append(
-                    f"Process-adoption workflow {path} contains the producer "
-                    "repository outside a supported literal uses scalar"
-                )
+                matches.append(uses[len(producer_prefix) :])
             if matches:
                 usages[(tree_name, path)] = matches
     declared_paths = set(pins_by_path)
@@ -1258,14 +1227,8 @@ def _validate_process_adoption_workflows(
         if expected is None or head_text is None:
             continue
         for pin in pins:
-            previous_identity = (
-                str(pin["previousCommit"]),
-                str(pin["previousReleaseTag"]),
-            )
-            target_identity = (
-                str(pin["targetCommit"]),
-                str(pin["targetReleaseTag"]),
-            )
+            previous_identity = str(pin["previousCommit"])
+            target_identity = str(pin["targetCommit"])
             if any(
                 identity != previous_identity
                 for identity in usages.get(("base", path), [])

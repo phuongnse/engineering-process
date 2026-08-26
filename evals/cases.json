@@ -105,17 +105,19 @@
     {
       "id": "evolve-consumer-triggered-recurrence",
       "skill": "evolve-process",
-      "prompt": "A consumer verification failure matches an invariant the process producer previously marked resolved. The consumer cannot safely continue and the producer has not yet triaged the new evidence.",
+      "prompt": "A consumer verification failure matches an invariant the process producer previously marked resolved. The proposed producer fix starts reimplementing a standard parser even though a maintained dependency may satisfy the bounded contract; the producer has not triaged either decision.",
       "mustInclude": [
         "improvement-required classification",
         "consumer remains blocked",
         "untrusted improvement signal",
         "producer-owned recurrence disposition",
+        "maintained dependency and managed-lock assessment before custom parsing",
         "immutable release and consumer reproduction"
       ],
       "mustNotInclude": [
         "consumer-owned producer fix",
         "signal treated as release authority",
+        "reinvented standard parser without dependency evidence",
         "another narrow local workaround"
       ]
     },

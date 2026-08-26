@@ -164,6 +164,15 @@ release, deployment, or adoption authority.
 
 ## Resource and generated-state policy
 
+Before implementing a standard format, protocol, parser, serializer, cryptographic
+primitive, or platform integration, evaluate maintained dependencies and supported
+tools at the owning boundary. Prefer a mature dependency when it materially reduces
+custom semantics and satisfies compatibility, licensing, supply-chain, portability,
+and resource-bound requirements; add it through the project's managed dependency and
+lock flow. A custom implementation requires concrete evidence that available
+dependencies cannot meet the accepted contract. Do not recreate a mature standard
+merely to avoid proposing or installing a useful dependency.
+
 Every operation over repository-controlled or remote input has explicit limits for
 time, count, individual item size, aggregate size, output, and process descendants.
 Limits fail closed and have regression coverage for success, failure, timeout, and

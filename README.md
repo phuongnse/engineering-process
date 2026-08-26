@@ -737,7 +737,8 @@ artifact-attestation validators resolve those objects before the target distribu
 is compared with the complete consumer materialization. Validation also requires the
 target wheel hash in the committed requirements lock and every use of that producer action
 across the complete regular-workflow tree; the protected base must be an ancestor and
-workflow mode may not change.
+workflow mode may not change. Workflow semantics are read with the pinned maintained
+PyYAML safe loader; the process does not maintain a substitute YAML scanner.
 
 For schema 3, add these independently resolved inputs to `validate-proposal`:
 

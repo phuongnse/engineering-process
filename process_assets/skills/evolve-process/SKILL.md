@@ -25,6 +25,10 @@ incident history into permanent ceremony.
    If root-cause evidence leaves multiple valid owner, trust, compatibility, rollout,
    or lifecycle corrections, stop and use the run-change owner-decision escalation
    protocol; do not try alternate process architectures until one is accepted.
+   Before adding custom standard-format or protocol logic, assess maintained
+   dependencies and existing supported tools. Reuse a suitable dependency through the
+   managed lock flow; require evidence before owning a custom parser or equivalent
+   implementation.
 4. Add regression cases at the lowest reliable owner boundary for both valid behavior
    and the fail-closed class. A shared fix also requires producer profiles and a real
    affected-consumer reproduction before release authorization. For skill behavior,
@@ -54,6 +58,8 @@ incident history into permanent ceremony.
 ## Hard gates
 
 - Do not promote an agent-host quirk into the portable core.
+- Do not reinvent a mature parser, protocol, serializer, cryptographic primitive, or
+  platform adapter when a maintained dependency satisfies the accepted contract.
 - Do not add a gate without an owner, failure message, and regression proof.
 - Do not break a released schema within its major version.
 - Do not respond to a rejected process direction by autonomously trying another

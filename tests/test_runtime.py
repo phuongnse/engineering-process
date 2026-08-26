@@ -28,6 +28,7 @@ class RuntimeDependencyTests(unittest.TestCase):
             "requirements-runtime.txt": [
                 "markdown-it-py==4.2.0",
                 "mdurl==0.1.2",
+                "pyyaml==6.0.3",
                 "regex==2026.7.19",
             ],
         }
@@ -71,6 +72,7 @@ class RuntimeDependencyTests(unittest.TestCase):
             {
                 "markdown-it-py": "4.2.0",
                 "mdurl": "0.1.2",
+                "pyyaml": "6.0.3",
                 "regex": "2026.7.19",
             },
             runtime_dependency_pins(),
@@ -80,6 +82,7 @@ class RuntimeDependencyTests(unittest.TestCase):
         actual = {
             "markdown-it-py": "3.0.0",
             "mdurl": "0.1.2",
+            "pyyaml": "6.0.3",
             "regex": "2026.7.19",
         }
         with mock.patch(

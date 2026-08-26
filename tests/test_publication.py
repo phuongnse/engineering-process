@@ -161,6 +161,7 @@ class PublicationTests(unittest.TestCase):
         second_workflow_key: str = "uses",
         case_variant_second_repository: bool = False,
         multiline_second_workflow: bool = False,
+        explicit_multiline_second_workflow: bool = False,
     ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
@@ -220,8 +221,11 @@ class PublicationTests(unittest.TestCase):
             ".agents/skills/run-change/SKILL.md": "# Run Change 0.7.0\n",
             ".github/PULL_REQUEST_TEMPLATE.md": "Managed pull request template\n",
             ".github/workflows/ci.yml": (
-                "steps:\n"
-                "  - uses: "
+                "jobs:\n"
+                "  verify:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - uses: "
                 + primary_quote
                 + "phuongnse/engineering-process@"
                 + "6" * 40
@@ -240,6 +244,7 @@ class PublicationTests(unittest.TestCase):
             or quoted_second_workflow
             or escaped_second_workflow
             or multiline_second_workflow
+            or explicit_multiline_second_workflow
         ):
             if escaped_second_workflow == "hex":
                 action = '"\\x70huongnse/engineering-process@' + "6" * 40 + '"'
@@ -256,16 +261,36 @@ class PublicationTests(unittest.TestCase):
                 action = repository + "@" + "6" * 40
             files[".github/workflows/review.yml"] = (
                 (
-                    "steps:\n"
-                    "  - \"\\x75ses\": \"\\x70huongnse/engineering-\\\n"
-                    + "      process@"
+                    "jobs:\n"
+                    "  review:\n"
+                    "    runs-on: ubuntu-latest\n"
+                    "    steps:\n"
+                    "      - ? \"\\x75\\\n"
+                    "          ses\"\n"
+                    "        : \"\\x70huongnse/engineering-\\\n"
+                    + "          process@"
+                    + "6" * 40
+                    + "\" # v0.7.0\n"
+                )
+                if explicit_multiline_second_workflow
+                else
+                (
+                    "jobs:\n"
+                    "  review:\n"
+                    "    runs-on: ubuntu-latest\n"
+                    "    steps:\n"
+                    "      - \"\\x75ses\": \"\\x70huongnse/engineering-\\\n"
+                    + "          process@"
                     + "6" * 40
                     + "\" # v0.7.0\n"
                 )
                 if multiline_second_workflow
                 else (
-                    "steps:\n"
-                    "  - " + second_workflow_key + ": " + action + " # v0.7.0\n"
+                    "jobs:\n"
+                    "  review:\n"
+                    "    runs-on: ubuntu-latest\n"
+                    "    steps:\n"
+                    "      - " + second_workflow_key + ": " + action + " # v0.7.0\n"
                 )
             )
         for relative, content in files.items():
@@ -307,8 +332,11 @@ class PublicationTests(unittest.TestCase):
         )
         (root / ".github" / "workflows" / "ci.yml").write_bytes(
             (
-                "steps:\n"
-                "  - uses: "
+                "jobs:\n"
+                "  verify:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - uses: "
                 + primary_quote
                 + "phuongnse/engineering-process@"
                 + "5" * 40
@@ -1037,7 +1065,7 @@ class PublicationTests(unittest.TestCase):
                 )
 
                 self.assertTrue(
-                    any("escapes the producer repository" in issue for issue in issues)
+                    any("omits producer workflow" in issue for issue in issues)
                 )
 
     def test_process_adoption_rejects_equivalent_producer_spellings(self):
@@ -1112,7 +1140,39 @@ class PublicationTests(unittest.TestCase):
             )
 
             self.assertTrue(
-                any("multiline or unsupported scalar" in issue for issue in issues)
+                any("omits producer workflow" in issue for issue in issues)
+            )
+
+    def test_process_adoption_rejects_explicit_multiline_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(
+                root,
+                explicit_multiline_second_workflow=True,
+            )
+
+            issues = self.validate_process_adoption(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("omits producer workflow" in issue for issue in issues)
             )
 
     def test_process_adoption_rejects_workflow_symlink_mode(self):

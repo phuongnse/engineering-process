@@ -74,6 +74,23 @@ class SkillTests(unittest.TestCase):
             validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []
         )
 
+    def test_process_requires_dependency_reuse_before_custom_standard_logic(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        implement = (skills / "implement-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        evolve = (skills / "evolve-process" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        production = (PROCESS_ROOT / "PRODUCTION_STANDARD.md").read_text(
+            encoding="utf-8"
+        )
+        for text in (implement, evolve, production):
+            self.assertIn("maintained dependenc", text.lower())
+            self.assertIn("managed", text.lower())
+            self.assertIn("custom", text.lower())
+        self.assertIn("Do not recreate a mature standard", production)
+
     def test_controlled_proposals_preserve_versioned_merge_boundaries(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"
         execution = (skills / "run-change" / "references" / "execution.md").read_text(
