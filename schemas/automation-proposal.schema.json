@@ -11,7 +11,6 @@
     "observedControls"
   ],
   "properties": {
-    "$schema": {"type": "string"},
     "schemaVersion": {"enum": [1, 2, 3]},
     "kind": {"const": "engineering-process-controlled-automation-proposal"},
     "status": {"const": "passed"},
@@ -182,13 +181,19 @@
             {"$ref": "#/$defs/adoptionControls"}
           ]
         },
+        "producerRepository": {"$ref": "#/$defs/repository"},
         "verifier": {"$ref": "#/$defs/verifier"}
       },
       "allOf": [
         {
           "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
           "then": {
-            "not": {"required": ["verifier"]},
+            "not": {
+              "anyOf": [
+                {"required": ["producerRepository"]},
+                {"required": ["verifier"]}
+              ]
+            },
             "properties": {
               "completionCheck": {"const": "lifecycle-completion"},
               "allowedProposalKinds": {"items": {"const": "dependency-update"}},
@@ -204,7 +209,12 @@
         {
           "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
           "then": {
-            "not": {"required": ["verifier"]},
+            "not": {
+              "anyOf": [
+                {"required": ["producerRepository"]},
+                {"required": ["verifier"]}
+              ]
+            },
             "properties": {
               "completionCheck": {"const": "lifecycle-completion"},
               "allowedProposalKinds": {"items": {"const": "dependency-update"}},
@@ -220,7 +230,7 @@
         {
           "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
           "then": {
-            "required": ["verifier"],
+            "required": ["producerRepository", "verifier"],
             "properties": {
               "completionCheck": {"const": "consumer-owner-merge"},
               "branchPrefix": {"const": "automation/renovate/"},
@@ -253,13 +263,31 @@
         "producerRelease": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["repository", "version", "tag", "commit", "attestationSha256"],
+          "required": [
+            "repository", "version", "tag", "commit", "releaseContract",
+            "distributionAttestation", "materialization"
+          ],
           "properties": {
             "repository": {"$ref": "#/$defs/repository"},
             "version": {"$ref": "#/$defs/version"},
             "tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
             "commit": {"$ref": "#/$defs/gitOid"},
-            "attestationSha256": {"$ref": "#/$defs/digest"}
+            "releaseContract": {"$ref": "#/$defs/jsonEvidence"},
+            "distributionAttestation": {"$ref": "#/$defs/jsonEvidence"},
+            "materialization": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status", "requirementsLockSha256", "processDigest",
+                "managedDistributionSha256"
+              ],
+              "properties": {
+                "status": {"const": "passed"},
+                "requirementsLockSha256": {"$ref": "#/$defs/digest"},
+                "processDigest": {"$ref": "#/$defs/digest"},
+                "managedDistributionSha256": {"$ref": "#/$defs/digest"}
+              }
+            }
           }
         },
         "sourceAuthority": {"$ref": "#/$defs/authority"},
@@ -327,6 +355,15 @@
       "properties": {
         "path": {"$ref": "#/$defs/path"},
         "sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "jsonEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "content"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/digest"},
+        "content": {"type": "string", "minLength": 2, "maxLength": 1000000}
       }
     },
     "actionPin": {

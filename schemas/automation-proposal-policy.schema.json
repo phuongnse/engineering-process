@@ -16,7 +16,6 @@
     "requiredControls"
   ],
   "properties": {
-    "$schema": {"type": "string"},
     "schemaVersion": {"enum": [1, 2, 3]},
     "kind": {"const": "engineering-process-automation-proposal-policy"},
     "enabled": {"const": true},
@@ -47,6 +46,7 @@
         {"$ref": "#/$defs/adoptionControls"}
       ]
     },
+    "producerRepository": {"$ref": "#/$defs/repository"},
     "verifier": {"$ref": "#/$defs/verifier"}
   },
   "$defs": {
@@ -137,7 +137,12 @@
     {
       "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
       "then": {
-        "not": {"required": ["verifier"]},
+        "not": {
+          "anyOf": [
+            {"required": ["producerRepository"]},
+            {"required": ["verifier"]}
+          ]
+        },
         "properties": {
           "completionCheck": {"const": "lifecycle-completion"},
           "allowedProposalKinds": {"items": {"const": "dependency-update"}},
@@ -153,7 +158,12 @@
     {
       "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
       "then": {
-        "not": {"required": ["verifier"]},
+        "not": {
+          "anyOf": [
+            {"required": ["producerRepository"]},
+            {"required": ["verifier"]}
+          ]
+        },
         "properties": {
           "completionCheck": {"const": "lifecycle-completion"},
           "allowedProposalKinds": {"items": {"const": "dependency-update"}},
@@ -169,7 +179,7 @@
     {
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
       "then": {
-        "required": ["verifier"],
+        "required": ["producerRepository", "verifier"],
         "properties": {
           "completionCheck": {"const": "consumer-owner-merge"},
           "branchPrefix": {"const": "automation/renovate/"},

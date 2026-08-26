@@ -282,13 +282,14 @@ completion, then permits exact-head merge only through the protected-base standi
 policy. Existing consumers remain on schema 1 until a separately completed opt-in
 change is merged.
 
-For schema-3 process adoption, the protected-base policy fixes Renovate, the immutable
-verifier repository/commit, `consumer-owner-merge`, automerge false,
+For schema-3 process adoption, the protected-base policy fixes Renovate, the producer
+repository, the immutable verifier repository/commit, `consumer-owner-merge`, automerge false,
 `consumerOwnerMergeRequired` true, and post-merge mutation false. The verifier binds
 the actual base independently plus the exact producer release/tag/commit/attestation,
 source and target authority identities, requirements bytes, process lock, complete
-selected managed distribution, declared migration, grouped full-SHA action-pin-only
-workflow delta, head/path set, and metadata. Candidate-owned commands run only after
+selected managed distribution, declared migration, bounded raw release/attestation
+bytes and artifact hashes, every producer use in the unchanged-mode regular-workflow
+tree, head/path set, and metadata. Base must be an ancestor of head. Candidate-owned commands run only after
 that validation. The consumer then owns project checks, review choice, and the manual
 merge decision. Merge is terminal; do not create lifecycle-completion for this route,
 apply standing auto-merge, or schedule synchronization after merge.

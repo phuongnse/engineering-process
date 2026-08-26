@@ -127,12 +127,19 @@ fixes an immutable protected-base verifier repository and commit, requires
 `consumerOwnerMergeRequired` true, and `postMergeMutation` false. Schema 1 and schema
 2 dependency proposals retain their released fields and completion routes.
 
-The verifier binds one complete candidate to the immutable producer release, tag,
+The protected-base policy fixes both producer and verifier repositories. The verifier
+binds one complete candidate to the immutable producer release, tag,
 commit and attestation; source and target authority identities; exact requirements
 input and complete hash lock bytes; target process lock; complete selected managed
 distribution; declared project migration; grouped full-SHA action-pin replacements;
 and exact repository, protected base, head, path set, metadata and verifier identity.
 The actual protected base is supplied independently of Renovate evidence. Missing or
+stale identity, a partial pin, an omitted lock or managed file, an inferred migration,
+The report includes bounded raw release-contract and distribution-attestation bytes,
+the lifecycle receipt identity, complete artifact hashes, and exact target
+materialization. The independently resolved base must be an ancestor of the head;
+every producer action use in the bounded regular-workflow tree must move as one group
+with unchanged mode, and the verified wheel hash must occur in the lock. Missing or
 stale identity, a partial pin, an omitted lock or managed file, an inferred migration,
 an unrelated workflow/path change, or a post-merge action fails closed before
 candidate-owned project commands run.

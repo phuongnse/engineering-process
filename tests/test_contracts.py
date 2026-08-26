@@ -376,6 +376,58 @@ class ProjectContractTests(unittest.TestCase):
         )
         self.assertFalse(validated["requiredControls"]["postMergeMutation"])
 
+    def test_process_adoption_rejects_invented_producer_release_evidence(self):
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        binding = document["processAdoption"]["producerRelease"][
+            "distributionAttestation"
+        ]
+        attestation = json.loads(binding["content"])
+        attestation["checkpoint"] = "4" * 40
+        binding["content"] = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        binding["sha256"] = "sha256:" + hashlib.sha256(
+            binding["content"].encode("utf-8")
+        ).hexdigest()
+
+        with self.assertRaisesRegex(ContractError, "attestation identity"):
+            validate_automation_proposal(document)
+
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["processAdoption"]["producerRelease"]["materialization"][
+            "processDigest"
+        ] = f"sha256:{'0' * 64}"
+        with self.assertRaisesRegex(ContractError, "exact target"):
+            validate_automation_proposal(document)
+
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["processAdoption"]["producerRelease"]["repository"] = (
+            "attacker/process"
+        )
+        document["processAdoption"]["actionPins"][0]["repository"] = (
+            "attacker/process"
+        )
+        with self.assertRaisesRegex(ContractError, "protected-base producer"):
+            validate_automation_proposal(document)
+
     def test_automation_proposal_bounds_and_canonicalizes_changed_paths(self):
         document = json.loads(
             (PROCESS_ROOT / "examples" / "automation-proposal.json").read_text(

@@ -724,6 +724,14 @@ requirements bytes, exact base/head/path set, migration result, complete managed
 set, and exact verifier identity. Workflow changes must be only the declared full-SHA
 action-pin replacements with their release annotations.
 
+The protected-base policy also fixes the producer repository. The report carries the
+bounded raw release-contract and distribution-attestation bytes, their digests,
+lifecycle receipt identity, complete artifact hashes, and the verifier's exact target
+materialization binding. Validation requires the tag/commit/attestation chain, target
+wheel hash in the committed requirements lock, and every use of that producer action
+across the complete regular-workflow tree; the protected base must be an ancestor and
+workflow mode may not change.
+
 The schema fixes `automerge` to false, `consumerOwnerMergeRequired` to true, and
 `postMergeMutation` to false. `publication validate-proposal-completion` always rejects
 this kind: lifecycle completion, standing automation, provider state, and a successful

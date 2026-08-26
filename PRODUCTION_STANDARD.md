@@ -190,7 +190,10 @@ Before candidate-owned commands, a protected-base immutable verifier independent
 binds the actual base and exact head, producer release/tag/commit/attestation, source
 and target process identities, requirements bytes, process lock, migration result,
 complete selected managed-file set, grouped full-SHA action-pin-only workflow delta,
-and verifier identity. Partial, stale, inferred, unauthorized, or post-merge-dependent
+and verifier identity. Producer and verifier repositories are protected-base owned;
+bounded raw release/attestation bytes and artifact hashes are validated, base must be
+an ancestor of head, and every producer use in the regular-workflow tree moves as one
+unchanged-mode pin group. Partial, stale, inferred, unauthorized, or post-merge-dependent
 candidates fail closed. This portable boundary reuses ordinary Renovate generation,
 managed adoption, consumer CI, review and branch protection. It does not introduce a
 reviewer host, daemon, scheduler, generic workflow engine, dynamically generated

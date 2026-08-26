@@ -146,7 +146,13 @@ class PublicationTests(unittest.TestCase):
         example["optIn"]["sha256"] = canonical_json_digest(policy)
         return validate_automation_proposal(example), body, title, head_sha
 
-    def process_adoption_fixture(self, root: Path, *, status: str = "pending"):
+    def process_adoption_fixture(
+        self,
+        root: Path,
+        *,
+        status: str = "pending",
+        second_workflow: bool = False,
+    ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
             ["git", "config", "user.email", "process-test@example.invalid"],
@@ -217,6 +223,13 @@ class PublicationTests(unittest.TestCase):
             ),
             "AGENTS.md": "Managed agent contract\n",
         }
+        if second_workflow:
+            files[".github/workflows/review.yml"] = (
+                "steps:\n"
+                "  - uses: phuongnse/engineering-process@"
+                + "6" * 40
+                + " # v0.7.0\n"
+            )
         for relative, content in files.items():
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -339,6 +352,27 @@ class PublicationTests(unittest.TestCase):
         )
         adoption["managedFiles"] = managed_files
         adoption["managedDistributionSha256"] = canonical_json_digest(managed_files)
+        producer_release = adoption["producerRelease"]
+        attestation = json.loads(
+            producer_release["distributionAttestation"]["content"]
+        )
+        wheel = next(
+            item for item in attestation["artifacts"] if item["name"].endswith(".whl")
+        )
+        wheel["sha256"] = f"sha256:{'8' * 64}"
+        attestation_content = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        producer_release["distributionAttestation"] = {
+            "sha256": digest(attestation_content.encode("utf-8")),
+            "content": attestation_content,
+        }
+        producer_release["materialization"] = {
+            "status": "passed",
+            "requirementsLockSha256": adoption["requirements"]["lockSha256"],
+            "processDigest": adoption["targetAuthority"]["processDigest"],
+            "managedDistributionSha256": adoption["managedDistributionSha256"],
+        }
         return validate_automation_proposal(example), body, title, head_sha
 
     def test_process_adoption_proposal_binds_complete_candidate(self):
@@ -527,6 +561,134 @@ class PublicationTests(unittest.TestCase):
 
             self.assertTrue(any("without an applied migration" in issue for issue in issues))
             self.assertTrue(any("unauthorized path" in issue for issue in issues))
+
+    def test_process_adoption_rejects_non_ancestor_current_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(root)
+            subprocess.run(["git", "switch", "-q", "main"], cwd=root, check=True)
+            (root / "base-advance.txt").write_bytes(b"advanced base\n")
+            subprocess.run(["git", "add", "base-advance.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "chore: advance protected base"],
+                cwd=root,
+                check=True,
+            )
+            current_base = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            subprocess.run(
+                ["git", "switch", "-q", proposal.branch], cwd=root, check=True
+            )
+            proposal = replace(proposal, base_sha=current_base)
+
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=current_base,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(any("must be an ancestor" in issue for issue in issues))
+
+    def test_process_adoption_requires_every_producer_action_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(
+                root, second_workflow=True
+            )
+
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("omits producer workflow" in issue for issue in issues)
+            )
+
+    def test_process_adoption_rejects_workflow_symlink_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, _head_sha = self.process_adoption_fixture(root)
+            workflow_content = subprocess.check_output(
+                ["git", "show", "HEAD:.github/workflows/ci.yml"], cwd=root
+            )
+            blob = subprocess.check_output(
+                ["git", "hash-object", "-w", "--stdin"],
+                cwd=root,
+                input=workflow_content,
+                text=False,
+            ).decode("ascii").strip()
+            subprocess.run(
+                [
+                    "git",
+                    "update-index",
+                    "--cacheinfo",
+                    f"120000,{blob},.github/workflows/ci.yml",
+                ],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-qm", "test: make workflow a symlink blob"],
+                cwd=root,
+                check=True,
+            )
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            proposal = replace(proposal, head_sha=head_sha)
+
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(any("unchanged mode" in issue for issue in issues))
 
     def test_controlled_proposal_is_untrusted_but_exactly_policy_bound(self):
         with tempfile.TemporaryDirectory() as directory:

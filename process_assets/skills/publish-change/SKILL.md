@@ -68,8 +68,11 @@ without duplicating implementation, verification, or review.
   automation proposal. A dependency proposal remains merge-blocked until exact-head
   completion; a schema-3 process-adoption proposal remains consumer-owner-merge-only.
 - Do not treat static policy verification as semantic independent review.
-- Do not merge before the standing policy's completed-lifecycle, review, exact-head,
-  current-base, required-check, and method gates all pass.
+- For a standing-policy automated merge, do not merge before its completed-lifecycle,
+  review, exact-head, current-base, required-check, and method gates all pass. These
+  automation gates do not replace or block the schema-3 consumer owner's manual merge
+  authority; that route requires its valid proposal gate and no standing auto-merge
+  policy.
 - Do not hand-edit one release identity surface independently of the release contract
   or update consumer locks before public artifact hashes are verified.
 - Do not treat a Renovate proposal as adoption evidence or allow provider automerge
@@ -83,8 +86,10 @@ without duplicating implementation, verification, or review.
   managed contract, and selected skill snapshots before review. Merge ends adoption;
   never defer synchronization to a post-merge step.
 - For schema-3 Renovate process adoption, require a protected-base immutable verifier,
-  exact release and source/target authority provenance, exact base/head/path bindings,
-  the complete managed distribution and grouped action-pin-only workflow delta. Keep
+  protected-base producer repository, bounded raw release/attestation evidence, exact
+  source/target authority provenance and artifact hashes, ancestor base/head/path
+  bindings, the complete managed distribution, and every producer use in one
+  unchanged-mode action-pin-only workflow group. Keep
   `consumerOwnerMergeRequired` true and never let completion, provider state, or
   standing automation escalate it to auto-merge.
 - Do not add a reviewer host, daemon, scheduler, generic workflow engine,

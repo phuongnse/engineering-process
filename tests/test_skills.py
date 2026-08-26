@@ -66,6 +66,7 @@ class SkillTests(unittest.TestCase):
             self.assertIn("merge is terminal", text.lower())
             self.assertIn("agent-host", text.lower())
             self.assertIn("reviewer host", text.lower())
+        self.assertIn("no standing auto-merge\n  policy", publish)
 
     def test_standing_policy_continues_automation_and_escalates_only_exceptions(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"

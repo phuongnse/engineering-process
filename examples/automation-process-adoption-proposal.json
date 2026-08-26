@@ -20,7 +20,7 @@
   ],
   "optIn": {
     "path": ".process/automation-proposals.json",
-    "sha256": "sha256:8c32f552b84a2f019e2a5bc6ef140a2485aaa38484480a2793195368b282e013",
+    "sha256": "sha256:eeccc5824107385aa79ac597e83f5048a18b226e51b6714aa68e5762da6a1270",
     "document": {
       "schemaVersion": 3,
       "kind": "engineering-process-automation-proposal-policy",
@@ -34,6 +34,7 @@
       "allowedProposalKinds": [
         "process-adoption"
       ],
+      "producerRepository": "phuongnse/engineering-process",
       "requiredControls": {
         "automerge": false,
         "scripts": false,
@@ -84,7 +85,20 @@
       "version": "0.8.0",
       "tag": "v0.8.0",
       "commit": "5555555555555555555555555555555555555555",
-      "attestationSha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      "releaseContract": {
+        "sha256": "sha256:07c92375a7c39f545398e490aa4ecf33e2914d1ea46958742c516033d9fa9ff0",
+        "content": "{\"changes\":[{\"id\":\"govern-process-adoption-proposals\",\"rationale\":\"Govern complete consumer-owned process adoption proposals.\",\"surfaces\":[\"automation-proposal\"],\"type\":\"breaking\"}],\"classification\":\"minor\",\"compatibility\":\"incompatible\",\"identity\":{\"artifacts\":[\"engineering_process-0.8.0-py3-none-any.whl\",\"engineering_process-0.8.0.tar.gz\"],\"authorizationAsset\":null,\"distribution\":\"engineering_process\",\"package\":\"engineering-process\",\"receiptAsset\":\"engineering-process-v0.8.0-evidence.json\",\"releaseName\":\"v0.8.0\",\"runtimeVersion\":{\"path\":\"engineering_process/__init__.py\",\"variable\":\"VERSION\"},\"tag\":\"v0.8.0\"},\"migration\":\"Adopt schema-3 process proposals only after the immutable capability release and consumer opt-in.\",\"previousVersion\":\"0.7.0\",\"provenance\":{\"lifecycleReceipt\":{\"asset\":\"engineering-process-v0.8.0-evidence.json\",\"changeId\":\"release-0-8-0\",\"cycle\":1,\"project\":\"engineering-process\"},\"mode\":\"governed\",\"statement\":\"The public N-1 lifecycle receipt authorizes this release.\"},\"schemaImpact\":\"additive\",\"schemaVersion\":3,\"version\":\"0.8.0\"}\n"
+      },
+      "distributionAttestation": {
+        "sha256": "sha256:eb58f4fff464b608552b1015d30921811c8bf358ff6e3d76bae958dc1db90972",
+        "content": "{\"artifacts\":[{\"name\":\"engineering_process-0.8.0-py3-none-any.whl\",\"sha256\":\"sha256:7777777777777777777777777777777777777777777777777777777777777777\",\"sizeBytes\":358000},{\"name\":\"engineering_process-0.8.0.tar.gz\",\"sha256\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"sizeBytes\":400000}],\"bootstrapAuthorization\":null,\"checkpoint\":\"5555555555555555555555555555555555555555\",\"kind\":\"engineering-process-distribution-attestation\",\"lifecycleReceipt\":{\"asset\":\"engineering-process-v0.8.0-evidence.json\",\"changeId\":\"release-0-8-0\",\"checkpoint\":\"8888888888888888888888888888888888888888\",\"cycle\":1,\"processDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"processVersion\":\"0.7.0\",\"project\":\"engineering-process\",\"sha256\":\"sha256:9999999999999999999999999999999999999999999999999999999999999999\"},\"release\":{\"artifacts\":[\"engineering_process-0.8.0-py3-none-any.whl\",\"engineering_process-0.8.0.tar.gz\"],\"contractSha256\":\"sha256:07c92375a7c39f545398e490aa4ecf33e2914d1ea46958742c516033d9fa9ff0\",\"package\":\"engineering-process\",\"releaseName\":\"v0.8.0\",\"tag\":\"v0.8.0\",\"version\":\"0.8.0\"},\"schemaVersion\":1}\n"
+      },
+      "materialization": {
+        "status": "passed",
+        "requirementsLockSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "processDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "managedDistributionSha256": "sha256:47b6458d765eb926e83b13dd334eb77958aa6b926ac67cea9fc1a1fd6b8e8cc0"
+      }
     },
     "sourceAuthority": {
       "version": "0.7.0",
