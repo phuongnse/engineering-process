@@ -116,6 +116,30 @@ class SkillTests(unittest.TestCase):
             "grants no lifecycle completion", " ".join(production.split())
         )
 
+    def test_plan_decision_gate_rejects_meta_review_and_reviewer_platforms(self):
+        skills = PROCESS_ROOT / "process_assets" / "skills"
+        execution = (skills / "run-change" / "references" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+        plan = (skills / "plan-change" / "SKILL.md").read_text(encoding="utf-8")
+        implement = (skills / "implement-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        combined = " ".join((execution + plan + implement).lower().split())
+
+        for required in (
+            "provenance-gated-authored-review",
+            "exactly recomputes the complete plan",
+            "unreviewed prose is candidate-only",
+            "reviewer-of-reviewer",
+            "assessment-of-assessment",
+            "dynamically generated approval chain",
+            "generic workflow engine",
+            "hosted reviewer platform",
+        ):
+            self.assertIn(required, combined)
+        self.assertIn("exact generated plans do not receive universal", combined)
+
     def test_digest_changes_with_instruction_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

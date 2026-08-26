@@ -115,6 +115,31 @@ evidence boundaries as completion-blocking.
 
 ## Recommendation validity
 
+An opted-in project gates implementation through plan provenance. Every nontrivial
+authored plan receives a fresh read-only semantic assessment for architecture,
+authority, compatibility, external mutation, lifecycle order, owner, rollout, scope,
+and trust boundary. The assignment binds the exact contract, plan, clean source,
+authority, project policy, author, reviewer context, and canonical category set. A
+clear assessment may authorize implementation; a decision-required assessment must
+bind the existing independently reviewed recommendation and explicit owner resolution
+for that exact assessment. Drift in any binding fails closed.
+
+A process-generated plan bypass is accepted only when the immutable installed core
+recognizes its generator and exactly recomputes the complete plan from bounded
+validated source-owned inputs. Generator labels, risk labels, author
+self-classification, heuristic prose scanning, and partial comparison are not
+provenance. Exact generated plans are not universally sent to semantic review, and
+portable core does not introduce a daemon, scheduler, webhook, hosted reviewer
+platform, vendor, model, or proprietary agent API. Unreviewed prose remains
+candidate-only and grants no decision or lifecycle authority.
+
+The three possible review boundaries never review one another. Plan-decision review
+assesses the authored plan; recommendation review challenges only the recommendation
+and its digest binding; final lifecycle review assesses implemented source and current
+evidence. Reviewer-of-reviewer, meta-assessment, assessment-of-assessment,
+policy-for-policy, dynamically generated approval chains, and generic workflow
+engines are outside the portable contract.
+
 A material owner decision derives recommendation eligibility before optimization.
 Every option assesses every governing hard invariant and references only proven or
 explicitly unproven assumptions. Any violated invariant makes the option invalid; any

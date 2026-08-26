@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/plan-decision-review-assignment.schema.json",
+  "title": "Fresh material-decision review assignment for an authored plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "changeId",
+    "cycle",
+    "contractSha256",
+    "planSha256",
+    "policySha256",
+    "source",
+    "authority",
+    "planAuthor",
+    "reviewer",
+    "independence",
+    "materialCategories",
+    "contextReservationSha256"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-plan-decision-review-assignment"},
+    "changeId": {"$ref": "#/$defs/id"},
+    "cycle": {"type": "integer", "minimum": 1},
+    "contractSha256": {"$ref": "#/$defs/digest"},
+    "planSha256": {"$ref": "#/$defs/digest"},
+    "policySha256": {"$ref": "#/$defs/digest"},
+    "source": {"$ref": "#/$defs/source"},
+    "authority": {"$ref": "#/$defs/authority"},
+    "planAuthor": {"$ref": "#/$defs/actor"},
+    "reviewer": {"$ref": "#/$defs/actor"},
+    "independence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "attestedBy", "evidence"],
+      "properties": {
+        "method": {"enum": ["isolated-context", "separate-person"]},
+        "attestedBy": {"type": "string", "minLength": 1, "maxLength": 256},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    },
+    "materialCategories": {"$ref": "#/$defs/categories"},
+    "contextReservationSha256": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkpoint", "comparisonBase", "workspaceFingerprint"],
+      "properties": {
+        "checkpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "comparisonBase": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "workspaceFingerprint": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "prefixItems": [
+        {"const": "architecture"},
+        {"const": "authority"},
+        {"const": "compatibility"},
+        {"const": "external-mutation"},
+        {"const": "lifecycle-order"},
+        {"const": "owner"},
+        {"const": "rollout"},
+        {"const": "scope"},
+        {"const": "trust-boundary"}
+      ],
+      "items": false
+    }
+  }
+}

@@ -31,6 +31,19 @@
       "status": "resolved"
     },
     {
+      "activeChangeId": "enforce-material-decision-gates",
+      "id": "material-decision-before-implementation",
+      "lastResolution": null,
+      "publicSurfaces": [
+        "lifecycle",
+        "plan",
+        "recommendation",
+        "skills"
+      ],
+      "reusableClass": "deterministic-enforcement",
+      "status": "active"
+    },
+    {
       "activeChangeId": null,
       "id": "producer-improvement-route-completeness",
       "lastResolution": {

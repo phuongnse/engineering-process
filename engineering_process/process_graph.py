@@ -42,7 +42,12 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
     "planned": {
         "ownerSkill": "implement-change",
         "actor": "automation",
-        "commands": ["change implement"],
+        "commands": [
+            "change decision resolve",
+            "change decision start",
+            "change decision submit",
+            "change implement",
+        ],
         "transitions": {
             "failure": "implement-change",
             "success": "verify-change",

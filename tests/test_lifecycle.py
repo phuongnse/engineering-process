@@ -10,6 +10,7 @@ from unittest import mock
 import engineering_process.lifecycle as lifecycle_module
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
+    MATERIAL_DECISION_CATEGORIES,
     Check,
     ContractError,
     ImpactComponent,
@@ -32,6 +33,10 @@ from engineering_process.improvement import (
     ingest_improvement_signal,
     validate_improvement_chain,
 )
+from engineering_process.recommendation import (
+    create_recommendation_resolution,
+    start_recommendation_review,
+)
 from engineering_process.lifecycle import (
     _change_lock,
     begin_implementation,
@@ -40,9 +45,12 @@ from engineering_process.lifecycle import (
     load_state,
     lifecycle_status,
     register_plan,
+    resolve_plan_decision,
+    start_plan_decision_review,
     start_change,
     start_review,
     submit_review,
+    submit_plan_decision_review,
     verify_change,
 )
 
@@ -97,6 +105,16 @@ class LifecycleTests(unittest.TestCase):
                 "review": (passing("review"),),
             },
             required_profiles=("development", "review"),
+        )
+
+    def plan_decision_project(self) -> Project:
+        base = self.project()
+        return Project(
+            identifier=base.identifier,
+            profiles=base.profiles,
+            required_profiles=base.required_profiles,
+            plan_decision_mode="provenance-gated-authored-review",
+            material_decision_categories=MATERIAL_DECISION_CATEGORIES,
         )
 
     def write_contract(self, path: Path, *, change_id: str = "change-1") -> None:
@@ -172,6 +190,103 @@ class LifecycleTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def write_authored_plan(
+        self, path: Path, digest: str, *, change_id: str = "change-1"
+    ) -> None:
+        self.write_plan(path, digest, change_id=change_id)
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        plan["schemaVersion"] = 3
+        plan["provenance"] = {
+            "kind": "authored",
+            "author": {
+                "actorId": "worker",
+                "contextId": "worker-context",
+                "kind": "agent",
+            },
+            "authority": {
+                "version": "0.1.1",
+                "digest": f"sha256:{'0' * 64}",
+            },
+        }
+        path.write_text(json.dumps(plan) + "\n", encoding="utf-8")
+
+    def write_plan_decision_review(
+        self,
+        path: Path,
+        assignment: dict[str, object],
+        *,
+        decision_category: str | None = None,
+    ) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": "engineering-process-plan-decision-review",
+                    "changeId": assignment["changeId"],
+                    "cycle": assignment["cycle"],
+                    "contractSha256": assignment["contractSha256"],
+                    "planSha256": assignment["planSha256"],
+                    "assignmentSha256": canonical_json_digest(assignment),
+                    "reviewer": assignment["reviewer"],
+                    "categoryAssessments": [
+                        {
+                            "category": category,
+                            "status": (
+                                "decision-required"
+                                if category == decision_category
+                                else "clear"
+                            ),
+                            "evidence": f"The reviewer assessed {category} against the exact plan.",
+                        }
+                        for category in MATERIAL_DECISION_CATEGORIES
+                    ],
+                    "verdict": (
+                        "decision-required" if decision_category else "clear"
+                    ),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def prepare_authored_plan_decision(
+        self, root: Path, inputs: Path
+    ) -> tuple[Project, dict[str, object]]:
+        project = self.plan_decision_project()
+        contract_path = inputs / "contract.json"
+        plan_path = inputs / "plan.json"
+        self.write_contract(contract_path)
+        state = start_change(
+            root,
+            project,
+            contract_path,
+            actor_id="worker",
+            context_id="worker-context",
+            kind="agent",
+        )
+        self.write_authored_plan(plan_path, state["contract"]["digest"])
+        register_plan(
+            root,
+            project,
+            "change-1",
+            plan_path,
+            actor_id="worker",
+            context_id="worker-context",
+            kind="agent",
+        )
+        _state, assignment = start_plan_decision_review(
+            root,
+            project,
+            "change-1",
+            actor_id="decision-reviewer",
+            context_id="fresh-plan-decision-context",
+            kind="agent",
+            method="isolated-context",
+            attested_by="test-host",
+            evidence="The host created a fresh read-only reviewer context.",
+        )
+        return project, assignment
 
     def review_quality(self, *, failed: tuple[str, ...] = ()):
         return {
@@ -362,6 +477,347 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual(state["phase"], "verified")
         return state
+
+    def test_authored_plan_requires_fresh_clear_assessment_before_implementation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project, assignment = self.prepare_authored_plan_decision(root, inputs)
+
+            with self.assertRaisesRegex(ContractError, "review artifact is missing"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+            review_path = inputs / "plan-decision-review.json"
+            self.write_plan_decision_review(review_path, assignment)
+            submit_plan_decision_review(
+                root, project, "change-1", review_path
+            )
+            with self.assertRaisesRegex(ContractError, "current project contract"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            state = begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            self.assertEqual("implementing", state["phase"])
+            self.assertTrue(state["planDecision"]["authorized"])
+
+    def test_authored_plan_assessment_fails_closed_on_source_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project, assignment = self.prepare_authored_plan_decision(root, inputs)
+            review_path = inputs / "plan-decision-review.json"
+            self.write_plan_decision_review(review_path, assignment)
+            submit_plan_decision_review(root, project, "change-1", review_path)
+            (root / "tracked.txt").write_text("drifted\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContractError, "stale.*implementation source"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_authored_plan_decision_evidence_survives_completion_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project, decision_assignment = self.prepare_authored_plan_decision(
+                root, inputs
+            )
+            decision_review_path = inputs / "plan-decision-review.json"
+            self.write_plan_decision_review(
+                decision_review_path, decision_assignment
+            )
+            submit_plan_decision_review(
+                root, project, "change-1", decision_review_path
+            )
+            begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            for profile in ("development", "review"):
+                verify_change(
+                    root,
+                    project,
+                    "change-1",
+                    profile,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            _state, assignment = start_review(
+                root,
+                "change-1",
+                actor_id="final-reviewer",
+                context_id="fresh-final-review-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a fresh final semantic review context.",
+            )
+            report_path = inputs / "review.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "changeId": "change-1",
+                        "cycle": 1,
+                        "checkpoint": assignment["checkpoint"],
+                        "workspaceFingerprint": assignment["workspaceFingerprint"],
+                        "comparisonBase": assignment["comparisonBase"],
+                        "reviewer": assignment["reviewer"],
+                        "independence": assignment["independence"],
+                        "quality": self.review_quality(),
+                        "verdict": "approved",
+                        "findings": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            submit_review(root, "change-1", report_path)
+            finish_change(
+                root,
+                "change-1",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            receipt_path = inputs / "receipt.json"
+
+            exported = export_receipt(root, "change-1", receipt_path)
+
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "authored", receipt["artifacts"]["planDecision"]["kind"]
+            )
+            self.assertIsNotNone(
+                receipt["artifacts"]["planDecision"]["contextReservation"]
+            )
+            self.assertEqual(exported, validate_receipt(receipt_path))
+
+    def test_decision_required_assessment_cannot_implement_without_owner_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project, assignment = self.prepare_authored_plan_decision(root, inputs)
+            review_path = inputs / "plan-decision-review.json"
+            self.write_plan_decision_review(
+                review_path, assignment, decision_category="architecture"
+            )
+            submit_plan_decision_review(root, project, "change-1", review_path)
+
+            with self.assertRaisesRegex(ContractError, "complete owner-decision chain"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_decision_required_assessment_reuses_exact_owner_resolution_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project, assignment = self.prepare_authored_plan_decision(root, inputs)
+            assessment_path = inputs / "plan-decision-review.json"
+            self.write_plan_decision_review(
+                assessment_path, assignment, decision_category="architecture"
+            )
+            _state, assessment = submit_plan_decision_review(
+                root, project, "change-1", assessment_path
+            )
+            recommendation = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "examples"
+                    / "recommendation.json"
+                ).read_text(encoding="utf-8")
+            )
+            assessment_digest = canonical_json_digest(assessment)
+            recommendation["decisionId"] = "change-1"
+            recommendation["coordinator"] = {
+                "actorId": "worker",
+                "contextId": "worker-context",
+                "kind": "agent",
+            }
+            binding = {
+                "id": "plan-decision-assessment",
+                "statement": "The recommendation is scoped to the exact fresh material-decision assessment for this authored plan.",
+                "source": f"plan-decision-review:{assessment_digest}",
+                "evidenceSha256": assessment_digest,
+            }
+            recommendation["invariants"].insert(1, binding)
+            for option in recommendation["options"]:
+                option["invariantAssessments"].insert(
+                    1,
+                    {
+                        "invariantId": "plan-decision-assessment",
+                        "status": "satisfied",
+                        "evidenceSha256": assessment_digest,
+                    },
+                )
+            recommendation_path = inputs / "recommendation.json"
+            recommendation_path.write_text(
+                json.dumps(recommendation) + "\n", encoding="utf-8"
+            )
+            assignment_result = start_recommendation_review(
+                root,
+                recommendation_path,
+                actor_id="recommendation-reviewer",
+                context_id="fresh-recommendation-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created another fresh read-only context.",
+            )
+            recommendation_assignment_path = root / assignment_result["assignment"]
+            recommendation_review = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "examples"
+                    / "recommendation-review.json"
+                ).read_text(encoding="utf-8")
+            )
+            recommendation_review["decisionId"] = "change-1"
+            recommendation_review["recommendationSha256"] = canonical_json_digest(
+                recommendation
+            )
+            recommendation_assignment = json.loads(
+                recommendation_assignment_path.read_text(encoding="utf-8")
+            )
+            recommendation_review["assignmentSha256"] = canonical_json_digest(
+                recommendation_assignment
+            )
+            recommendation_review["reviewer"] = recommendation_assignment["reviewer"]
+            recommendation_review["invariantAssessments"].insert(
+                1,
+                {
+                    "invariantId": "plan-decision-assessment",
+                    "status": "verified",
+                    "evidence": "The recommendation is bound to the exact assessment.",
+                },
+            )
+            recommendation_review_path = inputs / "recommendation-review.json"
+            recommendation_review_path.write_text(
+                json.dumps(recommendation_review) + "\n", encoding="utf-8"
+            )
+            resolution_path = inputs / "recommendation-resolution.json"
+            create_recommendation_resolution(
+                root,
+                recommendation_path,
+                recommendation_assignment_path,
+                recommendation_review_path,
+                selected_option_id="verify-before-completion",
+                owner_id="project-owner",
+                owner_evidence_sha256=f"sha256:{'9' * 64}",
+                selection_rationale_sha256=f"sha256:{'a' * 64}",
+                output=resolution_path,
+            )
+            resolve_plan_decision(
+                root,
+                project,
+                "change-1",
+                recommendation_path=recommendation_path,
+                assignment_path=recommendation_assignment_path,
+                review_path=recommendation_review_path,
+                resolution_path=resolution_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            state = begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.assertEqual("implementing", state["phase"])
+            self.assertTrue(state["planDecision"]["authorized"])
+
+    def test_opted_in_project_rejects_legacy_plan_without_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project = self.plan_decision_project()
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            state = start_change(
+                root,
+                project,
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+
+            with self.assertRaisesRegex(ContractError, "schema-3 plan"):
+                register_plan(
+                    root,
+                    project,
+                    "change-1",
+                    plan_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
 
     def test_verification_uses_registered_contract_comparison_base(self):
         with tempfile.TemporaryDirectory() as directory:

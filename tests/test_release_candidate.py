@@ -18,8 +18,75 @@ from engineering_process.release_candidate import (
     _resolved_improvement_catalog,
     prepare_release_candidate,
     render_release_pull_request,
+    validate_generated_release_lifecycle_plan,
 )
 class ReleaseCandidateTests(unittest.TestCase):
+    def enable_plan_decision_policy(self, root: Path) -> None:
+        project = {
+            "schemaVersion": 3,
+            "project": "sample",
+            "lifecycle": {
+                "requiredProfiles": ["development", "review"],
+                "planDecision": {
+                    "mode": "provenance-gated-authored-review",
+                    "materialCategories": [
+                        "architecture",
+                        "authority",
+                        "compatibility",
+                        "external-mutation",
+                        "lifecycle-order",
+                        "owner",
+                        "rollout",
+                        "scope",
+                        "trust-boundary",
+                    ],
+                },
+            },
+            "profiles": {
+                "development": [{
+                    "id": "unit",
+                    "run": ["python", "-c", "raise SystemExit(0)"],
+                    "timeoutSeconds": 10,
+                }],
+                "review": [{
+                    "id": "review",
+                    "run": ["python", "-c", "raise SystemExit(0)"],
+                    "timeoutSeconds": 10,
+                }],
+            },
+            "environment": {
+                "defaultProfile": "development",
+                "foregroundOnly": True,
+                "managedTools": [],
+                "profiles": {
+                    "development": ["python-runtime"],
+                    "review": ["python-runtime"],
+                },
+                "requirements": [{
+                    "id": "python-runtime",
+                    "description": "Python runtime",
+                    "probe": {
+                        "run": ["python", "--version"],
+                        "timeoutSeconds": 10,
+                        "readOnly": True,
+                        "outputStream": "combined",
+                        "outputRegex": "^Python 3\\.",
+                    },
+                    "remediation": "Install Python.",
+                }],
+                "setupActions": [],
+            },
+        }
+        (root / ".process" / "project.json").write_text(
+            json.dumps(project) + "\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", ".process/project.json"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "chore: adopt plan decision policy"],
+            cwd=root,
+            check=True,
+        )
+
     def assert_federated_migration_contract(
         self, aggregate: str, federated_migration: str | None
     ) -> None:
@@ -321,6 +388,42 @@ class ReleaseCandidateTests(unittest.TestCase):
                 "sha256:" + hashlib.sha256(contract_bytes).hexdigest(),
                 plan["contractDigest"],
             )
+
+    def test_adopted_policy_emits_and_exactly_recomputes_release_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_project(root)
+            self.enable_plan_decision_policy(root)
+            self.write_change(root)
+
+            prepare_release_candidate(root)
+
+            contract = json.loads(
+                (root / ".release" / "change.json").read_text(encoding="utf-8")
+            )
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(3, plan["schemaVersion"])
+            self.assertEqual("process-generated", plan["provenance"]["kind"])
+            validate_generated_release_lifecycle_plan(
+                root, project="sample", contract=contract, plan=plan
+            )
+
+            plan["provenance"]["generator"] = "claimed-generator"
+            with self.assertRaisesRegex(ContractError, "unknown.*generator"):
+                validate_generated_release_lifecycle_plan(
+                    root, project="sample", contract=contract, plan=plan
+                )
+
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
+            plan["approach"] = "A claimed generated plan with altered content."
+            with self.assertRaisesRegex(ContractError, "exact core recomputation"):
+                validate_generated_release_lifecycle_plan(
+                    root, project="sample", contract=contract, plan=plan
+                )
 
     def test_materialization_preserves_crlf_runtime_version_source(self):
         with tempfile.TemporaryDirectory() as directory:

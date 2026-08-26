@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/plan-decision-review.schema.json",
+  "title": "Fresh semantic material-decision assessment for an authored plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "changeId",
+    "cycle",
+    "contractSha256",
+    "planSha256",
+    "assignmentSha256",
+    "reviewer",
+    "categoryAssessments",
+    "verdict"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-plan-decision-review"},
+    "changeId": {"$ref": "#/$defs/id"},
+    "cycle": {"type": "integer", "minimum": 1},
+    "contractSha256": {"$ref": "#/$defs/digest"},
+    "planSha256": {"$ref": "#/$defs/digest"},
+    "assignmentSha256": {"$ref": "#/$defs/digest"},
+    "reviewer": {"$ref": "#/$defs/actor"},
+    "categoryAssessments": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "prefixItems": [
+        {"$ref": "#/$defs/assessmentArchitecture"},
+        {"$ref": "#/$defs/assessmentAuthority"},
+        {"$ref": "#/$defs/assessmentCompatibility"},
+        {"$ref": "#/$defs/assessmentExternalMutation"},
+        {"$ref": "#/$defs/assessmentLifecycleOrder"},
+        {"$ref": "#/$defs/assessmentOwner"},
+        {"$ref": "#/$defs/assessmentRollout"},
+        {"$ref": "#/$defs/assessmentScope"},
+        {"$ref": "#/$defs/assessmentTrustBoundary"}
+      ],
+      "items": false
+    },
+    "verdict": {"enum": ["clear", "decision-required"]}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "status", "evidence"],
+      "properties": {
+        "category": {"type": "string"},
+        "status": {"enum": ["clear", "decision-required"]},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    },
+    "assessmentArchitecture": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "architecture"}}}]},
+    "assessmentAuthority": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "authority"}}}]},
+    "assessmentCompatibility": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "compatibility"}}}]},
+    "assessmentExternalMutation": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "external-mutation"}}}]},
+    "assessmentLifecycleOrder": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "lifecycle-order"}}}]},
+    "assessmentOwner": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "owner"}}}]},
+    "assessmentRollout": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "rollout"}}}]},
+    "assessmentScope": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "scope"}}}]},
+    "assessmentTrustBoundary": {"allOf": [{"$ref": "#/$defs/assessment"}, {"properties": {"category": {"const": "trust-boundary"}}}]}
+  }
+}

@@ -28,6 +28,8 @@ class SchemaTests(unittest.TestCase):
             "improvement-resolution": "improvement-resolution",
             "improvement-signal": "improvement-signal",
             "plan": "plan",
+            "plan-decision-review": "plan-decision-review",
+            "plan-decision-review-assignment": "plan-decision-review-assignment",
             "project": "project",
             "recommendation": "recommendation",
             "recommendation-resolution": "recommendation-resolution",

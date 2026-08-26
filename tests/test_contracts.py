@@ -20,6 +20,8 @@ from engineering_process.contracts import (
     validate_improvement_resolution,
     validate_improvement_signal,
     validate_plan,
+    validate_plan_decision_review,
+    validate_plan_decision_review_assignment,
     validate_process_lock,
     validate_project,
     validate_release,
@@ -72,6 +74,66 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertEqual(project.identifier, "sample-project")
         self.assertEqual(project.profiles["development"][0].run[0], "python")
+
+    def test_plan_decision_policy_is_additive_and_canonical(self):
+        document = self.valid_project()
+        categories = [
+            "architecture",
+            "authority",
+            "compatibility",
+            "external-mutation",
+            "lifecycle-order",
+            "owner",
+            "rollout",
+            "scope",
+            "trust-boundary",
+        ]
+        document["lifecycle"]["planDecision"] = {
+            "mode": "provenance-gated-authored-review",
+            "materialCategories": categories,
+        }
+
+        project = validate_project(document)
+
+        self.assertEqual(
+            "provenance-gated-authored-review", project.plan_decision_mode
+        )
+        self.assertEqual(tuple(categories), project.material_decision_categories)
+        document["schemaVersion"] = 2
+        document["environment"].pop("foregroundOnly")
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_project(document)
+
+    def test_plan_schema_three_requires_explicit_provenance(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "plan.json").read_text(encoding="utf-8")
+        )
+        validate_plan(document)
+        del document["provenance"]
+        with self.assertRaisesRegex(ContractError, "provenance"):
+            validate_plan(document)
+
+        document["schemaVersion"] = 2
+        validate_plan(document)
+
+    def test_plan_decision_artifacts_derive_verdict_from_all_categories(self):
+        assignment = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "plan-decision-review-assignment.json"
+            ).read_text(encoding="utf-8")
+        )
+        review = json.loads(
+            (PROCESS_ROOT / "examples" / "plan-decision-review.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validate_plan_decision_review_assignment(assignment)
+        validate_plan_decision_review(review)
+        review["categoryAssessments"][0]["status"] = "decision-required"
+        with self.assertRaisesRegex(ContractError, "must be derived"):
+            validate_plan_decision_review(review)
 
     def test_improvement_contracts_validate_packaged_examples(self):
         validators = {

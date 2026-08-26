@@ -16,7 +16,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [1, 2]},
+    "schemaVersion": {"enum": [1, 2, 3]},
     "changeId": {
       "type": "string",
       "maxLength": 64,
@@ -100,12 +100,18 @@
       "type": "array",
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    },
+    "provenance": {
+      "oneOf": [
+        {"$ref": "#/$defs/authoredProvenance"},
+        {"$ref": "#/$defs/generatedProvenance"}
+      ]
     }
   },
   "allOf": [
     {
       "if": {
-        "properties": {"schemaVersion": {"const": 2}},
+        "properties": {"schemaVersion": {"enum": [2, 3]}},
         "required": ["schemaVersion"]
       },
       "then": {
@@ -132,6 +138,85 @@
           "openDecisions": {"maxItems": 256}
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"enum": [1, 2]}},
+        "required": ["schemaVersion"]
+      },
+      "then": {"not": {"required": ["provenance"]}}
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 3}},
+        "required": ["schemaVersion"]
+      },
+      "then": {"required": ["provenance"]}
     }
-  ]
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "authoredProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "author", "authority"],
+      "properties": {
+        "kind": {"const": "authored"},
+        "author": {"$ref": "#/$defs/actor"},
+        "authority": {"$ref": "#/$defs/authority"}
+      }
+    },
+    "generatedProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "generator", "authority", "inputs"],
+      "properties": {
+        "kind": {"const": "process-generated"},
+        "generator": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        },
+        "authority": {"$ref": "#/$defs/authority"},
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$).+$"
+              },
+              "sha256": {"$ref": "#/$defs/digest"}
+            }
+          }
+        }
+      }
+    }
+  }
 }

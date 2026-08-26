@@ -12,8 +12,12 @@ the canonical verification and review lifecycle.
 
 ## Workflow
 
-1. Confirm processctl change status reports planned or changes-requested, then register
-   the implementation actor and isolated context with processctl change implement.
+1. Confirm processctl change status reports planned or changes-requested. When the
+   project has adopted plan-decision enforcement, require an exactly recomputed
+   registered generated plan or current authored-plan evidence from a genuinely
+   fresh read-only reviewer. A clear assessment may proceed; `decision-required`
+   needs the exact reviewed recommendation and owner resolution. Then register the
+   implementation actor and isolated context with processctl change implement.
 2. Read the contract, plan, nearest AGENTS.md, and affected project owners. Resolve a
    conflict through the owning contract instead of silently changing scope.
 3. Implement work items in dependency order. Add or update proving tests at the lowest
@@ -32,6 +36,8 @@ the canonical verification and review lifecycle.
 ## Hard gates
 
 - Do not implement before a valid plan and required sign-off.
+- Do not implement through missing, stale, scope-mismatched, self-authored, or
+  unresolved plan-decision evidence.
 - Do not expand product behavior, compatibility, dependencies, or trust boundaries
   without returning to specification and planning.
 - The implementation actor cannot perform or approve independent review for a cycle

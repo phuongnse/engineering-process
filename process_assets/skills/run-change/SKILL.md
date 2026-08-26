@@ -22,7 +22,9 @@ semantics shared by every project.
 2. Route the current phase without creating a parallel plan or checklist:
    - no registered change: use define-change-contract;
    - specified: use plan-change;
-   - planned or changes-requested: use implement-change;
+   - planned or changes-requested: use implement-change; when the adopted project
+     policy requires plan-decision evidence, complete that gate before registering
+     the first implementation actor;
    - implementing: use verify-change after a clean immutable checkpoint exists;
    - improvement-required: use evolve-process and classify before corrective work;
    - improvement-pending: use cross-repo-change and wait for the required artifact chain;

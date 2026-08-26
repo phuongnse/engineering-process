@@ -4,16 +4,23 @@
     {
       "id": "run-new-production-change",
       "skill": "run-change",
-      "prompt": "Implement a non-trivial product change in a freshly bootstrapped repository. No lifecycle state exists yet, and publication was not requested.",
+      "prompt": "Implement a non-trivial authored product change in a repository that has adopted provenance-gated-authored-review. No lifecycle state exists yet, the plan may contain a material decision, and publication was not requested.",
       "mustInclude": [
         "start with specification",
         "plan before implementation",
+        "fresh semantic plan-decision assessment before implementation",
+        "decision-required remains blocked for reviewed recommendation and owner resolution",
         "baseline verification on an immutable checkpoint",
         "independent reviewer in a separate context",
         "completion without publication"
       ],
       "mustNotInclude": [
         "implementation before specification",
+        "risk-only or heuristic decision classification",
+        "universal semantic review of exactly recomputed generated plans",
+        "daemon, webhook, or hosted reviewer platform",
+        "reviewer reviewing reviewer or assessment-of-assessment",
+        "dynamic approval chain or generic workflow engine",
         "self-review",
         "implicit push or release"
       ]
