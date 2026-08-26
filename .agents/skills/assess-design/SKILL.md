@@ -39,6 +39,9 @@ product behavior or reopening foundational choices.
    resolution as decision evidence, never as lifecycle, merge, release, deployment,
    or adoption authority.
 10. Return ready only when blocking decisions and required approvals are resolved.
+    Treat every unreviewed design paragraph, generated summary, or conversational
+    preference as candidate-only; prose becomes decision authority only through its
+    governing reviewed artifact and owner resolution.
 
 ## Hard gates
 
