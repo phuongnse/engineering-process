@@ -22,7 +22,9 @@ semantics shared by every project.
 2. Route the current phase without creating a parallel plan or checklist:
    - no registered change: use define-change-contract;
    - specified: use plan-change;
-   - planned or changes-requested: use implement-change;
+   - planned or changes-requested: use implement-change; when the adopted project
+     policy requires plan-decision evidence, complete that gate before registering
+     the first implementation actor;
    - implementing: use verify-change after a clean immutable checkpoint exists;
    - improvement-required: use evolve-process and classify before corrective work;
    - improvement-pending: use cross-repo-change and wait for the required artifact chain;
@@ -45,7 +47,8 @@ semantics shared by every project.
    do not choose a new scope, authority, architecture, or lifecycle route implicitly.
 6. After a valid finding, preserve the reviewed checkpoint, begin the next
    implementation cycle, resolve the finding, and repeat every invalidated profile
-   and independent review.
+   and independent review. Under adopted plan-decision policy, refresh the authored
+   plan assessment in a new context for the current source before opening that cycle.
 7. Report the processctl phase, cycle, current evidence, blockers, and next owner.
    Never call a task complete from prose alone.
 

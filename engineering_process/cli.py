@@ -28,6 +28,8 @@ from .contracts import (
     validate_improvement_resolution,
     validate_improvement_signal,
     validate_plan,
+    validate_plan_decision_review,
+    validate_plan_decision_review_assignment,
     validate_process_lock,
     validate_project,
     validate_recommendation,
@@ -79,10 +81,13 @@ from .lifecycle import (
     lifecycle_status,
     ingest_remote_verification,
     register_plan,
+    resolve_plan_decision,
     request_remote_verification,
     start_change,
+    start_plan_decision_review,
     start_review,
     submit_review,
+    submit_plan_decision_review,
     verify_change,
 )
 from .runner import run_profile, source_state
@@ -295,6 +300,8 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "improvement-resolution": validate_improvement_resolution,
         "improvement-signal": validate_improvement_signal,
         "plan": validate_plan,
+        "plan-decision-review": validate_plan_decision_review,
+        "plan-decision-review-assignment": validate_plan_decision_review_assignment,
         "recommendation": validate_recommendation,
         "recommendation-resolution": validate_recommendation_resolution,
         "recommendation-review": validate_recommendation_review,
@@ -628,11 +635,80 @@ def command_change_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_change_decision_start(args: argparse.Namespace) -> int:
+    project = _lifecycle_project(args)
+    state, assignment = start_plan_decision_review(
+        args.project_root,
+        project,
+        args.change_id,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+        method=args.method,
+        attested_by=args.attested_by,
+        evidence=args.attestation_evidence,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change decision start",
+            state,
+            verdict="pending",
+            assignment=state["planDecision"]["assignment"]["path"],
+            planSha256=assignment["planSha256"],
+        ),
+    )
+    return 0
+
+
+def command_change_decision_submit(args: argparse.Namespace) -> int:
+    project = _lifecycle_project(args)
+    state, review = submit_plan_decision_review(
+        args.project_root, project, args.change_id, args.review
+    )
+    _emit(
+        args,
+        _change_result(
+            "change decision submit",
+            state,
+            verdict=review["verdict"],
+            review=state["planDecision"]["review"]["path"],
+        ),
+    )
+    return 0
+
+
+def command_change_decision_resolve(args: argparse.Namespace) -> int:
+    project = _lifecycle_project(args)
+    state = resolve_plan_decision(
+        args.project_root,
+        project,
+        args.change_id,
+        recommendation_path=args.recommendation,
+        assignment_path=args.assignment,
+        review_path=args.recommendation_review,
+        resolution_path=args.resolution,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change decision resolve",
+            state,
+            resolution=state["planDecision"]["resolution"]["path"],
+        ),
+    )
+    return 0
+
+
 def command_change_implement(args: argparse.Namespace) -> int:
-    _lifecycle_project(args)
+    project = _lifecycle_project(args)
     state = begin_implementation(
         args.project_root,
         args.change_id,
+        project=project,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -1597,6 +1673,8 @@ def build_parser() -> argparse.ArgumentParser:
             "improvement-resolution",
             "improvement-signal",
             "plan",
+            "plan-decision-review",
+            "plan-decision-review-assignment",
             "recommendation",
             "recommendation-resolution",
             "recommendation-review",
@@ -2360,6 +2438,47 @@ def build_parser() -> argparse.ArgumentParser:
     change_plan.add_argument("--change-id", required=True)
     change_plan.add_argument("--plan", type=Path, required=True)
     change_plan.set_defaults(handler=command_change_plan)
+
+    change_decision = change_commands.add_parser(
+        "decision", help="Assess material decisions in an authored plan"
+    )
+    decision_commands = change_decision.add_subparsers(
+        dest="change_decision_command", required=True
+    )
+    decision_start = decision_commands.add_parser(
+        "start", help="Reserve a fresh reviewer and create the plan assessment assignment"
+    )
+    _add_lifecycle_common(decision_start)
+    _add_actor(decision_start)
+    decision_start.add_argument("--change-id", required=True)
+    decision_start.add_argument(
+        "--method", choices=("isolated-context", "separate-person"), required=True
+    )
+    decision_start.add_argument("--attested-by", required=True)
+    decision_start.add_argument("--attestation-evidence", required=True)
+    decision_start.set_defaults(handler=command_change_decision_start)
+
+    decision_submit = decision_commands.add_parser(
+        "submit", help="Validate and register the fresh material-decision assessment"
+    )
+    _add_lifecycle_common(decision_submit)
+    decision_submit.add_argument("--change-id", required=True)
+    decision_submit.add_argument("--review", type=Path, required=True)
+    decision_submit.set_defaults(handler=command_change_decision_submit)
+
+    decision_resolve = decision_commands.add_parser(
+        "resolve", help="Bind an approved recommendation and owner resolution"
+    )
+    _add_lifecycle_common(decision_resolve)
+    _add_actor(decision_resolve)
+    decision_resolve.add_argument("--change-id", required=True)
+    decision_resolve.add_argument("--recommendation", type=Path, required=True)
+    decision_resolve.add_argument("--assignment", type=Path, required=True)
+    decision_resolve.add_argument(
+        "--recommendation-review", type=Path, required=True
+    )
+    decision_resolve.add_argument("--resolution", type=Path, required=True)
+    decision_resolve.set_defaults(handler=command_change_decision_resolve)
 
     change_implement = change_commands.add_parser(
         "implement", help="Register an implementation actor and begin a cycle"

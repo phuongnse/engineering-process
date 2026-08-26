@@ -45,6 +45,9 @@
     "comparisonBase": {"type": "string"},
     "contract": {"$ref": "#/$defs/artifact"},
     "plan": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "planDecision": {
+      "anyOf": [{"$ref": "#/$defs/planDecision"}, {"type": "null"}]
+    },
     "implementationActors": {"type": "array", "items": {"$ref": "#/$defs/actor"}},
     "verification": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
     "remoteVerification": {
@@ -65,6 +68,30 @@
     }
   },
   "$defs": {
+    "planDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "authorized",
+        "assignment",
+        "review",
+        "recommendation",
+        "recommendationAssignment",
+        "recommendationReview",
+        "resolution"
+      ],
+      "properties": {
+        "kind": {"enum": ["authored", "process-generated"]},
+        "authorized": {"type": "boolean"},
+        "assignment": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "review": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendation": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendationAssignment": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendationReview": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "resolution": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      }
+    },
     "actor": {
       "type": "object",
       "required": ["actorId", "contextId", "kind"],

@@ -57,6 +57,18 @@ MAX_PROJECT_PROFILES = 64
 MAX_CHECKS_PER_PROFILE = 256
 MAX_PROJECT_CHECKS = 1_024
 MAX_CONTRACT_ITEMS = 256
+PLAN_DECISION_MODE = "provenance-gated-authored-review"
+MATERIAL_DECISION_CATEGORIES = (
+    "architecture",
+    "authority",
+    "compatibility",
+    "external-mutation",
+    "lifecycle-order",
+    "owner",
+    "rollout",
+    "scope",
+    "trust-boundary",
+)
 RECOMMENDATION_CHALLENGE_CATEGORIES = (
     "assumption-evidence",
     "invariant-trace",
@@ -343,6 +355,8 @@ class Project:
     impact: ProjectImpact | None = None
     quality_extensions: tuple[str, ...] = ()
     remote_verification: dict[str, RemoteVerificationRequirement] | None = None
+    plan_decision_mode: str | None = None
+    material_decision_categories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1410,7 +1424,9 @@ def validate_project(document: Any, path: str = "project") -> Project:
     _exact_keys(
         lifecycle,
         required={"requiredProfiles"},
-        optional={"qualityExtensions"} if schema_version >= 3 else set(),
+        optional={"planDecision", "qualityExtensions"}
+        if schema_version >= 3
+        else set(),
         path=f"{path}.lifecycle",
     )
     required_profiles = _string_list(
@@ -1447,6 +1463,38 @@ def validate_project(document: Any, path: str = "project") -> Project:
         raise ContractError(
             f"{path}.lifecycle.qualityExtensions: extensions must use project-* names"
         )
+    plan_decision_mode: str | None = None
+    material_decision_categories: tuple[str, ...] = ()
+    if "planDecision" in lifecycle:
+        plan_decision = _object(
+            lifecycle["planDecision"], f"{path}.lifecycle.planDecision"
+        )
+        _exact_keys(
+            plan_decision,
+            required={"mode", "materialCategories"},
+            path=f"{path}.lifecycle.planDecision",
+        )
+        plan_decision_mode = _string(
+            plan_decision["mode"],
+            f"{path}.lifecycle.planDecision.mode",
+            max_length=64,
+        )
+        if plan_decision_mode != PLAN_DECISION_MODE:
+            raise ContractError(
+                f"{path}.lifecycle.planDecision.mode: unsupported plan decision mode"
+            )
+        categories = _string_list(
+            plan_decision["materialCategories"],
+            f"{path}.lifecycle.planDecision.materialCategories",
+            maximum=len(MATERIAL_DECISION_CATEGORIES),
+            pattern=PROFILE_PATTERN,
+        )
+        if tuple(categories) != MATERIAL_DECISION_CATEGORIES:
+            raise ContractError(
+                f"{path}.lifecycle.planDecision.materialCategories: must contain "
+                "the complete canonical material-decision category set"
+            )
+        material_decision_categories = tuple(categories)
 
     impact = (
         _validate_impact(value["impact"], f"{path}.impact")
@@ -1585,6 +1633,8 @@ def validate_project(document: Any, path: str = "project") -> Project:
         impact=impact,
         quality_extensions=tuple(quality_extensions),
         remote_verification=remote_verification,
+        plan_decision_mode=plan_decision_mode,
+        material_decision_categories=material_decision_categories,
     )
 
 
@@ -4343,9 +4393,9 @@ def validate_change(document: Any, path: str = "change") -> None:
 def validate_plan(document: Any, path: str = "plan") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2}:
-        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
-    bounded = schema_version == 2
+    if schema_version not in {1, 2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
+    bounded = schema_version in {2, 3}
     _exact_keys(
         value,
         required={
@@ -4357,10 +4407,98 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             "acceptancePlan",
             "risks",
             "openDecisions",
-        },
+        }
+        | ({"provenance"} if schema_version == 3 else set()),
         optional={"$schema"},
         path=path,
     )
+    if schema_version == 3:
+        provenance_path = f"{path}.provenance"
+        provenance = _object(value["provenance"], provenance_path)
+        provenance_kind = provenance.get("kind")
+        if provenance_kind == "authored":
+            _exact_keys(
+                provenance,
+                required={"kind", "author", "authority"},
+                path=provenance_path,
+            )
+            _validate_actor(provenance["author"], f"{provenance_path}.author")
+        elif provenance_kind == "process-generated":
+            _exact_keys(
+                provenance,
+                required={"kind", "generator", "authority", "inputs"},
+                path=provenance_path,
+            )
+            generator = _string(
+                provenance["generator"],
+                f"{provenance_path}.generator",
+                max_length=64,
+            )
+            if PROFILE_PATTERN.fullmatch(generator) is None:
+                raise ContractError(f"{provenance_path}.generator: invalid generator id")
+            inputs = provenance["inputs"]
+            if not isinstance(inputs, list) or not 1 <= len(inputs) <= 16:
+                raise ContractError(
+                    f"{provenance_path}.inputs: must contain 1 to 16 source inputs"
+                )
+            input_paths: list[str] = []
+            for index, raw_input in enumerate(inputs):
+                input_path = f"{provenance_path}.inputs[{index}]"
+                source_input = _object(raw_input, input_path)
+                _exact_keys(
+                    source_input,
+                    required={"path", "sha256"},
+                    path=input_path,
+                )
+                relative = _working_directory(
+                    source_input["path"], f"{input_path}.path"
+                )
+                if relative == ".":
+                    raise ContractError(f"{input_path}.path: must identify a file")
+                input_paths.append(relative)
+                digest = _string(
+                    source_input["sha256"],
+                    f"{input_path}.sha256",
+                    max_length=71,
+                )
+                if DIGEST_PATTERN.fullmatch(digest) is None:
+                    raise ContractError(
+                        f"{input_path}.sha256: must be a lowercase sha256 digest"
+                    )
+            if input_paths != sorted(set(input_paths)):
+                raise ContractError(
+                    f"{provenance_path}.inputs: must be sorted by path and unique"
+                )
+        else:
+            raise ContractError(
+                f"{provenance_path}.kind: must be authored or process-generated"
+            )
+        authority = _object(
+            provenance["authority"], f"{provenance_path}.authority"
+        )
+        _exact_keys(
+            authority,
+            required={"version", "digest"},
+            path=f"{provenance_path}.authority",
+        )
+        version = _string(
+            authority["version"],
+            f"{provenance_path}.authority.version",
+            max_length=64,
+        )
+        if FINAL_SEMVER_PATTERN.fullmatch(version) is None:
+            raise ContractError(
+                f"{provenance_path}.authority.version: must be final SemVer X.Y.Z"
+            )
+        digest = _string(
+            authority["digest"],
+            f"{provenance_path}.authority.digest",
+            max_length=71,
+        )
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise ContractError(
+                f"{provenance_path}.authority.digest: must be a lowercase sha256 digest"
+            )
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
     if PROFILE_PATTERN.fullmatch(change_id) is None:
         raise ContractError(f"{path}.changeId: invalid change id")
@@ -4472,6 +4610,216 @@ def validate_plan(document: Any, path: str = "plan") -> None:
             decisions,
             f"{path}.openDecisions",
             maximum=MAX_CONTRACT_ITEMS if bounded else None,
+        )
+
+
+def _validate_plan_decision_source(value: Any, path: str) -> None:
+    source = _object(value, path)
+    _exact_keys(
+        source,
+        required={"checkpoint", "comparisonBase", "workspaceFingerprint"},
+        path=path,
+    )
+    for name in ("checkpoint", "comparisonBase"):
+        commit = _string(source[name], f"{path}.{name}", max_length=40)
+        if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+            raise ContractError(f"{path}.{name}: must be a full lowercase Git commit")
+    fingerprint = _string(
+        source["workspaceFingerprint"],
+        f"{path}.workspaceFingerprint",
+        max_length=71,
+    )
+    if DIGEST_PATTERN.fullmatch(fingerprint) is None:
+        raise ContractError(
+            f"{path}.workspaceFingerprint: must be a lowercase sha256 digest"
+        )
+
+
+def _validate_plan_decision_authority(value: Any, path: str) -> None:
+    authority = _object(value, path)
+    _exact_keys(authority, required={"version", "digest"}, path=path)
+    version = _string(authority["version"], f"{path}.version", max_length=64)
+    if FINAL_SEMVER_PATTERN.fullmatch(version) is None:
+        raise ContractError(f"{path}.version: must be final SemVer X.Y.Z")
+    digest = _string(authority["digest"], f"{path}.digest", max_length=71)
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise ContractError(f"{path}.digest: must be a lowercase sha256 digest")
+
+
+def validate_plan_decision_review_assignment(
+    document: Any, path: str = "plan decision review assignment"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "changeId",
+            "cycle",
+            "contractSha256",
+            "planSha256",
+            "policySha256",
+            "source",
+            "authority",
+            "planAuthor",
+            "reviewer",
+            "independence",
+            "materialCategories",
+            "contextReservationSha256",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    _schema_version(value, path)
+    if value["kind"] != "engineering-process-plan-decision-review-assignment":
+        raise ContractError(f"{path}.kind: invalid plan decision assignment kind")
+    change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
+    if PROFILE_PATTERN.fullmatch(change_id) is None:
+        raise ContractError(f"{path}.changeId: invalid change id")
+    cycle = value["cycle"]
+    if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 1:
+        raise ContractError(f"{path}.cycle: must be a positive integer")
+    for name in (
+        "contractSha256",
+        "planSha256",
+        "policySha256",
+        "contextReservationSha256",
+    ):
+        digest = _string(value[name], f"{path}.{name}", max_length=71)
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise ContractError(f"{path}.{name}: must be a lowercase sha256 digest")
+    _validate_plan_decision_source(value["source"], f"{path}.source")
+    _validate_plan_decision_authority(value["authority"], f"{path}.authority")
+    author = _validate_actor(value["planAuthor"], f"{path}.planAuthor")
+    reviewer = _validate_actor(value["reviewer"], f"{path}.reviewer")
+    if (
+        author["actorId"] == reviewer["actorId"]
+        or author["contextId"] == reviewer["contextId"]
+    ):
+        raise ContractError(
+            f"{path}.reviewer: must use an actor and context independent of the plan author"
+        )
+    independence = _object(value["independence"], f"{path}.independence")
+    _exact_keys(
+        independence,
+        required={"method", "attestedBy", "evidence"},
+        path=f"{path}.independence",
+    )
+    if independence["method"] not in {"isolated-context", "separate-person"}:
+        raise ContractError(f"{path}.independence.method: invalid method")
+    if (
+        reviewer["kind"] == "agent"
+        and independence["method"] != "isolated-context"
+    ) or (
+        reviewer["kind"] == "human"
+        and independence["method"] != "separate-person"
+    ):
+        raise ContractError(
+            f"{path}.independence.method: does not match reviewer kind"
+        )
+    attested_by = _string(
+        independence["attestedBy"],
+        f"{path}.independence.attestedBy",
+        max_length=256,
+    )
+    if attested_by in {reviewer["actorId"], reviewer["contextId"]}:
+        raise ContractError(f"{path}.independence: cannot be self-attested")
+    _string(
+        independence["evidence"],
+        f"{path}.independence.evidence",
+        max_length=2000,
+    )
+    categories = _string_list(
+        value["materialCategories"],
+        f"{path}.materialCategories",
+        maximum=len(MATERIAL_DECISION_CATEGORIES),
+        pattern=PROFILE_PATTERN,
+    )
+    if tuple(categories) != MATERIAL_DECISION_CATEGORIES:
+        raise ContractError(
+            f"{path}.materialCategories: must contain the complete canonical set"
+        )
+
+
+def validate_plan_decision_review(
+    document: Any, path: str = "plan decision review"
+) -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "changeId",
+            "cycle",
+            "contractSha256",
+            "planSha256",
+            "assignmentSha256",
+            "reviewer",
+            "categoryAssessments",
+            "verdict",
+        },
+        optional={"$schema"},
+        path=path,
+    )
+    _schema_version(value, path)
+    if value["kind"] != "engineering-process-plan-decision-review":
+        raise ContractError(f"{path}.kind: invalid plan decision review kind")
+    change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
+    if PROFILE_PATTERN.fullmatch(change_id) is None:
+        raise ContractError(f"{path}.changeId: invalid change id")
+    cycle = value["cycle"]
+    if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 1:
+        raise ContractError(f"{path}.cycle: must be a positive integer")
+    for name in ("contractSha256", "planSha256", "assignmentSha256"):
+        digest = _string(value[name], f"{path}.{name}", max_length=71)
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise ContractError(f"{path}.{name}: must be a lowercase sha256 digest")
+    _validate_actor(value["reviewer"], f"{path}.reviewer")
+    assessments = value["categoryAssessments"]
+    if (
+        not isinstance(assessments, list)
+        or len(assessments) != len(MATERIAL_DECISION_CATEGORIES)
+    ):
+        raise ContractError(
+            f"{path}.categoryAssessments: must assess every material category"
+        )
+    categories: list[str] = []
+    statuses: list[str] = []
+    for index, raw_assessment in enumerate(assessments):
+        assessment_path = f"{path}.categoryAssessments[{index}]"
+        assessment = _object(raw_assessment, assessment_path)
+        _exact_keys(
+            assessment,
+            required={"category", "status", "evidence"},
+            path=assessment_path,
+        )
+        category = _string(
+            assessment["category"], f"{assessment_path}.category", max_length=64
+        )
+        categories.append(category)
+        status = assessment["status"]
+        if status not in {"clear", "decision-required"}:
+            raise ContractError(f"{assessment_path}.status: invalid assessment status")
+        statuses.append(status)
+        _string(
+            assessment["evidence"],
+            f"{assessment_path}.evidence",
+            max_length=2000,
+        )
+    if tuple(categories) != MATERIAL_DECISION_CATEGORIES:
+        raise ContractError(
+            f"{path}.categoryAssessments: must use the canonical category order"
+        )
+    expected_verdict = (
+        "decision-required"
+        if "decision-required" in statuses
+        else "clear"
+    )
+    if value["verdict"] != expected_verdict:
+        raise ContractError(
+            f"{path}.verdict: must be derived from the category assessments"
         )
 
 
@@ -5207,7 +5555,7 @@ def validate_completion(document: Any, path: str = "completion") -> None:
             "verification",
             "review",
         },
-        optional={"improvements", "remoteVerification"},
+        optional={"improvements", "planDecision", "remoteVerification"},
         path=path,
     )
     if value["schemaVersion"] != 1:
@@ -5245,6 +5593,40 @@ def validate_completion(document: Any, path: str = "completion") -> None:
         _artifact_reference(
             remote_verification, f"{path}.remoteVerification"
         )
+    plan_decision = value.get("planDecision")
+    if plan_decision is not None:
+        decision = _object(plan_decision, f"{path}.planDecision")
+        _exact_keys(
+            decision,
+            required={
+                "kind",
+                "authorized",
+                "assignment",
+                "review",
+                "recommendation",
+                "recommendationAssignment",
+                "recommendationReview",
+                "resolution",
+            },
+            path=f"{path}.planDecision",
+        )
+        if decision["kind"] not in {"authored", "process-generated"}:
+            raise ContractError(f"{path}.planDecision.kind: invalid provenance kind")
+        if decision["authorized"] is not True:
+            raise ContractError(
+                f"{path}.planDecision: must be implementation-authorized"
+            )
+        for field in (
+            "assignment",
+            "review",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        ):
+            reference = decision[field]
+            if reference is not None:
+                _artifact_reference(reference, f"{path}.planDecision.{field}")
     improvements = value.get("improvements", [])
     if not isinstance(improvements, list) or len(improvements) > MAX_CONTRACT_ITEMS:
         raise ContractError(

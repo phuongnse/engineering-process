@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-plan-decision-review",
+  "changeId": "issue-123",
+  "cycle": 1,
+  "contractSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "planSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "assignmentSha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "reviewer": {
+    "actorId": "decision-reviewer",
+    "contextId": "fresh-decision-assessment-context",
+    "kind": "agent"
+  },
+  "categoryAssessments": [
+    {"category": "architecture", "status": "clear", "evidence": "The plan uses the already selected architecture."},
+    {"category": "authority", "status": "clear", "evidence": "No authority choice remains open."},
+    {"category": "compatibility", "status": "clear", "evidence": "Compatibility behavior is explicit."},
+    {"category": "external-mutation", "status": "clear", "evidence": "External mutations are already authorized or absent."},
+    {"category": "lifecycle-order", "status": "clear", "evidence": "Lifecycle ordering is fixed by policy."},
+    {"category": "owner", "status": "clear", "evidence": "Every affected surface has an existing owner."},
+    {"category": "rollout", "status": "clear", "evidence": "The rollout boundary is already decided."},
+    {"category": "scope", "status": "clear", "evidence": "The plan stays within the accepted scope."},
+    {"category": "trust-boundary", "status": "clear", "evidence": "No new trust-boundary choice is hidden in implementation."}
+  ],
+  "verdict": "clear"
+}

@@ -13,13 +13,85 @@ from engineering_process.contracts import (
     validate_release,
     validate_release_change,
 )
+from engineering_process.evidence import (
+    _canonical_digest,
+    _plan_decision_entries,
+    _validate_plan_decision_receipt,
+)
 from engineering_process.publication import validate_pull_request
 from engineering_process.release_candidate import (
     _resolved_improvement_catalog,
     prepare_release_candidate,
     render_release_pull_request,
+    validate_generated_release_lifecycle_plan,
 )
 class ReleaseCandidateTests(unittest.TestCase):
+    def enable_plan_decision_policy(self, root: Path) -> None:
+        project = {
+            "schemaVersion": 3,
+            "project": "sample",
+            "lifecycle": {
+                "requiredProfiles": ["development", "review"],
+                "planDecision": {
+                    "mode": "provenance-gated-authored-review",
+                    "materialCategories": [
+                        "architecture",
+                        "authority",
+                        "compatibility",
+                        "external-mutation",
+                        "lifecycle-order",
+                        "owner",
+                        "rollout",
+                        "scope",
+                        "trust-boundary",
+                    ],
+                },
+            },
+            "profiles": {
+                "development": [{
+                    "id": "unit",
+                    "run": ["python", "-c", "raise SystemExit(0)"],
+                    "timeoutSeconds": 10,
+                }],
+                "review": [{
+                    "id": "review",
+                    "run": ["python", "-c", "raise SystemExit(0)"],
+                    "timeoutSeconds": 10,
+                }],
+            },
+            "environment": {
+                "defaultProfile": "development",
+                "foregroundOnly": True,
+                "managedTools": [],
+                "profiles": {
+                    "development": ["python-runtime"],
+                    "review": ["python-runtime"],
+                },
+                "requirements": [{
+                    "id": "python-runtime",
+                    "description": "Python runtime",
+                    "probe": {
+                        "run": ["python", "--version"],
+                        "timeoutSeconds": 10,
+                        "readOnly": True,
+                        "outputStream": "combined",
+                        "outputRegex": "^Python 3\\.",
+                    },
+                    "remediation": "Install Python.",
+                }],
+                "setupActions": [],
+            },
+        }
+        (root / ".process" / "project.json").write_text(
+            json.dumps(project) + "\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", ".process/project.json"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "chore: adopt plan decision policy"],
+            cwd=root,
+            check=True,
+        )
+
     def assert_federated_migration_contract(
         self, aggregate: str, federated_migration: str | None
     ) -> None:
@@ -321,6 +393,178 @@ class ReleaseCandidateTests(unittest.TestCase):
                 "sha256:" + hashlib.sha256(contract_bytes).hexdigest(),
                 plan["contractDigest"],
             )
+
+    def test_adopted_policy_emits_and_exactly_recomputes_release_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_project(root)
+            self.enable_plan_decision_policy(root)
+            self.write_change(root)
+
+            prepare_release_candidate(root)
+
+            contract = json.loads(
+                (root / ".release" / "change.json").read_text(encoding="utf-8")
+            )
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(3, plan["schemaVersion"])
+            self.assertEqual("process-generated", plan["provenance"]["kind"])
+            validate_generated_release_lifecycle_plan(
+                root, project="sample", contract=contract, plan=plan
+            )
+
+            for relative in (
+                ".process/project.json",
+                ".release/change.json",
+                "release.json",
+            ):
+                path = root / relative
+                original = path.read_bytes()
+                for malformed in (b"{", b"\xff"):
+                    with self.subTest(relative=relative, malformed=malformed):
+                        path.write_bytes(malformed)
+                        with self.assertRaisesRegex(
+                            ContractError, "invalid UTF-8 JSON"
+                        ):
+                            validate_generated_release_lifecycle_plan(
+                                root,
+                                project="sample",
+                                contract=contract,
+                                plan=plan,
+                            )
+                path.write_bytes(original)
+
+            plan["provenance"]["generator"] = "claimed-generator"
+            with self.assertRaisesRegex(ContractError, "unknown.*generator"):
+                validate_generated_release_lifecycle_plan(
+                    root, project="sample", contract=contract, plan=plan
+                )
+
+    def test_portable_generated_plan_evidence_recomputes_exact_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_project(root)
+            self.enable_plan_decision_policy(root)
+            self.write_change(root)
+            prepare_release_candidate(root)
+            contract = json.loads(
+                (root / ".release" / "change.json").read_text(encoding="utf-8")
+            )
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
+
+            decision_state = {
+                "kind": "process-generated",
+                "authorized": True,
+                "assignment": None,
+                "review": None,
+                "recommendation": None,
+                "recommendationAssignment": None,
+                "recommendationReview": None,
+                "resolution": None,
+            }
+            process = plan["provenance"]["authority"]
+            state = {
+                "project": "sample",
+                "planDecision": decision_state,
+                "implementationActors": [],
+                "plan": {
+                    "path": ".release/plan.json",
+                    "digest": (
+                        "sha256:"
+                        + hashlib.sha256(
+                            (root / ".release" / "plan.json").read_bytes()
+                        ).hexdigest()
+                    ),
+                },
+            }
+            exported = _plan_decision_entries(root, state)
+            self.assertIsNotNone(exported)
+            assert exported is not None
+            self.assertEqual(3, len(exported["generatedInputs"]))
+            _validate_plan_decision_receipt(
+                exported,
+                state=state,
+                contract=contract,
+                plan=plan,
+                process=process,
+            )
+
+            for mutation, message in (
+                (("generator", "unregistered-generator"), "unknown.*generator"),
+                (("authority", {"version": "9.9.9", "digest": f"sha256:{'9' * 64}"}), "exact core recomputation"),
+            ):
+                tampered = json.loads(json.dumps(plan))
+                tampered["provenance"][mutation[0]] = mutation[1]
+                with self.subTest(mutation=mutation[0]), self.assertRaisesRegex(
+                    ContractError, message
+                ):
+                    _validate_plan_decision_receipt(
+                        exported,
+                        state=state,
+                        contract=contract,
+                        plan=tampered,
+                        process=process,
+                    )
+
+            tampered = json.loads(json.dumps(plan))
+            tampered["provenance"]["inputs"][0]["sha256"] = f"sha256:{'8' * 64}"
+            with self.assertRaisesRegex(ContractError, "do not match plan provenance"):
+                _validate_plan_decision_receipt(
+                    exported,
+                    state=state,
+                    contract=contract,
+                    plan=tampered,
+                    process=process,
+                )
+
+            drifted_evidence = json.loads(json.dumps(exported))
+            drifted_plan = json.loads(json.dumps(plan))
+            project_input = next(
+                item
+                for item in drifted_evidence["generatedInputs"]
+                if item["path"] == ".process/project.json"
+            )
+            project_document = json.loads(
+                project_input["artifact"]["sourceText"]
+            )
+            del project_document["lifecycle"]["planDecision"]
+            project_text = json.dumps(project_document, sort_keys=True) + "\n"
+            project_digest = (
+                "sha256:" + hashlib.sha256(project_text.encode("utf-8")).hexdigest()
+            )
+            project_input["artifact"] = {
+                "sourceDigest": project_digest,
+                "canonicalDigest": _canonical_digest(project_document),
+                "sourceText": project_text,
+            }
+            next(
+                item
+                for item in drifted_plan["provenance"]["inputs"]
+                if item["path"] == ".process/project.json"
+            )["sha256"] = project_digest
+            with self.assertRaisesRegex(
+                ContractError, "adopted project decision policy"
+            ):
+                _validate_plan_decision_receipt(
+                    drifted_evidence,
+                    state=state,
+                    contract=contract,
+                    plan=drifted_plan,
+                    process=process,
+                )
+
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
+            plan["approach"] = "A claimed generated plan with altered content."
+            with self.assertRaisesRegex(ContractError, "exact core recomputation"):
+                validate_generated_release_lifecycle_plan(
+                    root, project="sample", contract=contract, plan=plan
+                )
 
     def test_materialization_preserves_crlf_runtime_version_source(self):
         with tempfile.TemporaryDirectory() as directory:

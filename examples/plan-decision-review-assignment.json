@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-plan-decision-review-assignment",
+  "changeId": "issue-123",
+  "cycle": 1,
+  "contractSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "planSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "policySha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "source": {
+    "checkpoint": "1111111111111111111111111111111111111111",
+    "comparisonBase": "0000000000000000000000000000000000000000",
+    "workspaceFingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "authority": {
+    "version": "0.7.0",
+    "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "planAuthor": {
+    "actorId": "implementation-coordinator",
+    "contextId": "fresh-plan-context",
+    "kind": "agent"
+  },
+  "reviewer": {
+    "actorId": "decision-reviewer",
+    "contextId": "fresh-decision-assessment-context",
+    "kind": "agent"
+  },
+  "independence": {
+    "method": "isolated-context",
+    "attestedBy": "review-host",
+    "evidence": "The host created a read-only context with no plan-author conversation."
+  },
+  "materialCategories": [
+    "architecture",
+    "authority",
+    "compatibility",
+    "external-mutation",
+    "lifecycle-order",
+    "owner",
+    "rollout",
+    "scope",
+    "trust-boundary"
+  ],
+  "contextReservationSha256": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+}

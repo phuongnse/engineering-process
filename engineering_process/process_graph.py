@@ -42,7 +42,12 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
     "planned": {
         "ownerSkill": "implement-change",
         "actor": "automation",
-        "commands": ["change implement"],
+        "commands": [
+            "change decision resolve",
+            "change decision start",
+            "change decision submit",
+            "change implement",
+        ],
         "transitions": {
             "failure": "implement-change",
             "success": "verify-change",
@@ -94,7 +99,12 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
     "verified": {
         "ownerSkill": "review-change",
         "actor": "automation",
-        "commands": ["change review start"],
+        "commands": [
+            "change decision resolve",
+            "change decision start",
+            "change decision submit",
+            "change review start",
+        ],
         "transitions": {
             "failure": "review-change",
             "reviewer-assigned": "review-change",
@@ -114,7 +124,12 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
     "changes-requested": {
         "ownerSkill": "implement-change",
         "actor": "automation",
-        "commands": ["change implement"],
+        "commands": [
+            "change decision resolve",
+            "change decision start",
+            "change decision submit",
+            "change implement",
+        ],
         "transitions": {
             "failure": "implement-change",
             "success": "verify-change",

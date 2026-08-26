@@ -16,17 +16,22 @@ from .contracts import (
     DIGEST_PATTERN,
     IMPROVEMENT_OWNER_BOUNDARIES,
     IMPROVEMENT_REUSABLE_CLASSES,
+    MATERIAL_DECISION_CATEGORIES,
     MAX_JSON_BYTES,
+    PLAN_DECISION_MODE,
     PROFILE_PATTERN,
-    REPOSITORY_PATTERN,
     Project,
+    REPOSITORY_PATTERN,
     _validate_legacy_review,
     read_json,
+    validate_plan_decision_review,
+    validate_plan_decision_review_assignment,
     validate_change,
     validate_completion,
     validate_improvement_catalog,
     validate_improvement_disposition,
     validate_plan,
+    validate_process_lock,
     validate_remote_verification_request,
     validate_review,
     validate_verification,
@@ -254,6 +259,8 @@ def reserve_review_context(
     project_root: Path,
     state: dict[str, Any],
     reviewer: dict[str, str],
+    *,
+    cycle: int | None = None,
 ) -> dict[str, Any]:
     context_digest = hashlib.sha256(
         reviewer["contextId"].encode("utf-8")
@@ -276,7 +283,7 @@ def reserve_review_context(
         "actorId": reviewer["actorId"],
         "kind": reviewer["kind"],
         "changeId": state["changeId"],
-        "cycle": state["cycle"],
+        "cycle": state["cycle"] if cycle is None else cycle,
         "reservedAt": _timestamp(),
     }
     content = (
@@ -434,7 +441,9 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
     }
     missing = sorted(required - set(state))
     extra = sorted(
-        set(state) - required - {"improvements", "remoteVerification"}
+        set(state)
+        - required
+        - {"improvements", "planDecision", "remoteVerification"}
     )
     if missing or extra:
         detail = []
@@ -455,6 +464,58 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         raise ContractError(f"{path}.history: must not be empty")
     if not isinstance(state["pendingFindings"], list):
         raise ContractError(f"{path}.pendingFindings: must be an array")
+    plan_decision = state.get("planDecision")
+    if plan_decision is not None:
+        if not isinstance(plan_decision, dict) or set(plan_decision) != {
+            "kind",
+            "authorized",
+            "assignment",
+            "review",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        }:
+            raise ContractError(f"{path}.planDecision: invalid fields")
+        if plan_decision["kind"] not in {"authored", "process-generated"}:
+            raise ContractError(f"{path}.planDecision.kind: invalid provenance kind")
+        if not isinstance(plan_decision["authorized"], bool):
+            raise ContractError(f"{path}.planDecision.authorized: must be boolean")
+        for field in (
+            "assignment",
+            "review",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        ):
+            reference = plan_decision[field]
+            if reference is None:
+                continue
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"path", "digest"}
+                or not isinstance(reference["path"], str)
+                or not isinstance(reference["digest"], str)
+                or DIGEST_PATTERN.fullmatch(reference["digest"]) is None
+            ):
+                raise ContractError(
+                    f"{path}.planDecision.{field}: invalid artifact reference"
+                )
+        if plan_decision["kind"] == "process-generated" and any(
+            plan_decision[field] is not None
+            for field in (
+                "assignment",
+                "review",
+                "recommendation",
+                "recommendationAssignment",
+                "recommendationReview",
+                "resolution",
+            )
+        ):
+            raise ContractError(
+                f"{path}.planDecision: generated plans cannot carry semantic review artifacts"
+            )
     remote = state.get("remoteVerification")
     if remote is not None:
         if not isinstance(remote, dict) or set(remote) != {
@@ -682,6 +743,8 @@ def _migrate_state(project_root: Path, state: Any, path: Path) -> dict[str, Any]
         migrated["schemaVersion"] = 2
     if migrated.get("schemaVersion") == 2 and "improvements" not in migrated:
         migrated["improvements"] = []
+    if migrated.get("schemaVersion") == 2 and "planDecision" not in migrated:
+        migrated["planDecision"] = None
     return migrated
 
 
@@ -725,6 +788,252 @@ def _plan(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     document = read_json(_artifact_path(project_root, state["plan"]))
     validate_plan(document, "registered plan")
     return document
+
+
+def _plan_decision_policy(project: Project) -> dict[str, Any] | None:
+    if project.plan_decision_mode is None:
+        return None
+    if (
+        project.plan_decision_mode != PLAN_DECISION_MODE
+        or project.material_decision_categories != MATERIAL_DECISION_CATEGORIES
+    ):
+        raise ContractError("project plan decision policy is incomplete")
+    return {
+        "mode": project.plan_decision_mode,
+        "materialCategories": list(project.material_decision_categories),
+    }
+
+
+def _plan_authority_identity(project_root: Path) -> dict[str, str]:
+    lock_path = project_root / ".process" / "process.lock"
+    lock = validate_process_lock(read_json(lock_path), str(lock_path))
+    return {"version": lock.version, "digest": lock.digest}
+
+
+def _plan_decision_target_cycle(state: dict[str, Any]) -> int:
+    return state["cycle"] + (
+        1 if state["phase"] in {"changes-requested", "verified"} else 0
+    )
+
+
+def _verified_source_is_current(
+    project_root: Path, state: dict[str, Any]
+) -> bool:
+    source = source_state(project_root)
+    checkpoints = {item["checkpoint"] for item in state["verification"]}
+    fingerprints = {
+        item["workspaceFingerprint"] for item in state["verification"]
+    }
+    return (
+        source["dirty"] is False
+        and source["checkpoint"] is not None
+        and source["fingerprint"] is not None
+        and checkpoints == {source["checkpoint"]}
+        and fingerprints == {source["fingerprint"]}
+    )
+
+
+def _plan_decision_artifact(
+    project_root: Path,
+    state: dict[str, Any],
+    field: str,
+    validator: Any,
+) -> dict[str, Any]:
+    plan_decision = state.get("planDecision")
+    if not isinstance(plan_decision, dict) or plan_decision.get(field) is None:
+        raise ContractError(f"plan decision {field} artifact is missing")
+    path = _artifact_path(project_root, plan_decision[field])
+    document = read_json(path)
+    validator(document, f"registered plan decision {field}")
+    return document
+
+
+def _validate_plan_decision_recommendation_binding(
+    recommendation: dict[str, Any],
+    review: dict[str, Any],
+) -> None:
+    review_digest = canonical_json_digest(review)
+    if recommendation.get("decisionId") != review["changeId"]:
+        raise ContractError(
+            "plan decision recommendation decision id does not match the change"
+        )
+    binding = [
+        invariant
+        for invariant in recommendation.get("invariants", [])
+        if invariant.get("id") == "plan-decision-assessment"
+    ]
+    if len(binding) != 1 or (
+        binding[0].get("source") != f"plan-decision-review:{review_digest}"
+        or binding[0].get("evidenceSha256") != review_digest
+    ):
+        raise ContractError(
+            "plan decision recommendation does not bind the exact assessment"
+        )
+    coordinator = recommendation.get("coordinator")
+    reviewer = review["reviewer"]
+    if not isinstance(coordinator, dict) or (
+        coordinator.get("actorId") == reviewer["actorId"]
+        or coordinator.get("contextId") == reviewer["contextId"]
+    ):
+        raise ContractError(
+            "plan decision reviewer cannot coordinate the dependent recommendation"
+        )
+
+
+def _authorize_plan_decision_for_implementation(
+    project_root: Path,
+    project: Project,
+    state: dict[str, Any],
+    *,
+    require_current_source: bool,
+    implementation_actor: dict[str, str],
+) -> None:
+    policy = _plan_decision_policy(project)
+    plan = _plan(project_root, state)
+    decision = state.get("planDecision")
+    if policy is None:
+        if decision is not None or plan["schemaVersion"] not in {1, 2}:
+            raise ContractError(
+                "project without plan decision opt-in requires released schema-1 or schema-2 behavior"
+            )
+        return
+    if plan["schemaVersion"] != 3 or not isinstance(decision, dict):
+        raise ContractError(
+            "implementation requires schema-3 plan provenance under the adopted policy"
+        )
+    contract = _contract(project_root, state)
+    provenance = plan["provenance"]
+    if decision["kind"] != provenance["kind"]:
+        raise ContractError("registered plan decision provenance kind is stale")
+    authority = _plan_authority_identity(project_root)
+    if provenance["authority"] != authority:
+        raise ContractError("plan authority provenance is stale")
+    if provenance["kind"] == "process-generated":
+        from .release_candidate import validate_generated_release_lifecycle_plan
+
+        validate_generated_release_lifecycle_plan(
+            project_root,
+            project=project.identifier,
+            contract=contract,
+            plan=plan,
+        )
+        decision["authorized"] = True
+        return
+
+    assignment = _plan_decision_artifact(
+        project_root,
+        state,
+        "assignment",
+        validate_plan_decision_review_assignment,
+    )
+    review = _plan_decision_artifact(
+        project_root, state, "review", validate_plan_decision_review
+    )
+    expected_assignment = {
+        "changeId": state["changeId"],
+        "cycle": _plan_decision_target_cycle(state),
+        "contractSha256": canonical_json_digest(contract),
+        "planSha256": canonical_json_digest(plan),
+        "policySha256": canonical_json_digest(policy),
+        "authority": authority,
+        "planAuthor": provenance["author"],
+        "materialCategories": list(MATERIAL_DECISION_CATEGORIES),
+    }
+    for field, expected in expected_assignment.items():
+        if assignment[field] != expected:
+            raise ContractError(f"plan decision assignment {field} is stale")
+    reservation = review_context_reservation(
+        project_root, assignment["reviewer"]["contextId"]
+    )
+    if (
+        canonical_json_digest(reservation)
+        != assignment["contextReservationSha256"]
+        or reservation["actorId"] != assignment["reviewer"]["actorId"]
+        or reservation["kind"] != assignment["reviewer"]["kind"]
+        or reservation["changeId"] != state["changeId"]
+        or reservation["cycle"] != assignment["cycle"]
+    ):
+        raise ContractError(
+            "plan decision assignment context reservation is stale or mismatched"
+        )
+    if assignment["source"]["comparisonBase"] != state["comparisonBase"]:
+        raise ContractError("plan decision assignment comparison base is stale")
+    if require_current_source:
+        source = source_state(project_root)
+        if (
+            source["dirty"] is not False
+            or source["checkpoint"] != assignment["source"]["checkpoint"]
+            or source["fingerprint"]
+            != assignment["source"]["workspaceFingerprint"]
+        ):
+            raise ContractError(
+                "plan decision assessment is stale for the implementation source"
+            )
+    if (
+        implementation_actor["actorId"] == assignment["reviewer"]["actorId"]
+        or implementation_actor["contextId"]
+        == assignment["reviewer"]["contextId"]
+    ):
+        raise ContractError(
+            "the assigned read-only plan reviewer cannot implement the reviewed plan"
+        )
+    expected_review = {
+        "changeId": assignment["changeId"],
+        "cycle": assignment["cycle"],
+        "contractSha256": assignment["contractSha256"],
+        "planSha256": assignment["planSha256"],
+        "assignmentSha256": canonical_json_digest(assignment),
+        "reviewer": assignment["reviewer"],
+    }
+    for field, expected in expected_review.items():
+        if review[field] != expected:
+            raise ContractError(f"plan decision review {field} is stale")
+    if review["verdict"] == "clear":
+        if any(
+            decision[field] is not None
+            for field in (
+                "recommendation",
+                "recommendationAssignment",
+                "recommendationReview",
+                "resolution",
+            )
+        ):
+            raise ContractError(
+                "clear plan decision assessment cannot carry an owner-decision chain"
+            )
+    else:
+        from .recommendation import validate_recommendation_chain
+
+        chain_fields = (
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        )
+        chain_paths = [
+            _artifact_path(project_root, decision[field])
+            if decision[field] is not None
+            else None
+            for field in chain_fields
+        ]
+        if any(path is None for path in chain_paths):
+            raise ContractError(
+                "decision-required plan assessment lacks the complete owner-decision chain"
+            )
+        recommendation = read_json(chain_paths[0])
+        _validate_plan_decision_recommendation_binding(recommendation, review)
+        result = validate_recommendation_chain(
+            project_root,
+            chain_paths[0],
+            chain_paths[1],
+            chain_paths[2],
+            chain_paths[3],
+        )
+        if result["phase"] != "resolved" or not result["allowed"]:
+            raise ContractError(
+                "decision-required plan assessment is not owner-resolved"
+            )
+    decision["authorized"] = True
 
 
 def _improvement_case(
@@ -1255,6 +1564,7 @@ def _start_change_unlocked(
         "comparisonBase": comparison_base,
         "contract": contract,
         "plan": None,
+        "planDecision": None,
         "implementationActors": [],
         "verification": [],
         "remoteVerification": (
@@ -1303,8 +1613,12 @@ def _register_plan_unlocked(
         raise ContractError(f"change {change_id} requires sign-off before planning")
     document = read_json(plan_path)
     validate_plan(document, str(plan_path))
-    if contract["schemaVersion"] == 3 and document["schemaVersion"] != 2:
-        raise ContractError("new schema-3 changes require a bounded schema-2 plan")
+    required_plan_schema = 3 if project.plan_decision_mode is not None else 2
+    if contract["schemaVersion"] == 3 and document["schemaVersion"] != required_plan_schema:
+        raise ContractError(
+            "new schema-3 changes require a bounded schema-"
+            f"{required_plan_schema} plan under the active project policy"
+        )
     if document["changeId"] != change_id:
         raise ContractError(f"plan changeId does not match {change_id}")
     if document["contractDigest"] != state["contract"]["digest"]:
@@ -1341,12 +1655,310 @@ def _register_plan_unlocked(
             f"plan does not use required profiles: {', '.join(missing_required)}"
         )
     actor = _actor(actor_id, context_id, kind)
+    if project.plan_decision_mode is not None:
+        provenance = document["provenance"]
+        authority = _plan_authority_identity(project_root)
+        if provenance["authority"] != authority:
+            raise ContractError(
+                "plan provenance does not match the immutable process authority"
+            )
+        if provenance["kind"] == "authored":
+            if provenance["author"] != actor:
+                raise ContractError(
+                    "authored plan provenance does not match the registering actor"
+                )
+        else:
+            from .release_candidate import validate_generated_release_lifecycle_plan
+
+            validate_generated_release_lifecycle_plan(
+                project_root,
+                project=project.identifier,
+                contract=contract,
+                plan=document,
+            )
     artifact = _copy_document(
         project_root, plan_path, _run_root(project_root, change_id) / "plan.json"
     )
     state["plan"] = artifact
+    state["planDecision"] = (
+        {
+            "kind": document["provenance"]["kind"],
+            "authorized": False,
+            "assignment": None,
+            "review": None,
+            "recommendation": None,
+            "recommendationAssignment": None,
+            "recommendationReview": None,
+            "resolution": None,
+        }
+        if project.plan_decision_mode is not None
+        else None
+    )
     _transition_phase(state, "success")
     _event(state, "planned", actor)
+    _save_state(project_root, state)
+    return state
+
+
+def _start_plan_decision_review_unlocked(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+    method: str,
+    attested_by: str,
+    evidence: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "planned", "changes-requested", "verified")
+    if state["phase"] == "verified" and _verified_source_is_current(
+        project_root, state
+    ):
+        raise ContractError(
+            "current verified change must enter independent review, not refresh planning"
+        )
+    policy = _plan_decision_policy(project)
+    if policy is None:
+        raise ContractError("project has not adopted authored plan decision review")
+    plan = _plan(project_root, state)
+    contract = _contract(project_root, state)
+    decision = state.get("planDecision")
+    if (
+        plan["schemaVersion"] != 3
+        or plan["provenance"]["kind"] != "authored"
+        or not isinstance(decision, dict)
+        or decision["kind"] != "authored"
+    ):
+        raise ContractError(
+            "fresh semantic assessment applies only to authored schema-3 plans"
+        )
+    target_cycle = _plan_decision_target_cycle(state)
+    if decision["assignment"] is not None:
+        if state["phase"] == "planned":
+            raise ContractError("plan decision review assignment already exists")
+        for field in (
+            "assignment",
+            "review",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        ):
+            decision[field] = None
+        decision["authorized"] = False
+    reviewer = _actor(actor_id, context_id, kind)
+    author = plan["provenance"]["author"]
+    if (
+        reviewer["actorId"] == author["actorId"]
+        or reviewer["contextId"] == author["contextId"]
+    ):
+        raise ContractError(
+            "plan decision reviewer must be independent of the plan author"
+        )
+    if method not in {"isolated-context", "separate-person"}:
+        raise ContractError("plan decision review independence method is invalid")
+    if (kind == "agent" and method != "isolated-context") or (
+        kind == "human" and method != "separate-person"
+    ):
+        raise ContractError(
+            "plan decision review independence method does not match reviewer kind"
+        )
+    if not attested_by or attested_by != attested_by.strip() or len(attested_by) > 256:
+        raise ContractError("plan decision review attester is invalid")
+    if attested_by in {reviewer["actorId"], reviewer["contextId"]}:
+        raise ContractError("plan decision review cannot be self-attested")
+    if not evidence or evidence != evidence.strip() or len(evidence) > 2000:
+        raise ContractError("plan decision review independence evidence is invalid")
+    source = source_state(project_root)
+    if (
+        source["dirty"] is not False
+        or source["checkpoint"] is None
+        or source["fingerprint"] is None
+    ):
+        raise ContractError(
+            "plan decision review requires a clean immutable source checkpoint"
+        )
+    reservation = reserve_review_context(
+        project_root, state, reviewer, cycle=target_cycle
+    )
+    assignment = {
+        "schemaVersion": 1,
+        "kind": "engineering-process-plan-decision-review-assignment",
+        "changeId": change_id,
+        "cycle": target_cycle,
+        "contractSha256": canonical_json_digest(contract),
+        "planSha256": canonical_json_digest(plan),
+        "policySha256": canonical_json_digest(policy),
+        "source": {
+            "checkpoint": source["checkpoint"],
+            "comparisonBase": state["comparisonBase"],
+            "workspaceFingerprint": source["fingerprint"],
+        },
+        "authority": _plan_authority_identity(project_root),
+        "planAuthor": author,
+        "reviewer": reviewer,
+        "independence": {
+            "method": method,
+            "attestedBy": attested_by,
+            "evidence": evidence,
+        },
+        "materialCategories": list(MATERIAL_DECISION_CATEGORIES),
+        "contextReservationSha256": canonical_json_digest(reservation),
+    }
+    validate_plan_decision_review_assignment(
+        assignment, "generated plan decision review assignment"
+    )
+    destination = (
+        _run_root(project_root, change_id)
+        / f"plan-decision-assignment-{target_cycle}.json"
+    )
+    _write_atomic(destination, assignment)
+    decision["assignment"] = {
+        "path": _relative(project_root, destination),
+        "digest": _digest_file(destination),
+    }
+    _event(
+        state,
+        "plan-decision-review-started",
+        reviewer,
+        cycle=target_cycle,
+        assignment=decision["assignment"],
+    )
+    _save_state(project_root, state)
+    return state, assignment
+
+
+def _submit_plan_decision_review_unlocked(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    review_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "planned", "changes-requested", "verified")
+    if _plan_decision_policy(project) is None:
+        raise ContractError("project has not adopted authored plan decision review")
+    assignment = _plan_decision_artifact(
+        project_root,
+        state,
+        "assignment",
+        validate_plan_decision_review_assignment,
+    )
+    decision = state["planDecision"]
+    if decision["review"] is not None:
+        raise ContractError("plan decision review is already registered")
+    review = read_json(review_path)
+    validate_plan_decision_review(review, str(review_path))
+    expected = {
+        "changeId": assignment["changeId"],
+        "cycle": assignment["cycle"],
+        "contractSha256": assignment["contractSha256"],
+        "planSha256": assignment["planSha256"],
+        "assignmentSha256": canonical_json_digest(assignment),
+        "reviewer": assignment["reviewer"],
+    }
+    for field, value in expected.items():
+        if review[field] != value:
+            raise ContractError(
+                f"plan decision review {field} does not match its assignment"
+            )
+    source = source_state(project_root)
+    if (
+        source["dirty"] is not False
+        or source["checkpoint"] != assignment["source"]["checkpoint"]
+        or source["fingerprint"] != assignment["source"]["workspaceFingerprint"]
+    ):
+        raise ContractError("plan decision review is stale for the current source")
+    destination = (
+        _run_root(project_root, change_id)
+        / f"plan-decision-review-{assignment['cycle']}.json"
+    )
+    artifact = _copy_document(project_root, review_path, destination)
+    decision["review"] = artifact
+    _event(
+        state,
+        "plan-decision-review-submitted",
+        review["reviewer"],
+        cycle=assignment["cycle"],
+        verdict=review["verdict"],
+        review=artifact,
+    )
+    _save_state(project_root, state)
+    return state, review
+
+
+def _resolve_plan_decision_unlocked(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    *,
+    recommendation_path: Path,
+    assignment_path: Path,
+    review_path: Path,
+    resolution_path: Path,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> dict[str, Any]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "planned", "changes-requested", "verified")
+    if _plan_decision_policy(project) is None:
+        raise ContractError("project has not adopted authored plan decision review")
+    assessment = _plan_decision_artifact(
+        project_root, state, "review", validate_plan_decision_review
+    )
+    if assessment["verdict"] != "decision-required":
+        raise ContractError("clear plan decision assessment needs no owner resolution")
+    from .recommendation import validate_recommendation_chain
+
+    result = validate_recommendation_chain(
+        project_root,
+        recommendation_path,
+        assignment_path,
+        review_path,
+        resolution_path,
+    )
+    if result["phase"] != "resolved" or not result["allowed"]:
+        raise ContractError("plan decision recommendation chain is not resolved")
+    recommendation = read_json(recommendation_path)
+    _validate_plan_decision_recommendation_binding(recommendation, assessment)
+    decision = state["planDecision"]
+    sources = {
+        "recommendation": recommendation_path,
+        "recommendationAssignment": assignment_path,
+        "recommendationReview": review_path,
+        "resolution": resolution_path,
+    }
+    expected_digests = {
+        "recommendation": result["recommendationSha256"],
+        "recommendationAssignment": result["assignmentSha256"],
+        "recommendationReview": result["reviewSha256"],
+        "resolution": result["resolutionSha256"],
+    }
+    destination_root = (
+        _run_root(project_root, change_id)
+        / f"plan-decision-resolution-{assessment['cycle']}"
+    )
+    for field, source_path in sources.items():
+        document = read_json(source_path)
+        if canonical_json_digest(document) != expected_digests[field]:
+            raise ContractError(
+                f"plan decision {field} changed after recommendation validation"
+            )
+        destination = destination_root / f"{field}.json"
+        decision[field] = _copy_document(project_root, source_path, destination)
+    actor = _actor(actor_id, context_id, kind)
+    _event(
+        state,
+        "plan-decision-resolved",
+        actor,
+        cycle=assessment["cycle"],
+        selectedOptionId=result["selectedOptionId"],
+        resolution=decision["resolution"],
+    )
     _save_state(project_root, state)
     return state
 
@@ -1355,6 +1967,7 @@ def _begin_implementation_unlocked(
     project_root: Path,
     change_id: str,
     *,
+    project: Project | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -1362,6 +1975,28 @@ def _begin_implementation_unlocked(
     state = load_state(project_root, change_id)
     _contract(project_root, state)
     _plan(project_root, state)
+    starting_phase = state["phase"]
+    if starting_phase == "verified" and _verified_source_is_current(
+        project_root, state
+    ):
+        raise ContractError(
+            "current verified change must enter independent review before "
+            "another implementation cycle"
+        )
+    if state.get("planDecision") is not None and project is None:
+        raise ContractError(
+            "implementation under plan decision policy requires the current project contract"
+        )
+    actor = _actor(actor_id, context_id, kind)
+    if project is not None:
+        _authorize_plan_decision_for_implementation(
+            project_root,
+            project,
+            state,
+            require_current_source=starting_phase
+            in {"planned", "changes-requested", "verified"},
+            implementation_actor=actor,
+        )
     classification_required = [
         case["id"]
         for case in state["improvements"]
@@ -1372,26 +2007,7 @@ def _begin_implementation_unlocked(
             "implementation cannot continue before improvement classification: "
             + ", ".join(classification_required)
         )
-    actor = _actor(actor_id, context_id, kind)
-    starting_phase = state["phase"]
     if starting_phase == "verified":
-        source = source_state(project_root)
-        checkpoints = {item["checkpoint"] for item in state["verification"]}
-        fingerprints = {
-            item["workspaceFingerprint"] for item in state["verification"]
-        }
-        current = (
-            source["dirty"] is False
-            and source["checkpoint"] is not None
-            and source["fingerprint"] is not None
-            and checkpoints == {source["checkpoint"]}
-            and fingerprints == {source["fingerprint"]}
-        )
-        if current:
-            raise ContractError(
-                "current verified change must enter independent review before "
-                "another implementation cycle"
-            )
         previous_cycle = state["cycle"]
         previous_verification = list(state["verification"])
         state["cycle"] += 1
@@ -2162,6 +2778,13 @@ def _finish_change_unlocked(
             "resolution or producer completion: "
             + ", ".join(blocking_improvements)
         )
+    if (
+        state.get("planDecision") is not None
+        and state["planDecision"]["authorized"] is not True
+    ):
+        raise ContractError(
+            "completion requires an implementation-authorized plan decision gate"
+        )
     review = read_json(_artifact_path(project_root, state["review"]))
     validate_review(review, "registered review")
     source = source_state(project_root)
@@ -2202,6 +2825,7 @@ def _finish_change_unlocked(
         "completedBy": actor,
         "contract": state["contract"],
         "plan": state["plan"],
+        "planDecision": state.get("planDecision"),
         "verification": state["verification"],
         "remoteVerification": (
             state["remoteVerification"]["evidence"]
@@ -2266,6 +2890,23 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
     if remote is not None:
         for name in ("request", "evidence"):
             artifact = remote.get(name)
+            if artifact is None:
+                continue
+            try:
+                _artifact_path(project_root, artifact)
+            except ContractError as error:
+                issues.append(str(error))
+    plan_decision = state.get("planDecision")
+    if plan_decision is not None:
+        for name in (
+            "assignment",
+            "review",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        ):
+            artifact = plan_decision.get(name)
             if artifact is None:
                 continue
             try:
@@ -2879,10 +3520,77 @@ def register_plan(
         )
 
 
+def start_plan_decision_review(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+    method: str,
+    attested_by: str,
+    evidence: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with _change_lock(project_root, change_id):
+        return _start_plan_decision_review_unlocked(
+            project_root,
+            project,
+            change_id,
+            actor_id=actor_id,
+            context_id=context_id,
+            kind=kind,
+            method=method,
+            attested_by=attested_by,
+            evidence=evidence,
+        )
+
+
+def submit_plan_decision_review(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    review_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with _change_lock(project_root, change_id):
+        return _submit_plan_decision_review_unlocked(
+            project_root, project, change_id, review_path
+        )
+
+
+def resolve_plan_decision(
+    project_root: Path,
+    project: Project,
+    change_id: str,
+    *,
+    recommendation_path: Path,
+    assignment_path: Path,
+    review_path: Path,
+    resolution_path: Path,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> dict[str, Any]:
+    with _change_lock(project_root, change_id):
+        return _resolve_plan_decision_unlocked(
+            project_root,
+            project,
+            change_id,
+            recommendation_path=recommendation_path,
+            assignment_path=assignment_path,
+            review_path=review_path,
+            resolution_path=resolution_path,
+            actor_id=actor_id,
+            context_id=context_id,
+            kind=kind,
+        )
+
+
 def begin_implementation(
     project_root: Path,
     change_id: str,
     *,
+    project: Project | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -2891,6 +3599,7 @@ def begin_implementation(
         return _begin_implementation_unlocked(
             project_root,
             change_id,
+            project=project,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,

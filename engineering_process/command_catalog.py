@@ -6,6 +6,9 @@ from __future__ import annotations
 LIFECYCLE_COMMAND_PATHS = frozenset(
     {
         "change finish",
+        "change decision resolve",
+        "change decision start",
+        "change decision submit",
         "change implement",
         "change plan",
         "change remote ingest",

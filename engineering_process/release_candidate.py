@@ -17,6 +17,8 @@ from .contracts import (
     derive_release_version,
     read_json,
     validate_process_lock,
+    validate_plan,
+    validate_project,
     validate_improvement_catalog,
     validate_release,
     validate_release_change,
@@ -26,6 +28,7 @@ from .release import _git, _project_metadata, _runtime_version
 
 MAX_RELEASE_CHANGE_BYTES = 8_000_000
 SCHEMA_IMPACT_ORDER = {"unchanged": 0, "additive": 1, "breaking": 2}
+RELEASE_LIFECYCLE_PLAN_GENERATOR = "release-lifecycle-v1"
 
 
 def _json_bytes(document: dict[str, Any]) -> bytes:
@@ -38,6 +41,68 @@ def _canonical_json_bytes(document: dict[str, Any]) -> bytes:
     return (
         json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+
+
+def _content_digest(content: bytes) -> str:
+    return f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+def _json_object_from_bytes(content: bytes, *, label: str) -> dict[str, Any]:
+    try:
+        document = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"{label}: invalid UTF-8 JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise ContractError(f"{label}: must be a JSON object")
+    return document
+
+
+def _release_plan_provenance_from_digests(
+    *,
+    input_digests: dict[str, str],
+    authority_version: str,
+    authority_digest: str,
+) -> dict[str, Any]:
+    expected_paths = (
+        ".process/project.json",
+        ".release/change.json",
+        "release.json",
+    )
+    if tuple(sorted(input_digests)) != expected_paths:
+        raise ContractError(
+            "release plan generator requires the exact registered input set"
+        )
+    return {
+        "kind": "process-generated",
+        "generator": RELEASE_LIFECYCLE_PLAN_GENERATOR,
+        "authority": {
+            "version": authority_version,
+            "digest": authority_digest,
+        },
+        "inputs": [
+            {"path": path, "sha256": input_digests[path]}
+            for path in expected_paths
+        ],
+    }
+
+
+def _release_plan_provenance(
+    *,
+    project_manifest: bytes,
+    lifecycle_contract: bytes,
+    release_contract: bytes,
+    authority_version: str,
+    authority_digest: str,
+) -> dict[str, Any]:
+    return _release_plan_provenance_from_digests(
+        input_digests={
+            ".process/project.json": _content_digest(project_manifest),
+            ".release/change.json": _content_digest(lifecycle_contract),
+            "release.json": _content_digest(release_contract),
+        },
+        authority_version=authority_version,
+        authority_digest=authority_digest,
+    )
 
 
 def _bounded_file(path: Path, *, label: str) -> bytes:
@@ -259,6 +324,7 @@ def _release_lifecycle_documents(
     project: str,
     version: str,
     comparison_base: str,
+    provenance: dict[str, Any] | None = None,
 ) -> tuple[bytes, bytes]:
     change_id = f"release-{version.replace('.', '-')}"
     contract = {
@@ -362,8 +428,8 @@ def _release_lifecycle_documents(
     }
     contract_bytes = _canonical_json_bytes(contract)
     contract_digest = f"sha256:{hashlib.sha256(contract_bytes).hexdigest()}"
-    plan = {
-        "schemaVersion": 2,
+    plan: dict[str, Any] = {
+        "schemaVersion": 3 if provenance is not None else 2,
         "changeId": change_id,
         "contractDigest": contract_digest,
         "approach": "Validate the generated release contract and every declared surface, build from the exact reviewed tree, and permit publication only after independent approval and merge.",
@@ -399,7 +465,101 @@ def _release_lifecycle_documents(
         ],
         "openDecisions": [],
     }
+    if provenance is not None:
+        plan["provenance"] = provenance
+    validate_plan(plan, "generated release lifecycle plan")
     return contract_bytes, _canonical_json_bytes(plan)
+
+
+def validate_generated_release_lifecycle_documents(
+    *,
+    project: str,
+    contract: dict[str, Any],
+    plan: dict[str, Any],
+    input_documents: dict[str, dict[str, Any]],
+    input_digests: dict[str, str],
+    authority: dict[str, str],
+) -> None:
+    provenance = plan.get("provenance")
+    if (
+        not isinstance(provenance, dict)
+        or provenance.get("kind") != "process-generated"
+        or provenance.get("generator") != RELEASE_LIFECYCLE_PLAN_GENERATOR
+    ):
+        raise ContractError("unknown process-generated plan generator")
+    if set(input_documents) != set(input_digests):
+        raise ContractError("release plan generator input documents are incomplete")
+    project_document = input_documents.get(".process/project.json")
+    configured_project = validate_project(project_document, "project manifest")
+    if (
+        configured_project.identifier != project
+        or configured_project.plan_decision_mode is None
+    ):
+        raise ContractError(
+            "release plan recomputation requires the adopted project decision policy"
+        )
+    lifecycle_contract = input_documents.get(".release/change.json")
+    release_document = input_documents.get("release.json")
+    release = validate_release(release_document, "release contract")
+    expected_provenance = _release_plan_provenance_from_digests(
+        input_digests=input_digests,
+        authority_version=authority["version"],
+        authority_digest=authority["digest"],
+    )
+    expected_contract_bytes, expected_plan_bytes = _release_lifecycle_documents(
+        project=project,
+        version=release.version,
+        comparison_base=contract["comparisonBase"],
+        provenance=expected_provenance,
+    )
+    expected_contract = _json_object_from_bytes(
+        expected_contract_bytes, label="recomputed release lifecycle contract"
+    )
+    expected_plan = _json_object_from_bytes(
+        expected_plan_bytes, label="recomputed release lifecycle plan"
+    )
+    if lifecycle_contract != contract:
+        raise ContractError(
+            "process-generated release plan source contract does not match the lifecycle"
+        )
+    if contract != expected_contract:
+        raise ContractError(
+            "process-generated release plan contract cannot be exactly recomputed"
+        )
+    if plan != expected_plan:
+        raise ContractError(
+            "process-generated release plan does not match exact core recomputation"
+        )
+
+
+def validate_generated_release_lifecycle_plan(
+    project_root: Path,
+    *,
+    project: str,
+    contract: dict[str, Any],
+    plan: dict[str, Any],
+) -> None:
+    paths = {
+        ".process/project.json": (project_root / ".process" / "project.json", "project manifest"),
+        ".release/change.json": (project_root / ".release" / "change.json", "release lifecycle contract"),
+        "release.json": (project_root / "release.json", "release contract"),
+    }
+    input_documents: dict[str, dict[str, Any]] = {}
+    input_digests: dict[str, str] = {}
+    for relative, (path, label) in paths.items():
+        content = _bounded_file(path, label=label)
+        input_documents[relative] = _json_object_from_bytes(content, label=label)
+        input_digests[relative] = _content_digest(content)
+    lock_path = project_root / ".process" / "process.lock"
+    lock = validate_process_lock(read_json(lock_path), str(lock_path))
+    validate_generated_release_lifecycle_documents(
+        project=project,
+        contract=contract,
+        plan=plan,
+        input_documents=input_documents,
+        input_digests=input_digests,
+        authority={"version": lock.version, "digest": lock.digest},
+    )
 
 
 def prepare_release_candidate(
@@ -546,11 +706,41 @@ def prepare_release_candidate(
         project_root,
         ["rev-list", "-n", "1", f"v{previous_release.version}", "--"],
     )
+    project_path = project_root / ".process" / "project.json"
+    project_bytes: bytes | None = None
+    configured_project = None
+    if project_path.is_file() and not project_path.is_symlink():
+        project_bytes = _bounded_file(project_path, label="project manifest")
+        configured_project = validate_project(
+            _json_object_from_bytes(project_bytes, label="project manifest"),
+            str(project_path),
+        )
+        if configured_project.identifier != package_name:
+            raise ContractError("project manifest does not match the release package")
     lifecycle_contract, lifecycle_plan = _release_lifecycle_documents(
         project=package_name,
         version=version,
         comparison_base=previous_checkpoint,
     )
+    release_bytes = _json_bytes(release_document)
+    if (
+        configured_project is not None
+        and configured_project.plan_decision_mode is not None
+    ):
+        assert project_bytes is not None
+        provenance = _release_plan_provenance(
+            project_manifest=project_bytes,
+            lifecycle_contract=lifecycle_contract,
+            release_contract=release_bytes,
+            authority_version=lock.version,
+            authority_digest=lock.digest,
+        )
+        lifecycle_contract, lifecycle_plan = _release_lifecycle_documents(
+            project=package_name,
+            version=version,
+            comparison_base=previous_checkpoint,
+            provenance=provenance,
+        )
 
     pyproject_path = project_root / "pyproject.toml"
     runtime_path = project_root / previous_release.runtime_version_file
@@ -566,7 +756,7 @@ def prepare_release_candidate(
         version=version,
     )
     outputs = {
-        release_path: _json_bytes(release_document),
+        release_path: release_bytes,
         pyproject_path: pyproject_bytes,
         runtime_path: runtime_bytes,
         project_root / ".release" / "change.json": lifecycle_contract,

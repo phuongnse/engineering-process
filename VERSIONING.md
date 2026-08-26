@@ -154,6 +154,32 @@ Completed historical decisions retain their original evidence and require no
 backfill. A recommendation resolution is decision evidence only and never substitutes
 for lifecycle completion or delivery authority.
 
+## Material-decision implementation gate
+
+Plan schema 3 adds explicit `authored` or `process-generated` provenance. The
+plan-decision assignment and review artifacts start at schema 1, while the optional
+project lifecycle policy is additive to project schemas 3 and 4. Released plan
+schemas 1 and 2 retain their historical meaning and remain readable; a project that
+does not adopt the policy retains its released schema-2 planning behavior.
+
+Adopting `provenance-gated-authored-review` changes the pre-implementation lifecycle
+semantics and is therefore a breaking package change before 1.0. Every new
+nontrivial authored plan receives a fresh read-only semantic assessment across the
+canonical material categories. A clear assessment permits `change implement`; a
+decision-required assessment remains blocked until the existing independently
+reviewed recommendation and explicit owner-resolution chain bind that exact
+assessment. A process-generated plan bypasses semantic assessment only when the
+installed immutable authority recognizes its generator and exactly recomputes the
+complete plan from validated source-owned inputs. Unknown generators, claimed
+labels, partial comparison, and stale contract, plan, source, authority, policy,
+context, assessment, recommendation, or resolution evidence fail closed.
+
+The producer ships the opt-in as a target-version adoption migration. Its current
+N-1 release candidate stays on plan schema 2, then self-adoption activates schema 3
+and exact release-plan recomputation for subsequent releases. No package, runtime,
+tag, artifact, or consumer-lock identity changes in the feature PR; the separate
+generated Release PR derives the pre-1.0 minor version.
+
 Remote-verification request and evidence-set schema-1 artifacts, optional project
 requirements, optional change selections, lifecycle references, and receipt content
 are additive serialized surfaces. A project does not gain the gate until a separate

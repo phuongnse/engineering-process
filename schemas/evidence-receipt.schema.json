@@ -51,11 +51,59 @@
           "maxItems": 64,
           "items": {"$ref": "#/$defs/verificationArtifact"}
         },
+        "planDecision": {"$ref": "#/$defs/planDecision"},
         "remoteVerification": {"$ref": "#/$defs/remoteVerification"}
       }
     }
   },
   "$defs": {
+    "planDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "authorized",
+        "generatedInputs",
+        "assignment",
+        "review",
+        "recommendation",
+        "recommendationAssignment",
+        "recommendationReview",
+        "resolution",
+        "contextReservation",
+        "recommendationContextReservation"
+      ],
+      "properties": {
+        "kind": {"enum": ["authored", "process-generated"]},
+        "authorized": {"const": true},
+        "generatedInputs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "artifact"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$).+$"
+              },
+              "artifact": {"$ref": "#/$defs/artifact"}
+            }
+          }
+        },
+        "assignment": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "review": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendation": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendationAssignment": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendationReview": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "resolution": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "contextReservation": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+        "recommendationContextReservation": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+      }
+    },
     "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
     "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "artifact": {

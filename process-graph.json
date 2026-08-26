@@ -26,7 +26,12 @@
       "id": "planned",
       "ownerSkill": "implement-change",
       "actor": "automation",
-      "commands": ["change implement"],
+      "commands": [
+        "change decision resolve",
+        "change decision start",
+        "change decision submit",
+        "change implement"
+      ],
       "transitions": [
         {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"},
         {"result": "failure", "nextState": "planned", "nextSkill": "implement-change"}
@@ -73,7 +78,12 @@
       "id": "verified",
       "ownerSkill": "review-change",
       "actor": "automation",
-      "commands": ["change review start"],
+      "commands": [
+        "change decision resolve",
+        "change decision start",
+        "change decision submit",
+        "change review start"
+      ],
       "transitions": [
         {"result": "reviewer-assigned", "nextState": "review-pending", "nextSkill": "review-change"},
         {"result": "failure", "nextState": "verified", "nextSkill": "review-change"},
@@ -95,7 +105,12 @@
       "id": "changes-requested",
       "ownerSkill": "implement-change",
       "actor": "automation",
-      "commands": ["change implement"],
+      "commands": [
+        "change decision resolve",
+        "change decision start",
+        "change decision submit",
+        "change implement"
+      ],
       "transitions": [
         {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"},
         {"result": "failure", "nextState": "changes-requested", "nextSkill": "implement-change"}

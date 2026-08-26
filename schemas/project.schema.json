@@ -39,6 +39,9 @@
             "type": "string",
             "pattern": "^project-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
           }
+        },
+        "planDecision": {
+          "$ref": "#/$defs/planDecision"
         }
       }
     },
@@ -74,12 +77,18 @@
           "anyOf": [
             {"required": ["environment"]},
             {"required": ["impact"]},
-            {"required": ["remoteVerification"]}
+            {"required": ["remoteVerification"]},
+            {"properties": {"lifecycle": {"required": ["planDecision"]}}}
           ]
         },
         "properties": {
           "lifecycle": {
-            "not": {"required": ["qualityExtensions"]}
+            "not": {
+              "anyOf": [
+                {"required": ["qualityExtensions"]},
+                {"required": ["planDecision"]}
+              ]
+            }
           },
           "profiles": {
             "additionalProperties": {
@@ -101,7 +110,12 @@
         },
         "properties": {
           "lifecycle": {
-            "not": {"required": ["qualityExtensions"]}
+            "not": {
+              "anyOf": [
+                {"required": ["qualityExtensions"]},
+                {"required": ["planDecision"]}
+              ]
+            }
           },
           "profiles": {
             "additionalProperties": {
@@ -254,6 +268,31 @@
     }
   ],
   "$defs": {
+    "planDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "materialCategories"],
+      "properties": {
+        "mode": {"const": "provenance-gated-authored-review"},
+        "materialCategories": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "prefixItems": [
+            {"const": "architecture"},
+            {"const": "authority"},
+            {"const": "compatibility"},
+            {"const": "external-mutation"},
+            {"const": "lifecycle-order"},
+            {"const": "owner"},
+            {"const": "rollout"},
+            {"const": "scope"},
+            {"const": "trust-boundary"}
+          ],
+          "items": false
+        }
+      }
+    },
     "remoteVerification": {
       "type": "object",
       "additionalProperties": false,

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "changeId": "issue-123",
   "contractDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "approach": "Implement the accepted behavior through its existing owner and preserve the current public contract.",
@@ -24,5 +24,17 @@
       "mitigation": "Reuse the policy owner and prove unauthorized access is rejected."
     }
   ],
-  "openDecisions": []
+  "openDecisions": [],
+  "provenance": {
+    "kind": "authored",
+    "author": {
+      "actorId": "implementation-coordinator",
+      "contextId": "fresh-plan-context",
+      "kind": "agent"
+    },
+    "authority": {
+      "version": "0.7.0",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
 }
