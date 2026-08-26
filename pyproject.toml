@@ -87,6 +87,8 @@ engineering_process = ["requirements-*.txt"]
   "examples/automation-policy.json",
   "examples/automation-proposal-policy.json",
   "examples/automation-proposal.json",
+  "examples/automation-process-adoption-policy.json",
+  "examples/automation-process-adoption-proposal.json",
   "examples/change.json",
   "examples/improvement-catalog.json",
   "examples/improvement-disposition.json",

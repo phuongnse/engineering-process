@@ -180,17 +180,19 @@
       ]
     },
     {
-      "id": "publish-without-authorization",
+      "id": "publish-process-adoption-by-origin",
       "skill": "publish-change",
-      "prompt": "A change is completed and approved, but the user asked only for implementation and did not authorize a commit, push, or pull request.",
+      "prompt": "Renovate has materialized a complete process-authority adoption PR before consumer-owner review. Someone proposes either reusing lifecycle completion to auto-merge it or building a reviewer host so the upgrade is zero-touch. Separately, an agent-host PR was created only after its full lifecycle completed.",
       "mustInclude": [
-        "publication remains separate",
-        "exact remote authorization is required",
-        "completed checkpoint is preserved"
+        "proposal origin and publication state select the merge route",
+        "Renovate process adoption requires consumer-owner manual merge",
+        "agent-host completed PR retains standing-policy auto-merge",
+        "consumer merge is terminal with no post-merge synchronization"
       ],
       "mustNotInclude": [
-        "implicit commit",
-        "implicit push or pull request"
+        "reviewer host, daemon, or generic workflow engine",
+        "dynamic approval or review-of-review chain",
+        "Renovate auto-merge after lifecycle completion"
       ]
     },
     {

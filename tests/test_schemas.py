@@ -21,6 +21,8 @@ class SchemaTests(unittest.TestCase):
             "automation-policy": "automation-policy",
             "automation-proposal-policy": "automation-proposal-policy",
             "automation-proposal": "automation-proposal",
+            "automation-process-adoption-policy": "automation-proposal-policy",
+            "automation-process-adoption-proposal": "automation-proposal",
             "change": "change",
             "improvement-catalog": "improvement-catalog",
             "improvement-disposition": "improvement-disposition",

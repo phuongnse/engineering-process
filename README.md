@@ -140,17 +140,18 @@ Renovate must install and verify a target authority before that target exists in
 checkout, and `processctl sync --check` compares those bytes with the pinned
 distribution.
 
-For an existing consumer, automation may prepare one unpublished adoption candidate,
-but the normal Renovate PR-first route is excluded from process-authority updates.
-The managed runner installs the target authority from the complete hash lock outside
-the checkout and atomically updates the process lock and managed assets before the
-lifecycle host publishes the completed candidate. If the consumer chooses or requires
-new project configuration, it adds
+For an existing opted-in consumer, Renovate may prepare and publish one complete
+process-adoption proposal before consumer-owner review. The managed runner installs
+the target authority from the complete hash lock outside the checkout and atomically
+updates the process lock and managed assets before PR creation. If the consumer
+chooses or requires new project configuration, it adds
 `.process/adoption-migrations/<target-version>.json`; the installed target authority
 binds the source and target manifest digests, validates the complete target manifest,
 and updates `.process/project.json` in the same rollback transaction. Optional
-capabilities are never inferred. CI and a fresh isolated review context approve the
-fully materialized checkpoint; merge completes adoption and no post-merge sync runs.
+capabilities are never inferred. Consumer CI and its chosen review approve the fully
+materialized checkpoint. Renovate cannot auto-merge it; consumer-owner merge completes
+adoption and no post-merge sync runs. Separately, an agent-host candidate created only
+after lifecycle completion retains normal standing-policy auto-merge.
 
 The engineering-process producer repository separately owns its root
 `.gitattributes` policy so tracked text sources and distribution inputs are LF and
@@ -651,13 +652,14 @@ without per-action confirmation.
 ### Controlled automation proposals
 
 Completion-before-publication remains the default. A consumer may enable an untrusted
-dependency proposal before completion only through a policy file already present on
-the protected base at `.process/automation-proposals.json`. The policy uses the
-shape in `examples/automation-proposal-policy.json`: current policy uses schema 2,
-selects the target and automation prefix, allows only `dependency-update`,
-requires the canonical `lifecycle-completion` check, and fixes every dangerous control
-to its fail-closed value. Absence, disablement, a branch-only policy, or a policy digest
-mismatch blocks the route.
+automation proposal before completion only through a policy file already present on
+the protected base at `.process/automation-proposals.json`. Schema 1 and schema 2 use
+the shape in `examples/automation-proposal-policy.json`, allow only
+`dependency-update`, require the canonical `lifecycle-completion` check, and retain
+their released human-only and completion-gated meanings. Schema 3 uses
+`examples/automation-process-adoption-policy.json` for the distinct
+`process-adoption` route. Absence, disablement, a branch-only policy, or a policy
+digest mismatch blocks every route.
 
 The immutable provider verifier emits one bounded
 `engineering-process-controlled-automation-proposal` report for the exact repository,
@@ -682,9 +684,9 @@ processctl publication validate-proposal --project-root . \
 
 This pass proves only that the proposal is safe to expose as untrusted input. It is
 not verification, semantic review, completion, or merge authority. Proposal checks
-remain read-only and receive no secrets; automerge, scripts, plugins, shell execution,
-privileged CI, process-authority, workflow, release, deployment, security-policy, and
-trust-root changes are excluded.
+remain read-only and receive no secrets. Dependency proposals exclude automerge,
+scripts, plugins, shell execution, privileged CI, process-authority, workflow,
+release, deployment, security-policy, and trust-root changes.
 
 The required completion check is absent on every new proposal head. After the exact
 head completes the lifecycle, export its receipt, finalize the managed PR requirements,
@@ -711,6 +713,31 @@ Schema 2 keeps provider automerge disabled before completion and permits merge o
 after the protected base's standing automation policy and exact completion gate pass.
 Provider tokens, check APIs, branch protection, retries, and repository selection
 remain consumer-owned adapter behavior.
+
+Schema-3 process adoption has a different merge boundary. Renovate may create the PR
+only after its allowlisted managed runner has materialized the complete target: direct
+pin, cross-platform hash lock, process lock, managed files, any declared project
+migration, and every immutable action pin. A protected-base immutable verifier is
+fixed by repository and commit in the opt-in policy. Its evidence binds the producer
+release/tag/commit/attestation, source and target authority versions and digests,
+requirements bytes, exact base/head/path set, migration result, complete managed-file
+set, and exact verifier identity. Workflow changes must be only the declared full-SHA
+action-pin replacements with their release annotations.
+
+The schema fixes `automerge` to false, `consumerOwnerMergeRequired` to true, and
+`postMergeMutation` to false. `publication validate-proposal-completion` always rejects
+this kind: lifecycle completion, standing automation, provider state, and a successful
+proposal check cannot convert it to automatic merge. The consumer chooses project
+configuration, commands, verification, review method, and whether to merge. Its owner
+manually merges the reviewed PR; that merge is the terminal adoption cutover and no
+post-merge synchronization runs.
+
+This does not alter the ordinary agent-host route. When an agent host completes the
+full lifecycle before it creates a source or adoption PR, the completed exact head may
+still auto-merge under the protected base's standing policy. Origin and publication
+state select the route: an agent-host completed PR is not reclassified as a Renovate
+proposal, and a Renovate process-adoption proposal never inherits completed-source
+auto-merge authority.
 
 ## Trust boundary
 

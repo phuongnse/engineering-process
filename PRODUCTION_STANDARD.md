@@ -177,6 +177,25 @@ authority, and shares one rollback boundary with the process lock and managed as
 Optional capabilities are never inferred, while configuration required by the target
 authority blocks adoption when it is missing or invalid.
 
+Proposal merge authority derives from proposal origin and publication state. An
+agent-host review object created only after full lifecycle completion may use standing
+policy auto-merge for its exact approved head. A Renovate `process-adoption` proposal
+is created before consumer-owner review and must instead fix automerge false,
+`consumerOwnerMergeRequired` true, and post-merge mutation false. Lifecycle
+completion, standing policy, provider state, and successful static checks never move
+that proposal onto the agent-host route. The consumer owns review and manually
+authorizes merge; merge is the terminal cutover.
+
+Before candidate-owned commands, a protected-base immutable verifier independently
+binds the actual base and exact head, producer release/tag/commit/attestation, source
+and target process identities, requirements bytes, process lock, migration result,
+complete selected managed-file set, grouped full-SHA action-pin-only workflow delta,
+and verifier identity. Partial, stale, inferred, unauthorized, or post-merge-dependent
+candidates fail closed. This portable boundary reuses ordinary Renovate generation,
+managed adoption, consumer CI, review and branch protection. It does not introduce a
+reviewer host, daemon, scheduler, generic workflow engine, dynamically generated
+approval chain, meta-assessment, or reviewer-of-reviewer layer.
+
 Released serialized contracts are never tightened in place. A new resource bound or
 meaning-changing requirement uses a new integer schema major with explicit migration;
 historical readers retain their published behavior. A new optional capability may

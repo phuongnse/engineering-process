@@ -43,7 +43,7 @@ class SkillTests(unittest.TestCase):
             validate_skills(PROCESS_ROOT / "process_assets" / "skills"), []
         )
 
-    def test_controlled_proposals_remain_untrusted_until_exact_completion(self):
+    def test_controlled_proposals_preserve_versioned_merge_boundaries(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"
         execution = (skills / "run-change" / "references" / "execution.md").read_text(
             encoding="utf-8"
@@ -60,6 +60,12 @@ class SkillTests(unittest.TestCase):
             self.assertIn("automerge", text)
             self.assertIn("process-authority", text)
         self.assertIn("Missing or disabled base policy fails closed", execution)
+        for text in (execution, publish):
+            self.assertIn("consumerOwnerMergeRequired", text)
+            self.assertIn("consumer owner", text.lower())
+            self.assertIn("merge is terminal", text.lower())
+            self.assertIn("agent-host", text.lower())
+            self.assertIn("reviewer host", text.lower())
 
     def test_standing_policy_continues_automation_and_escalates_only_exceptions(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"

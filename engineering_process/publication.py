@@ -13,7 +13,9 @@ from .contracts import (
     MAX_AUTOMATION_PROPOSAL_PATHS,
     MAX_JSON_BYTES,
     canonical_json_digest,
+    validate_adoption_migration,
     validate_automation_policy,
+    validate_process_lock,
 )
 from .git import portable_git_path, run_git
 from .markdown import (
@@ -669,6 +671,333 @@ def _proposal_base_policy(
     return document
 
 
+def _proposal_git_blob(
+    project_root: Path, *, commit: str, path: str, label: str
+) -> bytes:
+    result = run_git(
+        project_root,
+        ["show", f"{commit}:{path}"],
+        label=label,
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_JSON_BYTES,
+    )
+    if result.returncode != 0:
+        raise ContractError(f"{label} is missing from {commit[:12]}")
+    return result.stdout
+
+
+def _proposal_blob_digest(content: bytes) -> str:
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _proposal_json_blob(content: bytes, *, label: str) -> dict[str, object]:
+    try:
+        document = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"{label} must be valid UTF-8 JSON") from error
+    if not isinstance(document, dict):
+        raise ContractError(f"{label} must be a JSON object")
+    return document
+
+
+def _proposal_managed_tree_paths(
+    project_root: Path, *, commit: str, skills: tuple[str, ...]
+) -> tuple[str, ...]:
+    roots = [
+        "AGENTS.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".process/adopt-process.py",
+        ".process/adopt-process-windows-job.py",
+        ".agents/.gitattributes",
+        *(f".agents/skills/{skill}" for skill in skills),
+    ]
+    result = run_git(
+        project_root,
+        ["ls-tree", "-r", "-z", commit, "--", *roots],
+        label="inspect process-adoption managed tree",
+        timeout_seconds=30,
+        max_stdout_bytes=MAX_PROPOSAL_CHANGED_PATH_BYTES,
+    )
+    if result.returncode != 0:
+        raise ContractError("cannot inspect process-adoption managed tree")
+    paths: list[str] = []
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, encoded_path = record.partition(b"\t")
+        parts = metadata.split(b" ")
+        if not separator or len(parts) != 3 or parts[1] != b"blob":
+            raise ContractError("process-adoption managed tree contains an invalid entry")
+        if parts[0] not in {b"100644", b"100755"}:
+            raise ContractError(
+                "process-adoption managed files must be regular Git blobs"
+            )
+        paths.append(
+            portable_git_path(
+                encoded_path,
+                label="process-adoption managed path",
+            )
+        )
+    ordered = tuple(sorted(paths))
+    if len(ordered) > MAX_AUTOMATION_PROPOSAL_PATHS:
+        raise ContractError("process-adoption managed tree exceeds the file bound")
+    return ordered
+
+
+def _validate_process_adoption_workflows(
+    project_root: Path,
+    *,
+    base_commit: str,
+    head_commit: str,
+    action_pins: list[dict[str, object]],
+) -> list[str]:
+    issues: list[str] = []
+    pins_by_path: dict[str, list[dict[str, object]]] = {}
+    for pin in action_pins:
+        pins_by_path.setdefault(str(pin["path"]), []).append(pin)
+    for path, pins in pins_by_path.items():
+        base = _proposal_git_blob(
+            project_root,
+            commit=base_commit,
+            path=path,
+            label=f"process-adoption base workflow {path}",
+        )
+        head = _proposal_git_blob(
+            project_root,
+            commit=head_commit,
+            path=path,
+            label=f"process-adoption candidate workflow {path}",
+        )
+        try:
+            expected = base.decode("utf-8")
+            head_text = head.decode("utf-8")
+        except UnicodeDecodeError:
+            issues.append(f"Process-adoption workflow {path} must be UTF-8")
+            continue
+        for pin in pins:
+            pattern = re.compile(
+                rf"(?m)(uses:[ \t]*{re.escape(str(pin['repository']))}@)"
+                rf"{re.escape(str(pin['previousCommit']))}"
+                rf"([ \t]+#[ \t]*){re.escape(str(pin['previousReleaseTag']))}"
+                r"([ \t]*)$"
+            )
+            expected, replacements = pattern.subn(
+                lambda match: (
+                    match.group(1)
+                    + str(pin["targetCommit"])
+                    + match.group(2)
+                    + str(pin["targetReleaseTag"])
+                    + match.group(3)
+                ),
+                expected,
+            )
+            if replacements == 0:
+                issues.append(
+                    f"Process-adoption workflow {path} does not contain the exact "
+                    "declared previous action pin"
+                )
+        if expected != head_text:
+            issues.append(
+                f"Process-adoption workflow {path} contains changes beyond the "
+                "declared immutable action-pin replacements"
+            )
+    return issues
+
+
+def _validate_process_adoption_candidate(
+    project_root: Path,
+    *,
+    base_commit: str,
+    proposal: AutomationProposal,
+    changed_paths: tuple[str, ...],
+) -> list[str]:
+    if proposal.process_adoption is None:
+        return ["Process-adoption evidence is missing"]
+    adoption = proposal.process_adoption
+    issues: list[str] = []
+    source_authority = adoption["sourceAuthority"]
+    target_authority = adoption["targetAuthority"]
+    requirements = adoption["requirements"]
+    process_lock_binding = adoption["processLock"]
+    migration = adoption["projectMigration"]
+    managed_files = adoption["managedFiles"]
+    action_pins = adoption["actionPins"]
+
+    bindings = [
+        (requirements["inputPath"], requirements["inputSha256"], "requirements input"),
+        (requirements["lockPath"], requirements["lockSha256"], "requirements lock"),
+        (process_lock_binding["path"], process_lock_binding["sha256"], "process lock"),
+        (migration["projectPath"], migration["projectSha256"], "project manifest"),
+        *(
+            [(migration["path"], migration["sha256"], "adoption migration")]
+            if migration["status"] == "applied"
+            else []
+        ),
+        *((item["path"], item["sha256"], "managed file") for item in managed_files),
+    ]
+    blob_cache: dict[str, bytes] = {}
+    total_managed_bytes = 0
+    for bound_path, digest, label in bindings:
+        content = blob_cache.setdefault(
+            str(bound_path),
+            _proposal_git_blob(
+                project_root,
+                commit=proposal.head_sha,
+                path=str(bound_path),
+                label=f"process-adoption {label} {bound_path}",
+            ),
+        )
+        if label == "managed file":
+            total_managed_bytes += len(content)
+            if total_managed_bytes > 8_000_000:
+                raise ContractError(
+                    "process-adoption managed distribution exceeds 8000000 bytes"
+                )
+        if _proposal_blob_digest(content) != digest:
+            issues.append(
+                f"Process-adoption {label} {bound_path} digest does not match evidence"
+            )
+
+    process_lock_content = blob_cache[str(process_lock_binding["path"])]
+    process_lock = validate_process_lock(
+        _proposal_json_blob(process_lock_content, label="process-adoption process lock"),
+        "process-adoption process lock",
+    )
+    if (
+        process_lock.version != target_authority["version"]
+        or process_lock.digest != target_authority["processDigest"]
+    ):
+        issues.append(
+            "Process-adoption process lock does not match the target authority"
+        )
+
+    base_lock_content = _proposal_git_blob(
+        project_root,
+        commit=base_commit,
+        path=str(process_lock_binding["path"]),
+        label="process-adoption protected-base process lock",
+    )
+    base_lock = validate_process_lock(
+        _proposal_json_blob(base_lock_content, label="protected-base process lock"),
+        "protected-base process lock",
+    )
+    if (
+        base_lock.version != source_authority["version"]
+        or base_lock.digest != source_authority["processDigest"]
+    ):
+        issues.append(
+            "Process-adoption protected-base process lock does not match the "
+            "source authority"
+        )
+    dropped_skills = sorted(set(base_lock.skills) - set(process_lock.skills))
+    if dropped_skills:
+        issues.append(
+            "Process-adoption process lock drops a selected source skill: "
+            + dropped_skills[0]
+        )
+
+    expected_managed_paths = _proposal_managed_tree_paths(
+        project_root,
+        commit=proposal.head_sha,
+        skills=process_lock.skills,
+    )
+    declared_managed_paths = tuple(item["path"] for item in managed_files)
+    if declared_managed_paths != expected_managed_paths:
+        issues.append(
+            "Process-adoption managedFiles does not describe the complete selected "
+            "managed distribution"
+        )
+
+    input_content = blob_cache[str(requirements["inputPath"])]
+    lock_content = blob_cache[str(requirements["lockPath"])]
+    target_version = re.escape(str(target_authority["version"]))
+    direct_pin = re.compile(
+        rf"(?m)^engineering-process=={target_version}$"
+    )
+    locked_pin = re.compile(
+        rf"(?m)^engineering-process=={target_version}[ \t]+\\$"
+    )
+    try:
+        input_text = input_content.decode("utf-8")
+        lock_text = lock_content.decode("utf-8")
+    except UnicodeDecodeError:
+        issues.append("Process-adoption requirements must be UTF-8")
+    else:
+        if len(direct_pin.findall(input_text)) != 1:
+            issues.append(
+                "Process-adoption requirements input must contain one exact target pin"
+            )
+        if len(locked_pin.findall(lock_text)) != 1 or "--hash=sha256:" not in lock_text:
+            issues.append(
+                "Process-adoption requirements lock must contain one exact hash-locked "
+                "target pin"
+            )
+
+    head_project = blob_cache[str(migration["projectPath"])]
+    base_project = _proposal_git_blob(
+        project_root,
+        commit=base_commit,
+        path=str(migration["projectPath"]),
+        label="process-adoption protected-base project manifest",
+    )
+    if migration["status"] == "not-required":
+        if head_project != base_project:
+            issues.append(
+                "Process-adoption project manifest changed without an applied migration"
+            )
+    else:
+        migration_document = _proposal_json_blob(
+            blob_cache[str(migration["path"])],
+            label="process-adoption migration",
+        )
+        validate_adoption_migration(
+            migration_document, "process-adoption migration"
+        )
+        if (
+            migration_document["fromProcessVersion"] != source_authority["version"]
+            or migration_document["toProcessVersion"] != target_authority["version"]
+            or migration_document["sourceProjectDigest"]
+            != _proposal_blob_digest(base_project)
+            or migration_document["targetProjectDigest"]
+            != _proposal_blob_digest(head_project)
+        ):
+            issues.append(
+                "Process-adoption migration does not bind the exact source and target"
+            )
+
+    required_changed_paths = {
+        str(requirements["inputPath"]),
+        str(requirements["lockPath"]),
+        str(process_lock_binding["path"]),
+        *(str(pin["path"]) for pin in action_pins),
+    }
+    if migration["status"] == "applied":
+        required_changed_paths.update(
+            {str(migration["path"]), str(migration["projectPath"])}
+        )
+    allowed_changed_paths = required_changed_paths | set(declared_managed_paths)
+    missing = sorted(required_changed_paths - set(changed_paths))
+    unauthorized = sorted(set(changed_paths) - allowed_changed_paths)
+    if missing:
+        issues.append(
+            "Process-adoption proposal omits required materialized path: " + missing[0]
+        )
+    if unauthorized:
+        issues.append(
+            "Process-adoption proposal contains an unauthorized path: "
+            + unauthorized[0]
+        )
+    issues.extend(
+        _validate_process_adoption_workflows(
+            project_root,
+            base_commit=base_commit,
+            head_commit=proposal.head_sha,
+            action_pins=action_pins,
+        )
+    )
+    return issues
+
+
 def validate_controlled_automation_proposal(
     project_root: Path,
     *,
@@ -728,30 +1057,6 @@ def validate_controlled_automation_proposal(
     if branch == target_branch:
         issues.append("Automation proposal branch must differ from its target")
 
-    changed_paths = _proposal_changed_paths(
-        project_root,
-        base_sha=base_commit,
-        head_sha=proposal.head_sha,
-    )
-    if changed_paths != proposal.changed_paths:
-        issues.append("Automation proposal changed paths do not match policy evidence")
-    protected_paths = [
-        path
-        for path in changed_paths
-        if path in PROTECTED_AUTOMATION_PROPOSAL_PATHS
-        or path.startswith(PROTECTED_AUTOMATION_PROPOSAL_PREFIXES)
-    ]
-    if protected_paths:
-        issues.append(
-            "Controlled automation proposals cannot change process, workflow, "
-            "release, security-policy, or trust-root paths: "
-            + protected_paths[0]
-            + (
-                f" (+{len(protected_paths) - 1} more)"
-                if len(protected_paths) > 1
-                else ""
-            )
-        )
     base_policy = _proposal_base_policy(
         project_root,
         base_sha=base_commit,
@@ -761,6 +1066,41 @@ def validate_controlled_automation_proposal(
         issues.append("Automation proposal base opt-in digest does not match evidence")
     if base_policy != proposal.opt_in_document:
         issues.append("Automation proposal base opt-in document does not match evidence")
+
+    changed_paths = _proposal_changed_paths(
+        project_root,
+        base_sha=base_commit,
+        head_sha=proposal.head_sha,
+    )
+    if changed_paths != proposal.changed_paths:
+        issues.append("Automation proposal changed paths do not match policy evidence")
+    if proposal.proposal_kind == "process-adoption":
+        issues.extend(
+            _validate_process_adoption_candidate(
+                project_root,
+                base_commit=base_commit,
+                proposal=proposal,
+                changed_paths=changed_paths,
+            )
+        )
+    else:
+        protected_paths = [
+            path
+            for path in changed_paths
+            if path in PROTECTED_AUTOMATION_PROPOSAL_PATHS
+            or path.startswith(PROTECTED_AUTOMATION_PROPOSAL_PREFIXES)
+        ]
+        if protected_paths:
+            issues.append(
+                "Controlled automation proposals cannot change process, workflow, "
+                "release, security-policy, or trust-root paths: "
+                + protected_paths[0]
+                + (
+                    f" (+{len(protected_paths) - 1} more)"
+                    if len(protected_paths) > 1
+                    else ""
+                )
+            )
     return issues
 
 
@@ -781,6 +1121,26 @@ def validate_controlled_automation_proposal_completion(
     evidence: dict[str, object],
     source: dict[str, object],
 ) -> list[str]:
+    if proposal.proposal_kind == "process-adoption":
+        return [
+            *validate_controlled_automation_proposal(
+                project_root,
+                repository=repository,
+                title=title,
+                body=body,
+                branch=branch,
+                target_branch=target_branch,
+                base_commit=base_commit,
+                state="ready",
+                commit=commit,
+                verifier_repository=verifier_repository,
+                verifier_commit=verifier_commit,
+                proposal=proposal,
+                source=source,
+            ),
+            "Process-adoption proposals do not use lifecycle completion or standing "
+            "automation merge escalation; consumer-owner manual merge is required",
+        ]
     issues = validate_controlled_automation_proposal(
         project_root,
         repository=repository,

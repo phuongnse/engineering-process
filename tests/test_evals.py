@@ -37,3 +37,23 @@ class EvaluationFixtureTests(unittest.TestCase):
         self.assertEqual(len(case_ids), len(set(case_ids)))
         self.assertEqual(set(case_skills), skills)
         self.assertEqual(len(case_skills), len(set(case_skills)))
+
+    def test_publish_forward_case_preserves_origin_boundary_without_platform(self):
+        document = read_json(PROCESS_ROOT / "evals" / "cases.json")
+        case = next(
+            item
+            for item in document["cases"]
+            if item["id"] == "publish-process-adoption-by-origin"
+        )
+
+        self.assertIn(
+            "Renovate process adoption requires consumer-owner manual merge",
+            case["mustInclude"],
+        )
+        self.assertIn(
+            "agent-host completed PR retains standing-policy auto-merge",
+            case["mustInclude"],
+        )
+        self.assertTrue(
+            any("generic workflow engine" in item for item in case["mustNotInclude"])
+        )
