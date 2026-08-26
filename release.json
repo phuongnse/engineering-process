@@ -1,51 +1,46 @@
 {
   "schemaVersion": 3,
-  "previousVersion": "0.5.1",
-  "version": "0.6.0",
-  "classification": "minor",
-  "compatibility": "incompatible",
-  "schemaImpact": "additive",
-  "migration": "evidence-valid-remote-verification: After immutable release and adoption, route every new material owner decision through recommendation review and resolution. Projects that need remote claims separately add named remoteVerification requirements to the target-version project manifest and select them through requiredEvidence on new change contracts; historical decisions and completed lifecycles require no backfill.",
+  "previousVersion": "0.6.0",
+  "version": "0.6.1",
+  "classification": "patch",
+  "compatibility": "backward-compatible",
+  "schemaImpact": "unchanged",
+  "migration": null,
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.6.0",
-    "releaseName": "v0.6.0",
+    "tag": "v0.6.1",
+    "releaseName": "v0.6.1",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.6.0-py3-none-any.whl",
-      "engineering_process-0.6.0.tar.gz"
+      "engineering_process-0.6.1-py3-none-any.whl",
+      "engineering_process-0.6.1.tar.gz"
     ],
-    "receiptAsset": "engineering-process-v0.6.0-evidence.json",
+    "receiptAsset": "engineering-process-v0.6.1-evidence.json",
     "authorizationAsset": null
   },
   "provenance": {
     "mode": "governed",
     "statement": "The public N-1 lifecycle receipt and reviewed Release PR authorize this release.",
     "lifecycleReceipt": {
-      "asset": "engineering-process-v0.6.0-evidence.json",
+      "asset": "engineering-process-v0.6.1-evidence.json",
       "project": "engineering-process",
-      "changeId": "release-0-6-0",
+      "changeId": "release-0-6-1",
       "cycle": 1
     }
   },
   "changes": [
     {
-      "id": "evidence-valid-remote-verification",
-      "type": "breaking",
+      "id": "bind-authority-python-runtime-v2",
+      "type": "fix",
       "surfaces": [
-        "cli",
-        "governance",
-        "lifecycle",
-        "recommendation",
-        "schema",
-        "skills",
-        "verification"
+        "command-execution",
+        "environment-resolution"
       ],
-      "rationale": "Require evidence-derived valid recommendations with stateful independent challenge, and add project-owned exact-checkpoint remote evidence requests whose complete selector set must be ingested before review or completion."
+      "rationale": "Bind the portable logical command python to the exact interpreter running the immutable process authority across doctor, setup, exec, and verification so ambient shell PATH cannot select an unrelated Python runtime or require consumer activation wrappers."
     }
   ]
 }
