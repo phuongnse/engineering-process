@@ -191,7 +191,14 @@ class PublicationTests(unittest.TestCase):
             ".process/project.json": '{"schemaVersion":1,"project":"sample"}\n',
             ".process/adopt-process.py": "# Managed adoption runner\n",
             ".process/adopt-process-windows-job.py": "# Managed Windows runner\n",
-            ".agents/.gitattributes": "* text eol=lf\n",
+            ".agents/.gitattributes": (
+                "# engineering-process:attributes:start\n"
+                ".gitattributes text=auto eol=lf -working-tree-encoding "
+                "-filter -ident\n"
+                "skills/** text=auto eol=lf -working-tree-encoding "
+                "-filter -ident\n"
+                "# engineering-process:attributes:end\n"
+            ),
             ".agents/skills/run-change/.engineering-process-skill.json": (
                 '{"schemaVersion":1,"skill":"run-change"}\n'
             ),
@@ -213,7 +220,7 @@ class PublicationTests(unittest.TestCase):
         for relative, content in files.items():
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            target.write_bytes(content.encode("utf-8"))
         subprocess.run(["git", "add", "."], cwd=root, check=True)
         subprocess.run(
             ["git", "commit", "-qm", "chore: initialize adoption fixture"],
@@ -244,8 +251,8 @@ class PublicationTests(unittest.TestCase):
         (root / ".process" / "process.lock").write_text(
             json.dumps(target_lock, indent=2) + "\n", encoding="utf-8"
         )
-        (root / ".agents" / "skills" / "run-change" / "SKILL.md").write_text(
-            "# Run Change 0.8.0\n", encoding="utf-8"
+        (root / ".agents" / "skills" / "run-change" / "SKILL.md").write_bytes(
+            b"# Run Change 0.8.0\n"
         )
         (root / ".github" / "workflows" / "ci.yml").write_text(
             "steps:\n"
