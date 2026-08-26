@@ -31,9 +31,12 @@
       "status": "resolved"
     },
     {
-      "activeChangeId": "enforce-material-decision-gates",
+      "activeChangeId": null,
       "id": "material-decision-before-implementation",
-      "lastResolution": null,
+      "lastResolution": {
+        "changeId": "enforce-material-decision-gates",
+        "version": "0.7.0"
+      },
       "publicSurfaces": [
         "lifecycle",
         "plan",
@@ -41,7 +44,7 @@
         "skills"
       ],
       "reusableClass": "deterministic-enforcement",
-      "status": "active"
+      "status": "resolved"
     },
     {
       "activeChangeId": null,
