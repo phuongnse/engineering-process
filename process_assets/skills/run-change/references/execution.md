@@ -289,7 +289,10 @@ the actual base independently plus the exact producer release/tag/commit/attesta
 source and target authority identities, requirements bytes, process lock, complete
 selected managed distribution, declared migration, bounded raw release/attestation
 bytes and artifact hashes, every producer use in the unchanged-mode regular-workflow
-tree, head/path set, and metadata. Base must be an ancestor of head. Candidate-owned commands run only after
+tree, head/path set, and metadata. Report bytes do not authenticate themselves: supply
+a separate clean tagged producer checkout, release artifacts, receipt, and attestation
+to the existing release validators, then compare exact target synchronization. Base
+must be an ancestor of head. Candidate-owned commands run only after
 that validation. The consumer then owns project checks, review choice, and the manual
 merge decision. Merge is terminal; do not create lifecycle-completion for this route,
 apply standing auto-merge, or schedule synchronization after merge.

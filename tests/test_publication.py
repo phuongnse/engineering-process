@@ -1,4 +1,5 @@
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from engineering_process.contracts import (
     ContractError,
@@ -25,6 +27,7 @@ from engineering_process.publication import (
     validate_pr_title,
     validate_pull_request,
     validate_evidence_publication,
+    _validate_process_adoption_producer_inputs,
 )
 
 
@@ -152,6 +155,8 @@ class PublicationTests(unittest.TestCase):
         *,
         status: str = "pending",
         second_workflow: bool = False,
+        quoted_second_workflow: bool = False,
+        primary_quote: str = "",
     ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
@@ -212,8 +217,11 @@ class PublicationTests(unittest.TestCase):
             ".github/PULL_REQUEST_TEMPLATE.md": "Managed pull request template\n",
             ".github/workflows/ci.yml": (
                 "steps:\n"
-                "  - uses: phuongnse/engineering-process@"
+                "  - uses: "
+                + primary_quote
+                + "phuongnse/engineering-process@"
                 + "6" * 40
+                + primary_quote
                 + " # v0.7.0\n"
             ),
             "requirements/process.in": "engineering-process==0.7.0\n",
@@ -223,12 +231,15 @@ class PublicationTests(unittest.TestCase):
             ),
             "AGENTS.md": "Managed agent contract\n",
         }
-        if second_workflow:
+        if second_workflow or quoted_second_workflow:
+            action = (
+                '"phuongnse/engineering-process@' + "6" * 40 + '"'
+                if quoted_second_workflow
+                else "phuongnse/engineering-process@" + "6" * 40
+            )
             files[".github/workflows/review.yml"] = (
                 "steps:\n"
-                "  - uses: phuongnse/engineering-process@"
-                + "6" * 40
-                + " # v0.7.0\n"
+                "  - uses: " + action + " # v0.7.0\n"
             )
         for relative, content in files.items():
             target = root / relative
@@ -270,8 +281,11 @@ class PublicationTests(unittest.TestCase):
         (root / ".github" / "workflows" / "ci.yml").write_bytes(
             (
                 "steps:\n"
-                "  - uses: phuongnse/engineering-process@"
+                "  - uses: "
+                + primary_quote
+                + "phuongnse/engineering-process@"
                 + "5" * 40
+                + primary_quote
                 + " # v0.8.0\n"
             ).encode("utf-8")
         )
@@ -375,12 +389,42 @@ class PublicationTests(unittest.TestCase):
         }
         return validate_automation_proposal(example), body, title, head_sha
 
+    def validate_process_adoption(self, *args, **kwargs):
+        with (
+            mock.patch(
+                "engineering_process.publication."
+                "_validate_process_adoption_producer_inputs",
+                return_value=Path(__file__).resolve().parent.parent,
+            ),
+            mock.patch(
+                "engineering_process.syncing.synchronized_state",
+                return_value=[],
+            ),
+        ):
+            return validate_controlled_automation_proposal(*args, **kwargs)
+
+    def validate_process_adoption_completion(self, *args, **kwargs):
+        with (
+            mock.patch(
+                "engineering_process.publication."
+                "_validate_process_adoption_producer_inputs",
+                return_value=Path(__file__).resolve().parent.parent,
+            ),
+            mock.patch(
+                "engineering_process.syncing.synchronized_state",
+                return_value=[],
+            ),
+        ):
+            return validate_controlled_automation_proposal_completion(
+                *args, **kwargs
+            )
+
     def test_process_adoption_proposal_binds_complete_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             proposal, body, title, head_sha = self.process_adoption_fixture(root)
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,
@@ -402,6 +446,183 @@ class PublicationTests(unittest.TestCase):
 
             self.assertEqual([], issues)
 
+    def test_process_adoption_rejects_self_authenticating_producer_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(root)
+
+            issues = validate_controlled_automation_proposal(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("independently supplied producer" in issue for issue in issues)
+            )
+
+    def test_process_adoption_rejects_target_distribution_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(root)
+            with (
+                mock.patch(
+                    "engineering_process.publication."
+                    "_validate_process_adoption_producer_inputs",
+                    return_value=Path(__file__).resolve().parent.parent,
+                ),
+                mock.patch(
+                    "engineering_process.syncing.synchronized_state",
+                    return_value=["managed skill content differs from release"],
+                ),
+            ):
+                issues = validate_controlled_automation_proposal(
+                    root,
+                    repository="example/project",
+                    title=title,
+                    body=body,
+                    branch=proposal.branch,
+                    target_branch="main",
+                    base_commit=proposal.base_sha,
+                    state="draft",
+                    commit=head_sha,
+                    verifier_repository=proposal.verifier_repository,
+                    verifier_commit=proposal.verifier_commit,
+                    proposal=proposal,
+                    source={
+                        "dirty": False,
+                        "checkpoint": head_sha,
+                        "fingerprint": f"sha256:{'9' * 64}",
+                    },
+                )
+
+            self.assertTrue(
+                any("target materialization is invalid" in issue for issue in issues)
+            )
+
+    def test_process_adoption_validates_independent_producer_objects(self):
+        with (
+            tempfile.TemporaryDirectory() as consumer_directory,
+            tempfile.TemporaryDirectory() as producer_directory,
+        ):
+            consumer = Path(consumer_directory)
+            producer = Path(producer_directory)
+            proposal, _body, _title, _head_sha = self.process_adoption_fixture(
+                consumer
+            )
+            release = proposal.process_adoption["producerRelease"]
+            (producer / "release.json").write_bytes(
+                release["releaseContract"]["content"].encode("utf-8")
+            )
+            attestation = producer / "engineering-process-v0.8.0-artifacts.json"
+            attestation.write_bytes(
+                release["distributionAttestation"]["content"].encode("utf-8")
+            )
+            receipt = producer / "engineering-process-v0.8.0-evidence.json"
+            receipt.write_bytes(b"{}\n")
+            artifacts = producer / "artifacts"
+            artifacts.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=producer, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/phuongnse/engineering-process.git",
+                ],
+                cwd=producer,
+                check=True,
+            )
+            inputs = {
+                "root": producer,
+                "artifacts": artifacts,
+                "receipt": receipt,
+                "attestation": attestation,
+            }
+            release_result = {
+                "checkpoint": release["commit"],
+                "version": release["version"],
+                "tag": release["tag"],
+            }
+            attestation_document = json.loads(
+                release["distributionAttestation"]["content"]
+            )
+            with (
+                mock.patch(
+                    "engineering_process.publication.validate_release_checkpoint",
+                    return_value=release_result,
+                ) as release_gate,
+                mock.patch(
+                    "engineering_process.publication."
+                    "validate_distribution_attestation",
+                    return_value=attestation_document,
+                ) as artifact_gate,
+            ):
+                resolved = _validate_process_adoption_producer_inputs(
+                    consumer,
+                    proposal=proposal,
+                    producer_inputs=inputs,
+                )
+
+            self.assertEqual(producer.resolve(), resolved)
+            release_gate.assert_called_once()
+            artifact_gate.assert_called_once()
+
+            invented_adoption = copy.deepcopy(proposal.process_adoption)
+            invented_binding = invented_adoption["producerRelease"][
+                "distributionAttestation"
+            ]
+            invented_attestation = json.loads(invented_binding["content"])
+            invented_attestation["lifecycleReceipt"]["changeId"] = (
+                "invented-release"
+            )
+            invented_binding["content"] = (
+                json.dumps(
+                    invented_attestation,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            invented_binding["sha256"] = "sha256:" + hashlib.sha256(
+                invented_binding["content"].encode("utf-8")
+            ).hexdigest()
+            invented = replace(proposal, process_adoption=invented_adoption)
+            with self.assertRaisesRegex(
+                ContractError, "independent producer attestation"
+            ):
+                _validate_process_adoption_producer_inputs(
+                    consumer,
+                    proposal=invented,
+                    producer_inputs=inputs,
+                )
+
+            with mock.patch(
+                "engineering_process.publication.validate_release_checkpoint",
+                side_effect=ContractError("lifecycle receipt identity mismatch"),
+            ):
+                with self.assertRaisesRegex(ContractError, "receipt identity"):
+                    _validate_process_adoption_producer_inputs(
+                        consumer,
+                        proposal=proposal,
+                        producer_inputs=inputs,
+                    )
+
     def test_process_adoption_completion_route_cannot_enable_auto_merge(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -414,7 +635,7 @@ class PublicationTests(unittest.TestCase):
                 "fingerprint": f"sha256:{'9' * 64}",
             }
 
-            issues = validate_controlled_automation_proposal_completion(
+            issues = self.validate_process_adoption_completion(
                 root,
                 repository="example/project",
                 project="sample-project",
@@ -453,7 +674,7 @@ class PublicationTests(unittest.TestCase):
             ).strip()
             proposal = replace(proposal, head_sha=head_sha)
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,
@@ -497,7 +718,7 @@ class PublicationTests(unittest.TestCase):
             ).strip()
             proposal = replace(proposal, head_sha=head_sha)
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,
@@ -539,7 +760,7 @@ class PublicationTests(unittest.TestCase):
             ).strip()
             proposal = replace(proposal, head_sha=head_sha)
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,
@@ -582,7 +803,7 @@ class PublicationTests(unittest.TestCase):
             )
             proposal = replace(proposal, base_sha=current_base)
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,
@@ -611,7 +832,7 @@ class PublicationTests(unittest.TestCase):
                 root, second_workflow=True
             )
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,
@@ -634,6 +855,67 @@ class PublicationTests(unittest.TestCase):
             self.assertTrue(
                 any("omits producer workflow" in issue for issue in issues)
             )
+
+    def test_process_adoption_detects_quoted_producer_action_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(
+                root, quoted_second_workflow=True
+            )
+
+            issues = self.validate_process_adoption(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("omits producer workflow" in issue for issue in issues)
+            )
+
+    def test_process_adoption_accepts_declared_quoted_pin_replacements(self):
+        for quote in ('"', "'"):
+            with self.subTest(quote=quote), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                proposal, body, title, head_sha = self.process_adoption_fixture(
+                    root, primary_quote=quote
+                )
+
+                issues = self.validate_process_adoption(
+                    root,
+                    repository="example/project",
+                    title=title,
+                    body=body,
+                    branch=proposal.branch,
+                    target_branch="main",
+                    base_commit=proposal.base_sha,
+                    state="draft",
+                    commit=head_sha,
+                    verifier_repository=proposal.verifier_repository,
+                    verifier_commit=proposal.verifier_commit,
+                    proposal=proposal,
+                    source={
+                        "dirty": False,
+                        "checkpoint": head_sha,
+                        "fingerprint": f"sha256:{'9' * 64}",
+                    },
+                )
+
+                self.assertEqual([], issues)
 
     def test_process_adoption_rejects_workflow_symlink_mode(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -668,7 +950,7 @@ class PublicationTests(unittest.TestCase):
             ).strip()
             proposal = replace(proposal, head_sha=head_sha)
 
-            issues = validate_controlled_automation_proposal(
+            issues = self.validate_process_adoption(
                 root,
                 repository="example/project",
                 title=title,

@@ -571,6 +571,8 @@ def synchronized_state(
     project_root: Path,
     process_root: Path,
     lock: ProcessLock,
+    *,
+    authority_version: str | None = None,
 ) -> list[str]:
     source_root = process_skills_root(process_root)
     target_root = project_root / ".agents" / "skills"
@@ -583,9 +585,11 @@ def synchronized_state(
         )
     if issues:
         return issues
-    if lock.version != VERSION:
+    expected_authority_version = authority_version or VERSION
+    if lock.version != expected_authority_version:
         issues.append(
-            f"process.lock pins {lock.version}, but processctl is {VERSION}"
+            f"process.lock pins {lock.version}, but processctl is "
+            f"{expected_authority_version}"
         )
     actual_digest = distribution_digest(process_root, lock.skills)
     if actual_digest != lock.digest:

@@ -9,9 +9,10 @@
     "publication",
     "schemas",
     "skills",
+    "syncing",
     "versioning"
   ],
   "rationale": "Add a first-class Renovate process-adoption proposal whose complete candidate is protected-base verified and permanently consumer-owner-merge-only, while preserving standing auto-merge for agent-host PRs created after lifecycle completion and retaining automation-proposal schemas 1 and 2 unchanged.",
   "schemaImpact": "additive",
-  "migration": "Release and self-adopt this capability before a separately reviewed consumer opt-in or Renovate operations activation. Consumers choosing schema 3 must pin an immutable protected-base verifier, require complete adoption provenance and materialization, keep automerge false and consumerOwnerMergeRequired true, manually merge the reviewed PR as the terminal cutover, and run no post-merge synchronization. Existing schema-1/schema-2 dependency proposal and agent-host completed-publication routes retain their released behavior."
+  "migration": "Release and self-adopt this capability before a separately reviewed consumer opt-in or Renovate operations activation. Consumers choosing schema 3 must pin an immutable protected-base verifier and producer repository; independently supply a clean tagged producer checkout, release artifacts, receipt, and attestation; require exact target synchronization; keep automerge false and consumerOwnerMergeRequired true; manually merge the reviewed PR as the terminal cutover; and run no post-merge synchronization. Existing schema-1/schema-2 dependency proposal and agent-host completed-publication routes retain their released behavior."
 }

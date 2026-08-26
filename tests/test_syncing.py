@@ -219,6 +219,15 @@ class SyncTests(unittest.TestCase):
                 synchronized_state(project_root, PROCESS_ROOT, lock),
                 [],
             )
+            target_authority_issues = synchronized_state(
+                project_root,
+                PROCESS_ROOT,
+                lock,
+                authority_version="9.9.9",
+            )
+            self.assertTrue(
+                any("but processctl is 9.9.9" in issue for issue in target_authority_issues)
+            )
             attributes = (project_root / ".agents" / ".gitattributes").read_text(
                 encoding="utf-8"
             )

@@ -71,8 +71,9 @@ without duplicating implementation, verification, or review.
 - For a standing-policy automated merge, do not merge before its completed-lifecycle,
   review, exact-head, current-base, required-check, and method gates all pass. These
   automation gates do not replace or block the schema-3 consumer owner's manual merge
-  authority; that route requires its valid proposal gate and no standing auto-merge
-  policy.
+  authority; that route requires its valid proposal/current-base/manual-owner gates,
+  and standing auto-merge authority does not apply to that proposal. The same consumer
+  may retain standing automation for separate agent-host PRs published after completion.
 - Do not hand-edit one release identity surface independently of the release contract
   or update consumer locks before public artifact hashes are verified.
 - Do not treat a Renovate proposal as adoption evidence or allow provider automerge
@@ -92,6 +93,10 @@ without duplicating implementation, verification, or review.
   unchanged-mode action-pin-only workflow group. Keep
   `consumerOwnerMergeRequired` true and never let completion, provider state, or
   standing automation escalate it to auto-merge.
+- Never trust the report's producer claims by themselves. Supply a separate clean
+  exact-tag producer checkout, downloaded release artifacts, lifecycle receipt, and
+  distribution attestation to the existing release and synchronization validators
+  before candidate-owned project commands.
 - Do not add a reviewer host, daemon, scheduler, generic workflow engine,
   dynamically generated approval chain, meta-assessment, or reviewer-of-reviewer to
   automate this owner boundary.

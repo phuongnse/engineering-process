@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import json
 import re
+import stat
 from pathlib import Path
 
 from .contracts import (
@@ -18,6 +19,8 @@ from .contracts import (
     validate_process_lock,
 )
 from .git import portable_git_path, run_git
+from .artifact_attestation import validate_distribution_attestation
+from .release import validate_release_checkpoint
 from .markdown import (
     COMMENT_RE,
     contains_raw_html,
@@ -707,6 +710,181 @@ def _proposal_git_blob(
     return result.stdout
 
 
+def _proposal_external_bytes(path: Path, *, maximum: int, label: str) -> bytes:
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ContractError(f"{label} must be a regular non-symlink file")
+        if before.st_size > maximum:
+            raise ContractError(f"{label} exceeds {maximum} bytes")
+        content = path.read_bytes()
+        after = path.lstat()
+    except OSError as error:
+        raise ContractError(f"cannot read {label}: {error}") from error
+    if (
+        len(content) != before.st_size
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+    ):
+        raise ContractError(f"{label} changed while reading")
+    return content
+
+
+def _proposal_external_path(
+    project_root: Path, path: Path, *, label: str, directory: bool
+) -> Path:
+    try:
+        supplied_metadata = path.lstat()
+        if stat.S_ISLNK(supplied_metadata.st_mode):
+            raise ContractError(f"{label} must not be a symlink")
+        resolved = path.resolve(strict=True)
+        project = project_root.resolve(strict=True)
+        metadata = resolved.lstat()
+    except OSError as error:
+        raise ContractError(f"cannot resolve {label}: {error}") from error
+    if resolved.is_symlink() or (
+        directory and not stat.S_ISDIR(metadata.st_mode)
+    ) or (not directory and not stat.S_ISREG(metadata.st_mode)):
+        expected = "directory" if directory else "regular file"
+        raise ContractError(f"{label} must be a non-symlink {expected}")
+    try:
+        resolved.relative_to(project)
+    except ValueError:
+        return resolved
+    raise ContractError(f"{label} must stay outside the consumer checkout")
+
+
+def _proposal_producer_repository(project_root: Path) -> str:
+    result = run_git(
+        project_root,
+        ["remote", "get-url", "origin"],
+        label="resolve process-adoption producer repository",
+        timeout_seconds=30,
+        max_stdout_bytes=2048,
+    )
+    if result.returncode != 0:
+        raise ContractError("producer checkout requires an origin remote")
+    try:
+        url = result.stdout.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise ContractError("producer origin URL must be UTF-8") from error
+    match = re.fullmatch(
+        r"(?:https://github\.com/|git@github\.com:)(?P<repository>"
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?",
+        url,
+    )
+    if match is None:
+        raise ContractError("producer origin must be an exact GitHub repository URL")
+    return match.group("repository")
+
+
+def _validate_process_adoption_producer_inputs(
+    project_root: Path,
+    *,
+    proposal: AutomationProposal,
+    producer_inputs: dict[str, Path] | None,
+) -> Path:
+    if proposal.process_adoption is None:
+        raise ContractError("process-adoption evidence is missing")
+    if producer_inputs is None:
+        raise ContractError(
+            "process-adoption requires independently supplied producer checkout, "
+            "artifacts, receipt, and attestation"
+        )
+    expected_keys = {"root", "artifacts", "receipt", "attestation"}
+    if set(producer_inputs) != expected_keys:
+        raise ContractError(
+            "process-adoption producer inputs must contain root, artifacts, receipt, "
+            "and attestation"
+        )
+    producer_root = _proposal_external_path(
+        project_root,
+        producer_inputs["root"],
+        label="producer checkout",
+        directory=True,
+    )
+    artifact_root = _proposal_external_path(
+        project_root,
+        producer_inputs["artifacts"],
+        label="producer artifact root",
+        directory=True,
+    )
+    receipt_path = _proposal_external_path(
+        project_root,
+        producer_inputs["receipt"],
+        label="producer lifecycle receipt",
+        directory=False,
+    )
+    attestation_path = _proposal_external_path(
+        project_root,
+        producer_inputs["attestation"],
+        label="producer distribution attestation",
+        directory=False,
+    )
+    adoption = proposal.process_adoption
+    producer = adoption["producerRelease"]
+    if _proposal_producer_repository(producer_root) != producer["repository"]:
+        raise ContractError(
+            "producer checkout origin does not match protected-base policy"
+        )
+    release_bytes = _proposal_external_bytes(
+        producer_root / "release.json",
+        maximum=MAX_JSON_BYTES,
+        label="producer release contract",
+    )
+    release_binding = producer["releaseContract"]
+    if (
+        release_bytes != release_binding["content"].encode("utf-8")
+        or _proposal_blob_digest(release_bytes) != release_binding["sha256"]
+    ):
+        raise ContractError(
+            "independent producer release contract does not match proposal evidence"
+        )
+    attestation_bytes = _proposal_external_bytes(
+        attestation_path,
+        maximum=256_000,
+        label="producer distribution attestation",
+    )
+    attestation_binding = producer["distributionAttestation"]
+    if (
+        attestation_bytes != attestation_binding["content"].encode("utf-8")
+        or _proposal_blob_digest(attestation_bytes) != attestation_binding["sha256"]
+    ):
+        raise ContractError(
+            "independent producer attestation does not match proposal evidence"
+        )
+    release_result = validate_release_checkpoint(
+        producer_root,
+        tag=producer["tag"],
+        release_name=producer["tag"],
+        commit=producer["commit"],
+        main_ref="origin/main",
+        receipt_path=receipt_path,
+        authorization_path=None,
+        reviewed_commit=None,
+    )
+    if (
+        release_result["checkpoint"] != producer["commit"]
+        or release_result["version"] != producer["version"]
+        or release_result["tag"] != producer["tag"]
+    ):
+        raise ContractError("independent producer release identity is mismatched")
+    validated_attestation = validate_distribution_attestation(
+        producer_root,
+        artifact_root,
+        attestation_path,
+        receipt_path=receipt_path,
+        authorization_path=None,
+        checkpoint=producer["commit"],
+    )
+    if validated_attestation != json.loads(attestation_binding["content"]):
+        raise ContractError(
+            "independent producer artifact validation does not match proposal evidence"
+        )
+    return producer_root
+
+
 def _proposal_blob_digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
 
@@ -833,8 +1011,9 @@ def _validate_process_adoption_workflows(
         pins_by_path.setdefault(str(pin["path"]), []).append(pin)
     producer_repository = str(action_pins[0]["repository"])
     producer_use = re.compile(
-        rf"(?m)^[ \t]*(?:-[ \t]*)?uses:[ \t]*"
-        rf"{re.escape(producer_repository)}@(?P<commit>[^ \t\r\n#]+)"
+        rf"(?m)^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*"
+        rf"(?P<quote>['\"]?){re.escape(producer_repository)}@"
+        r"(?P<commit>[^ \t\r\n#'\"]+)(?P=quote)"
         r"(?:[ \t]+#[ \t]*(?P<tag>[^ \t\r\n]+))?[ \t]*\r?$"
     )
     base_tree = _proposal_workflow_tree(project_root, commit=base_commit)
@@ -854,6 +1033,11 @@ def _validate_process_adoption_workflows(
                 (match.group("commit"), match.group("tag"))
                 for match in producer_use.finditer(text)
             ]
+            if text.count(producer_repository + "@") != len(matches):
+                issues.append(
+                    f"Process-adoption workflow {path} contains an unsupported "
+                    "producer action spelling"
+                )
             if matches:
                 observed_paths.add(path)
                 usages[(tree_name, path)] = matches
@@ -919,18 +1103,21 @@ def _validate_process_adoption_workflows(
                     "unverified producer action identity"
                 )
             pattern = re.compile(
-                rf"(?m)(uses:[ \t]*{re.escape(str(pin['repository']))}@)"
+                rf"(?m)(uses[ \t]*:[ \t]*(?P<quote>['\"]?)"
+                rf"{re.escape(str(pin['repository']))}@)"
                 rf"{re.escape(str(pin['previousCommit']))}"
-                rf"([ \t]+#[ \t]*){re.escape(str(pin['previousReleaseTag']))}"
+                rf"(?P=quote)([ \t]+#[ \t]*)"
+                rf"{re.escape(str(pin['previousReleaseTag']))}"
                 r"([ \t]*)$"
             )
             expected, replacements = pattern.subn(
                 lambda match: (
                     match.group(1)
                     + str(pin["targetCommit"])
-                    + match.group(2)
-                    + str(pin["targetReleaseTag"])
+                    + match.group("quote")
                     + match.group(3)
+                    + str(pin["targetReleaseTag"])
+                    + match.group(4)
                 ),
                 expected,
             )
@@ -953,11 +1140,20 @@ def _validate_process_adoption_candidate(
     base_commit: str,
     proposal: AutomationProposal,
     changed_paths: tuple[str, ...],
+    producer_inputs: dict[str, Path] | None,
 ) -> list[str]:
     if proposal.process_adoption is None:
         return ["Process-adoption evidence is missing"]
     adoption = proposal.process_adoption
     issues: list[str] = []
+    try:
+        producer_root = _validate_process_adoption_producer_inputs(
+            project_root,
+            proposal=proposal,
+            producer_inputs=producer_inputs,
+        )
+    except ContractError as error:
+        return [f"Process-adoption producer evidence is invalid: {error}"]
     producer_release = adoption["producerRelease"]
     source_authority = adoption["sourceAuthority"]
     target_authority = adoption["targetAuthority"]
@@ -1039,6 +1235,17 @@ def _validate_process_adoption_candidate(
             "Process-adoption process lock drops a selected source skill: "
             + dropped_skills[0]
         )
+    from .syncing import synchronized_state
+
+    issues.extend(
+        "Process-adoption target materialization is invalid: " + issue
+        for issue in synchronized_state(
+            project_root,
+            producer_root,
+            process_lock,
+            authority_version=str(producer_release["version"]),
+        )
+    )
 
     expected_managed_paths = _proposal_managed_tree_paths(
         project_root,
@@ -1173,6 +1380,7 @@ def validate_controlled_automation_proposal(
     verifier_commit: str,
     proposal: AutomationProposal,
     source: dict[str, object],
+    producer_inputs: dict[str, Path] | None = None,
 ) -> list[str]:
     issues = validate_pull_request(
         title=title,
@@ -1253,6 +1461,7 @@ def validate_controlled_automation_proposal(
                 base_commit=base_commit,
                 proposal=proposal,
                 changed_paths=changed_paths,
+                producer_inputs=producer_inputs,
             )
         )
     else:
@@ -1292,6 +1501,7 @@ def validate_controlled_automation_proposal_completion(
     proposal: AutomationProposal,
     evidence: dict[str, object],
     source: dict[str, object],
+    producer_inputs: dict[str, Path] | None = None,
 ) -> list[str]:
     if proposal.proposal_kind == "process-adoption":
         return [
@@ -1309,6 +1519,7 @@ def validate_controlled_automation_proposal_completion(
                 verifier_commit=verifier_commit,
                 proposal=proposal,
                 source=source,
+                producer_inputs=producer_inputs,
             ),
             "Process-adoption proposals do not use lifecycle completion or standing "
             "automation merge escalation; consumer-owner manual merge is required",
@@ -1327,6 +1538,7 @@ def validate_controlled_automation_proposal_completion(
         verifier_commit=verifier_commit,
         proposal=proposal,
         source=source,
+        producer_inputs=producer_inputs,
     )
     issues.extend(
         validate_evidence_publication(

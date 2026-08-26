@@ -724,13 +724,26 @@ requirements bytes, exact base/head/path set, migration result, complete managed
 set, and exact verifier identity. Workflow changes must be only the declared full-SHA
 action-pin replacements with their release annotations.
 
-The protected-base policy also fixes the producer repository. The report carries the
-bounded raw release-contract and distribution-attestation bytes, their digests,
-lifecycle receipt identity, complete artifact hashes, and the verifier's exact target
-materialization binding. Validation requires the tag/commit/attestation chain, target
-wheel hash in the committed requirements lock, and every use of that producer action
+The protected-base policy also fixes the producer repository. The report binds bounded
+raw release-contract and distribution-attestation bytes, their digests, lifecycle
+receipt identity, complete artifact hashes, and the verifier's exact target
+materialization result. The adapter independently supplies a clean producer checkout
+with the exact tag and origin plus downloaded release artifacts, lifecycle receipt,
+and attestation; report bytes alone never pass. Existing release and
+artifact-attestation validators resolve those objects before the target distribution
+is compared with the complete consumer materialization. Validation also requires the
+target wheel hash in the committed requirements lock and every use of that producer action
 across the complete regular-workflow tree; the protected base must be an ancestor and
 workflow mode may not change.
+
+For schema 3, add these independently resolved inputs to `validate-proposal`:
+
+~~~text
+  --producer-root <clean-release-checkout> \
+  --producer-artifact-root <downloaded-release-artifacts> \
+  --producer-receipt <release-lifecycle-receipt> \
+  --producer-attestation <distribution-attestation>
+~~~
 
 The schema fixes `automerge` to false, `consumerOwnerMergeRequired` to true, and
 `postMergeMutation` to false. `publication validate-proposal-completion` always rejects

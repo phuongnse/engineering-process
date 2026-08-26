@@ -406,6 +406,28 @@ class ProjectContractTests(unittest.TestCase):
                 / "automation-process-adoption-proposal.json"
             ).read_text(encoding="utf-8")
         )
+        binding = document["processAdoption"]["producerRelease"][
+            "distributionAttestation"
+        ]
+        attestation = json.loads(binding["content"])
+        attestation["lifecycleReceipt"]["changeId"] = "different-release"
+        attestation["lifecycleReceipt"]["cycle"] = 9
+        binding["content"] = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        binding["sha256"] = "sha256:" + hashlib.sha256(
+            binding["content"].encode("utf-8")
+        ).hexdigest()
+        with self.assertRaisesRegex(ContractError, "lifecycle provenance"):
+            validate_automation_proposal(document)
+
+        document = json.loads(
+            (
+                PROCESS_ROOT
+                / "examples"
+                / "automation-process-adoption-proposal.json"
+            ).read_text(encoding="utf-8")
+        )
         document["processAdoption"]["producerRelease"]["materialization"][
             "processDigest"
         ] = f"sha256:{'0' * 64}"

@@ -3478,6 +3478,13 @@ def _automation_process_adoption(value: Any, path: str) -> dict[str, Any]:
         or re.fullmatch(r"[0-9a-f]{40}", str(receipt["checkpoint"])) is None
     ):
         raise ContractError(f"{receipt_path}: invalid lifecycle identity")
+    if (
+        change_id != release.receipt_change_id
+        or receipt["cycle"] != release.receipt_cycle
+    ):
+        raise ContractError(
+            f"{receipt_path}: does not match release lifecycle provenance"
+        )
 
     artifact_path = f"{attestation_binding_path}.content.artifacts"
     artifacts = attestation["artifacts"]

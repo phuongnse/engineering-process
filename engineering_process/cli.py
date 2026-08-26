@@ -1341,8 +1341,34 @@ def _proposal_policy_evidence(args: argparse.Namespace):
     )
 
 
+def _proposal_producer_inputs(
+    args: argparse.Namespace, proposal: object
+) -> dict[str, Path] | None:
+    values = {
+        "root": args.producer_root,
+        "artifacts": args.producer_artifact_root,
+        "receipt": args.producer_receipt,
+        "attestation": args.producer_attestation,
+    }
+    supplied = [value is not None for value in values.values()]
+    if getattr(proposal, "proposal_kind", "dependency-update") == "process-adoption":
+        if not all(supplied):
+            raise ContractError(
+                "process-adoption validation requires --producer-root, "
+                "--producer-artifact-root, --producer-receipt, and "
+                "--producer-attestation"
+            )
+        return {name: value for name, value in values.items() if value is not None}
+    if any(supplied):
+        raise ContractError(
+            "producer release inputs apply only to process-adoption proposals"
+        )
+    return None
+
+
 def command_publication_validate_proposal(args: argparse.Namespace) -> int:
     proposal = _proposal_policy_evidence(args)
+    producer_inputs = _proposal_producer_inputs(args, proposal)
     source = source_state(args.project_root)
     issues = validate_controlled_automation_proposal(
         args.project_root,
@@ -1358,6 +1384,7 @@ def command_publication_validate_proposal(args: argparse.Namespace) -> int:
         verifier_commit=args.verifier_commit,
         proposal=proposal,
         source=source,
+        producer_inputs=producer_inputs,
     )
     return _publication_result(
         args,
@@ -1383,6 +1410,7 @@ def command_publication_validate_proposal_completion(
     args: argparse.Namespace,
 ) -> int:
     proposal = _proposal_policy_evidence(args)
+    producer_inputs = _proposal_producer_inputs(args, proposal)
     evidence = validate_receipt(args.evidence)
     project_path = args.project_root / ".process" / "project.json"
     project = validate_project(read_json(project_path), str(project_path))
@@ -1403,6 +1431,7 @@ def command_publication_validate_proposal_completion(
         proposal=proposal,
         evidence=evidence,
         source=source,
+        producer_inputs=producer_inputs,
     )
     return _publication_result(
         args,
@@ -2028,6 +2057,10 @@ def build_parser() -> argparse.ArgumentParser:
     publication_proposal.add_argument("--body-file", type=Path)
     publication_proposal.add_argument("--verifier-repository", required=True)
     publication_proposal.add_argument("--verifier-commit", required=True)
+    publication_proposal.add_argument("--producer-root", type=Path)
+    publication_proposal.add_argument("--producer-artifact-root", type=Path)
+    publication_proposal.add_argument("--producer-receipt", type=Path)
+    publication_proposal.add_argument("--producer-attestation", type=Path)
     _add_json(publication_proposal)
     publication_proposal.set_defaults(
         handler=command_publication_validate_proposal
@@ -2060,6 +2093,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--verifier-repository", required=True
     )
     publication_proposal_completion.add_argument("--verifier-commit", required=True)
+    publication_proposal_completion.add_argument("--producer-root", type=Path)
+    publication_proposal_completion.add_argument(
+        "--producer-artifact-root", type=Path
+    )
+    publication_proposal_completion.add_argument("--producer-receipt", type=Path)
+    publication_proposal_completion.add_argument(
+        "--producer-attestation", type=Path
+    )
     _add_json(publication_proposal_completion)
     publication_proposal_completion.set_defaults(
         handler=command_publication_validate_proposal_completion

@@ -191,7 +191,9 @@ binds the actual base and exact head, producer release/tag/commit/attestation, s
 and target process identities, requirements bytes, process lock, migration result,
 complete selected managed-file set, grouped full-SHA action-pin-only workflow delta,
 and verifier identity. Producer and verifier repositories are protected-base owned;
-bounded raw release/attestation bytes and artifact hashes are validated, base must be
+report-controlled release claims never authenticate themselves. A separately supplied
+clean tagged producer checkout, artifacts, receipt, and attestation pass the existing
+release/attestation validators and exact target synchronization. Base must be
 an ancestor of head, and every producer use in the regular-workflow tree moves as one
 unchanged-mode pin group. Partial, stale, inferred, unauthorized, or post-merge-dependent
 candidates fail closed. This portable boundary reuses ordinary Renovate generation,
