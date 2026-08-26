@@ -248,26 +248,28 @@ class PublicationTests(unittest.TestCase):
             },
             "skills": ["run-change"],
         }
-        (root / ".process" / "process.lock").write_text(
-            json.dumps(target_lock, indent=2) + "\n", encoding="utf-8"
+        (root / ".process" / "process.lock").write_bytes(
+            (json.dumps(target_lock, indent=2) + "\n").encode("utf-8")
         )
         (root / ".agents" / "skills" / "run-change" / "SKILL.md").write_bytes(
             b"# Run Change 0.8.0\n"
         )
-        (root / ".github" / "workflows" / "ci.yml").write_text(
-            "steps:\n"
-            "  - uses: phuongnse/engineering-process@"
-            + "5" * 40
-            + " # v0.8.0\n",
-            encoding="utf-8",
+        (root / ".github" / "workflows" / "ci.yml").write_bytes(
+            (
+                "steps:\n"
+                "  - uses: phuongnse/engineering-process@"
+                + "5" * 40
+                + " # v0.8.0\n"
+            ).encode("utf-8")
         )
-        (root / "requirements" / "process.in").write_text(
-            "engineering-process==0.8.0\n", encoding="utf-8"
+        (root / "requirements" / "process.in").write_bytes(
+            b"engineering-process==0.8.0\n"
         )
-        (root / "requirements" / "process.txt").write_text(
-            "--only-binary :all:\n\nengineering-process==0.8.0 \\\n"
-            "    --hash=sha256:" + "8" * 64 + "\n",
-            encoding="utf-8",
+        (root / "requirements" / "process.txt").write_bytes(
+            (
+                "--only-binary :all:\n\nengineering-process==0.8.0 \\\n"
+                "    --hash=sha256:" + "8" * 64 + "\n"
+            ).encode("utf-8")
         )
         subprocess.run(["git", "add", "."], cwd=root, check=True)
         subprocess.run(
@@ -289,10 +291,13 @@ class PublicationTests(unittest.TestCase):
             "AGENTS.md",
         )
         digest = lambda content: "sha256:" + hashlib.sha256(content).hexdigest()
+        head_blob = lambda path: subprocess.check_output(
+            ["git", "show", f"{head_sha}:{path}"], cwd=root
+        )
         managed_files = [
             {
                 "path": path,
-                "sha256": digest((root / path).read_bytes()),
+                "sha256": digest(head_blob(path)),
             }
             for path in managed_paths
         ]
@@ -319,18 +324,18 @@ class PublicationTests(unittest.TestCase):
         adoption["requirements"].update(
             {
                 "inputSha256": digest(
-                    (root / "requirements" / "process.in").read_bytes()
+                    head_blob("requirements/process.in")
                 ),
                 "lockSha256": digest(
-                    (root / "requirements" / "process.txt").read_bytes()
+                    head_blob("requirements/process.txt")
                 ),
             }
         )
         adoption["processLock"]["sha256"] = digest(
-            (root / ".process" / "process.lock").read_bytes()
+            head_blob(".process/process.lock")
         )
         adoption["projectMigration"]["projectSha256"] = digest(
-            (root / ".process" / "project.json").read_bytes()
+            head_blob(".process/project.json")
         )
         adoption["managedFiles"] = managed_files
         adoption["managedDistributionSha256"] = canonical_json_digest(managed_files)
