@@ -269,6 +269,25 @@ class SyncTests(unittest.TestCase):
                 )
             )
 
+    def test_synchronized_state_applies_one_aggregate_skill_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            self.prepare_project(project_root)
+            self.assertEqual([], sync_skills(project_root, PROCESS_ROOT, check=False))
+            lock = validate_process_lock(
+                read_json(project_root / ".process" / "process.lock")
+            )
+
+            with mock.patch.object(syncing, "MAX_SYNC_SKILL_ENTRIES", 1):
+                issues = synchronized_state(project_root, PROCESS_ROOT, lock)
+            self.assertTrue(
+                any("synchronization entry count" in issue for issue in issues)
+            )
+
+            with mock.patch.object(syncing, "SYNC_SKILL_TIMEOUT_SECONDS", -1.0):
+                issues = synchronized_state(project_root, PROCESS_ROOT, lock)
+            self.assertTrue(any("synchronization exceeded" in issue for issue in issues))
+
     def test_sync_manages_adoption_runner_and_refuses_unmanaged_collision(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

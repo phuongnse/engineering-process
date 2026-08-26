@@ -39,6 +39,9 @@ MAX_SKILL_ENTRIES = 500
 MAX_SKILL_FILE_BYTES = 1_000_000
 MAX_SKILL_TOTAL_BYTES = 8_000_000
 SKILL_COMPARISON_TIMEOUT_SECONDS = 10.0
+MAX_SYNC_SKILL_ENTRIES = 4_096
+MAX_SYNC_SKILL_BYTES = 32_000_000
+SYNC_SKILL_TIMEOUT_SECONDS = 20.0
 
 
 def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
@@ -114,7 +117,12 @@ def _read_marker(path: Path) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
 
 
-def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
+def _files(
+    path: Path,
+    *,
+    ignore_marker: bool,
+    shared_budget: dict[str, float | int] | None = None,
+) -> dict[str, tuple[int, str]]:
     result: dict[str, tuple[int, str]] = {}
     if not os.path.lexists(path):
         return result
@@ -129,6 +137,14 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
     total_bytes = 0
     stack: list[tuple[Path, PurePosixPath]] = [(path, PurePosixPath())]
     while stack:
+        if (
+            shared_budget is not None
+            and time.monotonic() >= shared_budget["deadline"]
+        ):
+            raise ContractError(
+                "managed synchronization exceeded "
+                f"{SYNC_SKILL_TIMEOUT_SECONDS:g} seconds"
+            )
         if time.monotonic() >= deadline:
             raise ContractError(
                 f"{path}: managed skill comparison exceeded "
@@ -150,6 +166,18 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
                             f"{path}: managed skill entry count exceeds "
                             f"{MAX_SKILL_ENTRIES}"
                         )
+                    if shared_budget is not None:
+                        shared_budget["entries"] += 1
+                        if shared_budget["entries"] > MAX_SYNC_SKILL_ENTRIES:
+                            raise ContractError(
+                                "managed synchronization entry count exceeds "
+                                f"{MAX_SYNC_SKILL_ENTRIES}"
+                            )
+                        if time.monotonic() >= shared_budget["deadline"]:
+                            raise ContractError(
+                                "managed synchronization exceeded "
+                                f"{SYNC_SKILL_TIMEOUT_SECONDS:g} seconds"
+                            )
                     children.append(child)
                 children.sort(key=lambda item: item.name)
         except OSError as error:
@@ -201,6 +229,13 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
                     f"{path}: managed skill content exceeds "
                     f"{MAX_SKILL_TOTAL_BYTES} bytes"
                 )
+            if shared_budget is not None:
+                shared_budget["bytes"] += before.st_size
+                if shared_budget["bytes"] > MAX_SYNC_SKILL_BYTES:
+                    raise ContractError(
+                        "managed synchronization bytes exceed "
+                        f"{MAX_SYNC_SKILL_BYTES}"
+                    )
             digest = hashlib.sha256()
             read_bytes = 0
             try:
@@ -214,6 +249,14 @@ def _files(path: Path, *, ignore_marker: bool) -> dict[str, tuple[int, str]]:
                             f"{child.path}: managed skill file changed while opening"
                         )
                     while chunk := stream.read(64 * 1024):
+                        if (
+                            shared_budget is not None
+                            and time.monotonic() >= shared_budget["deadline"]
+                        ):
+                            raise ContractError(
+                                "managed synchronization exceeded "
+                                f"{SYNC_SKILL_TIMEOUT_SECONDS:g} seconds"
+                            )
                         if time.monotonic() >= deadline:
                             raise ContractError(
                                 f"{path}: managed skill comparison exceeded "
@@ -258,7 +301,9 @@ def managed_parent_issues(project_root: Path) -> list[str]:
     return issues
 
 
-def skill_target_ownership_issues(project_root: Path) -> list[str]:
+def skill_target_ownership_issues(
+    project_root: Path, *, targets: list[Path] | None = None
+) -> list[str]:
     target_root = project_root / ".agents" / "skills"
     if target_root.is_symlink():
         return [f"{target_root}: managed skills root must not be a symlink"]
@@ -268,7 +313,7 @@ def skill_target_ownership_issues(project_root: Path) -> list[str]:
         return [f"{target_root}: managed skills root must be a directory"]
 
     issues: list[str] = []
-    for target in target_root.iterdir():
+    for target in target_root.iterdir() if targets is None else targets:
         if target.is_symlink():
             issues.append(f"{target}: unmanaged symlink in managed skills root")
             continue
@@ -290,6 +335,35 @@ def skill_target_ownership_issues(project_root: Path) -> list[str]:
                 "from the pinned engineering-process distribution"
             )
     return issues
+
+
+def _bounded_skill_targets(
+    project_root: Path, shared_budget: dict[str, float | int]
+) -> list[Path]:
+    target_root = project_root / ".agents" / "skills"
+    if not target_root.is_dir() or target_root.is_symlink():
+        return []
+    targets: list[Path] = []
+    try:
+        with os.scandir(target_root) as iterator:
+            for item in iterator:
+                shared_budget["entries"] += 1
+                if shared_budget["entries"] > MAX_SYNC_SKILL_ENTRIES:
+                    raise ContractError(
+                        "managed synchronization entry count exceeds "
+                        f"{MAX_SYNC_SKILL_ENTRIES}"
+                    )
+                if time.monotonic() >= shared_budget["deadline"]:
+                    raise ContractError(
+                        "managed synchronization exceeded "
+                        f"{SYNC_SKILL_TIMEOUT_SECONDS:g} seconds"
+                    )
+                targets.append(Path(item.path))
+    except OSError as error:
+        raise ContractError(
+            f"cannot enumerate managed skill targets {target_root}: {error}"
+        ) from error
+    return sorted(targets)
 
 
 def selected_skill_target_issues(
@@ -577,8 +651,21 @@ def synchronized_state(
 ) -> list[str]:
     source_root = process_skills_root(process_root)
     target_root = project_root / ".agents" / "skills"
+    shared_budget: dict[str, float | int] = {
+        "deadline": time.monotonic() + SYNC_SKILL_TIMEOUT_SECONDS,
+        "entries": 0,
+        "bytes": 0,
+    }
+    try:
+        target_entries = _bounded_skill_targets(project_root, shared_budget)
+    except ContractError as error:
+        return [str(error)]
     issues = validate_skills(source_root, lock.skills)
-    bundles = load_bundles(process_root, source_root)
+    bundles = load_bundles(
+        process_root,
+        source_root,
+        selected_skills=lock.skills,
+    )
     missing_core = sorted(set(bundles["core"]) - set(lock.skills))
     if missing_core:
         issues.append(
@@ -607,12 +694,20 @@ def synchronized_state(
         if _read_marker(target) != _marker(lock, skill):
             issues.append(f"{target}: missing or stale managed-skill marker")
             continue
-        if _files(source, ignore_marker=True) != _files(target, ignore_marker=True):
+        if _files(
+            source,
+            ignore_marker=True,
+            shared_budget=shared_budget,
+        ) != _files(
+            target,
+            ignore_marker=True,
+            shared_budget=shared_budget,
+        ):
             issues.append(f"{target}: content differs from the pinned skill")
-    issues.extend(skill_target_ownership_issues(project_root))
+    issues.extend(skill_target_ownership_issues(project_root, targets=target_entries))
     issues.extend(managed_parent_issues(project_root))
     if target_root.is_dir():
-        for target in target_root.iterdir():
+        for target in target_entries:
             if not target.is_dir() or not (target / "SKILL.md").is_file():
                 continue
             marker = _read_marker(target)

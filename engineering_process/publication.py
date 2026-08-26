@@ -998,9 +998,10 @@ def _proposal_workflow_tree(
     return entries
 
 
-YAML_USES_KEY_RE = re.compile(r"^[ \t]*(?:-[ \t]*)?uses[ \t]*:")
-YAML_USES_LINE_RE = re.compile(
-    r"^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*"
+YAML_MAPPING_LINE_RE = re.compile(
+    r"^[ \t]*(?:-[ \t]*)?"
+    r"(?P<key>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)"
+    r"[ \t]*:[ \t]*"
     r"(?P<scalar>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[^#\r\n]*?)"
     r"[ \t]*(?:#[ \t]*(?P<tag>\S+))?[ \t]*$"
 )
@@ -1062,14 +1063,24 @@ def _proposal_yaml_uses(
     values: list[tuple[str, str, str | None]] = []
     issues: list[str] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
-        if YAML_USES_KEY_RE.match(line) is None:
-            continue
-        match = YAML_USES_LINE_RE.fullmatch(line)
+        match = YAML_MAPPING_LINE_RE.fullmatch(line)
         if match is None:
+            continue
+        raw_key = match.group("key")
+        try:
+            if raw_key.startswith('"'):
+                key = _decode_yaml_double_quoted_scalar(raw_key[1:-1])
+            elif raw_key.startswith("'"):
+                key = raw_key[1:-1].replace("''", "'")
+            else:
+                key = raw_key
+        except ContractError as error:
             issues.append(
-                f"Process-adoption workflow {path}:{line_number} has an unsupported "
-                "uses scalar"
+                f"Process-adoption workflow {path}:{line_number} has an invalid "
+                f"mapping key: {error}"
             )
+            continue
+        if key != "uses":
             continue
         raw = match.group("scalar").strip()
         try:
@@ -1087,6 +1098,30 @@ def _proposal_yaml_uses(
             continue
         values.append((raw, decoded, match.group("tag")))
     return values, issues
+
+
+def _proposal_requirement_hashes(
+    lock_text: str, *, version: str
+) -> set[str] | None:
+    lines = lock_text.splitlines()
+    pin = re.compile(
+        rf"^engineering-process=={re.escape(version)}[ \t]+\\$"
+    )
+    indexes = [index for index, line in enumerate(lines) if pin.fullmatch(line)]
+    if len(indexes) != 1:
+        return None
+    hashes: set[str] = set()
+    hash_line = re.compile(
+        r"^--hash=(?P<digest>sha256:[0-9a-f]{64})(?:[ \t]+\\)?$"
+    )
+    for line in lines[indexes[0] + 1 :]:
+        if not line.startswith((" ", "\t")):
+            break
+        stripped = line.strip()
+        match = hash_line.fullmatch(stripped)
+        if match is not None:
+            hashes.add(match.group("digest"))
+    return hashes
 
 
 def _validate_process_adoption_workflows(
@@ -1118,16 +1153,22 @@ def _validate_process_adoption_workflows(
             issues.extend(scalar_issues)
             matches: list[tuple[str, str | None]] = []
             producer_prefix = producer_repository + "@"
+            normalized_producer_prefix = producer_prefix.casefold()
             recognized_literal_occurrences = 0
             for raw, scalar, tag in values:
-                if not scalar.startswith(producer_prefix):
-                    if producer_repository in scalar:
+                if not scalar.casefold().startswith(normalized_producer_prefix):
+                    if producer_repository.casefold() in scalar.casefold():
                         issues.append(
                             f"Process-adoption workflow {path} contains an unsupported "
                             "producer action identity"
                         )
                     continue
                 observed_paths.add(path)
+                if not scalar.startswith(producer_prefix):
+                    issues.append(
+                        f"Process-adoption workflow {path} changes the protected "
+                        "producer repository spelling"
+                    )
                 if producer_prefix not in raw:
                     issues.append(
                         f"Process-adoption workflow {path} escapes the producer "
@@ -1135,7 +1176,7 @@ def _validate_process_adoption_workflows(
                     )
                 else:
                     recognized_literal_occurrences += 1
-                matches.append((scalar.removeprefix(producer_prefix), tag))
+                matches.append((scalar[len(producer_prefix) :], tag))
             if text.count(producer_repository) != recognized_literal_occurrences:
                 issues.append(
                     f"Process-adoption workflow {path} contains the producer "
@@ -1368,9 +1409,6 @@ def _validate_process_adoption_candidate(
     direct_pin = re.compile(
         rf"(?m)^engineering-process=={target_version}$"
     )
-    locked_pin = re.compile(
-        rf"(?m)^engineering-process=={target_version}[ \t]+\\$"
-    )
     try:
         input_text = input_content.decode("utf-8")
         lock_text = lock_content.decode("utf-8")
@@ -1381,7 +1419,11 @@ def _validate_process_adoption_candidate(
             issues.append(
                 "Process-adoption requirements input must contain one exact target pin"
             )
-        if len(locked_pin.findall(lock_text)) != 1 or "--hash=sha256:" not in lock_text:
+        requirement_hashes = _proposal_requirement_hashes(
+            lock_text,
+            version=str(target_authority["version"]),
+        )
+        if not requirement_hashes:
             issues.append(
                 "Process-adoption requirements lock must contain one exact hash-locked "
                 "target pin"
@@ -1394,12 +1436,12 @@ def _validate_process_adoption_candidate(
             for item in attestation["artifacts"]
             if item["name"].endswith(".whl")
         ]
-        if len(wheel_artifacts) != 1 or (
-            "--hash=" + wheel_artifacts[0]["sha256"]
-            not in lock_text
-        ):
+        verified_wheel_hash = (
+            wheel_artifacts[0]["sha256"] if len(wheel_artifacts) == 1 else None
+        )
+        if requirement_hashes != {verified_wheel_hash}:
             issues.append(
-                "Process-adoption requirements lock does not contain the verified "
+                "Process-adoption target requirement hashes do not equal the verified "
                 "producer wheel hash"
             )
 

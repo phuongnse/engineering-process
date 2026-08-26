@@ -158,6 +158,8 @@ class PublicationTests(unittest.TestCase):
         quoted_second_workflow: bool = False,
         primary_quote: str = "",
         escaped_second_workflow: str | None = None,
+        second_workflow_key: str = "uses",
+        case_variant_second_repository: bool = False,
     ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
@@ -240,10 +242,15 @@ class PublicationTests(unittest.TestCase):
             elif quoted_second_workflow:
                 action = '"phuongnse/engineering-process@' + "6" * 40 + '"'
             else:
-                action = "phuongnse/engineering-process@" + "6" * 40
+                repository = (
+                    "PhuongNSE/Engineering-Process"
+                    if case_variant_second_repository
+                    else "phuongnse/engineering-process"
+                )
+                action = repository + "@" + "6" * 40
             files[".github/workflows/review.yml"] = (
                 "steps:\n"
-                "  - uses: " + action + " # v0.7.0\n"
+                "  - " + second_workflow_key + ": " + action + " # v0.7.0\n"
             )
         for relative, content in files.items():
             target = root / relative
@@ -749,6 +756,66 @@ class PublicationTests(unittest.TestCase):
             self.assertTrue(any("target authority" in issue for issue in issues))
             self.assertTrue(any("omits required" in issue for issue in issues))
 
+    def test_process_adoption_binds_verified_hash_to_target_requirement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, _head_sha = self.process_adoption_fixture(root)
+            lock = root / "requirements" / "process.txt"
+            lock.write_bytes(
+                (
+                    "--only-binary :all:\n\nengineering-process==0.8.0 \\\n"
+                    "    --hash=sha256:" + "9" * 64 + "\n"
+                    "    # verified release hash is sha256:" + "8" * 64 + "\n"
+                ).encode("utf-8")
+            )
+            subprocess.run(["git", "add", str(lock)], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "test: detach verified wheel hash"],
+                cwd=root,
+                check=True,
+            )
+            head_sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            lock_bytes = subprocess.check_output(
+                ["git", "show", f"{head_sha}:requirements/process.txt"], cwd=root
+            )
+            lock_digest = "sha256:" + hashlib.sha256(lock_bytes).hexdigest()
+            adoption = copy.deepcopy(proposal.process_adoption)
+            adoption["requirements"]["lockSha256"] = lock_digest
+            adoption["producerRelease"]["materialization"][
+                "requirementsLockSha256"
+            ] = lock_digest
+            proposal = replace(
+                proposal,
+                head_sha=head_sha,
+                process_adoption=adoption,
+            )
+
+            issues = self.validate_process_adoption(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("hashes do not equal" in issue for issue in issues)
+            )
+
     def test_process_adoption_rejects_inferred_project_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -955,6 +1022,49 @@ class PublicationTests(unittest.TestCase):
 
                 self.assertTrue(
                     any("escapes the producer repository" in issue for issue in issues)
+                )
+
+    def test_process_adoption_rejects_equivalent_producer_spellings(self):
+        cases = (
+            {"second_workflow_key": '"uses"'},
+            {"second_workflow_key": '"\\x75ses"'},
+            {"case_variant_second_repository": True},
+        )
+        for options in cases:
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                proposal, body, title, head_sha = self.process_adoption_fixture(
+                    root,
+                    second_workflow=True,
+                    **options,
+                )
+
+                issues = self.validate_process_adoption(
+                    root,
+                    repository="example/project",
+                    title=title,
+                    body=body,
+                    branch=proposal.branch,
+                    target_branch="main",
+                    base_commit=proposal.base_sha,
+                    state="draft",
+                    commit=head_sha,
+                    verifier_repository=proposal.verifier_repository,
+                    verifier_commit=proposal.verifier_commit,
+                    proposal=proposal,
+                    source={
+                        "dirty": False,
+                        "checkpoint": head_sha,
+                        "fingerprint": f"sha256:{'9' * 64}",
+                    },
+                )
+
+                self.assertTrue(
+                    any(
+                        "omits producer workflow" in issue
+                        or "producer repository spelling" in issue
+                        for issue in issues
+                    )
                 )
 
     def test_process_adoption_rejects_workflow_symlink_mode(self):

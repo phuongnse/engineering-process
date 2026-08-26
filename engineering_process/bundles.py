@@ -20,7 +20,12 @@ def bundles_path(process_root: Path) -> Path:
     raise ContractError(f"{process_root}: cannot locate bundles.json")
 
 
-def load_bundles(process_root: Path, skills_root: Path) -> dict[str, tuple[str, ...]]:
+def load_bundles(
+    process_root: Path,
+    skills_root: Path,
+    *,
+    selected_skills: tuple[str, ...] | None = None,
+) -> dict[str, tuple[str, ...]]:
     path = bundles_path(process_root)
     document = read_json(path)
     if (
@@ -32,7 +37,16 @@ def load_bundles(process_root: Path, skills_root: Path) -> dict[str, tuple[str, 
     ):
         raise ContractError(f"{path}: invalid bundle contract")
 
-    available = {directory.name for directory in skill_directories(skills_root)}
+    available = (
+        {directory.name for directory in skill_directories(skills_root)}
+        if selected_skills is None
+        else {
+            skill
+            for skill in selected_skills
+            if (skills_root / skill / "SKILL.md").is_file()
+            and not (skills_root / skill).is_symlink()
+        }
+    )
     result: dict[str, tuple[str, ...]] = {}
     owned: dict[str, str] = {}
     for name, raw_skills in document["bundles"].items():
@@ -48,7 +62,11 @@ def load_bundles(process_root: Path, skills_root: Path) -> dict[str, tuple[str, 
             or raw_skills != sorted(set(raw_skills))
         ):
             raise ContractError(f"{path}: bundle {name} must be a sorted unique skill list")
-        missing = sorted(set(raw_skills) - available)
+        missing = sorted(
+            (set(raw_skills) - available)
+            if selected_skills is None
+            else (set(raw_skills) & set(selected_skills)) - available
+        )
         if missing:
             raise ContractError(
                 f"{path}: bundle {name} references missing skills: {', '.join(missing)}"
