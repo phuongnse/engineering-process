@@ -160,6 +160,7 @@ class PublicationTests(unittest.TestCase):
         escaped_second_workflow: str | None = None,
         second_workflow_key: str = "uses",
         case_variant_second_repository: bool = False,
+        multiline_second_workflow: bool = False,
     ):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
@@ -234,7 +235,12 @@ class PublicationTests(unittest.TestCase):
             ),
             "AGENTS.md": "Managed agent contract\n",
         }
-        if second_workflow or quoted_second_workflow or escaped_second_workflow:
+        if (
+            second_workflow
+            or quoted_second_workflow
+            or escaped_second_workflow
+            or multiline_second_workflow
+        ):
             if escaped_second_workflow == "hex":
                 action = '"\\x70huongnse/engineering-process@' + "6" * 40 + '"'
             elif escaped_second_workflow == "unicode":
@@ -249,8 +255,18 @@ class PublicationTests(unittest.TestCase):
                 )
                 action = repository + "@" + "6" * 40
             files[".github/workflows/review.yml"] = (
-                "steps:\n"
-                "  - " + second_workflow_key + ": " + action + " # v0.7.0\n"
+                (
+                    "steps:\n"
+                    "  - \"\\x75ses\": \"\\x70huongnse/engineering-\\\n"
+                    + "      process@"
+                    + "6" * 40
+                    + "\" # v0.7.0\n"
+                )
+                if multiline_second_workflow
+                else (
+                    "steps:\n"
+                    "  - " + second_workflow_key + ": " + action + " # v0.7.0\n"
+                )
             )
         for relative, content in files.items():
             target = root / relative
@@ -1066,6 +1082,38 @@ class PublicationTests(unittest.TestCase):
                         for issue in issues
                     )
                 )
+
+    def test_process_adoption_rejects_multiline_producer_use(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proposal, body, title, head_sha = self.process_adoption_fixture(
+                root,
+                multiline_second_workflow=True,
+            )
+
+            issues = self.validate_process_adoption(
+                root,
+                repository="example/project",
+                title=title,
+                body=body,
+                branch=proposal.branch,
+                target_branch="main",
+                base_commit=proposal.base_sha,
+                state="draft",
+                commit=head_sha,
+                verifier_repository=proposal.verifier_repository,
+                verifier_commit=proposal.verifier_commit,
+                proposal=proposal,
+                source={
+                    "dirty": False,
+                    "checkpoint": head_sha,
+                    "fingerprint": f"sha256:{'9' * 64}",
+                },
+            )
+
+            self.assertTrue(
+                any("multiline or unsupported scalar" in issue for issue in issues)
+            )
 
     def test_process_adoption_rejects_workflow_symlink_mode(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -288,6 +288,12 @@ class SyncTests(unittest.TestCase):
                 issues = synchronized_state(project_root, PROCESS_ROOT, lock)
             self.assertTrue(any("synchronization exceeded" in issue for issue in issues))
 
+            with (
+                mock.patch.object(syncing, "MAX_SYNC_SKILL_BYTES", 1),
+                self.assertRaisesRegex(ContractError, "synchronization bytes"),
+            ):
+                synchronized_state(project_root, PROCESS_ROOT, lock)
+
     def test_sync_manages_adoption_runner_and_refuses_unmanaged_collision(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

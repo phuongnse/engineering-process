@@ -109,11 +109,73 @@ def _marker(lock: ProcessLock, skill: str) -> dict[str, object]:
     }
 
 
-def _read_marker(path: Path) -> dict[str, object] | None:
+def _read_marker(
+    path: Path,
+    *,
+    shared_budget: dict[str, float | int] | None = None,
+) -> dict[str, object] | None:
     marker_path = path / MARKER_NAME
-    if not marker_path.is_file():
+    if not os.path.lexists(marker_path):
         return None
-    value = read_json(marker_path)
+    if shared_budget is None:
+        value = read_json(marker_path)
+        return value if isinstance(value, dict) else None
+    if time.monotonic() >= shared_budget["deadline"]:
+        raise ContractError(
+            "managed synchronization exceeded "
+            f"{SYNC_SKILL_TIMEOUT_SECONDS:g} seconds"
+        )
+    try:
+        before = marker_path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ContractError(
+                f"{marker_path}: managed marker must be a regular file"
+            )
+        if before.st_size > MAX_SKILL_FILE_BYTES:
+            raise ContractError(
+                f"{marker_path}: managed marker exceeds {MAX_SKILL_FILE_BYTES} bytes"
+            )
+        shared_budget["entries"] += 1
+        shared_budget["bytes"] += before.st_size
+        if shared_budget["entries"] > MAX_SYNC_SKILL_ENTRIES:
+            raise ContractError(
+                "managed synchronization entry count exceeds "
+                f"{MAX_SYNC_SKILL_ENTRIES}"
+            )
+        if shared_budget["bytes"] > MAX_SYNC_SKILL_BYTES:
+            raise ContractError(
+                "managed synchronization bytes exceed "
+                f"{MAX_SYNC_SKILL_BYTES}"
+            )
+        with marker_path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not _same_file_identity(opened, before)
+            ):
+                raise ContractError(f"{marker_path}: changed while opening")
+            content = stream.read(MAX_SKILL_FILE_BYTES + 1)
+        after = marker_path.lstat()
+    except OSError as error:
+        raise ContractError(f"{marker_path}: cannot read marker: {error}") from error
+    if (
+        len(content) != before.st_size
+        or len(content) > MAX_SKILL_FILE_BYTES
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_mode != before.st_mode
+        or not _same_file_identity(after, before)
+    ):
+        raise ContractError(f"{marker_path}: changed while reading")
+    if time.monotonic() >= shared_budget["deadline"]:
+        raise ContractError(
+            "managed synchronization exceeded "
+            f"{SYNC_SKILL_TIMEOUT_SECONDS:g} seconds"
+        )
+    try:
+        value = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(f"{marker_path}: invalid marker JSON: {error}") from error
     return value if isinstance(value, dict) else None
 
 
@@ -302,7 +364,10 @@ def managed_parent_issues(project_root: Path) -> list[str]:
 
 
 def skill_target_ownership_issues(
-    project_root: Path, *, targets: list[Path] | None = None
+    project_root: Path,
+    *,
+    targets: list[Path] | None = None,
+    shared_budget: dict[str, float | int] | None = None,
 ) -> list[str]:
     target_root = project_root / ".agents" / "skills"
     if target_root.is_symlink():
@@ -328,7 +393,7 @@ def skill_target_ownership_issues(
             continue
         if not (target / "SKILL.md").is_file():
             continue
-        marker = _read_marker(target)
+        marker = _read_marker(target, shared_budget=shared_budget)
         if not marker or marker.get("distribution") != "engineering-process":
             issues.append(
                 f"{target}: unmanaged project skill; process capabilities must come "
@@ -691,7 +756,7 @@ def synchronized_state(
     for skill in lock.skills:
         source = source_root / skill
         target = target_root / skill
-        if _read_marker(target) != _marker(lock, skill):
+        if _read_marker(target, shared_budget=shared_budget) != _marker(lock, skill):
             issues.append(f"{target}: missing or stale managed-skill marker")
             continue
         if _files(
@@ -704,13 +769,19 @@ def synchronized_state(
             shared_budget=shared_budget,
         ):
             issues.append(f"{target}: content differs from the pinned skill")
-    issues.extend(skill_target_ownership_issues(project_root, targets=target_entries))
+    issues.extend(
+        skill_target_ownership_issues(
+            project_root,
+            targets=target_entries,
+            shared_budget=shared_budget,
+        )
+    )
     issues.extend(managed_parent_issues(project_root))
     if target_root.is_dir():
         for target in target_entries:
             if not target.is_dir() or not (target / "SKILL.md").is_file():
                 continue
-            marker = _read_marker(target)
+            marker = _read_marker(target, shared_budget=shared_budget)
             if (
                 marker
                 and marker.get("distribution") == "engineering-process"

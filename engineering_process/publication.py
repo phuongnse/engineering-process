@@ -1005,6 +1005,11 @@ YAML_MAPPING_LINE_RE = re.compile(
     r"(?P<scalar>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[^#\r\n]*?)"
     r"[ \t]*(?:#[ \t]*(?P<tag>\S+))?[ \t]*$"
 )
+YAML_MAPPING_KEY_PREFIX_RE = re.compile(
+    r"^[ \t]*(?:-[ \t]*)?"
+    r"(?P<key>\"(?:\\.|[^\"\\])*\"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)"
+    r"[ \t]*:"
+)
 
 
 def _decode_yaml_double_quoted_scalar(value: str) -> str:
@@ -1065,6 +1070,23 @@ def _proposal_yaml_uses(
     for line_number, line in enumerate(text.splitlines(), start=1):
         match = YAML_MAPPING_LINE_RE.fullmatch(line)
         if match is None:
+            prefix = YAML_MAPPING_KEY_PREFIX_RE.match(line)
+            if prefix is not None:
+                raw_key = prefix.group("key")
+                try:
+                    if raw_key.startswith('"'):
+                        key = _decode_yaml_double_quoted_scalar(raw_key[1:-1])
+                    elif raw_key.startswith("'"):
+                        key = raw_key[1:-1].replace("''", "'")
+                    else:
+                        key = raw_key
+                except ContractError:
+                    key = None
+                if key == "uses":
+                    issues.append(
+                        f"Process-adoption workflow {path}:{line_number} uses a "
+                        "multiline or unsupported scalar; use one literal line"
+                    )
             continue
         raw_key = match.group("key")
         try:
@@ -1083,6 +1105,21 @@ def _proposal_yaml_uses(
         if key != "uses":
             continue
         raw = match.group("scalar").strip()
+        if (
+            (raw.startswith(('"', "'")) and not raw.endswith(raw[0]))
+            or raw.endswith("\\")
+        ):
+            issues.append(
+                f"Process-adoption workflow {path}:{line_number} uses a multiline "
+                "or unsupported scalar; use one literal line"
+            )
+            continue
+        if raw in {"|", "|-", "|+", ">", ">-", ">+"}:
+            issues.append(
+                f"Process-adoption workflow {path}:{line_number} uses a multiline "
+                "scalar; use one literal line"
+            )
+            continue
         try:
             if raw.startswith('"'):
                 decoded = _decode_yaml_double_quoted_scalar(raw[1:-1])
