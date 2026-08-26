@@ -134,9 +134,10 @@ def _read_skill_text(path: Path) -> str:
     ):
         raise ContractError(f"{path}: changed while reading")
     try:
-        return content.decode("utf-8")
+        text = content.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ContractError(f"{path}: cannot read UTF-8 content: {error}") from error
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def validate_skills(root: Path, selected: tuple[str, ...] | None = None) -> list[str]:
