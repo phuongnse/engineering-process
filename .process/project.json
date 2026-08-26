@@ -5,7 +5,21 @@
     "requiredProfiles": [
       "development",
       "review"
-    ]
+    ],
+    "planDecision": {
+      "mode": "provenance-gated-authored-review",
+      "materialCategories": [
+        "architecture",
+        "authority",
+        "compatibility",
+        "external-mutation",
+        "lifecycle-order",
+        "owner",
+        "rollout",
+        "scope",
+        "trust-boundary"
+      ]
+    }
   },
   "profiles": {
     "development": [

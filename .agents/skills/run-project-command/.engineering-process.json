@@ -1,7 +1,7 @@
 {
-  "digest": "sha256:d90a8a1d8a3caaee9db99fa89781c63f642c87862e69202260a7bf9186ec6750",
+  "digest": "sha256:24f2502506d1445d7c71096f39bdf72dee8c36d49cc606df059fb44ef6885ae4",
   "distribution": "engineering-process",
   "schemaVersion": 1,
   "skill": "run-project-command",
-  "version": "0.6.1"
+  "version": "0.7.0"
 }
