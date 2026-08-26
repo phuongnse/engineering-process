@@ -14,6 +14,7 @@ from engineering_process.contracts import (
     validate_release_change,
 )
 from engineering_process.evidence import (
+    _canonical_digest,
     _plan_decision_entries,
     _validate_plan_decision_receipt,
 )
@@ -517,6 +518,42 @@ class ReleaseCandidateTests(unittest.TestCase):
                     state=state,
                     contract=contract,
                     plan=tampered,
+                    process=process,
+                )
+
+            drifted_evidence = json.loads(json.dumps(exported))
+            drifted_plan = json.loads(json.dumps(plan))
+            project_input = next(
+                item
+                for item in drifted_evidence["generatedInputs"]
+                if item["path"] == ".process/project.json"
+            )
+            project_document = json.loads(
+                project_input["artifact"]["sourceText"]
+            )
+            del project_document["lifecycle"]["planDecision"]
+            project_text = json.dumps(project_document, sort_keys=True) + "\n"
+            project_digest = (
+                "sha256:" + hashlib.sha256(project_text.encode("utf-8")).hexdigest()
+            )
+            project_input["artifact"] = {
+                "sourceDigest": project_digest,
+                "canonicalDigest": _canonical_digest(project_document),
+                "sourceText": project_text,
+            }
+            next(
+                item
+                for item in drifted_plan["provenance"]["inputs"]
+                if item["path"] == ".process/project.json"
+            )["sha256"] = project_digest
+            with self.assertRaisesRegex(
+                ContractError, "adopted project decision policy"
+            ):
+                _validate_plan_decision_receipt(
+                    drifted_evidence,
+                    state=state,
+                    contract=contract,
+                    plan=drifted_plan,
                     process=process,
                 )
 
