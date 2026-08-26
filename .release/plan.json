@@ -32,16 +32,38 @@
     }
   ],
   "approach": "Validate the generated release contract and every declared surface, build from the exact reviewed tree, and permit publication only after independent approval and merge.",
-  "changeId": "release-0-7-0",
-  "contractDigest": "sha256:089e4b194989fa833c73046aaf4169354a86031e6e7bda2455525ab4d801c709",
+  "changeId": "release-0-8-0",
+  "contractDigest": "sha256:57c3f47b7ec854f37ddca5d06a58ed5c1e8db3254598185a105576d3b2214e3f",
   "openDecisions": [],
+  "provenance": {
+    "authority": {
+      "digest": "sha256:24f2502506d1445d7c71096f39bdf72dee8c36d49cc606df059fb44ef6885ae4",
+      "version": "0.7.0"
+    },
+    "generator": "release-lifecycle-v1",
+    "inputs": [
+      {
+        "path": ".process/project.json",
+        "sha256": "sha256:ad48fb8c12359f0262393ebf6bf84bfe665ba478da52120eed9968f78fe13bbb"
+      },
+      {
+        "path": ".release/change.json",
+        "sha256": "sha256:57c3f47b7ec854f37ddca5d06a58ed5c1e8db3254598185a105576d3b2214e3f"
+      },
+      {
+        "path": "release.json",
+        "sha256": "sha256:01cbc1a8387923e97183a63af228a04b53f203347b83a07b6a5ca1c55f231d96"
+      }
+    ],
+    "kind": "process-generated"
+  },
   "risks": [
     {
       "mitigation": "Bind review evidence, merge-tree equality, tag, release assets, attestation, and PyPI upload to one immutable identity.",
       "risk": "Publication could use source or artifacts other than the reviewed candidate."
     }
   ],
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "workItems": [
     {
       "affectedPaths": [
