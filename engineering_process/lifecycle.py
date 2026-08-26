@@ -259,6 +259,8 @@ def reserve_review_context(
     project_root: Path,
     state: dict[str, Any],
     reviewer: dict[str, str],
+    *,
+    cycle: int | None = None,
 ) -> dict[str, Any]:
     context_digest = hashlib.sha256(
         reviewer["contextId"].encode("utf-8")
@@ -281,7 +283,7 @@ def reserve_review_context(
         "actorId": reviewer["actorId"],
         "kind": reviewer["kind"],
         "changeId": state["changeId"],
-        "cycle": state["cycle"],
+        "cycle": state["cycle"] if cycle is None else cycle,
         "reservedAt": _timestamp(),
     }
     content = (
@@ -808,6 +810,29 @@ def _plan_authority_identity(project_root: Path) -> dict[str, str]:
     return {"version": lock.version, "digest": lock.digest}
 
 
+def _plan_decision_target_cycle(state: dict[str, Any]) -> int:
+    return state["cycle"] + (
+        1 if state["phase"] in {"changes-requested", "verified"} else 0
+    )
+
+
+def _verified_source_is_current(
+    project_root: Path, state: dict[str, Any]
+) -> bool:
+    source = source_state(project_root)
+    checkpoints = {item["checkpoint"] for item in state["verification"]}
+    fingerprints = {
+        item["workspaceFingerprint"] for item in state["verification"]
+    }
+    return (
+        source["dirty"] is False
+        and source["checkpoint"] is not None
+        and source["fingerprint"] is not None
+        and checkpoints == {source["checkpoint"]}
+        and fingerprints == {source["fingerprint"]}
+    )
+
+
 def _plan_decision_artifact(
     project_root: Path,
     state: dict[str, Any],
@@ -861,14 +886,15 @@ def _authorize_plan_decision_for_implementation(
     state: dict[str, Any],
     *,
     require_current_source: bool,
+    implementation_actor: dict[str, str],
 ) -> None:
     policy = _plan_decision_policy(project)
     plan = _plan(project_root, state)
     decision = state.get("planDecision")
     if policy is None:
-        if decision is not None or plan["schemaVersion"] != 2:
+        if decision is not None or plan["schemaVersion"] not in {1, 2}:
             raise ContractError(
-                "project without plan decision opt-in requires released schema-2 behavior"
+                "project without plan decision opt-in requires released schema-1 or schema-2 behavior"
             )
         return
     if plan["schemaVersion"] != 3 or not isinstance(decision, dict):
@@ -905,7 +931,7 @@ def _authorize_plan_decision_for_implementation(
     )
     expected_assignment = {
         "changeId": state["changeId"],
-        "cycle": 1,
+        "cycle": _plan_decision_target_cycle(state),
         "contractSha256": canonical_json_digest(contract),
         "planSha256": canonical_json_digest(plan),
         "policySha256": canonical_json_digest(policy),
@@ -925,7 +951,7 @@ def _authorize_plan_decision_for_implementation(
         or reservation["actorId"] != assignment["reviewer"]["actorId"]
         or reservation["kind"] != assignment["reviewer"]["kind"]
         or reservation["changeId"] != state["changeId"]
-        or reservation["cycle"] != 1
+        or reservation["cycle"] != assignment["cycle"]
     ):
         raise ContractError(
             "plan decision assignment context reservation is stale or mismatched"
@@ -943,6 +969,14 @@ def _authorize_plan_decision_for_implementation(
             raise ContractError(
                 "plan decision assessment is stale for the implementation source"
             )
+    if (
+        implementation_actor["actorId"] == assignment["reviewer"]["actorId"]
+        or implementation_actor["contextId"]
+        == assignment["reviewer"]["contextId"]
+    ):
+        raise ContractError(
+            "the assigned read-only plan reviewer cannot implement the reviewed plan"
+        )
     expected_review = {
         "changeId": assignment["changeId"],
         "cycle": assignment["cycle"],
@@ -1679,7 +1713,13 @@ def _start_plan_decision_review_unlocked(
     evidence: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = load_state(project_root, change_id)
-    _require_phase(state, "planned")
+    _require_phase(state, "planned", "changes-requested", "verified")
+    if state["phase"] == "verified" and _verified_source_is_current(
+        project_root, state
+    ):
+        raise ContractError(
+            "current verified change must enter independent review, not refresh planning"
+        )
     policy = _plan_decision_policy(project)
     if policy is None:
         raise ContractError("project has not adopted authored plan decision review")
@@ -1695,8 +1735,20 @@ def _start_plan_decision_review_unlocked(
         raise ContractError(
             "fresh semantic assessment applies only to authored schema-3 plans"
         )
+    target_cycle = _plan_decision_target_cycle(state)
     if decision["assignment"] is not None:
-        raise ContractError("plan decision review assignment already exists")
+        if state["phase"] == "planned":
+            raise ContractError("plan decision review assignment already exists")
+        for field in (
+            "assignment",
+            "review",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        ):
+            decision[field] = None
+        decision["authorized"] = False
     reviewer = _actor(actor_id, context_id, kind)
     author = plan["provenance"]["author"]
     if (
@@ -1729,12 +1781,14 @@ def _start_plan_decision_review_unlocked(
         raise ContractError(
             "plan decision review requires a clean immutable source checkpoint"
         )
-    reservation = reserve_review_context(project_root, state, reviewer)
+    reservation = reserve_review_context(
+        project_root, state, reviewer, cycle=target_cycle
+    )
     assignment = {
         "schemaVersion": 1,
         "kind": "engineering-process-plan-decision-review-assignment",
         "changeId": change_id,
-        "cycle": 1,
+        "cycle": target_cycle,
         "contractSha256": canonical_json_digest(contract),
         "planSha256": canonical_json_digest(plan),
         "policySha256": canonical_json_digest(policy),
@@ -1757,7 +1811,10 @@ def _start_plan_decision_review_unlocked(
     validate_plan_decision_review_assignment(
         assignment, "generated plan decision review assignment"
     )
-    destination = _run_root(project_root, change_id) / "plan-decision-assignment.json"
+    destination = (
+        _run_root(project_root, change_id)
+        / f"plan-decision-assignment-{target_cycle}.json"
+    )
     _write_atomic(destination, assignment)
     decision["assignment"] = {
         "path": _relative(project_root, destination),
@@ -1767,7 +1824,7 @@ def _start_plan_decision_review_unlocked(
         state,
         "plan-decision-review-started",
         reviewer,
-        cycle=1,
+        cycle=target_cycle,
         assignment=decision["assignment"],
     )
     _save_state(project_root, state)
@@ -1781,7 +1838,7 @@ def _submit_plan_decision_review_unlocked(
     review_path: Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = load_state(project_root, change_id)
-    _require_phase(state, "planned")
+    _require_phase(state, "planned", "changes-requested", "verified")
     if _plan_decision_policy(project) is None:
         raise ContractError("project has not adopted authored plan decision review")
     assignment = _plan_decision_artifact(
@@ -1815,14 +1872,17 @@ def _submit_plan_decision_review_unlocked(
         or source["fingerprint"] != assignment["source"]["workspaceFingerprint"]
     ):
         raise ContractError("plan decision review is stale for the current source")
-    destination = _run_root(project_root, change_id) / "plan-decision-review.json"
+    destination = (
+        _run_root(project_root, change_id)
+        / f"plan-decision-review-{assignment['cycle']}.json"
+    )
     artifact = _copy_document(project_root, review_path, destination)
     decision["review"] = artifact
     _event(
         state,
         "plan-decision-review-submitted",
         review["reviewer"],
-        cycle=1,
+        cycle=assignment["cycle"],
         verdict=review["verdict"],
         review=artifact,
     )
@@ -1844,7 +1904,7 @@ def _resolve_plan_decision_unlocked(
     kind: str,
 ) -> dict[str, Any]:
     state = load_state(project_root, change_id)
-    _require_phase(state, "planned")
+    _require_phase(state, "planned", "changes-requested", "verified")
     if _plan_decision_policy(project) is None:
         raise ContractError("project has not adopted authored plan decision review")
     assessment = _plan_decision_artifact(
@@ -1878,7 +1938,10 @@ def _resolve_plan_decision_unlocked(
         "recommendationReview": result["reviewSha256"],
         "resolution": result["resolutionSha256"],
     }
-    destination_root = _run_root(project_root, change_id) / "plan-decision-resolution"
+    destination_root = (
+        _run_root(project_root, change_id)
+        / f"plan-decision-resolution-{assessment['cycle']}"
+    )
     for field, source_path in sources.items():
         document = read_json(source_path)
         if canonical_json_digest(document) != expected_digests[field]:
@@ -1892,7 +1955,7 @@ def _resolve_plan_decision_unlocked(
         state,
         "plan-decision-resolved",
         actor,
-        cycle=1,
+        cycle=assessment["cycle"],
         selectedOptionId=result["selectedOptionId"],
         resolution=decision["resolution"],
     )
@@ -1912,16 +1975,27 @@ def _begin_implementation_unlocked(
     state = load_state(project_root, change_id)
     _contract(project_root, state)
     _plan(project_root, state)
+    starting_phase = state["phase"]
+    if starting_phase == "verified" and _verified_source_is_current(
+        project_root, state
+    ):
+        raise ContractError(
+            "current verified change must enter independent review before "
+            "another implementation cycle"
+        )
     if state.get("planDecision") is not None and project is None:
         raise ContractError(
             "implementation under plan decision policy requires the current project contract"
         )
+    actor = _actor(actor_id, context_id, kind)
     if project is not None:
         _authorize_plan_decision_for_implementation(
             project_root,
             project,
             state,
-            require_current_source=state["phase"] == "planned",
+            require_current_source=starting_phase
+            in {"planned", "changes-requested", "verified"},
+            implementation_actor=actor,
         )
     classification_required = [
         case["id"]
@@ -1933,26 +2007,7 @@ def _begin_implementation_unlocked(
             "implementation cannot continue before improvement classification: "
             + ", ".join(classification_required)
         )
-    actor = _actor(actor_id, context_id, kind)
-    starting_phase = state["phase"]
     if starting_phase == "verified":
-        source = source_state(project_root)
-        checkpoints = {item["checkpoint"] for item in state["verification"]}
-        fingerprints = {
-            item["workspaceFingerprint"] for item in state["verification"]
-        }
-        current = (
-            source["dirty"] is False
-            and source["checkpoint"] is not None
-            and source["fingerprint"] is not None
-            and checkpoints == {source["checkpoint"]}
-            and fingerprints == {source["fingerprint"]}
-        )
-        if current:
-            raise ContractError(
-                "current verified change must enter independent review before "
-                "another implementation cycle"
-            )
         previous_cycle = state["cycle"]
         previous_verification = list(state["verification"])
         state["cycle"] += 1

@@ -176,6 +176,7 @@ def _plan_decision_entries(
     result: dict[str, Any] = {
         "kind": decision["kind"],
         "authorized": decision["authorized"],
+        "generatedInputs": [],
     }
     for field in (
         "assignment",
@@ -189,6 +190,21 @@ def _plan_decision_entries(
         result[field] = _entry(project_root, reference) if reference is not None else None
     result["contextReservation"] = None
     result["recommendationContextReservation"] = None
+    if decision["kind"] == "process-generated":
+        plan = read_json(project_root / state["plan"]["path"])
+        result["generatedInputs"] = [
+            {
+                "path": source_input["path"],
+                "artifact": _entry(
+                    project_root,
+                    {
+                        "path": source_input["path"],
+                        "digest": source_input["sha256"],
+                    },
+                ),
+            }
+            for source_input in plan["provenance"]["inputs"]
+        ]
     if decision["assignment"] is not None:
         assignment = read_json(project_root / decision["assignment"]["path"])
         result["contextReservation"] = _context_reservation_entry(
@@ -360,6 +376,7 @@ def _validate_plan_decision_receipt(
     state: dict[str, Any],
     contract: dict[str, Any],
     plan: dict[str, Any],
+    process: dict[str, str],
 ) -> None:
     path = "receipt.artifacts.planDecision"
     if not isinstance(value, dict):
@@ -367,6 +384,7 @@ def _validate_plan_decision_receipt(
     fields = {
         "kind",
         "authorized",
+        "generatedInputs",
         "assignment",
         "review",
         "recommendation",
@@ -407,11 +425,50 @@ def _validate_plan_decision_receipt(
             raise ContractError(f"{path}.{field}: source digest does not match state")
         documents[field] = _validate_entry(entry, f"{path}.{field}")
     if decision["kind"] == "process-generated":
-        if any(documents.values()) or value["contextReservation"] is not None or value[
-            "recommendationContextReservation"
-        ] is not None:
+        if (
+            any(documents.values())
+            or value["contextReservation"] is not None
+            or value["recommendationContextReservation"] is not None
+        ):
             raise ContractError(f"{path}: generated plan carries semantic review evidence")
+        generated_inputs = value["generatedInputs"]
+        if not isinstance(generated_inputs, list) or not generated_inputs:
+            raise ContractError(f"{path}: generated plan inputs are missing")
+        input_documents: dict[str, dict[str, Any]] = {}
+        input_digests: dict[str, str] = {}
+        paths: list[str] = []
+        for index, item in enumerate(generated_inputs):
+            item_path = f"{path}.generatedInputs[{index}]"
+            if not isinstance(item, dict):
+                raise ContractError(f"{item_path}: must be an object")
+            _require_exact(item, {"path", "artifact"}, item_path)
+            relative = item["path"]
+            if not isinstance(relative, str):
+                raise ContractError(f"{item_path}.path: must be a string")
+            paths.append(relative)
+            document = _validate_entry(item["artifact"], f"{item_path}.artifact")
+            input_documents[relative] = document
+            input_digests[relative] = item["artifact"]["sourceDigest"]
+        provenance_inputs = plan["provenance"]["inputs"]
+        if paths != [item["path"] for item in provenance_inputs] or any(
+            input_digests[item["path"]] != item["sha256"]
+            for item in provenance_inputs
+        ):
+            raise ContractError(f"{path}: generated inputs do not match plan provenance")
+        from .release_candidate import validate_generated_release_lifecycle_documents
+
+        validate_generated_release_lifecycle_documents(
+            project=state["project"],
+            contract=contract,
+            plan=plan,
+            input_documents=input_documents,
+            input_digests=input_digests,
+            authority=process,
+        )
         return
+
+    if value["generatedInputs"] != []:
+        raise ContractError(f"{path}: authored plan cannot carry generated inputs")
 
     assignment = documents["assignment"]
     review = documents["review"]
@@ -421,6 +478,7 @@ def _validate_plan_decision_receipt(
     validate_plan_decision_review(review, f"{path}.review")
     if (
         assignment["changeId"] != state["changeId"]
+        or assignment["authority"] != process
         or assignment["contractSha256"] != canonical_json_digest(contract)
         or assignment["planSha256"] != canonical_json_digest(plan)
         or review["assignmentSha256"] != canonical_json_digest(assignment)
@@ -435,9 +493,15 @@ def _validate_plan_decision_receipt(
         or context.get("actorId") != assignment["reviewer"]["actorId"]
         or context.get("kind") != assignment["reviewer"]["kind"]
         or context.get("changeId") != state["changeId"]
-        or context.get("cycle") != 1
+        or context.get("cycle") != assignment["cycle"]
     ):
         raise ContractError(f"{path}.contextReservation: does not match assignment")
+    if any(
+        actor.get("actorId") == assignment["reviewer"]["actorId"]
+        or actor.get("contextId") == assignment["reviewer"]["contextId"]
+        for actor in state.get("implementationActors", [])
+    ):
+        raise ContractError(f"{path}: plan reviewer appears as an implementation actor")
     chain_fields = (
         "recommendation",
         "recommendationAssignment",
@@ -809,6 +873,10 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     validate_review(review, "receipt review")
     validate_completion(completion, "receipt completion")
     state_plan_decision = state.get("planDecision")
+    if plan.get("schemaVersion") == 3 and state_plan_decision is None:
+        raise ContractError(
+            "receipt schema-3 plan is missing required plan decision state"
+        )
     if (state_plan_decision is not None) != ("planDecision" in artifacts):
         raise ContractError(
             "receipt plan decision evidence presence does not match lifecycle state"
@@ -819,6 +887,7 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
             state=state,
             contract=contract,
             plan=plan,
+            process=process,
         )
     required_review_schema = 3 if contract["schemaVersion"] == 3 else 2
     if review["schemaVersion"] != required_review_schema:

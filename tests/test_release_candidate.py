@@ -13,6 +13,10 @@ from engineering_process.contracts import (
     validate_release,
     validate_release_change,
 )
+from engineering_process.evidence import (
+    _plan_decision_entries,
+    _validate_plan_decision_receipt,
+)
 from engineering_process.publication import validate_pull_request
 from engineering_process.release_candidate import (
     _resolved_improvement_catalog,
@@ -410,10 +414,110 @@ class ReleaseCandidateTests(unittest.TestCase):
                 root, project="sample", contract=contract, plan=plan
             )
 
+            for relative in (
+                ".process/project.json",
+                ".release/change.json",
+                "release.json",
+            ):
+                path = root / relative
+                original = path.read_bytes()
+                for malformed in (b"{", b"\xff"):
+                    with self.subTest(relative=relative, malformed=malformed):
+                        path.write_bytes(malformed)
+                        with self.assertRaisesRegex(
+                            ContractError, "invalid UTF-8 JSON"
+                        ):
+                            validate_generated_release_lifecycle_plan(
+                                root,
+                                project="sample",
+                                contract=contract,
+                                plan=plan,
+                            )
+                path.write_bytes(original)
+
             plan["provenance"]["generator"] = "claimed-generator"
             with self.assertRaisesRegex(ContractError, "unknown.*generator"):
                 validate_generated_release_lifecycle_plan(
                     root, project="sample", contract=contract, plan=plan
+                )
+
+    def test_portable_generated_plan_evidence_recomputes_exact_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_project(root)
+            self.enable_plan_decision_policy(root)
+            self.write_change(root)
+            prepare_release_candidate(root)
+            contract = json.loads(
+                (root / ".release" / "change.json").read_text(encoding="utf-8")
+            )
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
+
+            decision_state = {
+                "kind": "process-generated",
+                "authorized": True,
+                "assignment": None,
+                "review": None,
+                "recommendation": None,
+                "recommendationAssignment": None,
+                "recommendationReview": None,
+                "resolution": None,
+            }
+            process = plan["provenance"]["authority"]
+            state = {
+                "project": "sample",
+                "planDecision": decision_state,
+                "implementationActors": [],
+                "plan": {
+                    "path": ".release/plan.json",
+                    "digest": (
+                        "sha256:"
+                        + hashlib.sha256(
+                            (root / ".release" / "plan.json").read_bytes()
+                        ).hexdigest()
+                    ),
+                },
+            }
+            exported = _plan_decision_entries(root, state)
+            self.assertIsNotNone(exported)
+            assert exported is not None
+            self.assertEqual(3, len(exported["generatedInputs"]))
+            _validate_plan_decision_receipt(
+                exported,
+                state=state,
+                contract=contract,
+                plan=plan,
+                process=process,
+            )
+
+            for mutation, message in (
+                (("generator", "unregistered-generator"), "unknown.*generator"),
+                (("authority", {"version": "9.9.9", "digest": f"sha256:{'9' * 64}"}), "exact core recomputation"),
+            ):
+                tampered = json.loads(json.dumps(plan))
+                tampered["provenance"][mutation[0]] = mutation[1]
+                with self.subTest(mutation=mutation[0]), self.assertRaisesRegex(
+                    ContractError, message
+                ):
+                    _validate_plan_decision_receipt(
+                        exported,
+                        state=state,
+                        contract=contract,
+                        plan=tampered,
+                        process=process,
+                    )
+
+            tampered = json.loads(json.dumps(plan))
+            tampered["provenance"]["inputs"][0]["sha256"] = f"sha256:{'8' * 64}"
+            with self.assertRaisesRegex(ContractError, "do not match plan provenance"):
+                _validate_plan_decision_receipt(
+                    exported,
+                    state=state,
+                    contract=contract,
+                    plan=tampered,
+                    process=process,
                 )
 
             plan = json.loads(

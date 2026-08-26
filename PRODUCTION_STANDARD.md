@@ -123,6 +123,9 @@ authority, project policy, author, reviewer context, and canonical category set.
 clear assessment may authorize implementation; a decision-required assessment must
 bind the existing independently reviewed recommendation and explicit owner resolution
 for that exact assessment. Drift in any binding fails closed.
+Each later implementation cycle after a finding or clean post-verification source
+drift requires a newly reserved context and assessment bound to that cycle's source;
+cycle-1 evidence cannot be relabeled or reused.
 
 A process-generated plan bypass is accepted only when the immutable installed core
 recognizes its generator and exactly recomputes the complete plan from bounded

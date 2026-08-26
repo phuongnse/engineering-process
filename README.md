@@ -538,6 +538,10 @@ is exactly recomputed from bounded source-owned inputs and the immutable install
 authority. Exact generated plans are not universally sent to semantic review. Core
 requires no daemon, scheduler, service, webhook receiver, hosted reviewer platform,
 vendor, model, or proprietary agent API.
+Every later implementation cycle after a finding or clean post-verification source
+drift repeats the assessment with a newly reserved reviewer context bound to the new
+source checkpoint. Earlier assignment, assessment, and owner-decision artifacts stay
+historical and cannot authorize the new cycle.
 
 When a schema-3 change selects a project-owned `requiredEvidence` id, local profiles
 alone do not advance it to review. Create the exact no-authority request, run the

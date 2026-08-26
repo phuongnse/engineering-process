@@ -288,6 +288,33 @@ class LifecycleTests(unittest.TestCase):
         )
         return project, assignment
 
+    def prepare_verified_authored_plan_decision(
+        self, root: Path, inputs: Path
+    ) -> Project:
+        project, assignment = self.prepare_authored_plan_decision(root, inputs)
+        review_path = inputs / "plan-decision-review.json"
+        self.write_plan_decision_review(review_path, assignment)
+        submit_plan_decision_review(root, project, "change-1", review_path)
+        begin_implementation(
+            root,
+            "change-1",
+            project=project,
+            actor_id="worker",
+            context_id="worker-context",
+            kind="agent",
+        )
+        for profile in ("development", "review"):
+            verify_change(
+                root,
+                project,
+                "change-1",
+                profile,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+        return project
+
     def review_quality(self, *, failed: tuple[str, ...] = ()):
         return {
             "standard": "production-v1",
@@ -503,6 +530,24 @@ class LifecycleTests(unittest.TestCase):
             submit_plan_decision_review(
                 root, project, "change-1", review_path
             )
+            with self.assertRaisesRegex(ContractError, "read-only plan reviewer"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="decision-reviewer",
+                    context_id="fresh-plan-decision-context",
+                    kind="agent",
+                )
+            with self.assertRaisesRegex(ContractError, "read-only plan reviewer"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="different-reviewer-name",
+                    context_id="fresh-plan-decision-context",
+                    kind="agent",
+                )
             with self.assertRaisesRegex(ContractError, "current project contract"):
                 begin_implementation(
                     root,
@@ -546,6 +591,165 @@ class LifecycleTests(unittest.TestCase):
                     context_id="worker-context",
                     kind="agent",
                 )
+
+    def test_verified_source_drift_requires_refreshed_plan_assessment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project = self.prepare_verified_authored_plan_decision(root, inputs)
+            (root / "tracked.txt").write_text("new checkpoint\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "fix: create new implementation source"],
+                cwd=root,
+                check=True,
+            )
+
+            with self.assertRaisesRegex(ContractError, "assignment cycle is stale"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            _state, assignment = start_plan_decision_review(
+                root,
+                project,
+                "change-1",
+                actor_id="decision-reviewer-two",
+                context_id="fresh-plan-decision-context-two",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a new read-only context for cycle two.",
+            )
+            review_path = inputs / "plan-decision-review-2.json"
+            self.write_plan_decision_review(review_path, assignment)
+            submit_plan_decision_review(root, project, "change-1", review_path)
+
+            state = begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            self.assertEqual(2, state["cycle"])
+            self.assertEqual("implementing", state["phase"])
+
+    def test_review_finding_cycle_requires_refreshed_plan_assessment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project = self.prepare_verified_authored_plan_decision(root, inputs)
+            _state, assignment = start_review(
+                root,
+                "change-1",
+                actor_id="final-reviewer",
+                context_id="fresh-final-review-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a fresh final review context.",
+            )
+            report_path = inputs / "changes-requested-review.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "changeId": "change-1",
+                        "cycle": 1,
+                        "checkpoint": assignment["checkpoint"],
+                        "workspaceFingerprint": assignment["workspaceFingerprint"],
+                        "comparisonBase": assignment["comparisonBase"],
+                        "reviewer": assignment["reviewer"],
+                        "independence": assignment["independence"],
+                        "quality": self.review_quality(failed=("correctness",)),
+                        "verdict": "changes-requested",
+                        "findings": [
+                            {
+                                "id": "cycle-two-finding",
+                                "severity": "high",
+                                "path": "tracked.txt",
+                                "line": 1,
+                                "summary": "The implementation needs correction",
+                                "evidence": "The exact checkpoint retains the defect.",
+                                "status": "open",
+                                "resolutionEvidence": None,
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            submit_review(root, "change-1", report_path)
+            state = load_state(root, "change-1")
+            classify_improvement_case(
+                root,
+                "change-1",
+                state["improvements"][0]["id"],
+                owner_boundary="project-local",
+                reusable_class="local-behavior",
+                invariant_id="cycle-two-correction",
+                disposition="local-fix",
+                rationale_sha256=f"sha256:{'b' * 64}",
+                target_project=None,
+                target_repository=None,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            with self.assertRaisesRegex(ContractError, "assignment cycle is stale"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            _state, decision_assignment = start_plan_decision_review(
+                root,
+                project,
+                "change-1",
+                actor_id="decision-reviewer-two",
+                context_id="fresh-finding-cycle-decision-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a fresh read-only finding-cycle context.",
+            )
+            decision_review_path = inputs / "finding-cycle-decision-review.json"
+            self.write_plan_decision_review(
+                decision_review_path, decision_assignment
+            )
+            submit_plan_decision_review(
+                root, project, "change-1", decision_review_path
+            )
+
+            state = begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.assertEqual(2, state["cycle"])
 
     def test_authored_plan_decision_evidence_survives_completion_export(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -633,6 +837,18 @@ class LifecycleTests(unittest.TestCase):
                 receipt["artifacts"]["planDecision"]["contextReservation"]
             )
             self.assertEqual(exported, validate_receipt(receipt_path))
+            missing_path = inputs / "missing-plan-decision-receipt.json"
+            missing = json.loads(receipt_path.read_text(encoding="utf-8"))
+            del missing["artifacts"]["planDecision"]
+            missing["state"]["document"]["planDecision"] = None
+            missing["state"]["canonicalDigest"] = _canonical_digest(
+                missing["state"]["document"]
+            )
+            missing_path.write_text(json.dumps(missing) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ContractError, "schema-3 plan is missing required plan decision"
+            ):
+                validate_receipt(missing_path)
 
     def test_decision_required_assessment_cannot_implement_without_owner_chain(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -818,6 +1034,81 @@ class LifecycleTests(unittest.TestCase):
                     context_id="worker-context",
                     kind="agent",
                 )
+
+    def test_non_opted_project_resumes_historical_schema_one_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_contract(contract_path)
+            state = start_change(
+                root,
+                self.project(),
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                self.project(),
+                "change-1",
+                plan_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            run_root = root / ".process" / "runs" / "change-1"
+            registered_contract_path = run_root / "contract.json"
+            registered_contract = json.loads(
+                registered_contract_path.read_text(encoding="utf-8")
+            )
+            registered_contract["schemaVersion"] = 2
+            del registered_contract["quality"]
+            registered_contract_path.write_text(
+                json.dumps(registered_contract, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            registered_plan_path = run_root / "plan.json"
+            registered_plan = json.loads(
+                registered_plan_path.read_text(encoding="utf-8")
+            )
+            registered_plan["schemaVersion"] = 1
+            registered_plan_path.write_text(
+                json.dumps(registered_plan, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            state_path = run_root / "state.json"
+            historical_state = json.loads(state_path.read_text(encoding="utf-8"))
+            historical_state["contract"]["digest"] = (
+                "sha256:"
+                + hashlib.sha256(registered_contract_path.read_bytes()).hexdigest()
+            )
+            historical_state["plan"]["digest"] = (
+                "sha256:"
+                + hashlib.sha256(registered_plan_path.read_bytes()).hexdigest()
+            )
+            state_path.write_text(
+                json.dumps(historical_state, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            state = begin_implementation(
+                root,
+                "change-1",
+                project=self.project(),
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+
+            self.assertEqual("implementing", state["phase"])
 
     def test_verification_uses_registered_contract_comparison_base(self):
         with tempfile.TemporaryDirectory() as directory:

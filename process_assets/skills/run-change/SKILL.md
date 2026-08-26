@@ -47,7 +47,8 @@ semantics shared by every project.
    do not choose a new scope, authority, architecture, or lifecycle route implicitly.
 6. After a valid finding, preserve the reviewed checkpoint, begin the next
    implementation cycle, resolve the finding, and repeat every invalidated profile
-   and independent review.
+   and independent review. Under adopted plan-decision policy, refresh the authored
+   plan assessment in a new context for the current source before opening that cycle.
 7. Report the processctl phase, cycle, current evidence, blockers, and next owner.
    Never call a task complete from prose alone.
 

@@ -114,8 +114,8 @@ weakens existing safe read-only diagnosis.
 ## Plan decision gate
 
 When the project adopts `provenance-gated-authored-review`, every nontrivial authored
-plan uses schema 3 provenance and receives a fresh semantic assessment before the
-first implementation mutation. `change decision start` atomically reserves a
+plan uses schema 3 provenance and receives a fresh semantic assessment before each
+new implementation cycle. `change decision start` atomically reserves a
 project-global context unused by lifecycle or recommendation review. The assigned
 read-only reviewer is independent of the plan author and assesses architecture,
 authority, compatibility, external mutation, lifecycle order, owner, rollout, scope,
@@ -143,6 +143,12 @@ or review the plan reviewer. The final change reviewer reviews implemented sourc
 current evidence, not either prior reviewer. Never add reviewer-of-reviewer,
 meta-assessment, assessment-of-assessment, policy-for-policy, a dynamically generated
 approval chain, or a generic workflow engine.
+
+After a finding or clean post-verification source drift, the previous assessment is
+source-stale. Before `change implement` opens the next cycle, create a new assignment
+with a fresh context and submit a new assessment for the new source checkpoint. Do
+not relabel or reuse the earlier assignment, reviewer context, or owner-decision
+artifacts.
 
 ## Failure-to-invariant protocol
 

@@ -63,6 +63,7 @@
       "required": [
         "kind",
         "authorized",
+        "generatedInputs",
         "assignment",
         "review",
         "recommendation",
@@ -75,6 +76,24 @@
       "properties": {
         "kind": {"enum": ["authored", "process-generated"]},
         "authorized": {"const": true},
+        "generatedInputs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "artifact"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\/$).+$"
+              },
+              "artifact": {"$ref": "#/$defs/artifact"}
+            }
+          }
+        },
         "assignment": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
         "review": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
         "recommendation": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},

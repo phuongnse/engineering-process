@@ -16,8 +16,10 @@ the canonical verification and review lifecycle.
    project has adopted plan-decision enforcement, require an exactly recomputed
    registered generated plan or current authored-plan evidence from a genuinely
    fresh read-only reviewer. A clear assessment may proceed; `decision-required`
-   needs the exact reviewed recommendation and owner resolution. Then register the
-   implementation actor and isolated context with processctl change implement.
+   needs the exact reviewed recommendation and owner resolution. A finding or clean
+   post-verification source drift invalidates the prior assessment, so refresh it in
+   a new context before registering the next cycle. Then register the implementation
+   actor and isolated context with processctl change implement.
 2. Read the contract, plan, nearest AGENTS.md, and affected project owners. Resolve a
    conflict through the owning contract instead of silently changing scope.
 3. Implement work items in dependency order. Add or update proving tests at the lowest
