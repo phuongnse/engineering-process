@@ -1,6 +1,6 @@
 ---
 name: publish-change
-description: Publish and merge a completed, independently reviewed checkpoint through standing project automation policy, then continue authorized release, deployment, adoption, and cleanup operations. Use after lifecycle completion when a valid project policy authorizes automation.
+description: Publish and merge a completed, independently reviewed checkpoint through standing project automation policy, or validate the consumer-owner manual boundary of an opted-in schema-3 process-adoption proposal.
 ---
 
 # Publish a Change
@@ -13,8 +13,11 @@ without duplicating implementation, verification, or review.
 ## Workflow
 
 1. Classify the exact authorized remote action and read project publication policy,
-   version governance, and current lifecycle status. Do not create a branch or review
-   object before the local lifecycle is completed.
+   version governance, and current lifecycle status. On the default agent-host route,
+   do not create a branch or review object before local lifecycle completion. A valid
+   schema-3 Renovate process-adoption proposal is the explicit exception: complete
+   materialization and protected-base proposal validation precede publication, while
+   consumer-owner review and manual terminal merge follow it.
 2. For source publication, require a current completion record whose checkpoint and
    workspace fingerprint match the source being published. When publication runs on
    a different machine, require a validated external completion receipt and use
@@ -27,7 +30,8 @@ without duplicating implementation, verification, or review.
    `processctl publication validate-source` with the change id and exact completion
    commit, then validate branch and commit range. Provider draft/ready status is
    presentation only and never substitutes for completion evidence.
-4. Push and create the review object only from the exact completed checkpoint. The
+4. On the agent-host route, push and create the review object only from the exact
+   completed checkpoint. The
    independent semantic review has already finished; remote CI may validate the same
    receipt/checkpoint but must not fabricate a replacement review.
    When a schema-1/schema-2 controlled automation proposal for a dependency already

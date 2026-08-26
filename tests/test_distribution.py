@@ -2,7 +2,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from engineering_process import distribution
+from engineering_process.contracts import ContractError
 from engineering_process.distribution import distribution_digest
 
 
@@ -114,6 +117,37 @@ class DistributionDigestTests(unittest.TestCase):
                 baseline,
                 distribution_digest(root, selected, package_root=package),
             )
+
+    def test_digest_bounds_producer_files_entries_and_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = self.prepare_distribution(root)
+            package = root / "runtime"
+            package.mkdir()
+            oversized = package / "module.py"
+            oversized.write_bytes(
+                b"x" * (distribution.MAX_DISTRIBUTION_FILE_BYTES + 1)
+            )
+            with self.assertRaisesRegex(ContractError, "file exceeds"):
+                distribution_digest(root, selected, package_root=package)
+
+            oversized.write_bytes(b"VALUE = 1\n")
+            (package / "second.py").write_bytes(b"VALUE = 2\n")
+            with (
+                mock.patch.object(distribution, "MAX_DISTRIBUTION_FILES", 1),
+                self.assertRaisesRegex(ContractError, "files"),
+            ):
+                distribution_digest(root, selected, package_root=package)
+
+            with (
+                mock.patch.object(
+                    distribution.time,
+                    "monotonic",
+                    side_effect=[0.0, 11.0],
+                ),
+                self.assertRaisesRegex(ContractError, "exceeded 10 seconds"),
+            ):
+                distribution_digest(root, selected, package_root=package)
 
 
 if __name__ == "__main__":

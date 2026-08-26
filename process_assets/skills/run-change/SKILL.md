@@ -59,8 +59,11 @@ semantics shared by every project.
 - Do not convert missing, stale, failed, timed-out, or blocked evidence into a pass.
 - Do not continue verification, completion, or publication through
   `improvement-required` or `improvement-pending`.
-- Do not publish before completion. Standing project policy may authorize automatic
-  commit, push, branch/PR creation, and exact-head merge after completion.
+- On the default agent-host route, do not publish before completion. Standing project
+  policy may authorize automatic commit, push, branch/PR creation, and exact-head merge
+  after completion. An opted-in schema-3 Renovate process-adoption proposal is the
+  explicit exception after complete materialization and protected-base proposal
+  validation; it remains consumer-owner manual-merge-only.
 - Treat a valid standing policy as authorization for its declared release,
   deployment, adoption, and ephemeral-cleanup operations;
   do not request redundant per-action confirmation.

@@ -51,6 +51,10 @@ class SkillTests(unittest.TestCase):
         publish = (skills / "publish-change" / "SKILL.md").read_text(
             encoding="utf-8"
         )
+        run_change = (skills / "run-change" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        versioning = (PROCESS_ROOT / "VERSIONING.md").read_text(encoding="utf-8")
 
         for text in (execution, publish):
             normalized = text.lower().replace("-", " ")
@@ -68,6 +72,11 @@ class SkillTests(unittest.TestCase):
             self.assertIn("reviewer host", text.lower())
         self.assertIn("standing auto-merge authority does not apply", publish)
         self.assertIn("may retain standing automation", publish)
+        self.assertIn("default agent-host route", publish)
+        self.assertIn("explicit exception", publish)
+        self.assertIn("default agent-host route", run_change.lower())
+        self.assertIn("default agent-host completion-first route", versioning)
+        self.assertIn("explicit exception", versioning)
 
     def test_standing_policy_continues_automation_and_escalates_only_exceptions(self):
         skills = PROCESS_ROOT / "process_assets" / "skills"

@@ -234,24 +234,30 @@ process semantics.
 
 ## Release and adoption boundary
 
-Release, self-adoption, and consumer adoption are separate changes:
+Release, self-adoption, and consumer adoption are separate changes. The numbered
+sequence below is the default agent-host completion-first route:
 
 1. Release N governs and verifies the source of N+1.
 2. N+1 is published as an immutable release and its public hashes are verified.
 3. Consumer-owned automation prepares an unpublished local candidate artifact,
    updates the direct pin, regenerates the hash-locked dependency graph, and runs the
-   managed adoption runner. Renovate must not publish a process-authority branch or
-   PR because its normal PR-first execution cannot satisfy this lifecycle boundary.
+   managed adoption runner. On this agent-host route, no process-authority branch or
+   PR is published before lifecycle completion.
 4. Required profiles validate the immutable candidate. The consumer-selected host
    supplies an independent semantic agent or human review; findings repeat candidate
    generation and full verification until lifecycle completion. Each
    platform/runtime job publishes a bounded supplemental evidence bundle bound to the
    source checkpoint, workflow checkpoint, run identity, and profile-report hashes.
-   Only after completion may automation push the candidate branch and create the PR
+   Only after completion may the agent host push the candidate branch and create the PR
    containing the process lock and every selected managed asset. A valid consumer
    standing policy may merge that exact checkpoint automatically after required
    checks; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the merged adoption checkpoint.
+
+An opted-in schema-3 Renovate `process-adoption` proposal is the explicit exception to
+steps 3-4: after complete materialization and protected-base proposal validation,
+Renovate may publish it before consumer-owner review. It never receives agent-host
+completion or standing auto-merge authority; consumer-owner manual merge is terminal.
 
 The repository-root GitHub Action and Python package are two surfaces of the same
 governed release checkpoint. A consumer invocation pins the action by the release

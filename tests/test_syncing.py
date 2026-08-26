@@ -228,6 +228,26 @@ class SyncTests(unittest.TestCase):
             self.assertTrue(
                 any("but processctl is 9.9.9" in issue for issue in target_authority_issues)
             )
+            producer_package = PROCESS_ROOT / "engineering_process"
+            with mock.patch.object(
+                syncing,
+                "distribution_digest",
+                return_value=lock.digest,
+            ) as digest:
+                self.assertEqual(
+                    [],
+                    synchronized_state(
+                        project_root,
+                        PROCESS_ROOT,
+                        lock,
+                        package_root=producer_package,
+                    ),
+                )
+            digest.assert_called_once_with(
+                PROCESS_ROOT,
+                lock.skills,
+                package_root=producer_package,
+            )
             attributes = (project_root / ".agents" / ".gitattributes").read_text(
                 encoding="utf-8"
             )

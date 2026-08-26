@@ -1244,6 +1244,7 @@ def _validate_process_adoption_candidate(
             producer_root,
             process_lock,
             authority_version=str(producer_release["version"]),
+            package_root=producer_root / "engineering_process",
         )
     )
 

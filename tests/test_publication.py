@@ -488,7 +488,7 @@ class PublicationTests(unittest.TestCase):
                 mock.patch(
                     "engineering_process.syncing.synchronized_state",
                     return_value=["managed skill content differs from release"],
-                ),
+                ) as sync_gate,
             ):
                 issues = validate_controlled_automation_proposal(
                     root,
@@ -512,6 +512,10 @@ class PublicationTests(unittest.TestCase):
 
             self.assertTrue(
                 any("target materialization is invalid" in issue for issue in issues)
+            )
+            self.assertEqual(
+                Path(__file__).resolve().parent.parent / "engineering_process",
+                sync_gate.call_args.kwargs["package_root"],
             )
 
     def test_process_adoption_validates_independent_producer_objects(self):

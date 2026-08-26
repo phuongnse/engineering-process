@@ -566,7 +566,7 @@ to the explicit durable failure location before cleanup. Remote artifacts and th
 service ids remain lifecycle evidence, not merge, release, deployment, or adoption
 authority.
 
-The canonical publication order is stricter than a PR-first workflow: implementation
+The default agent-host publication order is stricter than a PR-first workflow: implementation
 and every required local and remote profile pass on a clean checkpoint; a consumer-selected independent
 agent or human semantically reviews that checkpoint; findings repeat implementation,
 complete verification, and fresh review until approved; `change finish` records
@@ -574,6 +574,9 @@ completion; only then may automation push and create the PR. Static policy/secre
 checks supplement this review and cannot generate a semantic verdict. With a valid
 standing policy, automation then waits for exact-head/current-base required checks and
 performs the configured merge without a separate human step.
+An opted-in schema-3 Renovate process-adoption proposal is the explicit pre-review
+publication exception; its complete candidate passes protected-base proposal
+validation first, then consumer-owner review and manual terminal merge.
 
 Completed local evidence can be moved across machines or attached to a release as a
 bounded receipt. Export and validate it before any explicit prune:
