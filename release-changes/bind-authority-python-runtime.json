@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "bind-authority-python-runtime",
+  "type": "fix",
+  "surfaces": [
+    "command-execution",
+    "environment-resolution"
+  ],
+  "rationale": "Bind the portable logical command python to the exact interpreter running the immutable process authority across doctor, setup, exec, and verification so ambient shell PATH cannot select an unrelated Python runtime or require consumer activation wrappers.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

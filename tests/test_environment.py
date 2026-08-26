@@ -12,6 +12,7 @@ from unittest.mock import patch
 from engineering_process.contracts import ContractError, validate_project
 from engineering_process.environment import (
     doctor_environment,
+    environment_command_bindings,
     execute_command,
     setup_environment,
 )
@@ -30,7 +31,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
                 "id": "prepare-parent",
                 "kind": "command",
                 "run": [
-                    sys.executable,
+                    "python",
                     "-c",
                     "from pathlib import Path; Path('parent.txt').write_text('ready')",
                 ],
@@ -46,7 +47,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
         action = {
             "id": "prepare-environment",
             "kind": "command",
-            "run": [sys.executable, "-c", command],
+            "run": ["python", "-c", command],
             "timeoutSeconds": 30,
             "mutations": ["project-files"],
         }
@@ -58,7 +59,7 @@ def project_document(*, setup: bool = True, dependency: bool = False):
         "id": "project-environment",
         "description": "Project environment marker",
         "probe": {
-            "run": [sys.executable, "-c", ready_probe],
+            "run": ["python", "-c", ready_probe],
             "timeoutSeconds": 30,
             "readOnly": True,
         },
@@ -74,14 +75,14 @@ def project_document(*, setup: bool = True, dependency: bool = False):
             "development": [
                 {
                     "id": "unit",
-                    "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                    "run": ["python", "-c", "raise SystemExit(0)"],
                     "timeoutSeconds": 30,
                 }
             ],
             "review": [
                 {
                     "id": "review",
-                    "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                    "run": ["python", "-c", "raise SystemExit(0)"],
                     "timeoutSeconds": 30,
                 }
             ],
@@ -101,6 +102,44 @@ def project_document(*, setup: bool = True, dependency: bool = False):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_portable_python_uses_authority_without_path_activation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = validate_project(project_document(setup=False))
+            bindings = environment_command_bindings(project, profile="development")
+
+            with patch.dict(os.environ, {"PATH": str(root)}):
+                report = execute_command(
+                    root,
+                    identifier="authority-python",
+                    run=("python", "-c", "import sys; print(sys.executable)"),
+                    timeout_seconds=30,
+                    working_directory=".",
+                    command_bindings=bindings,
+                )
+
+            self.assertEqual("passed", report["status"])
+            self.assertEqual(
+                ["python", "-c", "import sys; print(sys.executable)"],
+                report["command"],
+            )
+            self.assertEqual(Path(sys.executable), Path(report["stdout"].strip()))
+
+    def test_managed_tool_cannot_shadow_the_authority_python_binding(self):
+        project = validate_project(project_document(setup=False))
+        shadow = ManagedCommandBinding(application=Path(sys.executable))
+
+        with (
+            patch(
+                "engineering_process.environment.managed_command_bindings",
+                return_value={"python": shadow},
+            ),
+            self.assertRaisesRegex(
+                ContractError, "reserved authority command: python"
+            ),
+        ):
+            environment_command_bindings(project, profile="development")
+
     def test_exit_zero_warning_or_error_diagnostic_fails_closed(self):
         cases = (
             ("stdout", "WARN: degraded validation"),
@@ -253,6 +292,25 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual("failed", report["status"])
             self.assertEqual("missing", report["requirements"][0]["status"])
             self.assertFalse((root / "ready.txt").exists())
+
+    def test_doctor_uses_authority_python_when_ambient_path_has_no_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = project_document(setup=False)
+            document["environment"]["requirements"][0]["probe"] = {
+                "run": ["python", "-c", "print('authority ready')"],
+                "timeoutSeconds": 30,
+                "readOnly": True,
+                "outputStream": "stdout",
+                "outputRegex": "^authority ready$",
+            }
+            project = validate_project(document)
+
+            with patch.dict(os.environ, {"PATH": str(root)}):
+                report = doctor_environment(root, project)
+
+            self.assertEqual("passed", report["status"])
+            self.assertEqual("satisfied", report["requirements"][0]["status"])
 
     def test_setup_plan_does_not_mutate_and_lists_required_approval(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -624,6 +682,28 @@ class EnvironmentTests(unittest.TestCase):
             self.assertEqual("blocked", report["status"])
             self.assertIn("not a directory", "\n".join(report["blocked"]))
             self.assertFalse((root / "mutated").exists())
+
+    def test_setup_rejects_managed_tool_that_provides_reserved_python(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self.managed_setup_document()
+            artifact = document["environment"]["managedTools"][0]["artifacts"][0]
+            executable = "python.exe" if os.name == "nt" else "python"
+            artifact["commands"] = {"python": executable}
+            project = validate_project(document)
+
+            report = setup_environment(
+                root,
+                project,
+                profile=None,
+                apply=False,
+                allowed_mutations=set(),
+            )
+
+            self.assertEqual("blocked", report["status"])
+            self.assertIn(
+                "reserved authority command: python", "\n".join(report["blocked"])
+            )
 
     def test_setup_preserves_partial_evidence_for_operational_installer_error(self):
         with tempfile.TemporaryDirectory() as directory:

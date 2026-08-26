@@ -84,6 +84,35 @@ class RunnerTests(unittest.TestCase):
             ]
             validate_verification(legacy)
 
+    def test_profile_uses_authority_python_from_portable_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            identifier="portable-python",
+                            run=(
+                                "python",
+                                "-c",
+                                "import sys; print(sys.executable)",
+                            ),
+                            timeout_seconds=10,
+                            working_directory=".",
+                        ),
+                    )
+                },
+            )
+
+            with patch(
+                "engineering_process.environment.sys.stderr", io.StringIO()
+            ):
+                report = run_profile(root, project, "development")
+
+            self.assertEqual("passed", report["status"])
+            self.assertEqual("python", report["checks"][0]["command"][0])
+
     def test_warning_after_evidence_prefix_and_split_across_writes_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

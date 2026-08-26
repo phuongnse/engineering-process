@@ -9,13 +9,14 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import regex as bounded_regex
 
 from .contracts import (
     ContractError,
     EnvironmentRequirement,
+    ManagedTool,
     MUTATION_SCOPES,
     Project,
     ProjectEnvironment,
@@ -479,10 +480,29 @@ def environment_path_entries(
     return tuple(entries)
 
 
+def _authority_command_bindings(
+    tools: Iterable[ManagedTool],
+) -> dict[str, ManagedCommandBinding]:
+    bindings = managed_command_bindings(tools)
+    if "python" in bindings:
+        raise ContractError(
+            "managed tools cannot provide the reserved authority command: python"
+        )
+    authority_python = Path(sys.executable)
+    if not authority_python.is_absolute() or not authority_python.is_file():
+        raise ContractError(
+            "the active process authority does not expose an absolute Python executable"
+        )
+    return {
+        "python": ManagedCommandBinding(application=authority_python),
+        **bindings,
+    }
+
+
 def environment_command_bindings(
     project: Project, *, profile: str
 ) -> dict[str, ManagedCommandBinding]:
-    return managed_command_bindings(
+    return _authority_command_bindings(
         _environment_managed_tools(project, profile=profile)
     )
 
@@ -684,7 +704,7 @@ def setup_environment(
         installed_paths = ()
         preflight_issues.append(str(error))
     try:
-        installed_bindings = managed_command_bindings(
+        installed_bindings = _authority_command_bindings(
             environment.managed_tools[identifier]
             for identifier in sorted(planned_tool_ids)
         )
@@ -698,9 +718,18 @@ def setup_environment(
                 tool = environment.managed_tools[action.tool]
                 artifact = selected_artifact(tool)
                 issue = None
+                if "python" in artifact.commands:
+                    issue = (
+                        f"setup action {action.identifier}: managed tools cannot provide "
+                        "the reserved authority command: python"
+                    )
                 install_issue = managed_tool_preflight(tool)
                 if install_issue is not None:
-                    issue = f"setup action {action.identifier}: {install_issue}"
+                    issue = (
+                        f"{issue}; {install_issue}"
+                        if issue is not None
+                        else f"setup action {action.identifier}: {install_issue}"
+                    )
                 for command_name in artifact.commands:
                     previous = provided_commands.get(command_name)
                     if previous is not None and previous != action.identifier:
@@ -841,7 +870,7 @@ def setup_environment(
                         environment.managed_tools[identifier]
                         for identifier in sorted(planned_tool_ids)
                     ),
-                    command_bindings=managed_command_bindings(
+                    command_bindings=_authority_command_bindings(
                         environment.managed_tools[identifier]
                         for identifier in sorted(planned_tool_ids)
                     ),
