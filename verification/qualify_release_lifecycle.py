@@ -404,7 +404,11 @@ def qualify_release_lifecycle(
                 "release qualification did not stop at the expected reviewer handoff"
             )
         if plan_kind == "authored":
-            decision = lifecycle_status.get("planDecision")
+            lifecycle_state = _read_object(
+                candidate / ".process" / "runs" / change_id / "state.json",
+                "release qualification lifecycle state",
+            )
+            decision = lifecycle_state.get("planDecision")
             if (
                 not isinstance(decision, dict)
                 or decision.get("authorized") is not False

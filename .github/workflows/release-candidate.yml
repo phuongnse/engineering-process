@@ -116,8 +116,13 @@ jobs:
               "Reserved for a fresh consumer-selected read-only plan reviewer; no workflow or implementation context may review"
             status="$(processctl change status --change-id "$change_id" --json)"
             test "$(jq -r .phase <<<"$status")" = planned
-            test "$(jq -r .planDecision.authorized <<<"$status")" = false
-            test "$(jq -r .planDecision.assignment.path <<<"$status")" != null
+            state=".process/runs/$change_id/state.json"
+            test "$(jq -r .planDecision.authorized "$state")" = false
+            assignment="$(jq -er .planDecision.assignment.path "$state")"
+            test -f "$assignment"
+            test "$(jq -r .reviewer.actorId "$assignment")" = independent-plan-reviewer
+            test "$(jq -r .reviewer.contextId "$assignment")" = "$reviewer_context"
+            test ! -e ".process/runs/$change_id/plan-decision-review-1.json"
             printf 'reviewer_context=%s\n' "$reviewer_context" >> "$GITHUB_OUTPUT"
           else
             processctl change implement \

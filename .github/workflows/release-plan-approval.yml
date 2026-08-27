@@ -143,7 +143,7 @@ jobs:
             --review "$RUNNER_TEMP/plan-review.json"
           status="$(processctl change status --change-id "$CHANGE_ID" --json)"
           test "$(jq -r .phase <<<"$status")" = planned
-          test "$(jq -r .planDecision.authorized <<<"$status")" = true
+          test "$(jq -r .planDecision.authorized ".process/runs/$CHANGE_ID/state.json")" = true
 
       - name: Implement and verify the plan-approved candidate under N-1
         env:
