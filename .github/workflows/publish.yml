@@ -162,7 +162,7 @@ jobs:
               "$RUNNER_TEMP/release-assets/distributions/$artifact"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           evidence_args=()
-          if test "$MODE" = governed; then
+          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
             "${controller[@]}" evidence validate \
               "$EVIDENCE_PATH" --json
             evidence_args+=(--receipt "$EVIDENCE_PATH")
@@ -330,7 +330,7 @@ jobs:
               "$RUNNER_TEMP/release-assets/distributions/$artifact"
           done < "$RUNNER_TEMP/release-assets/artifact-names.txt"
           evidence_args=()
-          if test "$MODE" = governed; then
+          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
             "${controller[@]}" evidence validate \
               "$EVIDENCE_PATH" --json
             evidence_args+=(--receipt "$EVIDENCE_PATH")

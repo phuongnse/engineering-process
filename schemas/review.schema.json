@@ -18,7 +18,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [2, 3]},
+    "schemaVersion": {"enum": [2, 3, 4]},
     "changeId": {
       "type": "string",
       "maxLength": 64,
@@ -67,6 +67,15 @@
             {"contains": {"properties": {"dimension": {"const": "supply-chain"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1}
           ]
         }
+      }
+    },
+    "authorityTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "candidateEvidence"],
+      "properties": {
+        "request": {"type": "object"},
+        "candidateEvidence": {"type": "object"}
       }
     },
     "findings": {
@@ -131,6 +140,13 @@
         "properties": {
           "findings": {"maxItems": 256}
         }
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 4}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["quality", "authorityTransition"],
+        "properties": {"findings": {"maxItems": 256}}
       }
     },
     {

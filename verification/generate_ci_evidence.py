@@ -50,7 +50,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runner-os", required=True)
     parser.add_argument("--runner-arch", required=True)
     parser.add_argument("--triggered-by", required=True)
+    parser.add_argument("--remote-request", type=Path)
     args = parser.parse_args(argv)
+
+    authority_transition = None
+    if args.remote_request is not None:
+        request = json.loads(args.remote_request.read_text(encoding="utf-8"))
+        authority_transition = request.get("authorityTransition")
 
     manifest, reports = build_supplemental_verification(
         args.project_root,
@@ -71,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         runner_os=args.runner_os,
         runner_arch=args.runner_arch,
         triggered_by=args.triggered_by,
+        authority_transition=authority_transition,
     )
     schema_root = args.project_root / "schemas"
     verification_validator = _validator(

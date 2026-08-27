@@ -1,0 +1,265 @@
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from engineering_process.contracts import CORE_QUALITY_DIMENSIONS, Check, ContractError, Project
+from engineering_process.lifecycle import (
+    begin_implementation,
+    finish_change,
+    ingest_authority_transition_evidence,
+    load_state,
+    register_authority_transition,
+    register_plan,
+    start_change,
+    start_review,
+    submit_review,
+    verify_change,
+)
+from engineering_process.evidence import export_receipt, validate_receipt
+from engineering_process.runner import source_state
+from engineering_process.transition import validate_registered_candidate
+
+
+class AuthorityTransitionTests(unittest.TestCase):
+    def project(self) -> Project:
+        check = Check(
+            identifier="unit",
+            run=(sys.executable, "-c", "raise SystemExit(0)"),
+            timeout_seconds=10,
+            working_directory=".",
+        )
+        return Project(
+            identifier="sample-project",
+            profiles={"development": (check,)},
+            required_profiles=("development",),
+        )
+
+    def initialize(self, root: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Transition Test"], cwd=root, check=True)
+        (root / ".gitignore").write_text(".process/runs/\n", encoding="utf-8")
+        (root / ".process").mkdir()
+        (root / "requirements").mkdir()
+        (root / ".process" / "process.lock").write_text(
+            json.dumps({"schemaVersion": 1, "process": {"version": "0.7.0", "digest": f"sha256:{'0' * 64}"}, "skills": ["run-change"]}) + "\n",
+            encoding="utf-8",
+        )
+        (root / ".process" / "project.json").write_text(
+            json.dumps({
+                "schemaVersion": 2,
+                "project": "sample-project",
+                "lifecycle": {"requiredProfiles": ["development"]},
+                "profiles": {"development": [{"id": "unit", "run": ["python", "-c", "raise SystemExit(0)"], "timeoutSeconds": 10}]},
+                "environment": {
+                    "defaultProfile": "development",
+                    "managedTools": [],
+                    "profiles": {"development": ["python-runtime"]},
+                    "requirements": [{"id": "python-runtime", "description": "Python", "probe": {"run": ["python", "--version"], "timeoutSeconds": 10, "readOnly": True}, "remediation": "Install Python"}],
+                    "setupActions": [],
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+        (root / "requirements" / "process.txt").write_text("engineering-process==0.7.0\n", encoding="utf-8")
+        (root / "tracked.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=root, check=True)
+
+    def write_contract_and_plan(self, root: Path) -> tuple[Path, Path]:
+        inputs = root / ".process" / "runs" / "_inputs"
+        inputs.mkdir(parents=True, exist_ok=True)
+        contract = inputs / "contract.json"
+        contract.write_text(json.dumps({
+            "schemaVersion": 3,
+            "id": "adopt-process-0-9-0",
+            "summary": "Adopt the target process",
+            "source": "test",
+            "comparisonBase": "HEAD",
+            "specification": {"kind": "change-contract", "reference": "test", "rationale": "Fixture"},
+            "risk": "high",
+            "affectedProjects": ["sample-project"],
+            "acceptanceCriteria": [{"id": "ac-1", "outcome": "Adoption is governed"}],
+            "requiredProfiles": ["development"],
+            "quality": {
+                "standard": "production-v1",
+                "assessments": [
+                    {"dimension": dimension, "status": "applicable", "rationale": "Transition fixture", "criteria": ["ac-1"]}
+                    for dimension in CORE_QUALITY_DIMENSIONS
+                ],
+            },
+            "signOff": {"required": False, "status": "not-required", "evidence": None},
+        }) + "\n", encoding="utf-8")
+        state = start_change(root, self.project(), contract, actor_id="worker", context_id="ctx", kind="agent")
+        plan = inputs / "plan.json"
+        plan.write_text(json.dumps({
+            "schemaVersion": 2,
+            "changeId": "adopt-process-0-9-0",
+            "contractDigest": state["contract"]["digest"],
+            "approach": "Use the explicit transition route.",
+            "workItems": [{"id": "work-1", "outcome": "Adopt", "affectedPaths": [".process/process.lock"], "verificationProfiles": ["development"]}],
+            "acceptancePlan": [{"criterionId": "ac-1", "workItems": ["work-1"], "verificationProfiles": ["development"]}],
+            "risks": [],
+            "openDecisions": [],
+        }) + "\n", encoding="utf-8")
+        register_plan(root, self.project(), "adopt-process-0-9-0", plan, actor_id="worker", context_id="ctx", kind="agent")
+        begin_implementation(root, "adopt-process-0-9-0", actor_id="worker", context_id="ctx", kind="agent")
+        return contract, plan
+
+    def test_registers_transition_before_candidate_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize(root)
+            self.write_contract_and_plan(root)
+            source = source_state(root)
+            digest = lambda path: f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+            request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
+            request["project"] = "sample-project"
+            request["changeId"] = "adopt-process-0-9-0"
+            request["source"] = {
+                "authority": {"version": "0.7.0", "digest": f"sha256:{'0' * 64}"},
+                "checkpoint": source["checkpoint"],
+                "workspaceFingerprint": source["fingerprint"],
+                "processLockSha256": digest(root / ".process" / "process.lock"),
+                "requirementsLockSha256": digest(root / "requirements" / "process.txt"),
+            }
+            request["candidate"]["baseCheckpoint"] = source["checkpoint"]
+            request_path = root / ".process" / "runs" / "_inputs" / "request.json"
+            request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
+
+            state, _ = register_authority_transition(root, "adopt-process-0-9-0", request_path, actor_id="worker", context_id="ctx", kind="agent")
+
+            self.assertEqual(3, state["schemaVersion"])
+            self.assertIsNone(state["authorityTransition"]["candidateEvidence"])
+            self.assertEqual(3, load_state(root, "adopt-process-0-9-0")["schemaVersion"])
+            with self.assertRaisesRegex(ContractError, "already registered"):
+                register_authority_transition(root, "adopt-process-0-9-0", request_path, actor_id="worker", context_id="ctx", kind="agent")
+
+    def test_candidate_evidence_is_recomputed_not_trusted(self):
+        request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
+        evidence = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-evidence.json").read_text(encoding="utf-8"))
+        from engineering_process.contracts import canonical_json_digest
+        evidence["requestSha256"] = canonical_json_digest(request)
+        evidence["project"] = request["project"]
+        evidence["changeId"] = request["changeId"]
+        evidence["cycle"] = request["cycle"]
+        evidence["sourceAuthority"] = request["source"]["authority"]
+        evidence["targetAuthority"] = {"version": request["target"]["version"], "digest": request["target"]["processDigest"]}
+        inspected = {
+            "checkpoint": evidence["candidate"]["checkpoint"],
+            "tree": evidence["candidate"]["tree"],
+            "workspaceFingerprint": evidence["candidate"]["workspaceFingerprint"],
+            "changedPaths": evidence["candidate"]["changedPaths"],
+            "lock": mock.Mock(skills=tuple(request["candidate"]["selectedSkills"])),
+        }
+        for field in ("requirementsInputSha256", "requirementsLockSha256", "processLockSha256", "projectManifestSha256"):
+            evidence["bindings"][field] = f"sha256:{'a' * 64}"
+        for field in ("requirementsInputSha256", "requirementsLockSha256", "projectManifestSha256"):
+            request["candidate"][field] = evidence["bindings"][field]
+        request["candidate"]["actionPinsSha256"] = evidence["bindings"]["actionPinsSha256"]
+        evidence["bindings"]["managedDistributionSha256"] = request["target"]["processDigest"]
+        evidence["requestSha256"] = canonical_json_digest(request)
+        with mock.patch("engineering_process.transition.inspect_transition_candidate", return_value=inspected), mock.patch("engineering_process.transition._file_digest", return_value=f"sha256:{'a' * 64}"), mock.patch("engineering_process.transition._action_pins_digest", return_value=evidence["bindings"]["actionPinsSha256"]):
+            validate_registered_candidate(Path("."), request, evidence, target_process_root=Path("."))
+            evidence["candidate"]["tree"] = "f" * 40
+            with self.assertRaisesRegex(ContractError, "stale"):
+                validate_registered_candidate(Path("."), request, evidence, target_process_root=Path("."))
+
+    def test_n_minus_one_completes_exact_external_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "control"
+            root.mkdir()
+            self.initialize(root)
+            self.write_contract_and_plan(root)
+            source = source_state(root)
+            digest = lambda path: f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+            request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
+            request["project"] = "sample-project"
+            request["changeId"] = "adopt-process-0-9-0"
+            request["source"] = {
+                "authority": {"version": "0.7.0", "digest": f"sha256:{'0' * 64}"},
+                "checkpoint": source["checkpoint"],
+                "workspaceFingerprint": source["fingerprint"],
+                "processLockSha256": digest(root / ".process" / "process.lock"),
+                "requirementsLockSha256": digest(root / "requirements" / "process.txt"),
+            }
+            request["candidate"]["baseCheckpoint"] = source["checkpoint"]
+            request["candidate"]["expectedChangedPaths"] = [".process/process.lock", "tracked.txt"]
+            request_path = root / ".process" / "runs" / "_inputs" / "request.json"
+            request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
+            register_authority_transition(root, "adopt-process-0-9-0", request_path, actor_id="worker", context_id="ctx", kind="agent")
+
+            candidate = Path(directory) / "candidate"
+            subprocess.run(["git", "clone", "-q", str(root), str(candidate)], check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=candidate, check=True)
+            subprocess.run(["git", "config", "user.name", "Transition Test"], cwd=candidate, check=True)
+            (candidate / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+            lock = json.loads((candidate / ".process" / "process.lock").read_text(encoding="utf-8"))
+            lock["process"] = {"version": "0.9.0", "digest": f"sha256:{'1' * 64}"}
+            (candidate / ".process" / "process.lock").write_text(json.dumps(lock) + "\n", encoding="utf-8")
+            subprocess.run(["git", "add", ".process/process.lock", "tracked.txt"], cwd=candidate, check=True)
+            subprocess.run(["git", "commit", "-qm", "candidate"], cwd=candidate, check=True)
+            candidate_source = source_state(candidate)
+            tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=candidate, check=True, capture_output=True, text=True).stdout.strip()
+            from engineering_process.contracts import canonical_json_digest
+            evidence = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-evidence.json").read_text(encoding="utf-8"))
+            evidence.update({
+                "project": request["project"],
+                "changeId": request["changeId"],
+                "cycle": request["cycle"],
+                "requestSha256": canonical_json_digest(request),
+                "sourceAuthority": request["source"]["authority"],
+                "targetAuthority": {"version": "0.9.0", "digest": f"sha256:{'1' * 64}"},
+            })
+            evidence["candidate"] = {
+                "baseCheckpoint": source["checkpoint"],
+                "checkpoint": candidate_source["checkpoint"],
+                "tree": tree,
+                "workspaceFingerprint": candidate_source["fingerprint"],
+                "workingTreeDirty": False,
+                "changedPaths": request["candidate"]["expectedChangedPaths"],
+            }
+            evidence_path = root / ".process" / "runs" / "_inputs" / "evidence.json"
+            evidence_path.write_text(json.dumps(evidence) + "\n", encoding="utf-8")
+            validated = {"evidence": evidence, "candidate": {"checkpoint": candidate_source["checkpoint"], "tree": tree}}
+            with mock.patch("engineering_process.lifecycle.validate_registered_candidate", return_value=validated):
+                ingest_authority_transition_evidence(root, "adopt-process-0-9-0", candidate, evidence_path, Path(__file__).resolve().parent.parent, actor_id="worker", context_id="ctx", kind="agent")
+
+            state, report = verify_change(root, self.project(), "adopt-process-0-9-0", "development", candidate_root=candidate, actor_id="worker", context_id="ctx", kind="agent")
+            self.assertEqual(4, report["schemaVersion"])
+            self.assertEqual("verified", state["phase"])
+            state, assignment = start_review(root, "adopt-process-0-9-0", candidate_root=candidate, actor_id="reviewer", context_id="review-context", kind="agent", method="isolated-context", attested_by="host", evidence="Fresh read-only context")
+            review = {
+                "schemaVersion": 4,
+                "changeId": "adopt-process-0-9-0",
+                "cycle": 1,
+                "checkpoint": assignment["checkpoint"],
+                "workspaceFingerprint": assignment["workspaceFingerprint"],
+                "comparisonBase": assignment["comparisonBase"],
+                "reviewer": assignment["reviewer"],
+                "independence": assignment["independence"],
+                "verdict": "approved",
+                "quality": {"standard": "production-v1", "assessments": [{"dimension": dimension, "status": "verified", "criteria": ["ac-1"], "evidence": "Verified exact candidate"} for dimension in CORE_QUALITY_DIMENSIONS]},
+                "authorityTransition": state["authorityTransition"],
+                "findings": [],
+            }
+            review_path = root / ".process" / "runs" / "_inputs" / "review.json"
+            review_path.write_text(json.dumps(review) + "\n", encoding="utf-8")
+            state = submit_review(root, "adopt-process-0-9-0", review_path, candidate_root=candidate)
+            self.assertEqual("approved", state["phase"])
+            state, completion = finish_change(root, "adopt-process-0-9-0", candidate_root=candidate, actor_id="worker", context_id="ctx", kind="agent")
+            self.assertEqual(2, completion["schemaVersion"])
+            self.assertEqual("completed", state["phase"])
+            receipt_path = Path(directory) / "transition-receipt.json"
+            receipt = export_receipt(root, "adopt-process-0-9-0", receipt_path)
+            self.assertEqual(candidate_source["checkpoint"], receipt["checkpoint"])
+            self.assertEqual(receipt, validate_receipt(receipt_path))
+
+
+if __name__ == "__main__":
+    unittest.main()

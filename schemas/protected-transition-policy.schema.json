@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/protected-transition-policy.schema.json",
+  "title": "Project-owned protected authority transition policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "repository", "sourceAuthority", "target", "intentPath", "verifier", "workflow", "merge", "authorizationTransport", "singleUse", "postMergeMutation", "expiresAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-protected-transition-policy"},
+    "project": {"type": "string"},
+    "repository": {"type": "string"},
+    "sourceAuthority": {"type": "object"},
+    "target": {"type": "object"},
+    "intentPath": {"type": "string"},
+    "verifier": {"type": "object"},
+    "workflow": {"type": "object"},
+    "merge": {"type": "object"},
+    "authorizationTransport": {"type": "object"},
+    "singleUse": {"const": true},
+    "postMergeMutation": {"const": false},
+    "expiresAt": {"type": "string", "format": "date-time"}
+  }
+}

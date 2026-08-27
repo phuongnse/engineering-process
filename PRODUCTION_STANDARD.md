@@ -186,6 +186,17 @@ authority, and shares one rollback boundary with the process lock and managed as
 Optional capabilities are never inferred, while configuration required by the target
 authority blocks adoption when it is missing or invalid.
 
+A self-hosted authority transition keeps the governing and candidate workspaces
+separate. N-1 owns lifecycle state and every authoritative decision; N+1 output is
+bounded untrusted input. The pre-registered request fixes source and target authority,
+release provenance, base, paths, migration, selected assets and expiry. Transition
+verification recomputes the clean candidate commit, tree, workspace, lock, hash graph,
+managed distribution and action-pin set. A protected-transition policy is a separate
+schema-1 mutation grant: it fixes the source-owned verifier commit, protected workflow,
+check context, exact current base and head, target, required checks, no post-merge
+mutation, and one-use protected auto-merge. Target or candidate code can never
+interpret the authorization that activates itself.
+
 Proposal merge authority derives from proposal origin and publication state. An
 agent-host review object created only after full lifecycle completion may use standing
 policy auto-merge for its exact approved head. A Renovate `process-adoption` proposal

@@ -15,6 +15,24 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_authority_transition_workflow_uses_source_owned_verifier(self):
+        workflow = (
+            PROCESS_ROOT / ".github" / "workflows" / "authority-transition.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("bootstrap_authorization_gzip_base64", workflow)
+        self.assertIn('test "${#AUTHORIZATION_BASE64}" -le 60000', workflow)
+        self.assertIn(".transition-controller/verification/validate_authority_transition.py", workflow)
+        self.assertIn("ref: ${{ env.VERIFIER_COMMIT }}", workflow)
+        self.assertIn("ref: ${{ inputs.candidate_head }}", workflow)
+        self.assertIn("authority-transition-completion", (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(encoding="utf-8"))
+        self.assertIn('gh pr merge "$PR_NUMBER"', workflow)
+        self.assertIn("--auto --squash", workflow)
+        self.assertNotIn("processctl change finish", workflow)
+        for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
+            if uses.startswith("./"):
+                continue
+            self.assertRegex(uses, r"@[0-9a-f]{40}$")
+
     def test_public_install_action_uses_immutable_checkout_source_and_safe_inputs(self):
         action = (PROCESS_ROOT / "action.yml").read_text(encoding="utf-8")
         ci = (

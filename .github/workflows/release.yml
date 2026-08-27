@@ -159,7 +159,7 @@ jobs:
         run: |
           controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
           evidence_args=(--reviewed-commit "$REVIEWED_SHA")
-          if test "$MODE" = governed; then
+          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
             "${controller[@]}" evidence validate \
               "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
             evidence_args+=(--receipt "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET")

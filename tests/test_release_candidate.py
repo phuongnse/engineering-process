@@ -602,6 +602,60 @@ class ReleaseCandidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "self-adoption"):
                 prepare_release_candidate(root)
 
+    def test_derives_one_typed_transition_release_under_stale_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize_project(root)
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "sample"\nversion = "0.8.0"\n',
+                encoding="utf-8",
+            )
+            (root / "engineering_process" / "__init__.py").write_text(
+                'VERSION = "0.8.0"\n', encoding="utf-8"
+            )
+            (root / ".process" / "process.lock").write_text(
+                json.dumps({"schemaVersion": 1, "process": {"version": "0.7.0", "digest": f"sha256:{'7' * 64}"}, "skills": ["run-change"]}) + "\n",
+                encoding="utf-8",
+            )
+            (root / "release.json").write_text(json.dumps({
+                "schemaVersion": 3,
+                "previousVersion": "0.7.0",
+                "version": "0.8.0",
+                "classification": "minor",
+                "compatibility": "incompatible",
+                "schemaImpact": "additive",
+                "migration": "Adopt the new lifecycle contracts.",
+                "identity": {
+                    "package": "sample", "distribution": "sample", "tag": "v0.8.0", "releaseName": "v0.8.0",
+                    "runtimeVersion": {"path": "engineering_process/__init__.py", "variable": "VERSION"},
+                    "artifacts": ["sample-0.8.0-py3-none-any.whl", "sample-0.8.0.tar.gz"],
+                    "receiptAsset": "sample-v0.8.0-evidence.json", "authorizationAsset": None,
+                },
+                "provenance": {"mode": "governed", "statement": "Governed release.", "lifecycleReceipt": {"asset": "sample-v0.8.0-evidence.json", "project": "sample", "changeId": "release-0-8-0", "cycle": 1}},
+                "changes": [{"id": "previous-breaking", "type": "breaking", "surfaces": ["lifecycle"], "rationale": "Previous release."}],
+            }) + "\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "chore: record v0.8.0"], cwd=root, check=True)
+            subprocess.run(["git", "tag", "v0.8.0"], cwd=root, check=True)
+            (root / "release-changes" / "authority-transition-protocol.json").write_text(json.dumps({
+                "schemaVersion": 1,
+                "id": "authority-transition-protocol",
+                "type": "breaking",
+                "surfaces": ["lifecycle"],
+                "rationale": "Introduce exact authority transitions.",
+                "schemaImpact": "breaking",
+                "migration": "Use transition-only schema majors.",
+            }) + "\n", encoding="utf-8")
+
+            result = prepare_release_candidate(root)
+
+            self.assertEqual("authority-transition-bootstrap", result["provenanceMode"])
+            release = json.loads((root / "release.json").read_text(encoding="utf-8"))
+            self.assertEqual(4, release["schemaVersion"])
+            self.assertEqual("0.7.0", release["provenance"]["authorityTransition"]["sourceAuthority"]["version"])
+            self.assertEqual("0.8.0", release["provenance"]["authorityTransition"]["skippedRelease"]["version"])
+
+
     def test_rejects_a_release_change_directory_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "project"

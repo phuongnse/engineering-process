@@ -71,7 +71,8 @@ jobs:
           MODE: ${{ steps.identity.outputs.mode }}
           EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
         run: |
-          test "$MODE" = governed -o "$MODE" = bootstrap-authority
+          test "$MODE" = governed -o "$MODE" = bootstrap-authority \
+            -o "$MODE" = authority-transition-bootstrap
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
             | grep -Fx "$EVIDENCE_ASSET" >/dev/null
           mkdir -p "$RUNNER_TEMP/release-evidence"
@@ -79,7 +80,7 @@ jobs:
             --pattern "$EVIDENCE_ASSET" --dir "$RUNNER_TEMP/release-evidence"
           printf 'EVIDENCE_PATH=%s\n' \
             "$RUNNER_TEMP/release-evidence/$EVIDENCE_ASSET" >> "$GITHUB_ENV"
-          if test "$MODE" = governed; then
+          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
             "$RUNNER_TEMP/process-authority/bin/python" \
               "$GITHUB_WORKSPACE/.release-controller/processctl.py" \
               evidence validate \
@@ -114,7 +115,7 @@ jobs:
           )
           "${controller[@]}" contract validate --kind release release.json
           evidence_args=()
-          if test "$MODE" = governed; then
+          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
             evidence_args+=(--receipt "$EVIDENCE_PATH")
           else
             evidence_args+=(--authorization "$EVIDENCE_PATH")
@@ -134,7 +135,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/draft-assets"
           attestation_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
           evidence_args=()
-          if test "$MODE" = governed; then
+          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
             evidence_args+=(--receipt "$EVIDENCE_PATH")
           else
             evidence_args+=(--authorization "$EVIDENCE_PATH")

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-bootstrap-adoption-intent",
+  "project": "engineering-process",
+  "repository": "owner/engineering-process",
+  "changeId": "bootstrap-adopt-process-0-9-0",
+  "sourceAuthority": {"version": "0.7.0", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+  "targetRelease": {
+    "version": "0.9.0",
+    "tag": "v0.9.0",
+    "commit": "1111111111111111111111111111111111111111",
+    "processDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "releaseContractSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "distributionAttestationSha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "artifacts": [
+      {"name": "engineering_process-0.9.0-py3-none-any.whl", "sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444", "sizeBytes": 1000},
+      {"name": "engineering_process-0.9.0.tar.gz", "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555", "sizeBytes": 1000}
+    ]
+  },
+  "candidate": {
+    "requirementsInputSha256": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "requirementsLockSha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "projectManifestSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "projectMigrationSha256": null,
+    "actionPinsSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "selectedSkills": ["run-change"],
+    "expectedChangedPaths": [".agents/skills/run-change/SKILL.md", ".process/process.lock", "requirements/process.txt"]
+  },
+  "policySha256": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+  "ownerResolutionSha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+  "expiresAt": "2030-01-01T00:00:00Z"
+}

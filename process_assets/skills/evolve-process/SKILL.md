@@ -48,8 +48,12 @@ incident history into permanent ceremony.
 9. For a self-hosted authority rotation, let the old immutable authority govern the
    new authority's introduction, publish the new identity before any consumer pin,
    prove cutover without a control gap, and retire the old authority only after the
-   new boundary is active. Use separate lifecycle changes when provider mechanics
-   make introduction and cutover separately publishable.
+   new boundary is active. Keep a clean N-1 control workspace separate from the N+1
+   candidate, pre-register the transition, treat target evidence as untrusted, and
+   make protected merge the sole activation event. If N-1 predates this route, use
+   only the exact source-owned, policy-bound, single-use bootstrap contract. Use
+   separate lifecycle changes when provider mechanics make introduction and cutover
+   separately publishable.
 10. Own the mandatory `improvement-required` phase. For a shared consumer case, export
    one bounded untrusted signal and keep dependent work in `improvement-pending`.
    Producer disposition assigns the canonical catalog invariant and linked lifecycle;

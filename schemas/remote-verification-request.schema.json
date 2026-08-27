@@ -18,7 +18,7 @@
     "controls"
   ],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "kind": {"const": "engineering-process-remote-verification-request"},
     "changeId": {"$ref": "#/$defs/id"},
     "cycle": {"type": "integer", "minimum": 1, "maximum": 1000000},
@@ -52,7 +52,8 @@
         "grantsRelease": {"const": false},
         "grantsReview": {"const": false}
       }
-    }
+    },
+    "authorityTransition": {"type": "object"}
   },
   "$defs": {
     "id": {
@@ -112,5 +113,11 @@
         "pythonMinor": {"type": "string", "pattern": "^3\\.(?:11|12|13|14)$"}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {"required": ["authorityTransition"]}
+    }
+  ]
 }

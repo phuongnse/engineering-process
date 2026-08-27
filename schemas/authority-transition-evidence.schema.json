@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/authority-transition-evidence.schema.json",
+  "title": "Non-authoritative process authority transition candidate evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "changeId", "cycle", "requestSha256", "sourceAuthority", "targetAuthority", "candidate", "bindings", "materialization", "generatedBy", "generatedAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-authority-transition-evidence"},
+    "project": {"type": "string"},
+    "changeId": {"type": "string"},
+    "cycle": {"type": "integer", "minimum": 1},
+    "requestSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sourceAuthority": {"type": "object"},
+    "targetAuthority": {"type": "object"},
+    "candidate": {"type": "object"},
+    "bindings": {"type": "object"},
+    "materialization": {"type": "object"},
+    "generatedBy": {"type": "object"},
+    "generatedAt": {"type": "string", "format": "date-time"}
+  }
+}

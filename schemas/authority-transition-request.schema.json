@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/authority-transition-request.schema.json",
+  "title": "Pre-registered process authority transition request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "changeId", "cycle", "source", "target", "candidate", "registeredBy", "registeredAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-authority-transition-request"},
+    "project": {"type": "string"},
+    "changeId": {"type": "string"},
+    "cycle": {"type": "integer", "minimum": 1},
+    "source": {"type": "object"},
+    "target": {"type": "object"},
+    "candidate": {"type": "object"},
+    "registeredBy": {"type": "object"},
+    "registeredAt": {"type": "string", "format": "date-time"}
+  }
+}

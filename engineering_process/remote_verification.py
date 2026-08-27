@@ -292,9 +292,8 @@ def _validated_bundle(
     manifest = documents.get("manifest.json")
     if manifest is None:
         raise ContractError(f"{label}: manifest.json is missing")
-    _exact_keys(
-        manifest,
-        {
+    expected_manifest_schema = 3 if request.get("schemaVersion") == 2 else 2
+    manifest_keys = {
             "schemaVersion",
             "kind",
             "status",
@@ -308,11 +307,16 @@ def _validated_bundle(
             "platform",
             "runtime",
             "reports",
-        },
+        }
+    if expected_manifest_schema == 3:
+        manifest_keys.add("authorityTransition")
+    _exact_keys(
+        manifest,
+        manifest_keys,
         label=f"{label}:manifest",
     )
     if (
-        manifest["schemaVersion"] != 2
+        manifest["schemaVersion"] != expected_manifest_schema
         or manifest["kind"]
         != "engineering-process-supplemental-verification"
         or manifest["status"] != "passed"
@@ -321,6 +325,10 @@ def _validated_bundle(
         or manifest["workspaceFingerprint"] != request["workspaceFingerprint"]
     ):
         raise ContractError(f"{label}: manifest source identity or status mismatch")
+    if expected_manifest_schema == 3 and (
+        manifest.get("authorityTransition") != request.get("authorityTransition")
+    ):
+        raise ContractError(f"{label}: authority transition binding mismatch")
     execution = manifest["execution"]
     expected_execution = requirement["execution"]
     for source_name, expected_name in (
@@ -426,6 +434,11 @@ def validate_remote_evidence_set(
     evidence = read_remote_evidence_document(evidence_path)
     if evidence["requestSha256"] != canonical_json_digest(request):
         raise ContractError("remote verification evidence request digest mismatch")
+    if request.get("schemaVersion") == 2 and (
+        evidence.get("schemaVersion") != 2
+        or evidence.get("authorityTransition") != request.get("authorityTransition")
+    ):
+        raise ContractError("remote verification authority transition mismatch")
     requirements = {
         requirement["id"]: requirement for requirement in request["requirements"]
     }

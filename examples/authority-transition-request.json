@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-authority-transition-request",
+  "project": "sample-project",
+  "changeId": "adopt-process-0-9-0",
+  "cycle": 1,
+  "source": {
+    "authority": {"version": "0.7.0", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+    "checkpoint": "0000000000000000000000000000000000000000",
+    "workspaceFingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "processLockSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "requirementsLockSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "target": {
+    "repository": "owner/engineering-process",
+    "version": "0.9.0",
+    "tag": "v0.9.0",
+    "commit": "1111111111111111111111111111111111111111",
+    "processDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "releaseContractSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "distributionAttestationSha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "lifecycleReceiptSha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "artifacts": [
+      {"name": "engineering_process-0.9.0-py3-none-any.whl", "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555", "sizeBytes": 1000},
+      {"name": "engineering_process-0.9.0.tar.gz", "sha256": "sha256:6666666666666666666666666666666666666666666666666666666666666666", "sizeBytes": 1000}
+    ]
+  },
+  "candidate": {
+    "baseCheckpoint": "0000000000000000000000000000000000000000",
+    "selectedSkills": ["run-change"],
+    "projectMigrationSha256": null,
+    "requirementsInputSha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "requirementsLockSha256": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "projectManifestSha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "actionPinsSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expectedChangedPaths": [".agents/skills/run-change/SKILL.md", ".process/process.lock", "requirements/process.txt"],
+    "expiresAt": "2030-01-01T00:00:00Z"
+  },
+  "registeredBy": {"actorId": "coordinator", "contextId": "transition-context", "kind": "agent"},
+  "registeredAt": "2026-01-01T00:00:00Z"
+}

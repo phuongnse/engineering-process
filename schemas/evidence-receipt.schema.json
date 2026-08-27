@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "kind", "process", "project", "changeId", "cycle", "checkpoint", "comparisonBase", "state", "artifacts"],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "kind": {
       "enum": [
         "engineering-process-lifecycle-receipt",
@@ -53,6 +53,15 @@
         },
         "planDecision": {"$ref": "#/$defs/planDecision"},
         "remoteVerification": {"$ref": "#/$defs/remoteVerification"}
+        ,"authorityTransition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["request", "candidateEvidence"],
+          "properties": {
+            "request": {"$ref": "#/$defs/artifact"},
+            "candidateEvidence": {"$ref": "#/$defs/artifact"}
+          }
+        }
       }
     }
   },

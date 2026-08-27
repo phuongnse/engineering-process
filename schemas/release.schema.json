@@ -7,7 +7,7 @@
   "required": ["schemaVersion", "previousVersion", "version", "classification", "compatibility", "schemaImpact", "migration"],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [1, 2, 3]},
+    "schemaVersion": {"enum": [1, 2, 3, 4]},
     "previousVersion": {"$ref": "#/$defs/version"},
     "version": {"$ref": "#/$defs/version"},
     "classification": {"enum": ["patch", "minor", "major"]},
@@ -54,9 +54,36 @@
       "additionalProperties": false,
       "required": ["mode", "statement", "lifecycleReceipt"],
       "properties": {
-        "mode": {"enum": ["bootstrap-history", "bootstrap-authority", "governed"]},
+        "mode": {"enum": ["bootstrap-history", "bootstrap-authority", "governed", "authority-transition-bootstrap"]},
         "statement": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "lifecycleReceipt": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/receipt"}]}
+        "lifecycleReceipt": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/receipt"}]},
+        "authorityTransition": {"$ref": "#/$defs/authorityTransition"}
+      }
+    },
+    "authorityTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceAuthority", "skippedRelease", "bootstrapChangeId"],
+      "properties": {
+        "sourceAuthority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "digest"],
+          "properties": {
+            "version": {"$ref": "#/$defs/version"},
+            "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+          }
+        },
+        "skippedRelease": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "tag"],
+          "properties": {
+            "version": {"$ref": "#/$defs/version"},
+            "tag": {"type": "string", "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"}
+          }
+        },
+        "bootstrapChangeId": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", "maxLength": 64}
       }
     },
     "receipt": {
@@ -107,6 +134,19 @@
       "then": {
         "required": ["identity", "provenance", "changes"],
         "properties": {"identity": {"required": ["authorizationAsset"]}}
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 4}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["identity", "provenance", "changes"],
+        "properties": {
+          "identity": {"required": ["authorizationAsset"]},
+          "provenance": {
+            "required": ["authorityTransition"],
+            "properties": {"mode": {"const": "authority-transition-bootstrap"}}
+          }
+        }
       }
     },
     {

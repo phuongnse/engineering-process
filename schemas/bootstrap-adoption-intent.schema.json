@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/bootstrap-adoption-intent.schema.json",
+  "title": "One-time producer bootstrap adoption intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "repository", "changeId", "sourceAuthority", "targetRelease", "candidate", "policySha256", "ownerResolutionSha256", "expiresAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-bootstrap-adoption-intent"},
+    "project": {"type": "string"},
+    "repository": {"type": "string"},
+    "changeId": {"type": "string"},
+    "sourceAuthority": {"type": "object"},
+    "targetRelease": {"type": "object"},
+    "candidate": {"type": "object"},
+    "policySha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "ownerResolutionSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "expiresAt": {"type": "string", "format": "date-time"}
+  }
+}

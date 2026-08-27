@@ -395,6 +395,10 @@ class Release:
     receipt_project: str | None = None
     receipt_cycle: int | None = None
     provenance_mode: str = "legacy"
+    transition_source_version: str | None = None
+    transition_source_digest: str | None = None
+    transition_skipped_version: str | None = None
+    transition_change_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1725,8 +1729,8 @@ def validate_adoption_migration(
 def validate_release(document: Any, path: str = "release") -> Release:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2, 3}:
-        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
+    if schema_version not in {1, 2, 3, 4}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, 3, or 4")
     _exact_keys(
         value,
         required={
@@ -1740,7 +1744,7 @@ def validate_release(document: Any, path: str = "release") -> Release:
         }
         | (
             {"identity", "provenance", "changes"}
-            if schema_version in {2, 3}
+            if schema_version in {2, 3, 4}
             else set()
         ),
         optional={"$schema"},
@@ -1825,7 +1829,11 @@ def validate_release(document: Any, path: str = "release") -> Release:
     receipt_project: str | None = None
     receipt_cycle: int | None = None
     provenance_mode = "legacy"
-    if schema_version in {2, 3}:
+    transition_source_version: str | None = None
+    transition_source_digest: str | None = None
+    transition_skipped_version: str | None = None
+    transition_change_id: str | None = None
+    if schema_version in {2, 3, 4}:
         changes = value["changes"]
         if not isinstance(changes, list) or not changes:
             raise ContractError(f"{path}.changes: must not be empty")
@@ -1895,7 +1903,7 @@ def validate_release(document: Any, path: str = "release") -> Release:
             "artifacts",
             "receiptAsset",
         }
-        if schema_version == 3:
+        if schema_version in {3, 4}:
             identity_required.add("authorizationAsset")
         _exact_keys(
             identity,
@@ -1958,7 +1966,7 @@ def validate_release(document: Any, path: str = "release") -> Release:
             receipt_asset = _string(
                 receipt_asset, f"{path}.identity.receiptAsset", max_length=200
             )
-        if schema_version == 3:
+        if schema_version in {3, 4}:
             authorization_asset = identity["authorizationAsset"]
             if authorization_asset is not None:
                 authorization_asset = _string(
@@ -1968,15 +1976,16 @@ def validate_release(document: Any, path: str = "release") -> Release:
                 )
 
         provenance = _object(value["provenance"], f"{path}.provenance")
-        _exact_keys(
-            provenance,
-            required={"mode", "statement", "lifecycleReceipt"},
-            path=f"{path}.provenance",
-        )
+        provenance_required = {"mode", "statement", "lifecycleReceipt"}
+        if schema_version == 4:
+            provenance_required.add("authorityTransition")
+        _exact_keys(provenance, required=provenance_required, path=f"{path}.provenance")
         provenance_mode = provenance["mode"]
         allowed_modes = {"bootstrap-history", "governed"}
         if schema_version == 3:
             allowed_modes.add("bootstrap-authority")
+        if schema_version == 4:
+            allowed_modes = {"authority-transition-bootstrap"}
         if provenance_mode not in allowed_modes:
             raise ContractError(
                 f"{path}.provenance.mode: invalid for schemaVersion {schema_version}"
@@ -2021,8 +2030,13 @@ def validate_release(document: Any, path: str = "release") -> Release:
                 )
         else:
             if release_name != expected_tag:
+                release_kind = (
+                    "governed releases"
+                    if provenance_mode == "governed"
+                    else "authority transition releases"
+                )
                 raise ContractError(
-                    f"{path}.identity.releaseName: governed releases must use {expected_tag}"
+                    f"{path}.identity.releaseName: {release_kind} must use {expected_tag}"
                 )
             expected_receipt_asset = f"{package_name}-{expected_tag}-evidence.json"
             if receipt_asset != expected_receipt_asset:
@@ -2031,7 +2045,7 @@ def validate_release(document: Any, path: str = "release") -> Release:
                 )
             if authorization_asset is not None:
                 raise ContractError(
-                    f"{path}.identity.authorizationAsset: governed releases must use null"
+                    f"{path}.identity.authorizationAsset: receipt-governed releases must use null"
                 )
             receipt = _object(
                 lifecycle_receipt, f"{path}.provenance.lifecycleReceipt"
@@ -2072,6 +2086,67 @@ def validate_release(document: Any, path: str = "release") -> Release:
                     f"{path}.provenance.lifecycleReceipt.cycle: must be a positive integer"
                 )
             receipt_cycle = receipt["cycle"]
+            if provenance_mode == "authority-transition-bootstrap":
+                transition_path = f"{path}.provenance.authorityTransition"
+                transition = _object(
+                    provenance["authorityTransition"], transition_path
+                )
+                _exact_keys(
+                    transition,
+                    required={
+                        "sourceAuthority",
+                        "skippedRelease",
+                        "bootstrapChangeId",
+                    },
+                    path=transition_path,
+                )
+                source_path = f"{transition_path}.sourceAuthority"
+                source = _object(transition["sourceAuthority"], source_path)
+                _exact_keys(
+                    source, required={"version", "digest"}, path=source_path
+                )
+                transition_source_version = _string(
+                    source["version"], f"{source_path}.version", max_length=64
+                )
+                if FINAL_SEMVER_PATTERN.fullmatch(transition_source_version) is None:
+                    raise ContractError(
+                        f"{source_path}.version: must be final SemVer X.Y.Z"
+                    )
+                transition_source_digest = _string(
+                    source["digest"], f"{source_path}.digest", max_length=71
+                )
+                if DIGEST_PATTERN.fullmatch(transition_source_digest) is None:
+                    raise ContractError(f"{source_path}.digest: invalid digest")
+                if transition_source_version == previous:
+                    raise ContractError(
+                        f"{source_path}.version: transition mode requires a stale source authority"
+                    )
+                skipped_path = f"{transition_path}.skippedRelease"
+                skipped = _object(transition["skippedRelease"], skipped_path)
+                _exact_keys(skipped, required={"version", "tag"}, path=skipped_path)
+                transition_skipped_version = _string(
+                    skipped["version"], f"{skipped_path}.version", max_length=64
+                )
+                if transition_skipped_version != previous:
+                    raise ContractError(
+                        f"{skipped_path}.version: must equal previousVersion {previous}"
+                    )
+                if skipped["tag"] != f"v{previous}":
+                    raise ContractError(
+                        f"{skipped_path}.tag: must be v{previous}"
+                    )
+                transition_change_id = _string(
+                    transition["bootstrapChangeId"],
+                    f"{transition_path}.bootstrapChangeId",
+                    max_length=64,
+                )
+                if (
+                    PROFILE_PATTERN.fullmatch(transition_change_id) is None
+                    or transition_change_id not in change_ids
+                ):
+                    raise ContractError(
+                        f"{transition_path}.bootstrapChangeId: must identify a release change"
+                    )
     return Release(
         previous_version=previous,
         version=current,
@@ -2092,6 +2167,10 @@ def validate_release(document: Any, path: str = "release") -> Release:
         receipt_project=receipt_project,
         receipt_cycle=receipt_cycle,
         provenance_mode=provenance_mode,
+        transition_source_version=transition_source_version,
+        transition_source_digest=transition_source_digest,
+        transition_skipped_version=transition_skipped_version,
+        transition_change_id=transition_change_id,
     )
 
 
@@ -2829,6 +2908,7 @@ def validate_remote_verification_request(
     document: Any, path: str = "remote-verification-request"
 ) -> None:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
     _exact_keys(
         value,
         required={
@@ -2843,17 +2923,31 @@ def validate_remote_verification_request(
             "createdAt",
             "requirements",
             "controls",
-        },
+        }
+        | ({"authorityTransition"} if schema_version == 2 else set()),
         optional={"$schema"},
         path=path,
     )
     if (
         isinstance(value["schemaVersion"], bool)
-        or value["schemaVersion"] != 1
+        or schema_version not in {1, 2}
         or value["kind"]
         != "engineering-process-remote-verification-request"
     ):
         raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    if schema_version == 2:
+        transition_path = f"{path}.authorityTransition"
+        transition = _object(value["authorityTransition"], transition_path)
+        _exact_keys(
+            transition,
+            required={"request", "candidateEvidence"},
+            path=transition_path,
+        )
+        _artifact_reference(transition["request"], f"{transition_path}.request")
+        _artifact_reference(
+            transition["candidateEvidence"],
+            f"{transition_path}.candidateEvidence",
+        )
     for name, pattern, maximum in (
         ("changeId", PROFILE_PATTERN, 64),
         ("project", NAME_PATTERN, 128),
@@ -3046,6 +3140,7 @@ def validate_remote_verification_evidence(
     document: Any, path: str = "remote-verification-evidence"
 ) -> None:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
     _exact_keys(
         value,
         required={
@@ -3054,17 +3149,31 @@ def validate_remote_verification_evidence(
             "requestSha256",
             "capturedAt",
             "artifacts",
-        },
+        }
+        | ({"authorityTransition"} if schema_version == 2 else set()),
         optional={"$schema"},
         path=path,
     )
     if (
         isinstance(value["schemaVersion"], bool)
-        or value["schemaVersion"] != 1
+        or schema_version not in {1, 2}
         or value["kind"]
         != "engineering-process-remote-verification-evidence"
     ):
         raise ContractError(f"{path}: unsupported schemaVersion or kind")
+    if schema_version == 2:
+        transition_path = f"{path}.authorityTransition"
+        transition = _object(value["authorityTransition"], transition_path)
+        _exact_keys(
+            transition,
+            required={"request", "candidateEvidence"},
+            path=transition_path,
+        )
+        _artifact_reference(transition["request"], f"{transition_path}.request")
+        _artifact_reference(
+            transition["candidateEvidence"],
+            f"{transition_path}.candidateEvidence",
+        )
     digest = _string(
         value["requestSha256"], f"{path}.requestSha256", max_length=71
     )
@@ -3360,7 +3469,8 @@ def _automation_process_adoption(value: Any, path: str) -> dict[str, Any]:
         or release.release_name != producer["tag"]
         or release.package_name != "engineering-process"
         or release.distribution_name != "engineering_process"
-        or release.provenance_mode != "governed"
+        or release.provenance_mode
+        not in {"governed", "authority-transition-bootstrap"}
         or release.receipt_asset is None
         or len(release.artifacts) != 2
     ):
@@ -3392,9 +3502,7 @@ def _automation_process_adoption(value: Any, path: str) -> dict[str, Any]:
         raise ContractError(
             f"{attestation_binding_path}.sha256: does not match attestation bytes"
         )
-    _exact_keys(
-        attestation,
-        required={
+    attestation_required = {
             "schemaVersion",
             "kind",
             "checkpoint",
@@ -3402,17 +3510,39 @@ def _automation_process_adoption(value: Any, path: str) -> dict[str, Any]:
             "lifecycleReceipt",
             "bootstrapAuthorization",
             "artifacts",
-        },
+        }
+    if release.provenance_mode == "authority-transition-bootstrap":
+        attestation_required.add("authorityTransition")
+    _exact_keys(
+        attestation,
+        required=attestation_required,
         path=f"{attestation_binding_path}.content",
     )
+    expected_attestation_schema = (
+        2 if release.provenance_mode == "authority-transition-bootstrap" else 1
+    )
     if (
-        attestation["schemaVersion"] != 1
+        attestation["schemaVersion"] != expected_attestation_schema
         or attestation["kind"] != "engineering-process-distribution-attestation"
         or attestation["checkpoint"] != producer_commit
         or attestation["bootstrapAuthorization"] is not None
     ):
         raise ContractError(
             f"{attestation_binding_path}.content: invalid governed attestation identity"
+        )
+    if release.provenance_mode == "authority-transition-bootstrap" and (
+        attestation.get("authorityTransition")
+        != {
+            "sourceAuthority": {
+                "version": release.transition_source_version,
+                "digest": release.transition_source_digest,
+            },
+            "skippedRelease": release.transition_skipped_version,
+            "bootstrapChangeId": release.transition_change_id,
+        }
+    ):
+        raise ContractError(
+            f"{attestation_binding_path}.content: transition provenance mismatch"
         )
     attested_release_path = f"{attestation_binding_path}.content.release"
     attested_release = _object(attestation["release"], attested_release_path)
@@ -5453,8 +5583,8 @@ def _validate_review(
 ) -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {2, 3}:
-        raise ContractError(f"{path}.schemaVersion: must be 2 or 3")
+    if schema_version not in {2, 3, 4}:
+        raise ContractError(f"{path}.schemaVersion: must be 2, 3, or 4")
     required_keys = {
         "schemaVersion",
         "changeId",
@@ -5467,8 +5597,10 @@ def _validate_review(
         "verdict",
         "findings",
     }
-    if schema_version == 3:
+    if schema_version >= 3:
         required_keys.add("quality")
+    if schema_version == 4:
+        required_keys.add("authorityTransition")
     _exact_keys(
         value,
         required=required_keys,
@@ -5516,7 +5648,7 @@ def _validate_review(
         raise ContractError(
             f"{path}.verdict: must be approved or changes-requested"
         )
-    if schema_version == 3:
+    if schema_version >= 3:
         quality = _object(value["quality"], f"{path}.quality")
         _exact_keys(
             quality,
@@ -5613,8 +5745,21 @@ def _validate_review(
     findings = value["findings"]
     if not isinstance(findings, list):
         raise ContractError(f"{path}.findings: must be an array")
-    if schema_version == 3 and len(findings) > MAX_CONTRACT_ITEMS:
+    if schema_version >= 3 and len(findings) > MAX_CONTRACT_ITEMS:
         raise ContractError(f"{path}.findings: exceeds {MAX_CONTRACT_ITEMS} items")
+    if schema_version == 4:
+        transition_path = f"{path}.authorityTransition"
+        transition = _object(value["authorityTransition"], transition_path)
+        _exact_keys(
+            transition,
+            required={"request", "candidateEvidence"},
+            path=transition_path,
+        )
+        _artifact_reference(transition["request"], f"{transition_path}.request")
+        _artifact_reference(
+            transition["candidateEvidence"],
+            f"{transition_path}.candidateEvidence",
+        )
     finding_ids: set[str] = set()
     unresolved_findings = 0
     for index, raw_finding in enumerate(findings):
@@ -5804,8 +5949,8 @@ def _validate_diagnostics(document: Any, path: str) -> None:
 def validate_verification(document: Any, path: str = "verification") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {1, 2, 3}:
-        raise ContractError(f"{path}.schemaVersion: must be 1, 2, or 3")
+    if schema_version not in {1, 2, 3, 4}:
+        raise ContractError(f"{path}.schemaVersion: must be 1, 2, 3, or 4")
     required = {
         "schemaVersion",
         "project",
@@ -5822,7 +5967,9 @@ def validate_verification(document: Any, path: str = "verification") -> None:
     }
     _exact_keys(
         value,
-        required=required | ({"impact"} if schema_version >= 2 else set()),
+        required=required
+        | ({"impact"} if schema_version >= 2 else set())
+        | ({"authorityTransition"} if schema_version == 4 else set()),
         optional={"impact"} if schema_version == 1 else set(),
         path=path,
     )
@@ -5851,6 +5998,50 @@ def validate_verification(document: Any, path: str = "verification") -> None:
     _string(value["completedAt"], f"{path}.completedAt", max_length=64)
     if value["status"] not in {"passed", "failed"}:
         raise ContractError(f"{path}.status: must be passed or failed")
+    if schema_version == 4:
+        transition_path = f"{path}.authorityTransition"
+        transition = _object(value["authorityTransition"], transition_path)
+        _exact_keys(
+            transition,
+            required={
+                "request",
+                "candidateEvidence",
+                "sourceAuthority",
+                "targetAuthority",
+                "controlCheckpoint",
+            },
+            path=transition_path,
+        )
+        _artifact_reference(transition["request"], f"{transition_path}.request")
+        _artifact_reference(
+            transition["candidateEvidence"],
+            f"{transition_path}.candidateEvidence",
+        )
+        for name in ("sourceAuthority", "targetAuthority"):
+            authority_path = f"{transition_path}.{name}"
+            authority = _object(transition[name], authority_path)
+            _exact_keys(
+                authority, required={"version", "digest"}, path=authority_path
+            )
+            version = _string(
+                authority["version"], f"{authority_path}.version", max_length=64
+            )
+            if FINAL_SEMVER_PATTERN.fullmatch(version) is None:
+                raise ContractError(f"{authority_path}.version: invalid version")
+            digest = _string(
+                authority["digest"], f"{authority_path}.digest", max_length=71
+            )
+            if DIGEST_PATTERN.fullmatch(digest) is None:
+                raise ContractError(f"{authority_path}.digest: invalid digest")
+        checkpoint = _string(
+            transition["controlCheckpoint"],
+            f"{transition_path}.controlCheckpoint",
+            max_length=40,
+        )
+        if re.fullmatch(r"[0-9a-f]{40}", checkpoint) is None:
+            raise ContractError(
+                f"{transition_path}.controlCheckpoint: invalid checkpoint"
+            )
 
     checks = value["checks"]
     if not isinstance(checks, list):
@@ -5888,7 +6079,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
             check,
             required=required_check
             | (evidence_fields if schema_version >= 2 else set())
-            | (diagnostic_fields if schema_version == 3 else set()),
+            | (diagnostic_fields if schema_version >= 3 else set()),
             optional={"error", "pathEntries", "timeoutSeconds"}
             | (evidence_fields if schema_version == 1 else set()),
             path=check_path,
@@ -5960,7 +6151,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         for name in ("outputTruncated", "streamOutputTruncated"):
             if name in check and not isinstance(check[name], bool):
                 raise ContractError(f"{check_path}.{name}: must be boolean")
-        if schema_version == 3:
+        if schema_version >= 3:
             _validate_diagnostics(
                 check["diagnostics"], f"{check_path}.diagnostics"
             )
@@ -5968,7 +6159,7 @@ def validate_verification(document: Any, path: str = "verification") -> None:
             check["exitCode"] != 0
             or check.get("impactIntegrity") == "failed"
             or (
-                schema_version == 3
+                schema_version >= 3
                 and check["diagnostics"]["status"] != "clean"
             )
             or "error" in check
@@ -6150,6 +6341,9 @@ def validate_verification(document: Any, path: str = "verification") -> None:
 
 def validate_completion(document: Any, path: str = "completion") -> None:
     value = _object(document, path)
+    schema_version = value.get("schemaVersion")
+    if schema_version not in {1, 2}:
+        raise ContractError(f"{path}.schemaVersion: must be 1 or 2")
     _exact_keys(
         value,
         required={
@@ -6165,12 +6359,11 @@ def validate_completion(document: Any, path: str = "completion") -> None:
             "plan",
             "verification",
             "review",
-        },
+        }
+        | ({"authorityTransition"} if schema_version == 2 else set()),
         optional={"improvements", "planDecision", "remoteVerification"},
         path=path,
     )
-    if value["schemaVersion"] != 1:
-        raise ContractError(f"{path}.schemaVersion: must be 1")
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
     if PROFILE_PATTERN.fullmatch(change_id) is None:
         raise ContractError(f"{path}.changeId: invalid change id")
@@ -6188,6 +6381,19 @@ def validate_completion(document: Any, path: str = "completion") -> None:
     _string(value["comparisonBase"], f"{path}.comparisonBase", max_length=256)
     _string(value["completedAt"], f"{path}.completedAt", max_length=64)
     _validate_actor(value["completedBy"], f"{path}.completedBy")
+    if schema_version == 2:
+        transition_path = f"{path}.authorityTransition"
+        transition = _object(value["authorityTransition"], transition_path)
+        _exact_keys(
+            transition,
+            required={"request", "candidateEvidence"},
+            path=transition_path,
+        )
+        _artifact_reference(transition["request"], f"{transition_path}.request")
+        _artifact_reference(
+            transition["candidateEvidence"],
+            f"{transition_path}.candidateEvidence",
+        )
     for name in ("contract", "plan", "review"):
         _artifact_reference(value[name], f"{path}.{name}")
     verification = value["verification"]

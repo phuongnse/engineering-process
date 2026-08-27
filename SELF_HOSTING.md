@@ -25,6 +25,37 @@ change carries the target-version migration and updates `.process/project.json`
 inside the adoption transaction. N+1 governs only changes opened after the complete
 adoption checkpoint is reviewed and merged.
 
+## Authority transitions
+
+An adoption that changes this producer's own process lock uses separate control and
+candidate workspaces. The control workspace retains the public N-1 lock, managed
+skills, project instructions, lifecycle state, and source authority for the entire
+change. N-1 registers the transition before candidate mutation. The candidate
+workspace begins at that exact control checkpoint; installed N+1 may synchronize it
+and emit bounded candidate evidence but cannot verify, review, finish, publish, or
+merge the lifecycle.
+
+N-1 lifecycle commands accept an external candidate only when the current state is
+lifecycle schema 3, the request and candidate evidence are digest-bound, and the
+candidate root remains the same clean commit, tree and workspace fingerprint. Missing
+candidate roots, ordinary commands with target locks, arbitrary process roots, stale
+evidence, changed path sets, partial assets, inferred migrations and target-authored
+lifecycle evidence all fail closed. Completion exports receipt schema 2 with both
+authority identities and both transition artifacts. Protected merge alone activates
+N+1; no post-merge synchronization follows.
+
+Immutable 0.7.0 cannot execute that route. Its single bootstrap uses the normal
+0.7.0 lifecycle and bootstrap export to authenticate a fixed intent/policy checkpoint.
+Interpretation is performed by verifier source fixed to the already merged feature
+commit that 0.7.0 reviewed, never by the target release or candidate checkout. The
+project-owned protected workflow may create `authority-transition-completion` and
+merge only the exact current-base candidate authorized by that policy. The merge tree
+must equal the validated candidate tree and the successful base advance consumes the
+authorization exactly once.
+The current base is authenticated by tree equivalence with the checkpoint carried in
+the 0.7.0 bundle; the policy never attempts to contain the hash of the commit that
+contains the policy itself.
+
 ## Initial bootstrap root
 
 The clean prospective self-hosting lineage begins from immutable public release

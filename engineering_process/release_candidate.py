@@ -605,13 +605,28 @@ def prepare_release_candidate(
         raise ContractError("current runtime version does not match the prior release contract")
     lock_path = project_root / ".process" / "process.lock"
     lock = validate_process_lock(read_json(lock_path), str(lock_path))
-    if lock.version != previous_release.version:
-        raise ContractError(
-            "self-adoption must pin the latest public release before preparing another release"
-        )
-    if previous_release.provenance_mode == "bootstrap-history":
+    change_ids = {change.identifier for _path, change in entries}
+    transition_bootstrap = lock.version != previous_release.version
+    if transition_bootstrap:
+        if not (
+            lock.version == "0.7.0"
+            and previous_release.version == "0.8.0"
+            and previous_release.provenance_mode == "governed"
+            and "authority-transition-protocol" in change_ids
+        ):
+            raise ContractError(
+                "self-adoption must pin the latest public release before preparing "
+                "another release unless the exact one-time authority-transition "
+                "bootstrap is present"
+            )
+        provenance_mode = "authority-transition-bootstrap"
+    elif previous_release.provenance_mode == "bootstrap-history":
         provenance_mode = "bootstrap-authority"
-    elif previous_release.provenance_mode in {"bootstrap-authority", "governed"}:
+    elif previous_release.provenance_mode in {
+        "bootstrap-authority",
+        "governed",
+        "authority-transition-bootstrap",
+    }:
         provenance_mode = "governed"
     else:
         raise ContractError("legacy release history cannot prepare an automated release")
@@ -644,7 +659,7 @@ def prepare_release_candidate(
     change_id = f"release-{version.replace('.', '-')}"
     receipt_asset = (
         f"{package_name}-{tag}-evidence.json"
-        if provenance_mode == "governed"
+        if provenance_mode in {"governed", "authority-transition-bootstrap"}
         else None
     )
     authorization_asset = (
@@ -653,7 +668,7 @@ def prepare_release_candidate(
         else None
     )
     release_document: dict[str, Any] = {
-        "schemaVersion": 3,
+        "schemaVersion": 4 if transition_bootstrap else 3,
         "previousVersion": previous_release.version,
         "version": version,
         "classification": plan.classification,
@@ -678,7 +693,11 @@ def prepare_release_candidate(
             "statement": (
                 "A reviewed bootstrap-authority Release PR authorizes the first public lifecycle authority."
                 if provenance_mode == "bootstrap-authority"
-                else "The public N-1 lifecycle receipt and reviewed Release PR authorize this release."
+                else (
+                    "Public 0.7.0 and the reviewed source-owned transition verifier authorize this one-time transition release."
+                    if provenance_mode == "authority-transition-bootstrap"
+                    else "The public N-1 lifecycle receipt and reviewed Release PR authorize this release."
+                )
             ),
             "lifecycleReceipt": (
                 {
@@ -687,8 +706,25 @@ def prepare_release_candidate(
                     "changeId": change_id,
                     "cycle": 1,
                 }
-                if provenance_mode == "governed"
+                if provenance_mode in {"governed", "authority-transition-bootstrap"}
                 else None
+            ),
+            **(
+                {
+                    "authorityTransition": {
+                        "sourceAuthority": {
+                            "version": lock.version,
+                            "digest": lock.digest,
+                        },
+                        "skippedRelease": {
+                            "version": previous_release.version,
+                            "tag": f"v{previous_release.version}",
+                        },
+                        "bootstrapChangeId": "authority-transition-protocol",
+                    }
+                }
+                if transition_bootstrap
+                else {}
             ),
         },
         "changes": [
@@ -797,7 +833,11 @@ def prepare_release_candidate(
 def render_release_pull_request(project_root: Path, *, approved: bool) -> str:
     release_path = project_root.resolve(strict=True) / "release.json"
     release = validate_release(read_json(release_path), str(release_path))
-    if release.provenance_mode not in {"bootstrap-authority", "governed"}:
+    if release.provenance_mode not in {
+        "bootstrap-authority",
+        "governed",
+        "authority-transition-bootstrap",
+    }:
         raise ContractError("Release PR body requires a publishable release candidate")
     state = "satisfied" if approved else "pending"
     checkbox = "x" if approved else " "

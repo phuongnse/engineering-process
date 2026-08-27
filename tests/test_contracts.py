@@ -26,7 +26,16 @@ from engineering_process.contracts import (
     validate_project,
     validate_release,
     validate_release_change,
+    validate_remote_verification_evidence,
+    validate_remote_verification_request,
     validate_review,
+)
+from engineering_process.transition import (
+    validate_authority_transition_evidence,
+    validate_authority_transition_request,
+    validate_bootstrap_adoption_consumption,
+    validate_bootstrap_adoption_intent,
+    validate_protected_transition_policy,
 )
 
 
@@ -794,6 +803,104 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_remote_transition_uses_new_request_and_evidence_majors(self):
+        transition = {
+            "request": {"path": ".process/runs/change/request.json", "digest": f"sha256:{'1' * 64}"},
+            "candidateEvidence": {"path": ".process/runs/change/evidence.json", "digest": f"sha256:{'2' * 64}"},
+        }
+        request = json.loads((PROCESS_ROOT / "examples" / "remote-verification-request.json").read_text(encoding="utf-8"))
+        request["schemaVersion"] = 2
+        request["authorityTransition"] = transition
+        validate_remote_verification_request(request)
+        evidence = json.loads((PROCESS_ROOT / "examples" / "remote-verification-evidence.json").read_text(encoding="utf-8"))
+        evidence["schemaVersion"] = 2
+        evidence["authorityTransition"] = transition
+        validate_remote_verification_evidence(evidence)
+
+    def test_authority_transition_contracts_validate_packaged_examples(self):
+        validators = {
+            "authority-transition-evidence": validate_authority_transition_evidence,
+            "authority-transition-request": validate_authority_transition_request,
+            "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+            "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
+            "protected-transition-policy": validate_protected_transition_policy,
+        }
+        for name, validator in validators.items():
+            with self.subTest(name=name):
+                document = json.loads(
+                    (PROCESS_ROOT / "examples" / f"{name}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                validator(document)
+
+    def test_transition_request_rejects_same_authority_and_partial_paths(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-request.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["target"]["version"] = "0.7.0"
+        document["target"]["tag"] = "v0.7.0"
+        with self.assertRaisesRegex(ContractError, "must differ"):
+            validate_authority_transition_request(document)
+        document["target"]["version"] = "0.9.0"
+        document["target"]["tag"] = "v0.9.0"
+        document["candidate"]["expectedChangedPaths"] = []
+        with self.assertRaisesRegex(ContractError, "non-empty"):
+            validate_authority_transition_request(document)
+
+    def test_protected_transition_policy_is_exactly_single_use(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["singleUse"] = False
+        with self.assertRaisesRegex(ContractError, "single-use"):
+            validate_protected_transition_policy(document)
+        document["singleUse"] = True
+        document["sourceBase"] = "0" * 40
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_protected_transition_policy(document)
+
+    def test_release_schema_four_binds_stale_source_authority(self):
+        document = {
+            "schemaVersion": 4,
+            "previousVersion": "0.8.0",
+            "version": "0.9.0",
+            "classification": "minor",
+            "compatibility": "incompatible",
+            "schemaImpact": "breaking",
+            "migration": "Use the authority-transition protocol for trust-root cutovers.",
+            "identity": {
+                "package": "engineering-process",
+                "distribution": "engineering_process",
+                "tag": "v0.9.0",
+                "releaseName": "v0.9.0",
+                "runtimeVersion": {"path": "engineering_process/__init__.py", "variable": "VERSION"},
+                "artifacts": ["engineering_process-0.9.0-py3-none-any.whl", "engineering_process-0.9.0.tar.gz"],
+                "receiptAsset": "engineering-process-v0.9.0-evidence.json",
+                "authorizationAsset": None,
+            },
+            "provenance": {
+                "mode": "authority-transition-bootstrap",
+                "statement": "Public 0.7.0 governs the transition release.",
+                "lifecycleReceipt": {"asset": "engineering-process-v0.9.0-evidence.json", "project": "engineering-process", "changeId": "release-0-9-0", "cycle": 1},
+                "authorityTransition": {
+                    "sourceAuthority": {"version": "0.7.0", "digest": f"sha256:{'0' * 64}"},
+                    "skippedRelease": {"version": "0.8.0", "tag": "v0.8.0"},
+                    "bootstrapChangeId": "authority-transition-protocol",
+                },
+            },
+            "changes": [{"id": "authority-transition-protocol", "type": "breaking", "surfaces": ["lifecycle"], "rationale": "Introduce exact transitions."}],
+        }
+        release = validate_release(document)
+        self.assertEqual("0.7.0", release.transition_source_version)
+        document["provenance"]["authorityTransition"]["sourceAuthority"]["version"] = "0.8.0"
+        with self.assertRaisesRegex(ContractError, "stale source authority"):
+            validate_release(document)
+
     def test_release_schema_three_separates_bootstrap_authorization_from_receipts(self):
         document = {
             "schemaVersion": 3,

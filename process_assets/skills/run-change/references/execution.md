@@ -325,6 +325,20 @@ the new immutable identity cannot exist before publication:
 4. Retire the old authority only after the new identity, caller, and enforcement
    boundary are active and independently reviewed.
 
+When the live process lock itself is the candidate, use an explicit two-workspace
+authority transition. N-1 keeps a clean control workspace and registers source/target
+identity, base, paths, migration, assets and expiry before mutation. N+1 may change
+only a separate candidate and emit bounded evidence. N-1 ingests that evidence and
+runs verification, remote evidence, review, completion and publication against the
+exact candidate root. A transition-only lifecycle never becomes a generic lock bypass.
+
+If immutable N-1 predates this route, a one-time bootstrap is valid only when N-1
+completes and exports an exact intent/policy checkpoint, a verifier fixed to the
+already N-1-governed protected-base source interprets it outside target/candidate
+checkouts, and a typed project-owned policy fixes the workflow, check, current base,
+head, target and protected merge. Successful merge is atomic single-use consumption
+and the sole activation event.
+
 Each separately published stage is its own lifecycle change. Provider-specific
 default-branch, check-context, key-store, or artifact mechanics belong to the project
 adapter and must not become portable lifecycle phases.

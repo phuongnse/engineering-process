@@ -106,7 +106,7 @@ jobs:
             --input "$RUNNER_TEMP/completion-evidence.txt" \
             --output "$RUNNER_TEMP/completion-evidence.json"
           mode="$(jq -r .provenance.mode release.json)"
-          if test "$mode" = governed; then
+          if test "$mode" = governed -o "$mode" = authority-transition-bootstrap; then
             processctl evidence validate "$RUNNER_TEMP/completion-evidence.json" --json \
               > "$RUNNER_TEMP/completion-summary.json"
             evidence_kind=receipt

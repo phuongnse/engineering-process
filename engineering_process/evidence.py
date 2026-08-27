@@ -252,8 +252,16 @@ def _export_evidence(
     plan_decision_entries = _plan_decision_entries(project_root, state)
     if plan_decision_entries is not None:
         artifacts["planDecision"] = plan_decision_entries
+    transition = state.get("authorityTransition")
+    if transition is not None:
+        artifacts["authorityTransition"] = {
+            "request": _entry(project_root, transition["request"]),
+            "candidateEvidence": _entry(
+                project_root, transition["candidateEvidence"]
+            ),
+        }
     receipt: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2 if transition is not None else 1,
         "kind": kind,
         "process": {"version": lock.version, "digest": lock.digest},
         "project": state["project"],
@@ -789,7 +797,7 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
         },
         "receipt",
     )
-    if receipt["schemaVersion"] != 1 or receipt["kind"] != expected_kind:
+    if receipt["schemaVersion"] not in {1, 2} or receipt["kind"] != expected_kind:
         raise ContractError("receipt: unsupported schemaVersion or kind")
     if (
         not isinstance(receipt["project"], str)
@@ -845,7 +853,11 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
         "review",
         "completion",
     }
-    optional_artifacts = {"planDecision", "remoteVerification"}
+    optional_artifacts = {
+        "authorityTransition",
+        "planDecision",
+        "remoteVerification",
+    }
     missing_artifacts = required_artifacts - set(artifacts)
     unknown_artifacts = set(artifacts) - required_artifacts - optional_artifacts
     if missing_artifacts or unknown_artifacts:
@@ -872,6 +884,56 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     validate_plan(plan, "receipt plan")
     validate_review(review, "receipt review")
     validate_completion(completion, "receipt completion")
+    state_transition = state.get("authorityTransition")
+    if (state_transition is not None) != ("authorityTransition" in artifacts):
+        raise ContractError(
+            "receipt authority transition presence does not match lifecycle state"
+        )
+    if state_transition is not None:
+        if receipt["schemaVersion"] != 2:
+            raise ContractError(
+                "authority-transition lifecycle receipts require schemaVersion 2"
+            )
+        transition_artifacts = artifacts["authorityTransition"]
+        if not isinstance(transition_artifacts, dict):
+            raise ContractError("receipt.artifacts.authorityTransition: must be an object")
+        _require_exact(
+            transition_artifacts,
+            {"request", "candidateEvidence"},
+            "receipt.artifacts.authorityTransition",
+        )
+        request = _validate_entry(
+            transition_artifacts["request"],
+            "receipt.artifacts.authorityTransition.request",
+        )
+        candidate_evidence = _validate_entry(
+            transition_artifacts["candidateEvidence"],
+            "receipt.artifacts.authorityTransition.candidateEvidence",
+        )
+        from .transition import (
+            validate_authority_transition_evidence,
+            validate_authority_transition_request,
+        )
+
+        validate_authority_transition_request(request, "receipt transition request")
+        validate_authority_transition_evidence(
+            candidate_evidence, "receipt transition candidate evidence"
+        )
+        if (
+            state_transition["request"]["digest"]
+            != transition_artifacts["request"]["sourceDigest"]
+            or state_transition["candidateEvidence"]["digest"]
+            != transition_artifacts["candidateEvidence"]["sourceDigest"]
+            or candidate_evidence["requestSha256"]
+            != canonical_json_digest(request)
+        ):
+            raise ContractError(
+                "receipt authority transition references are inconsistent"
+            )
+    elif receipt["schemaVersion"] != 1:
+        raise ContractError(
+            "ordinary lifecycle receipts must retain schemaVersion 1"
+        )
     state_plan_decision = state.get("planDecision")
     if plan.get("schemaVersion") == 3 and state_plan_decision is None:
         raise ContractError(
@@ -889,10 +951,14 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
             plan=plan,
             process=process,
         )
-    required_review_schema = 3 if contract["schemaVersion"] == 3 else 2
+    required_review_schema = (
+        4
+        if state_transition is not None
+        else (3 if contract["schemaVersion"] == 3 else 2)
+    )
     if review["schemaVersion"] != required_review_schema:
         raise ContractError("receipt review schema does not match the change contract")
-    if required_review_schema == 3:
+    if required_review_schema >= 3:
         accepted_quality = {
             item["dimension"]: item for item in contract["quality"]["assessments"]
         }
@@ -981,6 +1047,10 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     if completion.get("planDecision") != state.get("planDecision"):
         raise ContractError(
             "receipt completion plan decision reference is inconsistent"
+        )
+    if completion.get("authorityTransition") != state_transition:
+        raise ContractError(
+            "receipt completion authority transition reference is inconsistent"
         )
     if completion.get("verification") != state.get("verification"):
         raise ContractError("receipt completion verification references are inconsistent")

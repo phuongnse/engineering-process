@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/bootstrap-adoption-consumption.schema.json",
+  "title": "Terminal one-time bootstrap adoption consumption",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "repository", "policySha256", "intentSha256", "authorizationSha256", "baseCheckpoint", "headCheckpoint", "headTree", "mergeCheckpoint", "checkContext", "consumedAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-bootstrap-adoption-consumption"},
+    "project": {"type": "string"},
+    "repository": {"type": "string"},
+    "policySha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "intentSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "authorizationSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "baseCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "headCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "headTree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "mergeCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "checkContext": {"type": "string"},
+    "consumedAt": {"type": "string", "format": "date-time"}
+  }
+}

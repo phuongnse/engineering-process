@@ -437,6 +437,41 @@ processctl change finish --change-id issue-123 \
 processctl change status --change-id issue-123
 ~~~
 
+### Process authority transition
+
+A trust-root adoption uses a clean N-1 control checkout and a separate N+1 candidate
+checkout. Register the exact transition before the target changes any candidate file,
+then let the installed target emit only non-authoritative evidence:
+
+~~~text
+processctl change transition register --project-root control \
+  --change-id adopt-process-0-9-0 --request transition-request.json \
+  --actor worker --context worker-session --actor-kind agent
+
+processctl authority-transition candidate-evidence \
+  --candidate-root candidate --target-process-root /installed/target \
+  --request transition-request.json --output candidate-evidence.json \
+  --actor candidate-materializer --context candidate-session --actor-kind agent
+
+processctl change transition ingest --project-root control \
+  --change-id adopt-process-0-9-0 --candidate-root candidate \
+  --target-process-root /installed/target --evidence candidate-evidence.json \
+  --actor worker --context worker-session --actor-kind agent
+~~~
+
+Every later `change verify`, `change remote`, `change review`, `change finish`, and
+`change status` command supplies the same `--candidate-root`; lifecycle state and the
+CLI authority remain in `control`. The target lock never becomes an ordinary bypass.
+Transition verification, review, completion, remote evidence and receipt use their
+transition-only schema majors.
+
+The initial producer bootstrap is separate. Public 0.7.0 completes an exact intent
+and protected-transition policy. A verifier checked out from the policy's fixed
+protected-base feature commit validates the 0.7.0 bundle, immutable target release,
+complete candidate and current base. Only its fixed
+`authority-transition-completion` check may feed the policy-bound exact-head merge;
+the successful merge consumes the authorization and activates the target.
+
 One worker owning specification, planning, implementation, and verification is the
 default topology. Bounded helpers are optional optimizations, not required roles;
 only review requires a separate actor and context.

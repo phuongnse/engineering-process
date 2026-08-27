@@ -57,9 +57,12 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "ownerSkill": "verify-change",
         "actor": "automation",
         "commands": [
+            "authority-transition candidate-evidence",
             "change implement",
             "change remote ingest",
             "change remote request",
+            "change transition ingest",
+            "change transition register",
             "change verify",
         ],
         "transitions": {
@@ -148,6 +151,8 @@ CANONICAL_STATE_CONTRACTS: dict[str, dict[str, Any]] = {
         "ownerSkill": "publish-change",
         "actor": "automation",
         "commands": [
+            "authority-transition bootstrap consume",
+            "authority-transition bootstrap validate",
             "evidence encode-completion",
             "improvement attach",
             "improvement status",

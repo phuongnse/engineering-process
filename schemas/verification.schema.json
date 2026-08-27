@@ -20,7 +20,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "enum": [1, 2, 3]
+      "enum": [1, 2, 3, 4]
     },
     "project": {
       "type": "string"
@@ -266,6 +266,18 @@
         },
         "additionalProperties": false
       }
+    },
+    "authorityTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "candidateEvidence", "sourceAuthority", "targetAuthority", "controlCheckpoint"],
+      "properties": {
+        "request": {"type": "object"},
+        "candidateEvidence": {"type": "object"},
+        "sourceAuthority": {"type": "object"},
+        "targetAuthority": {"type": "object"},
+        "controlCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
     }
   },
   "$defs": {
@@ -403,6 +415,20 @@
                 "streamOutputTruncated"
               ]
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 4}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["authorityTransition"],
+        "properties": {
+          "checks": {
+            "items": {"required": ["diagnostics"]}
           }
         }
       }

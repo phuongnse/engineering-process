@@ -150,6 +150,7 @@ def build_supplemental_verification(
     runner_os: str,
     runner_arch: str,
     triggered_by: str,
+    authority_transition: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     project_root = project_root.resolve(strict=True)
     expected_checkpoint = _git_oid(
@@ -251,9 +252,13 @@ def build_supplemental_verification(
             profile_name,
             base_ref=comparison_base,
         )
-        if report.get("schemaVersion") != 3:
+        if authority_transition is not None:
+            report["schemaVersion"] = 4
+            report["authorityTransition"] = authority_transition
+        expected_report_schema = 4 if authority_transition is not None else 3
+        if report.get("schemaVersion") != expected_report_schema:
             raise ContractError(
-                "supplemental verification requires schema 3 reports"
+                f"supplemental verification requires schema {expected_report_schema} reports"
             )
         if (
             report.get("checkpoint") != expected_checkpoint
@@ -283,7 +288,7 @@ def build_supplemental_verification(
                 "path": filename,
                 "bytes": len(serialized),
                 "sha256": f"sha256:{hashlib.sha256(serialized).hexdigest()}",
-                "schemaVersion": 3,
+                "schemaVersion": expected_report_schema,
                 "profile": profile_name,
                 "status": report["status"],
                 "checkpoint": report["checkpoint"],
@@ -302,7 +307,7 @@ def build_supplemental_verification(
             "supplemental verification workspace changed between profiles"
         )
     manifest = {
-        "schemaVersion": 2,
+        "schemaVersion": 3 if authority_transition is not None else 2,
         "kind": "engineering-process-supplemental-verification",
         "status": (
             "passed"
@@ -346,6 +351,11 @@ def build_supplemental_verification(
             "cacheTag": sys.implementation.cache_tag,
         },
         "reports": entries,
+        **(
+            {"authorityTransition": authority_transition}
+            if authority_transition is not None
+            else {}
+        ),
     }
     manifest_bytes = _json_bytes(manifest)
     if len(manifest_bytes) > MAX_SUPPLEMENTAL_MANIFEST_BYTES:

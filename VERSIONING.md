@@ -54,6 +54,17 @@ typed authorization bundle is not a lifecycle receipt. Self-adoption must pin th
 public version before another release can be prepared; every later release is
 `governed` by a receipt from its public N-1 authority.
 
+One producer-lineage exception exists for the immutable 0.7.0/0.8.0 authority
+deadlock. A release containing the permanent authority-transition protocol uses
+release schema 4 mode `authority-transition-bootstrap`. The source generator accepts
+that mode only while the producer lock is exactly 0.7.0, the latest public release is
+exactly 0.8.0, and the governed release set contains
+`authority-transition-protocol`. Public 0.7.0 supplies the lifecycle receipt and the
+source-owned verifier; 0.8.0 remains immutable public history but never becomes the
+producer authority. The version is still derived from the reviewed change set. After
+that one release is prepared, its new previous-version and source-lock predicates make
+a second use invalid.
+
 ## Serialized-contract versions
 
 Each artifact owns an independent integer `schemaVersion`. Package SemVer and schema
@@ -92,6 +103,15 @@ constant.
 Package `schemaImpact` is `unchanged`, `additive`, or `breaking` for the combined
 release. Additive schema capability requires at least a capability release; a
 breaking schema requires an incompatible release.
+
+Authority transitions do not reinterpret the one-workspace artifacts already
+published. Transition-only generation uses release schema 4, distribution-attestation
+schema 2, lifecycle schema 3, verification schema 4, supplemental-verification schema
+3, review schema 4, completion schema 2, evidence-receipt schema 2, and remote request
+and evidence schema 2. Authority-transition request, candidate evidence,
+bootstrap-adoption intent, bootstrap consumption, and protected-transition policy
+start at schema 1. Every historical reader and generator retains its published
+meaning.
 
 ## Controlled dependency-proposal capability
 
@@ -253,6 +273,30 @@ sequence below is the default agent-host completion-first route:
    standing policy may merge that exact checkpoint automatically after required
    checks; there is no post-merge synchronization.
 5. N+1 governs only changes that begin after the merged adoption checkpoint.
+
+For an explicit authority transition, steps 3-4 use two isolated workspaces. The
+control workspace stays clean, pinned, and synchronized to public N-1 and owns the
+lifecycle ledger. Before any candidate mutation, N-1 registers the exact source
+authority, target release provenance, control checkpoint, candidate base, selected
+assets, migration input, expected paths, and expiry. Installed N+1 may materialize
+and check only a separate candidate workspace and emit schema-1 evidence. N-1
+independently ingests that evidence, runs profiles against the exact candidate,
+assigns review, closes findings, completes, and publishes the candidate checkpoint.
+There is no `--ignore-lock` route and no lifecycle transition executed by N+1.
+
+The first producer cutover additionally uses a separately completed 0.7.0 bootstrap
+intent and a project-owner-installed protected-transition policy. The validated 0.7.0
+bootstrap bundle checkpoint Git-binds both artifacts. A verifier fixed to the exact
+0.7.0-governed protected-base feature commit runs outside target and candidate
+checkouts, resolves the target tag, receipt, attestation, artifacts and distribution,
+recomputes complete materialization, and compares the exact candidate. The policy
+fixes that verifier, workflow, check context, current base, target, exact head and
+protected auto-merge grant. Successful current-base merge is the atomic one-time
+consumption event; afterward the base and source lock no longer satisfy the policy.
+The tracked policy does not embed its own commit id. Instead the validated 0.7.0
+bundle supplies the reviewed checkpoint, and the adapter requires its Git tree to be
+byte-identical to the independently resolved current protected-base tree. This avoids
+a self-referential commit field while preserving an exact base binding.
 
 An opted-in schema-3 Renovate `process-adoption` proposal is the explicit exception to
 steps 3-4: after complete materialization and protected-base proposal validation,

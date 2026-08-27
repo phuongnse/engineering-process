@@ -79,8 +79,10 @@ from .lifecycle import (
     finish_change,
     lifecycle_environment_issues,
     lifecycle_status,
+    ingest_authority_transition_evidence,
     ingest_remote_verification,
     register_plan,
+    register_authority_transition,
     resolve_plan_decision,
     request_remote_verification,
     start_change,
@@ -117,6 +119,16 @@ from .syncing import (
     process_skills_root,
     sync_skills,
     synchronized_state,
+)
+from .transition import (
+    create_authority_transition_evidence,
+    create_bootstrap_adoption_consumption,
+    validate_authority_transition_evidence,
+    validate_authority_transition_request,
+    validate_bootstrap_adoption_consumption,
+    validate_bootstrap_adoption_intent,
+    validate_bootstrap_transition_candidate,
+    validate_protected_transition_policy,
 )
 
 
@@ -290,9 +302,13 @@ def command_contract_validate(args: argparse.Namespace) -> int:
     document = read_json(args.path)
     validators: dict[str, Callable[[Any, str], Any]] = {
         "adoption-migration": validate_adoption_migration,
+        "authority-transition-evidence": validate_authority_transition_evidence,
+        "authority-transition-request": validate_authority_transition_request,
         "automation-policy": validate_automation_policy,
         "automation-proposal": validate_automation_proposal,
         "automation-proposal-policy": validate_automation_proposal_policy,
+        "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+        "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
         "change": validate_change,
         "improvement-catalog": validate_improvement_catalog,
         "improvement-disposition": validate_improvement_disposition,
@@ -302,6 +318,7 @@ def command_contract_validate(args: argparse.Namespace) -> int:
         "plan": validate_plan,
         "plan-decision-review": validate_plan_decision_review,
         "plan-decision-review-assignment": validate_plan_decision_review_assignment,
+        "protected-transition-policy": validate_protected_transition_policy,
         "recommendation": validate_recommendation,
         "recommendation-resolution": validate_recommendation_resolution,
         "recommendation-review": validate_recommendation_review,
@@ -339,6 +356,88 @@ def command_recommendation_validate_chain(args: argparse.Namespace) -> int:
         _result("recommendation validate-chain", status=status, **result),
     )
     return 0 if result["allowed"] else 1
+
+
+def command_authority_transition_bootstrap_validate(
+    args: argparse.Namespace,
+) -> int:
+    result = validate_bootstrap_transition_candidate(
+        args.controller_root,
+        args.candidate_root,
+        policy_path=args.policy,
+        intent_path=args.intent,
+        authorization_path=args.authorization,
+        target_checkout=args.target_checkout,
+        target_process_root=args.target_process_root,
+        artifact_root=args.artifact_root,
+        release_receipt_path=args.release_receipt,
+        artifact_attestation_path=args.artifact_attestation,
+        protected_base_ref=args.protected_base,
+    )
+    _emit(args, _result("authority-transition bootstrap validate", **result))
+    return 0
+
+
+def command_authority_transition_candidate_evidence(
+    args: argparse.Namespace,
+) -> int:
+    request = read_json(args.request)
+    evidence = create_authority_transition_evidence(
+        args.candidate_root,
+        request,
+        target_process_root=args.target_process_root,
+        actor_id=args.actor,
+        context_id=args.context,
+        actor_kind=args.actor_kind,
+    )
+    if args.output.exists():
+        raise ContractError(f"{args.output}: refusing to replace existing evidence")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with args.output.open("x", encoding="utf-8") as stream:
+            json.dump(evidence, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+    except OSError as error:
+        raise ContractError(f"cannot write transition evidence: {error}") from error
+    _emit(
+        args,
+        _result(
+            "authority-transition candidate-evidence",
+            output=str(args.output),
+            checkpoint=evidence["candidate"]["checkpoint"],
+            tree=evidence["candidate"]["tree"],
+        ),
+    )
+    return 0
+
+
+def command_authority_transition_bootstrap_consume(
+    args: argparse.Namespace,
+) -> int:
+    validation = read_json(args.validation)
+    consumption = create_bootstrap_adoption_consumption(
+        args.candidate_root,
+        validation,
+        merge_checkpoint=args.merge_checkpoint,
+    )
+    if args.output.exists():
+        raise ContractError(f"{args.output}: refusing to replace existing consumption")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with args.output.open("x", encoding="utf-8") as stream:
+            json.dump(consumption, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+    except OSError as error:
+        raise ContractError(f"cannot write bootstrap consumption: {error}") from error
+    _emit(
+        args,
+        _result(
+            "authority-transition bootstrap consume",
+            output=str(args.output),
+            mergeCheckpoint=consumption["mergeCheckpoint"],
+        ),
+    )
+    return 0
 
 
 def command_recommendation_review_start(args: argparse.Namespace) -> int:
@@ -641,6 +740,7 @@ def command_change_decision_start(args: argparse.Namespace) -> int:
         args.project_root,
         project,
         args.change_id,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -709,11 +809,63 @@ def command_change_implement(args: argparse.Namespace) -> int:
         args.project_root,
         args.change_id,
         project=project,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
     )
     _emit(args, _change_result("change implement", state))
+    return 0
+
+
+def command_change_transition_register(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    state, request = register_authority_transition(
+        args.project_root,
+        args.change_id,
+        args.request,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change transition register",
+            state,
+            request=state["authorityTransition"]["request"]["path"],
+            sourceAuthority=request["source"]["authority"],
+            targetAuthority={
+                "version": request["target"]["version"],
+                "digest": request["target"]["processDigest"],
+            },
+        ),
+    )
+    return 0
+
+
+def command_change_transition_ingest(args: argparse.Namespace) -> int:
+    _lifecycle_project(args)
+    state, evidence = ingest_authority_transition_evidence(
+        args.project_root,
+        args.change_id,
+        args.candidate_root,
+        args.evidence,
+        args.target_process_root,
+        actor_id=args.actor,
+        context_id=args.context,
+        kind=args.actor_kind,
+    )
+    _emit(
+        args,
+        _change_result(
+            "change transition ingest",
+            state,
+            evidence=state["authorityTransition"]["candidateEvidence"]["path"],
+            checkpoint=evidence["candidate"]["checkpoint"],
+            tree=evidence["candidate"]["tree"],
+        ),
+    )
     return 0
 
 
@@ -724,6 +876,7 @@ def command_change_verify(args: argparse.Namespace) -> int:
         project,
         args.change_id,
         args.profile,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -752,6 +905,7 @@ def command_change_remote_request(args: argparse.Namespace) -> int:
         args.project_root,
         project,
         args.change_id,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -776,6 +930,7 @@ def command_change_remote_ingest(args: argparse.Namespace) -> int:
         args.project_root,
         args.change_id,
         args.evidence,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -798,6 +953,7 @@ def command_change_review_start(args: argparse.Namespace) -> int:
     state, assignment = start_review(
         args.project_root,
         args.change_id,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -820,7 +976,12 @@ def command_change_review_start(args: argparse.Namespace) -> int:
 
 def command_change_review_submit(args: argparse.Namespace) -> int:
     _lifecycle_project(args)
-    state = submit_review(args.project_root, args.change_id, args.report)
+    state = submit_review(
+        args.project_root,
+        args.change_id,
+        args.report,
+        candidate_root=args.candidate_root,
+    )
     _emit(
         args,
         _change_result(
@@ -837,6 +998,7 @@ def command_change_finish(args: argparse.Namespace) -> int:
     state, completion = finish_change(
         args.project_root,
         args.change_id,
+        candidate_root=args.candidate_root,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -855,7 +1017,11 @@ def command_change_finish(args: argparse.Namespace) -> int:
 
 def command_change_status(args: argparse.Namespace) -> int:
     _lifecycle_project(args)
-    state = lifecycle_status(args.project_root, args.change_id)
+    state = lifecycle_status(
+        args.project_root,
+        args.change_id,
+        candidate_root=args.candidate_root,
+    )
     value = _change_result(
         "change status",
         state,
@@ -867,6 +1033,7 @@ def command_change_status(args: argparse.Namespace) -> int:
         implementationActors=state["implementationActors"],
         verification=state["verification"],
         remoteVerification=state.get("remoteVerification"),
+        authorityTransition=state.get("authorityTransition"),
         pendingFindings=state["pendingFindings"],
         reviewAssignment=state["reviewAssignment"],
         review=state["review"],
@@ -1284,14 +1451,19 @@ def command_publication_validate_pr(args: argparse.Namespace) -> int:
 
 
 def command_publication_validate_source(args: argparse.Namespace) -> int:
-    lifecycle = lifecycle_status(args.project_root, args.change_id)
+    lifecycle = lifecycle_status(
+        args.project_root,
+        args.change_id,
+        candidate_root=args.candidate_root,
+    )
+    source_root = args.candidate_root or args.project_root
     issues = validate_completed_publication(
         title=args.title,
         body=_publication_body(args),
         branch=args.branch,
         commit=args.commit,
         lifecycle=lifecycle,
-        source=source_state(args.project_root),
+        source=source_state(source_root),
     )
     return _publication_result(
         args,
@@ -1687,6 +1859,62 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json(adoption_check)
     adoption_check.set_defaults(handler=command_adoption_check)
 
+    authority_transition = commands.add_parser(
+        "authority-transition",
+        help="Validate and consume source-owned process authority cutovers",
+    )
+    authority_transition_commands = authority_transition.add_subparsers(
+        dest="authority_transition_command", required=True
+    )
+    candidate_evidence = authority_transition_commands.add_parser(
+        "candidate-evidence",
+        help="Emit bounded non-authoritative evidence from the installed target",
+    )
+    _add_actor(candidate_evidence)
+    candidate_evidence.add_argument("--candidate-root", type=_root, required=True)
+    candidate_evidence.add_argument("--request", type=Path, required=True)
+    candidate_evidence.add_argument("--target-process-root", type=_root, required=True)
+    candidate_evidence.add_argument("--output", type=Path, required=True)
+    _add_json(candidate_evidence)
+    candidate_evidence.set_defaults(
+        handler=command_authority_transition_candidate_evidence
+    )
+    bootstrap = authority_transition_commands.add_parser(
+        "bootstrap", help="Validate the one-time producer bootstrap adoption"
+    )
+    bootstrap_commands = bootstrap.add_subparsers(
+        dest="authority_transition_bootstrap_command", required=True
+    )
+    bootstrap_validate = bootstrap_commands.add_parser(
+        "validate", help="Validate an exact candidate with the protected-base verifier"
+    )
+    bootstrap_validate.add_argument("--controller-root", type=_root, required=True)
+    bootstrap_validate.add_argument("--candidate-root", type=_root, required=True)
+    bootstrap_validate.add_argument("--policy", type=Path, required=True)
+    bootstrap_validate.add_argument("--intent", type=Path, required=True)
+    bootstrap_validate.add_argument("--authorization", type=Path, required=True)
+    bootstrap_validate.add_argument("--target-checkout", type=_root, required=True)
+    bootstrap_validate.add_argument("--target-process-root", type=_root, required=True)
+    bootstrap_validate.add_argument("--artifact-root", type=_root, required=True)
+    bootstrap_validate.add_argument("--release-receipt", type=Path, required=True)
+    bootstrap_validate.add_argument("--artifact-attestation", type=Path, required=True)
+    bootstrap_validate.add_argument("--protected-base", required=True)
+    _add_json(bootstrap_validate)
+    bootstrap_validate.set_defaults(
+        handler=command_authority_transition_bootstrap_validate
+    )
+    bootstrap_consume = bootstrap_commands.add_parser(
+        "consume", help="Record the exact protected merge as terminal one-time use"
+    )
+    bootstrap_consume.add_argument("--candidate-root", type=_root, required=True)
+    bootstrap_consume.add_argument("--validation", type=Path, required=True)
+    bootstrap_consume.add_argument("--merge-checkpoint", required=True)
+    bootstrap_consume.add_argument("--output", type=Path, required=True)
+    _add_json(bootstrap_consume)
+    bootstrap_consume.set_defaults(
+        handler=command_authority_transition_bootstrap_consume
+    )
+
     contract = commands.add_parser("contract", help="Validate process artifacts")
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)
     contract_validate = contract_commands.add_parser("validate")
@@ -1694,9 +1922,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--kind",
         choices=(
             "adoption-migration",
+            "authority-transition-evidence",
+            "authority-transition-request",
             "automation-policy",
             "automation-proposal",
             "automation-proposal-policy",
+            "bootstrap-adoption-consumption",
+            "bootstrap-adoption-intent",
             "change",
             "improvement-catalog",
             "improvement-disposition",
@@ -1706,6 +1938,7 @@ def build_parser() -> argparse.ArgumentParser:
             "plan",
             "plan-decision-review",
             "plan-decision-review-assignment",
+            "protected-transition-policy",
             "recommendation",
             "recommendation-resolution",
             "recommendation-review",
@@ -2010,6 +2243,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_project_root(publication_source)
     publication_source.add_argument("--change-id", required=True)
+    publication_source.add_argument("--candidate-root", type=_root)
     publication_source.add_argument("--commit", required=True)
     publication_source.add_argument("--title", required=True)
     publication_source.add_argument("--branch", required=True)
@@ -2494,6 +2728,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lifecycle_common(decision_start)
     _add_actor(decision_start)
     decision_start.add_argument("--change-id", required=True)
+    decision_start.add_argument("--candidate-root", type=_root)
     decision_start.add_argument(
         "--method", choices=("isolated-context", "separate-person"), required=True
     )
@@ -2529,7 +2764,37 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lifecycle_common(change_implement)
     _add_actor(change_implement)
     change_implement.add_argument("--change-id", required=True)
+    change_implement.add_argument("--candidate-root", type=_root)
     change_implement.set_defaults(handler=command_change_implement)
+
+    change_transition = change_commands.add_parser(
+        "transition",
+        help="Register and validate an explicit N-1 governed authority transition",
+    )
+    transition_commands = change_transition.add_subparsers(
+        dest="change_transition_command", required=True
+    )
+    transition_register = transition_commands.add_parser(
+        "register", help="Bind the source and target authorities before candidate mutation"
+    )
+    _add_lifecycle_common(transition_register)
+    _add_actor(transition_register)
+    transition_register.add_argument("--change-id", required=True)
+    transition_register.add_argument("--request", type=Path, required=True)
+    transition_register.set_defaults(handler=command_change_transition_register)
+
+    transition_ingest = transition_commands.add_parser(
+        "ingest", help="Validate and bind non-authoritative target candidate evidence"
+    )
+    _add_lifecycle_common(transition_ingest)
+    _add_actor(transition_ingest)
+    transition_ingest.add_argument("--change-id", required=True)
+    transition_ingest.add_argument("--candidate-root", type=_root, required=True)
+    transition_ingest.add_argument("--evidence", type=Path, required=True)
+    transition_ingest.add_argument(
+        "--target-process-root", type=_root, required=True
+    )
+    transition_ingest.set_defaults(handler=command_change_transition_ingest)
 
     change_verify = change_commands.add_parser(
         "verify", help="Run and bind a required verification profile"
@@ -2538,6 +2803,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_actor(change_verify)
     change_verify.add_argument("--change-id", required=True)
     change_verify.add_argument("--profile", required=True)
+    change_verify.add_argument("--candidate-root", type=_root)
     change_verify.set_defaults(handler=command_change_verify)
 
     change_remote = change_commands.add_parser(
@@ -2552,6 +2818,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lifecycle_common(remote_request)
     _add_actor(remote_request)
     remote_request.add_argument("--change-id", required=True)
+    remote_request.add_argument("--candidate-root", type=_root)
     remote_request.set_defaults(handler=command_change_remote_request)
 
     remote_ingest = remote_commands.add_parser(
@@ -2561,6 +2828,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_actor(remote_ingest)
     remote_ingest.add_argument("--change-id", required=True)
     remote_ingest.add_argument("--evidence", type=Path, required=True)
+    remote_ingest.add_argument("--candidate-root", type=_root)
     remote_ingest.set_defaults(handler=command_change_remote_ingest)
 
     change_review = change_commands.add_parser(
@@ -2575,6 +2843,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lifecycle_common(review_start)
     _add_actor(review_start)
     review_start.add_argument("--change-id", required=True)
+    review_start.add_argument("--candidate-root", type=_root)
     review_start.add_argument(
         "--method", choices=("isolated-context", "separate-person"), required=True
     )
@@ -2588,6 +2857,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lifecycle_common(review_submit)
     review_submit.add_argument("--change-id", required=True)
     review_submit.add_argument("--report", type=Path, required=True)
+    review_submit.add_argument("--candidate-root", type=_root)
     review_submit.set_defaults(handler=command_change_review_submit)
 
     change_finish = change_commands.add_parser(
@@ -2596,11 +2866,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lifecycle_common(change_finish)
     _add_actor(change_finish)
     change_finish.add_argument("--change-id", required=True)
+    change_finish.add_argument("--candidate-root", type=_root)
     change_finish.set_defaults(handler=command_change_finish)
 
     change_status = change_commands.add_parser("status", help="Inspect lifecycle state")
     _add_lifecycle_common(change_status)
     change_status.add_argument("--change-id", required=True)
+    change_status.add_argument("--candidate-root", type=_root)
     change_status.set_defaults(handler=command_change_status)
 
     return parser

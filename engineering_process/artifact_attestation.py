@@ -131,7 +131,10 @@ def _receipt_identity(
     *,
     checkpoint: str,
 ) -> dict[str, Any] | None:
-    if release.provenance_mode == "governed":
+    if release.provenance_mode in {
+        "governed",
+        "authority-transition-bootstrap",
+    }:
         if receipt_path is None:
             raise ContractError("governed artifact attestation requires a lifecycle receipt")
         if receipt_path.name != release.receipt_asset:
@@ -311,8 +314,9 @@ def _expected_attestation(
         limit=1_000_000,
         label="artifact attestation release contract",
     )
+    transition = release.provenance_mode == "authority-transition-bootstrap"
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2 if transition else 1,
         "kind": ATTESTATION_KIND,
         "checkpoint": checkpoint,
         "release": {
@@ -331,6 +335,20 @@ def _expected_attestation(
             release,
             authorization_path,
             checkpoint=checkpoint,
+        ),
+        **(
+            {
+                "authorityTransition": {
+                    "sourceAuthority": {
+                        "version": release.transition_source_version,
+                        "digest": release.transition_source_digest,
+                    },
+                    "skippedRelease": release.transition_skipped_version,
+                    "bootstrapChangeId": release.transition_change_id,
+                }
+            }
+            if transition
+            else {}
         ),
         "artifacts": _artifact_entries(artifact_root, release),
     }

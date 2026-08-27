@@ -1,0 +1,191 @@
+name: Complete protected process authority transition
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Exact bootstrap-adoption pull request
+        required: true
+        type: string
+      source_base:
+        description: Exact current protected base containing intent and policy
+        required: true
+        type: string
+      candidate_head:
+        description: Exact candidate head to validate and merge
+        required: true
+        type: string
+      bootstrap_authorization_gzip_base64:
+        description: Public N-1 bootstrap authorization encoded by processctl
+        required: true
+        type: string
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: authority-transition-${{ inputs.source_base }}-${{ inputs.candidate_head }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-merge:
+    name: Validate source-owned transition and authorize exact merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Validate bounded callback identity
+        env:
+          AUTHORIZATION_BASE64: ${{ inputs.bootstrap_authorization_gzip_base64 }}
+          BASE_SHA: ${{ inputs.source_base }}
+          HEAD_SHA: ${{ inputs.candidate_head }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          printf '%s' "$BASE_SHA$HEAD_SHA" | grep -Eq '^[0-9a-f]{80}$'
+          printf '%s' "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'
+          test -n "$AUTHORIZATION_BASE64"
+          test "${#AUTHORIZATION_BASE64}" -le 60000
+
+      - name: Check out exact protected base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.source_base }}
+
+      - name: Require current base and exact PR identity
+        env:
+          BASE_SHA: ${{ inputs.source_base }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.candidate_head }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+        run: |
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(gh pr view "$PR_NUMBER" --json baseRefOid --jq .baseRefOid)" = "$BASE_SHA"
+          test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$HEAD_SHA"
+          test "$(gh pr view "$PR_NUMBER" --json state --jq .state)" = OPEN
+          test "$WORKFLOW_SHA" = "$BASE_SHA"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install exact source authority and validate protected artifacts
+        env:
+          AUTHORIZATION_BASE64: ${{ inputs.bootstrap_authorization_gzip_base64 }}
+        run: |
+          python -m venv "$RUNNER_TEMP/source-authority"
+          "$RUNNER_TEMP/source-authority/bin/python" -m pip install \
+            --require-hashes -r requirements/process.txt
+          "$RUNNER_TEMP/source-authority/bin/python" -m pip install \
+            -r engineering_process/requirements-runtime.txt \
+            -r engineering_process/requirements-dev.txt \
+            -r engineering_process/requirements-build.txt
+          printf '%s' "$AUTHORIZATION_BASE64" > "$RUNNER_TEMP/bootstrap-authorization.txt"
+          "$RUNNER_TEMP/source-authority/bin/python" \
+            verification/decode_completion_evidence.py \
+            --input "$RUNNER_TEMP/bootstrap-authorization.txt" \
+            --output "$RUNNER_TEMP/bootstrap-authorization.json"
+          "$RUNNER_TEMP/source-authority/bin/python" processctl.py \
+            evidence validate-bootstrap "$RUNNER_TEMP/bootstrap-authorization.json" --json \
+            > "$RUNNER_TEMP/bootstrap-authorization-summary.json"
+          "$RUNNER_TEMP/source-authority/bin/python" processctl.py \
+            contract validate --kind protected-transition-policy \
+            .process/protected-transition-policy.json
+          test "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["repository"])')" = "$GITHUB_REPOSITORY"
+          test "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["verifier"]["repository"])')" = "$GITHUB_REPOSITORY"
+          test "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["repository"])')" = "$GITHUB_REPOSITORY"
+          test "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["path"])')" = .github/workflows/authority-transition.yml
+          intent_path="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["intentPath"])')"
+          "$RUNNER_TEMP/source-authority/bin/python" processctl.py \
+            contract validate --kind bootstrap-adoption-intent "$intent_path"
+          printf 'INTENT_PATH=%s\n' "$intent_path" >> "$GITHUB_ENV"
+          printf 'VERIFIER_COMMIT=%s\n' "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["verifier"]["commit"])')" >> "$GITHUB_ENV"
+          printf 'TARGET_TAG=%s\n' "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["target"]["tag"])')" >> "$GITHUB_ENV"
+          printf 'AUTH_CHECKPOINT=%s\n' "$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/bootstrap-authorization-summary.json", encoding="utf-8"))["checkpoint"])')" >> "$GITHUB_ENV"
+
+      - name: Check out policy-fixed verifier, candidate, and target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.VERIFIER_COMMIT }}
+          path: .transition-controller
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_head }}
+          path: .transition-candidate
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.TARGET_TAG }}
+          path: .transition-target
+
+      - name: Resolve immutable target artifacts without executing target authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git -C .transition-candidate fetch --no-tags origin "$AUTH_CHECKPOINT"
+          git -C .transition-candidate cat-file -e "$AUTH_CHECKPOINT^{commit}"
+          mkdir -p "$RUNNER_TEMP/target-assets" "$RUNNER_TEMP/target-distributions"
+          gh release download "$TARGET_TAG" --dir "$RUNNER_TEMP/target-assets"
+          receipt="$(python -c 'import json; print(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
+          package="$(python -c 'import json; print(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["package"])')"
+          while IFS= read -r artifact; do
+            cp "$RUNNER_TEMP/target-assets/$artifact" "$RUNNER_TEMP/target-distributions/$artifact"
+          done < <(python -c 'import json; print("\n".join(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["artifacts"]))')
+          printf 'RECEIPT_PATH=%s\n' "$RUNNER_TEMP/target-assets/$receipt" >> "$GITHUB_ENV"
+          printf 'ATTESTATION_PATH=%s\n' "$RUNNER_TEMP/target-assets/$package-$TARGET_TAG-artifacts.json" >> "$GITHUB_ENV"
+          python -m venv "$RUNNER_TEMP/target-process"
+          "$RUNNER_TEMP/target-process/bin/python" -m pip install \
+            --no-deps "$RUNNER_TEMP"/target-distributions/*.whl
+
+      - name: Validate exact candidate with source-owned verifier
+        env:
+          BASE_SHA: ${{ inputs.source_base }}
+        run: |
+          "$RUNNER_TEMP/source-authority/bin/python" \
+            .transition-controller/verification/validate_authority_transition.py \
+            --controller-root .transition-controller \
+            --candidate-root .transition-candidate \
+            --policy .transition-candidate/.process/protected-transition-policy.json \
+            --intent ".transition-candidate/$INTENT_PATH" \
+            --authorization "$RUNNER_TEMP/bootstrap-authorization.json" \
+            --target-checkout .transition-target \
+            --target-process-root "$RUNNER_TEMP/target-process" \
+            --artifact-root "$RUNNER_TEMP/target-distributions" \
+            --release-receipt "$RECEIPT_PATH" \
+            --artifact-attestation "$ATTESTATION_PATH" \
+            --protected-base "$BASE_SHA" \
+            --output "$RUNNER_TEMP/authority-transition-validation.json"
+          test "$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/authority-transition-validation.json", encoding="utf-8"))["headCheckpoint"])')" = "${{ inputs.candidate_head }}"
+
+      - name: Create exact transition check and enable protected auto-merge
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+      - name: Authorize only the validated exact head
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_SHA: ${{ inputs.candidate_head }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+        run: |
+          check_context="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkContext"])')"
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs" --jq ".check_runs[] | select(.name == \"$check_context\") | .conclusion")"
+          if test -n "$existing"; then
+            test "$existing" = success
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+              -f name="$check_context" -f head_sha="$HEAD_SHA" \
+              -f status=completed -f conclusion=success >/dev/null
+          fi
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash

@@ -179,6 +179,15 @@ prepared. Every subsequent release is `governed` and must carry a lifecycle rece
 exported and validated by the pinned public N-1 authority. A second bootstrap attempt
 or a governed release under a stale process lock fails closed.
 
+The sole exception is release schema 4 mode `authority-transition-bootstrap` for the
+reviewed 0.7.0/0.8.0 producer cutover. Source candidate generation derives this mode
+only for the `authority-transition-protocol` change while the lock is exactly 0.7.0
+and the previous public release is exactly 0.8.0. It remains receipt-governed by
+0.7.0, uses distribution-attestation schema 2, and does not activate its target.
+After publication, a separate 0.7.0 lifecycle installs the exact intent and protected
+transition policy; source-owned verification and protected merge perform adoption.
+No other stale lock, version pair, change set, tag or target may use this mode.
+
 ## Adoption
 
 Successful exact PyPI verification sends an authenticated bounded event to the
@@ -229,6 +238,10 @@ The following rules are regression contracts, not bootstrap exceptions:
   version. If self-adoption is stale, automation defers version derivation and
   redispatches the exact current release through the idempotent publish/adoption path;
   it does not invent another version or require a manual bridge.
+- The one schema-4 transition-bootstrap release is the typed exception above, not a
+  manual bridge. Its exact 0.7.0 source authority, 0.8.0 skipped public release,
+  protocol change id, receipt, target artifacts and source-owned verifier remain
+  machine-bound. Every ordinary release continues to require latest self-adoption.
 - The process hash lock is generated with a pinned lock generator and contains hashes
   for the complete supported Python/OS binary matrix, not only the machine that
   generated it.

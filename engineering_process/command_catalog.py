@@ -5,6 +5,9 @@ from __future__ import annotations
 # prove that every entry remains routable by processctl.
 LIFECYCLE_COMMAND_PATHS = frozenset(
     {
+        "authority-transition bootstrap consume",
+        "authority-transition bootstrap validate",
+        "authority-transition candidate-evidence",
         "change finish",
         "change decision resolve",
         "change decision start",
@@ -16,6 +19,8 @@ LIFECYCLE_COMMAND_PATHS = frozenset(
         "change review start",
         "change review submit",
         "change start",
+        "change transition ingest",
+        "change transition register",
         "change verify",
         "contract validate",
         "evidence encode-completion",
