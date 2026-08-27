@@ -281,6 +281,7 @@ def command_adoption_apply(args: argparse.Namespace) -> int:
         args.requirements_lock,
         requirements_source=args.requirements_source,
         expected_requirements_digest=args.expected_requirements_digest,
+        rollback_probe=args.rollback_probe,
     )
     _emit(args, _result("adoption apply", **details))
     return 0
@@ -373,6 +374,7 @@ def command_authority_transition_bootstrap_validate(
         release_receipt_path=args.release_receipt,
         artifact_attestation_path=args.artifact_attestation,
         protected_base_ref=args.protected_base,
+        validation_service_path=args.validation_service,
     )
     _emit(args, _result("authority-transition bootstrap validate", **result))
     return 0
@@ -427,6 +429,7 @@ def command_authority_transition_bootstrap_consume(
             "runAttempt": args.validation_run_attempt,
             "runUrl": args.validation_run_url,
         },
+        validation_service=read_json(args.validation_service),
         consumed_at=args.consumed_at,
     )
     if args.output.exists():
@@ -1856,6 +1859,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--expected-requirements-digest",
         help="Expected sha256 digest of the private requirements snapshot",
     )
+    adoption_apply.add_argument(
+        "--rollback-probe",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     _add_json(adoption_apply)
     adoption_apply.set_defaults(handler=command_adoption_apply)
     adoption_check = adoption_commands.add_parser(
@@ -1912,6 +1920,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_validate.add_argument("--release-receipt", type=Path, required=True)
     bootstrap_validate.add_argument("--artifact-attestation", type=Path, required=True)
     bootstrap_validate.add_argument("--protected-base", required=True)
+    bootstrap_validate.add_argument("--validation-service", type=Path, required=True)
     _add_json(bootstrap_validate)
     bootstrap_validate.set_defaults(
         handler=command_authority_transition_bootstrap_validate
@@ -1928,6 +1937,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_consume.add_argument("--validation-run-id", required=True)
     bootstrap_consume.add_argument("--validation-run-attempt", type=int, required=True)
     bootstrap_consume.add_argument("--validation-run-url", required=True)
+    bootstrap_consume.add_argument("--validation-service", type=Path, required=True)
     bootstrap_consume.add_argument("--consumed-at", required=True)
     bootstrap_consume.add_argument("--output", type=Path, required=True)
     _add_json(bootstrap_consume)

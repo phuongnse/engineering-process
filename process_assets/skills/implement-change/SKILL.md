@@ -36,6 +36,8 @@ the canonical verification and review lifecycle.
    For an authority transition, keep the N-1 control workspace clean and register the
    exact transition before changing a separate candidate workspace. N+1 may
    materialize the candidate and emit `authority-transition candidate-evidence`; it
+   must expose observed apply/check/idempotence and after-write rollback behavior in
+   disposable worktrees whose trees N-1 independently recomputes. It
    must not run lifecycle verification, review, completion, publication, or merge.
 4. Run focused project checks while editing. These checks diagnose implementation but
    do not replace lifecycle verification.

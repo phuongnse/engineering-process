@@ -44,6 +44,20 @@ lifecycle evidence all fail closed. Completion exports receipt schema 2 with bot
 authority identities and both transition artifacts. Protected merge alone activates
 N+1; no post-merge synchronization follows.
 
+The packaged transition JSON Schemas and `contract validate` own the same exact
+serialized shape, nesting, bounds and field syntax. Cross-field relations that JSON
+Schema cannot express—canonical ordering, source/target inequality, tag/version
+derivation and changed pin commits—are a separate mandatory operational layer run by
+registration and the protected verifier before any lifecycle mutation. A shape-valid
+document is never transition authorization by itself.
+
+Candidate materialization is observed rather than asserted. The source verifier
+creates disposable worktrees at the registered base, supplies only the pre-registered
+requirements, migration and action-pin inputs, runs target adoption apply/check twice,
+compares both Git trees with the exact candidate, and forces the real transaction to
+fail after its first authority write. The rollback worktree must return to its exact
+input tree, including on Windows, before candidate evidence can be ingested.
+
 Immutable 0.7.0 cannot execute that route. Its single bootstrap uses the normal
 0.7.0 lifecycle and bootstrap export to authenticate a fixed intent/policy checkpoint.
 Interpretation is performed by verifier source fixed to the already merged feature
@@ -52,6 +66,12 @@ project-owned protected workflow may create `authority-transition-completion` an
 merge only the exact current-base candidate authorized by that policy. The merge tree
 must equal the validated candidate tree and the successful base advance consumes the
 authorization exactly once.
+The validation artifact binds its repository, workflow path and SHA, run id/attempt,
+base, check context and GitHub App id. The closed-PR consumer resolves that service
+chain independently, verifies the exact App-authenticated completion check and squash
+merge parent/tree, then records the canonical consumption JSON in an exclusive
+App-authenticated check on the merge commit. The expiring Actions artifact is only a
+transport copy, not the durable terminal record.
 The current base is authenticated by tree equivalence with the checkpoint carried in
 the 0.7.0 bundle; the policy never attempts to contain the hash of the commit that
 contains the policy itself.

@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--release-receipt", type=Path, required=True)
     parser.add_argument("--artifact-attestation", type=Path, required=True)
     parser.add_argument("--protected-base", required=True)
+    parser.add_argument("--validation-service", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         release_receipt_path=args.release_receipt,
         artifact_attestation_path=args.artifact_attestation,
         protected_base_ref=args.protected_base,
+        validation_service_path=args.validation_service,
     )
     if os.path.lexists(args.output):
         raise ContractError(f"{args.output}: refusing to replace validation output")

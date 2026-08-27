@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/authority-transition-evidence.schema.json",
+  "$comment": "This schema and contract validate the complete serialized shape. Evidence ingestion additionally recomputes and relates request, authority, candidate, apply/idempotent, and rollback identities.",
   "title": "Non-authoritative process authority transition candidate evidence",
   "type": "object", "additionalProperties": false,
   "required": ["schemaVersion", "kind", "project", "changeId", "cycle", "requestSha256", "sourceAuthority", "targetAuthority", "candidate", "bindings", "materialization", "generatedBy", "generatedAt"],
@@ -18,7 +19,27 @@
       "required": ["requirementsInputSha256", "requirementsLockSha256", "processLockSha256", "projectManifestSha256", "projectMigrationSha256", "managedDistributionSha256", "actionPinsSha256"],
       "properties": {"requirementsInputSha256": {"$ref": "#/$defs/digest"}, "requirementsLockSha256": {"$ref": "#/$defs/digest"}, "processLockSha256": {"$ref": "#/$defs/digest"}, "projectManifestSha256": {"$ref": "#/$defs/digest"}, "projectMigrationSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]}, "managedDistributionSha256": {"$ref": "#/$defs/digest"}, "actionPinsSha256": {"$ref": "#/$defs/digest"}}
     },
-    "materialization": {"type": "object", "additionalProperties": false, "required": ["status", "finalStateChecks", "issues"], "properties": {"status": {"const": "passed"}, "finalStateChecks": {"const": 2}, "issues": {"type": "array", "maxItems": 0}}},
+    "materialization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "applyTree", "idempotentTree", "checkRuns", "rollback", "issues"],
+      "properties": {
+        "status": {"const": "passed"},
+        "applyTree": {"$ref": "#/$defs/gitOid"},
+        "idempotentTree": {"$ref": "#/$defs/gitOid"},
+        "checkRuns": {"const": 2},
+        "rollback": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "beforeTree", "afterTree", "probe"],
+          "properties": {
+            "status": {"const": "restored"},
+            "beforeTree": {"$ref": "#/$defs/gitOid"},
+            "afterTree": {"$ref": "#/$defs/gitOid"},
+            "probe": {"const": "after-authority-write"}
+          }
+        },
+        "issues": {"type": "array", "maxItems": 0}
+      }
+    },
     "generatedBy": {"$ref": "#/$defs/actor"}, "generatedAt": {"type": "string", "format": "date-time"}
   },
   "$defs": {

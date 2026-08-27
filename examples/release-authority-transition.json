@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 4,
+  "previousVersion": "0.8.0",
+  "version": "0.9.0",
+  "classification": "minor",
+  "compatibility": "incompatible",
+  "schemaImpact": "breaking",
+  "migration": "Use the authority-transition protocol for trust-root cutovers.",
+  "identity": {
+    "package": "engineering-process",
+    "distribution": "engineering_process",
+    "tag": "v0.9.0",
+    "releaseName": "v0.9.0",
+    "runtimeVersion": {"path": "engineering_process/__init__.py", "variable": "VERSION"},
+    "artifacts": ["engineering_process-0.9.0-py3-none-any.whl", "engineering_process-0.9.0.tar.gz"],
+    "receiptAsset": "engineering-process-v0.9.0-evidence.json",
+    "authorizationAsset": null
+  },
+  "provenance": {
+    "mode": "authority-transition-bootstrap",
+    "statement": "Public 0.7.0 governs the transition release.",
+    "lifecycleReceipt": {"asset": "engineering-process-v0.9.0-evidence.json", "project": "engineering-process", "changeId": "release-0-9-0", "cycle": 1},
+    "authorityTransition": {
+      "sourceAuthority": {"version": "0.7.0", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+      "skippedRelease": {"version": "0.8.0", "tag": "v0.8.0"},
+      "bootstrapChangeId": "authority-transition-protocol"
+    }
+  },
+  "changes": [
+    {"id": "authority-transition-protocol", "type": "breaking", "surfaces": ["lifecycle"], "rationale": "Introduce exact process authority transitions."}
+  ]
+}

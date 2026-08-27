@@ -34,6 +34,11 @@ from engineering_process.contracts import (
 from engineering_process.transition import (
     validate_authority_transition_evidence,
     validate_authority_transition_request,
+    require_authority_transition_request_semantics,
+    require_authority_transition_evidence_semantics,
+    require_bootstrap_adoption_consumption_semantics,
+    require_bootstrap_adoption_intent_semantics,
+    require_protected_transition_policy_semantics,
     validate_bootstrap_adoption_consumption,
     validate_bootstrap_adoption_intent,
     validate_protected_transition_policy,
@@ -974,13 +979,137 @@ class ArtifactContractTests(unittest.TestCase):
         )
         document["target"]["version"] = "0.7.0"
         document["target"]["tag"] = "v0.7.0"
+        shaped = validate_authority_transition_request(document)
         with self.assertRaisesRegex(ContractError, "must differ"):
-            validate_authority_transition_request(document)
+            require_authority_transition_request_semantics(shaped)
         document["target"]["version"] = "0.9.0"
         document["target"]["tag"] = "v0.9.0"
         document["candidate"]["expectedChangedPaths"] = []
         with self.assertRaisesRegex(ContractError, "non-empty"):
             validate_authority_transition_request(document)
+
+    def test_transition_request_schema_and_core_share_shape_while_operations_enforce_relations(self):
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "authority-transition-request.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validator = Draft202012Validator(schema)
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-request.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        invalid_shapes = []
+        wrong_workflow = copy.deepcopy(document)
+        wrong_workflow["candidate"]["actionPins"] = [
+            {
+                "path": "README.md",
+                "repository": "owner/process",
+                "previousCommit": "1" * 40,
+                "targetCommit": "2" * 40,
+                "previousReleaseTag": "v0.7.0",
+                "targetReleaseTag": "v0.9.0",
+            }
+        ]
+        invalid_shapes.append(wrong_workflow)
+        duplicate_skill = copy.deepcopy(document)
+        duplicate_skill["candidate"]["selectedSkills"].append(
+            duplicate_skill["candidate"]["selectedSkills"][0]
+        )
+        invalid_shapes.append(duplicate_skill)
+        nested_extra = copy.deepcopy(document)
+        nested_extra["target"]["unexpected"] = True
+        invalid_shapes.append(nested_extra)
+        for invalid in invalid_shapes:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    validator.validate(invalid)
+                with self.assertRaises(ContractError):
+                    validate_authority_transition_request(invalid)
+
+        relational = copy.deepcopy(document)
+        relational["target"]["version"] = relational["source"]["authority"]["version"]
+        relational["target"]["tag"] = "v0.7.0"
+        validator.validate(relational)
+        shaped = validate_authority_transition_request(relational)
+        with self.assertRaisesRegex(ContractError, "must differ"):
+            require_authority_transition_request_semantics(shaped)
+
+    def test_transition_relational_invariants_are_mandatory_operational_gates(self):
+        cases = []
+
+        evidence = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-evidence.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        evidence["materialization"]["applyTree"] = "f" * 40
+        cases.append(
+            (
+                "authority-transition-evidence",
+                evidence,
+                validate_authority_transition_evidence,
+                require_authority_transition_evidence_semantics,
+            )
+        )
+
+        intent = json.loads(
+            (PROCESS_ROOT / "examples" / "bootstrap-adoption-intent.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        intent["targetRelease"]["tag"] = "v1.0.0"
+        cases.append(
+            (
+                "bootstrap-adoption-intent",
+                intent,
+                validate_bootstrap_adoption_intent,
+                require_bootstrap_adoption_intent_semantics,
+            )
+        )
+
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy["verifier"]["commit"] = policy["target"]["commit"]
+        cases.append(
+            (
+                "protected-transition-policy",
+                policy,
+                validate_protected_transition_policy,
+                require_protected_transition_policy_semantics,
+            )
+        )
+
+        consumption = json.loads(
+            (PROCESS_ROOT / "examples" / "bootstrap-adoption-consumption.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        consumption["validationArtifact"]["runId"] = "999"
+        cases.append(
+            (
+                "bootstrap-adoption-consumption",
+                consumption,
+                validate_bootstrap_adoption_consumption,
+                require_bootstrap_adoption_consumption_semantics,
+            )
+        )
+
+        for name, document, shape_validator, semantic_validator in cases:
+            with self.subTest(name=name):
+                schema = json.loads(
+                    (PROCESS_ROOT / "schemas" / f"{name}.schema.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                Draft202012Validator(schema).validate(document)
+                shaped = shape_validator(document)
+                with self.assertRaises(ContractError):
+                    semantic_validator(shaped)
 
     def test_transition_evidence_does_not_claim_unobserved_rollback(self):
         document = json.loads(

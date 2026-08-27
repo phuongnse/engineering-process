@@ -328,7 +328,9 @@ the new immutable identity cannot exist before publication:
 When the live process lock itself is the candidate, use an explicit two-workspace
 authority transition. N-1 keeps a clean control workspace and registers source/target
 identity, base, paths, migration, assets and expiry before mutation. N+1 may change
-only a separate candidate and emit bounded evidence. N-1 ingests that evidence and
+only a separate candidate and emit bounded evidence. N-1 must independently recreate
+the candidate through observed target apply/check, a second idempotent apply/check,
+and an after-write rollback probe in disposable exact-base worktrees before it ingests that evidence and
 runs verification, remote evidence, review, completion and publication against the
 exact candidate root. A transition-only lifecycle never becomes a generic lock bypass.
 
@@ -337,7 +339,9 @@ completes and exports an exact intent/policy checkpoint, a verifier fixed to the
 already N-1-governed protected-base source interprets it outside target/candidate
 checkouts, and a typed project-owned policy fixes the workflow, check, current base,
 head, target and protected merge. Successful merge is atomic single-use consumption
-and the sole activation event.
+and the sole activation event. Terminal consumption authenticates the validation
+artifact's repository, workflow SHA/path, run, exact App-owned completion check,
+base/head/merge tree and records a durable exclusive provider identity.
 
 Each separately published stage is its own lifecycle change. Provider-specific
 default-branch, check-context, key-store, or artifact mechanics belong to the project

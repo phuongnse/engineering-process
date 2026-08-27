@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/protected-transition-policy.schema.json",
+  "$comment": "This schema and contract validate the complete serialized shape. Protected execution additionally enforces source/target inequality, derived tags, same-repository verifier/workflow ownership, and independent verifier identity.",
   "title": "Project-owned protected authority transition policy",
   "type": "object", "additionalProperties": false,
   "required": ["schemaVersion", "kind", "project", "repository", "sourceAuthority", "target", "intentPath", "verifier", "workflow", "merge", "authorizationTransport", "singleUse", "postMergeMutation", "expiresAt"],
@@ -10,7 +11,7 @@
     "target": {"type": "object", "additionalProperties": false, "required": ["version", "tag", "commit", "processDigest"], "properties": {"version": {"$ref": "#/$defs/version"}, "tag": {"$ref": "#/$defs/tag"}, "commit": {"$ref": "#/$defs/gitOid"}, "processDigest": {"$ref": "#/$defs/digest"}}},
     "intentPath": {"$ref": "#/$defs/path"},
     "verifier": {"type": "object", "additionalProperties": false, "required": ["repository", "commit", "entrypoint"], "properties": {"repository": {"$ref": "#/$defs/repository"}, "commit": {"$ref": "#/$defs/gitOid"}, "entrypoint": {"$ref": "#/$defs/path"}}},
-    "workflow": {"type": "object", "additionalProperties": false, "required": ["repository", "path", "checkContext"], "properties": {"repository": {"$ref": "#/$defs/repository"}, "path": {"$ref": "#/$defs/path"}, "checkContext": {"type": "string", "minLength": 1, "maxLength": 128}}},
+    "workflow": {"type": "object", "additionalProperties": false, "required": ["repository", "path", "checkContext", "checkAppId", "consumptionContext"], "properties": {"repository": {"$ref": "#/$defs/repository"}, "path": {"$ref": "#/$defs/path"}, "checkContext": {"type": "string", "minLength": 1, "maxLength": 128}, "checkAppId": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807}, "consumptionContext": {"type": "string", "minLength": 1, "maxLength": 128}}},
     "merge": {"type": "object", "additionalProperties": false, "required": ["method", "requireCurrentBase", "requireExactHead", "requireRequiredChecks"], "properties": {"method": {"const": "protected-auto-merge"}, "requireCurrentBase": {"const": true}, "requireExactHead": {"const": true}, "requireRequiredChecks": {"const": true}}},
     "authorizationTransport": {"type": "object", "additionalProperties": false, "required": ["kind", "evidenceKind", "maxEncodedBytes"], "properties": {"kind": {"const": "host-callback-gzip-base64"}, "evidenceKind": {"const": "bootstrap-authorization"}, "maxEncodedBytes": {"const": 60000}}},
     "singleUse": {"const": true}, "postMergeMutation": {"const": false}, "expiresAt": {"type": "string", "format": "date-time"}

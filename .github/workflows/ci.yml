@@ -141,6 +141,15 @@ jobs:
           python -m pip install -r engineering_process/requirements-runtime.txt -r engineering_process/requirements-dev.txt -r engineering_process/requirements-build.txt
           python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"
 
+      - name: Prove transition release rendering under the real public authority
+        env:
+          PROCESS_ACTION_PYTHON: ${{ runner.os == 'Windows' && format('{0}/process-action-smoke/Scripts/python.exe', runner.temp) || format('{0}/process-action-smoke/bin/python', runner.temp) }}
+        run: >-
+          python verification/verify_transition_release_rendering.py
+          --public-python "$PROCESS_ACTION_PYTHON"
+          --controller processctl.py
+          --release examples/release-authority-transition.json
+
       - name: Verify real Windows Job Object boundary
         if: runner.os == 'Windows'
         run: python -m unittest tests.test_windows_job

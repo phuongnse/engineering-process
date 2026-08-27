@@ -775,6 +775,7 @@ def apply_adoption(
     *,
     requirements_source: Path | None = None,
     expected_requirements_digest: str | None = None,
+    rollback_probe: bool = False,
 ) -> dict[str, object]:
     project_root = Path(os.path.abspath(os.fspath(project_root)))
     process_root = process_root.resolve()
@@ -889,6 +890,10 @@ def apply_adoption(
                 _atomic_write(
                     project_root / ".process" / "project.json",
                     migration.target_content,
+                )
+            if rollback_probe:
+                raise ContractError(
+                    "controlled authority-transition rollback probe"
                 )
             issues = sync_skills(project_root, process_root, check=False)
             if issues:

@@ -919,6 +919,30 @@ def _lifecycle_source(
         )
     request = _transition_request(project_root, state)
     assert request is not None
+    _validate_authority_transition_control(project_root, request)
+    evidence = read_json(
+        _artifact_path(project_root, transition["candidateEvidence"])
+    )
+    validate_authority_transition_evidence(
+        evidence, "registered authority-transition evidence"
+    )
+    candidate_root = candidate_root.resolve(strict=True)
+    source = source_state(candidate_root)
+    expected = evidence["candidate"]
+    if (
+        source.get("dirty") is not False
+        or source.get("checkpoint") != expected["checkpoint"]
+        or source.get("fingerprint") != expected["workspaceFingerprint"]
+    ):
+        raise ContractError(
+            "authority-transition candidate workspace is stale or dirty"
+        )
+    return candidate_root, source
+
+
+def _validate_authority_transition_control(
+    project_root: Path, request: dict[str, Any]
+) -> dict[str, Any]:
     require_authority_transition_current(request)
     control_source = source_state(project_root)
     control_lock_path = project_root / ".process" / "process.lock"
@@ -941,24 +965,7 @@ def _lifecycle_source(
         raise ContractError(
             "authority-transition control workspace is stale, dirty, or no longer governed by N-1"
         )
-    evidence = read_json(
-        _artifact_path(project_root, transition["candidateEvidence"])
-    )
-    validate_authority_transition_evidence(
-        evidence, "registered authority-transition evidence"
-    )
-    candidate_root = candidate_root.resolve(strict=True)
-    source = source_state(candidate_root)
-    expected = evidence["candidate"]
-    if (
-        source.get("dirty") is not False
-        or source.get("checkpoint") != expected["checkpoint"]
-        or source.get("fingerprint") != expected["workspaceFingerprint"]
-    ):
-        raise ContractError(
-            "authority-transition candidate workspace is stale or dirty"
-        )
-    return candidate_root, source
+    return control_source
 
 
 def _register_authority_transition_unlocked(
@@ -1077,7 +1084,7 @@ def _ingest_authority_transition_evidence_unlocked(
     request = _transition_request(project_root, state)
     if request is None:
         raise ContractError("authority transition is not registered")
-    require_authority_transition_current(request)
+    _validate_authority_transition_control(project_root, request)
     evidence = read_json(evidence_path)
     validated = validate_registered_candidate(
         candidate_root,

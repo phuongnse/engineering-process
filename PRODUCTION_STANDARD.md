@@ -193,9 +193,17 @@ release provenance, base, paths, migration, selected assets and expiry. Transiti
 verification recomputes the clean candidate commit, tree, workspace, lock, hash graph,
 managed distribution and action-pin set. A protected-transition policy is a separate
 schema-1 mutation grant: it fixes the source-owned verifier commit, protected workflow,
-check context, exact current base and head, target, required checks, no post-merge
+check context and App identity, exact current base and head, target, required checks, no post-merge
 mutation, and one-use protected auto-merge. Target or candidate code can never
 interpret the authorization that activates itself.
+
+Transition artifact schemas and portable contract validation share one serialized
+shape boundary. Operational entrypoints additionally enforce cross-field relations
+that standard JSON Schema cannot represent. Those semantic checks are mandatory at
+registration, evidence ingestion, protected validation and terminal consumption; a
+shape-only validation never grants authority. Candidate evidence includes observed
+apply/check/idempotence trees and an after-write rollback probe executed in disposable
+worktrees under a bounded target process.
 
 Proposal merge authority derives from proposal origin and publication state. An
 agent-host review object created only after full lifecycle completion may use standing

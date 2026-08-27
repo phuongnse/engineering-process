@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/authority-transition-request.schema.json",
+  "$comment": "This schema and contract validate the complete serialized shape. Operational registration additionally enforces canonical ordering and cross-field authority, tag, commit, and action-pin invariants.",
   "title": "Pre-registered process authority transition request",
   "type": "object",
   "additionalProperties": false,
@@ -28,7 +29,7 @@
         "tag": {"$ref": "#/$defs/tag"}, "commit": {"$ref": "#/$defs/gitOid"}, "processDigest": {"$ref": "#/$defs/digest"},
         "releaseContractSha256": {"$ref": "#/$defs/digest"}, "distributionAttestationSha256": {"$ref": "#/$defs/digest"},
         "lifecycleReceiptSha256": {"$ref": "#/$defs/digest"},
-        "artifacts": {"type": "array", "minItems": 2, "maxItems": 16, "items": {"$ref": "#/$defs/artifact"}}
+        "artifacts": {"type": "array", "minItems": 2, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/artifact"}}
       }
     },
     "candidate": {
@@ -40,7 +41,7 @@
         "projectMigrationSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
         "requirementsInputSha256": {"$ref": "#/$defs/digest"}, "requirementsLockSha256": {"$ref": "#/$defs/digest"},
         "projectManifestSha256": {"$ref": "#/$defs/digest"}, "actionPinsSha256": {"$ref": "#/$defs/digest"},
-        "actionPins": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/actionPin"}},
+        "actionPins": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/actionPin"}},
         "expectedChangedPaths": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/path"}},
         "expiresAt": {"type": "string", "format": "date-time"}
       }
@@ -57,9 +58,10 @@
     "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"},
+    "workflowPath": {"type": "string", "minLength": 23, "maxLength": 512, "pattern": "^\\.github/workflows/(?!.*\\.\\.)(?!.*//)[^/\\\\]+\\.ya?ml$"},
     "authority": {"type": "object", "additionalProperties": false, "required": ["version", "digest"], "properties": {"version": {"$ref": "#/$defs/version"}, "digest": {"$ref": "#/$defs/digest"}}},
     "actor": {"type": "object", "additionalProperties": false, "required": ["actorId", "contextId", "kind"], "properties": {"actorId": {"type": "string", "minLength": 1, "maxLength": 256}, "contextId": {"type": "string", "minLength": 1, "maxLength": 256}, "kind": {"enum": ["agent", "human"]}}},
     "artifact": {"type": "object", "additionalProperties": false, "required": ["name", "sha256", "sizeBytes"], "properties": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 200}, "sha256": {"$ref": "#/$defs/digest"}, "sizeBytes": {"type": "integer", "minimum": 1, "maximum": 1000000000}}},
-    "actionPin": {"type": "object", "additionalProperties": false, "required": ["path", "repository", "previousCommit", "targetCommit", "previousReleaseTag", "targetReleaseTag"], "properties": {"path": {"$ref": "#/$defs/path"}, "repository": {"$ref": "#/$defs/repository"}, "previousCommit": {"$ref": "#/$defs/gitOid"}, "targetCommit": {"$ref": "#/$defs/gitOid"}, "previousReleaseTag": {"$ref": "#/$defs/tag"}, "targetReleaseTag": {"$ref": "#/$defs/tag"}}}
+    "actionPin": {"type": "object", "additionalProperties": false, "required": ["path", "repository", "previousCommit", "targetCommit", "previousReleaseTag", "targetReleaseTag"], "properties": {"path": {"$ref": "#/$defs/workflowPath"}, "repository": {"$ref": "#/$defs/repository"}, "previousCommit": {"$ref": "#/$defs/gitOid"}, "targetCommit": {"$ref": "#/$defs/gitOid"}, "previousReleaseTag": {"$ref": "#/$defs/tag"}, "targetReleaseTag": {"$ref": "#/$defs/tag"}}}
   }
 }

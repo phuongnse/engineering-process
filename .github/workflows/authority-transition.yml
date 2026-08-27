@@ -62,11 +62,19 @@ jobs:
           PR_NUMBER: ${{ inputs.pull_request_number }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
-          test "$(gh pr view "$PR_NUMBER" --json baseRefOid --jq .baseRefOid)" = "$BASE_SHA"
-          test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$HEAD_SHA"
-          test "$(gh pr view "$PR_NUMBER" --json state --jq .state)" = OPEN
-          test "$WORKFLOW_SHA" = "$BASE_SHA"
+          current_base="$(git ls-remote origin refs/heads/main | cut -f1)"
+          gh pr view "$PR_NUMBER" --json number,baseRefOid,headRefOid,state \
+            > "$RUNNER_TEMP/transition-pr.json"
+          python verification/validate_protected_transition_callback.py \
+            --policy .process/protected-transition-policy.json \
+            --pull-request "$RUNNER_TEMP/transition-pr.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --pull-request-number "$PR_NUMBER" \
+            --source-base "$BASE_SHA" \
+            --candidate-head "$HEAD_SHA" \
+            --current-base "$current_base" \
+            --workflow-sha "$WORKFLOW_SHA" \
+            --event-name "$GITHUB_EVENT_NAME"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -167,6 +175,17 @@ jobs:
           BASE_SHA: ${{ inputs.source_base }}
         run: |
           "$RUNNER_TEMP/source-authority/bin/python" \
+            .transition-controller/verification/build_transition_validation_service.py \
+            --policy .transition-candidate/.process/protected-transition-policy.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-sha "$BASE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
+            --event "$GITHUB_EVENT_NAME" \
+            --head-sha "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/transition-validation-service.json"
+          "$RUNNER_TEMP/source-authority/bin/python" \
             ".transition-controller/$VERIFIER_ENTRYPOINT" \
             --controller-root .transition-controller \
             --candidate-root .transition-candidate \
@@ -179,6 +198,7 @@ jobs:
             --release-receipt "$RECEIPT_PATH" \
             --artifact-attestation "$ATTESTATION_PATH" \
             --protected-base "$BASE_SHA" \
+            --validation-service "$RUNNER_TEMP/transition-validation-service.json" \
             --output "$RUNNER_TEMP/authority-transition-validation.json"
           test "$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/authority-transition-validation.json", encoding="utf-8"))["headCheckpoint"])')" = "${{ inputs.candidate_head }}"
 
@@ -207,13 +227,23 @@ jobs:
           PR_NUMBER: ${{ inputs.pull_request_number }}
         run: |
           check_context="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkContext"])')"
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs" --jq ".check_runs[] | select(.name == \"$check_context\") | .conclusion")"
-          if test -n "$existing"; then
-            test "$existing" = success
+          check_app_id="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkAppId"])')"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+            > "$RUNNER_TEMP/head-checks.json"
+          existing_count="$(jq --arg name "$check_context" --argjson app "$check_app_id" \
+            '[.check_runs[] | select(.name == $name and .app.id == $app)] | length' \
+            "$RUNNER_TEMP/head-checks.json")"
+          if test "$existing_count" = 1; then
+            test "$(jq -r --arg name "$check_context" --argjson app "$check_app_id" \
+              '.check_runs[] | select(.name == $name and .app.id == $app) | .conclusion' \
+              "$RUNNER_TEMP/head-checks.json")" = success
           else
+            test "$existing_count" = 0
             gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
               -f name="$check_context" -f head_sha="$HEAD_SHA" \
-              -f status=completed -f conclusion=success >/dev/null
+              -f status=completed -f conclusion=success \
+              > "$RUNNER_TEMP/created-transition-check.json"
+            test "$(jq -r .app.id "$RUNNER_TEMP/created-transition-check.json")" = "$check_app_id"
           fi
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash \
             --match-head-commit "$HEAD_SHA"

@@ -7,7 +7,7 @@
   "target": {"version": "0.9.0", "tag": "v0.9.0", "commit": "1111111111111111111111111111111111111111", "processDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
   "intentPath": ".process/bootstrap-adoptions/0.9.0.json",
   "verifier": {"repository": "owner/engineering-process", "commit": "0000000000000000000000000000000000000000", "entrypoint": "verification/validate_authority_transition.py"},
-  "workflow": {"repository": "owner/engineering-process", "path": ".github/workflows/authority-transition.yml", "checkContext": "authority-transition-completion"},
+  "workflow": {"repository": "owner/engineering-process", "path": ".github/workflows/authority-transition.yml", "checkContext": "authority-transition-completion", "checkAppId": 12345, "consumptionContext": "authority-transition-consumption"},
   "merge": {"method": "protected-auto-merge", "requireCurrentBase": true, "requireExactHead": true, "requireRequiredChecks": true},
   "authorizationTransport": {"kind": "host-callback-gzip-base64", "evidenceKind": "bootstrap-authorization", "maxEncodedBytes": 60000},
   "singleUse": true,

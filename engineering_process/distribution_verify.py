@@ -60,6 +60,7 @@ REQUIRED_SUFFIXES = {
     "schemas/plan-decision-review.schema.json",
     "schemas/protected-transition-policy.schema.json",
     "examples/protected-transition-policy.json",
+    "examples/release-authority-transition.json",
     "examples/plan-decision-review-assignment.json",
     "examples/plan-decision-review.json",
     "schemas/release-change.schema.json",

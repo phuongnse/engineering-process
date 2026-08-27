@@ -236,6 +236,37 @@ class AdoptionTests(unittest.TestCase):
                 source, (root / ".process" / "project.json").read_bytes()
             )
 
+    def test_transition_rollback_probe_observes_the_real_transaction_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = self.prepare_project(root)
+            lock_path = root / ".process" / "process.lock"
+            previous = read_json(lock_path)
+            previous["process"]["version"] = "0.1.0"
+            lock_path.write_text(
+                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
+            )
+            _, project_before, _ = self.prepare_project_migration(root)
+            runner = root / ".process" / "adopt-process.py"
+            runner_before = runner.read_bytes()
+            lock_before = lock_path.read_bytes()
+
+            with self.assertRaisesRegex(
+                ContractError, "controlled authority-transition rollback probe"
+            ):
+                apply_adoption(
+                    root,
+                    PROCESS_ROOT,
+                    requirements,
+                    rollback_probe=True,
+                )
+
+            self.assertEqual(lock_before, lock_path.read_bytes())
+            self.assertEqual(
+                project_before, (root / ".process" / "project.json").read_bytes()
+            )
+            self.assertEqual(runner_before, runner.read_bytes())
+
     def test_apply_rejects_invalid_target_digest_before_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

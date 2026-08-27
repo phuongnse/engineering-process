@@ -5,9 +5,14 @@ import json
 import os
 import re
 import stat
+import sys
+import tempfile
+import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 from .contracts import (
     ContractError,
@@ -24,6 +29,7 @@ from .contracts import (
     read_json,
     validate_process_lock,
 )
+from .bounded_process import run_bounded_process
 from .distribution import distribution_digest
 from .git import run_git
 from .runner import source_state
@@ -37,6 +43,8 @@ POLICY_KIND = "engineering-process-protected-transition-policy"
 
 MAX_TRANSITION_PATHS = 512
 MAX_TRANSITION_ARTIFACTS = 16
+MATERIALIZATION_TIMEOUT_SECONDS = 300
+MATERIALIZATION_OUTPUT_BYTES = 128_000
 
 
 def _digest(value: Any, path: str) -> str:
@@ -126,7 +134,6 @@ def _artifact_bindings(value: Any, path: str) -> list[dict[str, Any]]:
             f"{path}: must contain 2 to {MAX_TRANSITION_ARTIFACTS} artifacts"
         )
     result: list[dict[str, Any]] = []
-    names: list[str] = []
     for index, raw in enumerate(value):
         item_path = f"{path}[{index}]"
         item = _object(raw, item_path)
@@ -139,7 +146,6 @@ def _artifact_bindings(value: Any, path: str) -> list[dict[str, Any]]:
         size = item["sizeBytes"]
         if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= 1_000_000_000:
             raise ContractError(f"{item_path}.sizeBytes: invalid bounded size")
-        names.append(name)
         result.append(
             {
                 "name": name,
@@ -147,8 +153,8 @@ def _artifact_bindings(value: Any, path: str) -> list[dict[str, Any]]:
                 "sizeBytes": size,
             }
         )
-    if names != sorted(set(names)):
-        raise ContractError(f"{path}: must be sorted by name and unique")
+    if len(result) != len({json.dumps(item, sort_keys=True) for item in result}):
+        raise ContractError(f"{path}: must contain unique artifacts")
     return result
 
 
@@ -156,7 +162,6 @@ def _action_pin_changes(value: Any, path: str) -> list[dict[str, str]]:
     if not isinstance(value, list) or len(value) > 256:
         raise ContractError(f"{path}: must contain at most 256 action-pin changes")
     result: list[dict[str, str]] = []
-    identities: list[tuple[str, str]] = []
     for index, raw in enumerate(value):
         item_path = f"{path}[{index}]"
         item = _object(raw, item_path)
@@ -173,15 +178,14 @@ def _action_pin_changes(value: Any, path: str) -> list[dict[str, str]]:
             path=item_path,
         )
         relative = _relative_path(item["path"], f"{item_path}.path")
-        if not relative.startswith(".github/workflows/") or not relative.endswith(
-            (".yml", ".yaml")
+        if (
+            PurePosixPath(relative).parent != PurePosixPath(".github/workflows")
+            or not relative.endswith((".yml", ".yaml"))
         ):
             raise ContractError(f"{item_path}.path: must name a workflow file")
         repository = _repository(item["repository"], f"{item_path}.repository")
         previous = _git_oid(item["previousCommit"], f"{item_path}.previousCommit")
         target = _git_oid(item["targetCommit"], f"{item_path}.targetCommit")
-        if previous == target:
-            raise ContractError(f"{item_path}: action pin must change commit")
         previous_tag = _string(
             item["previousReleaseTag"],
             f"{item_path}.previousReleaseTag",
@@ -197,7 +201,6 @@ def _action_pin_changes(value: Any, path: str) -> list[dict[str, str]]:
             target_tag,
         ) is None:
             raise ContractError(f"{item_path}: action release tags must be final SemVer tags")
-        identities.append((relative, repository))
         result.append(
             {
                 "path": relative,
@@ -208,8 +211,8 @@ def _action_pin_changes(value: Any, path: str) -> list[dict[str, str]]:
                 "targetReleaseTag": target_tag,
             }
         )
-    if identities != sorted(set(identities)):
-        raise ContractError(f"{path}: must be sorted by path/repository and unique")
+    if len(result) != len({json.dumps(item, sort_keys=True) for item in result}):
+        raise ContractError(f"{path}: must contain unique action-pin entries")
     return result
 
 
@@ -276,10 +279,6 @@ def validate_authority_transition_request(
         path=target_path,
     )
     target_version = _version(target["version"], f"{target_path}.version")
-    if target["tag"] != f"v{target_version}":
-        raise ContractError(f"{target_path}.tag: must be v{target_version}")
-    if target_version == source_authority["version"]:
-        raise ContractError(f"{target_path}.version: must differ from source authority")
 
     candidate_path = f"{path}.candidate"
     candidate = _object(value["candidate"], candidate_path)
@@ -305,9 +304,9 @@ def validate_authority_transition_request(
         pattern=PROFILE_PATTERN,
         maximum=256,
     )
-    if not selected_skills or selected_skills != sorted(set(selected_skills)):
+    if not selected_skills or len(selected_skills) != len(set(selected_skills)):
         raise ContractError(
-            f"{candidate_path}.selectedSkills: must be non-empty, sorted, and unique"
+            f"{candidate_path}.selectedSkills: must be non-empty and unique"
         )
     changed_paths = [
         _relative_path(item, f"{candidate_path}.expectedChangedPaths[{index}]")
@@ -316,10 +315,10 @@ def validate_authority_transition_request(
     if (
         not changed_paths
         or len(changed_paths) > MAX_TRANSITION_PATHS
-        or changed_paths != sorted(set(changed_paths))
+        or len(changed_paths) != len(set(changed_paths))
     ):
         raise ContractError(
-            f"{candidate_path}.expectedChangedPaths: must be non-empty, sorted, unique, and bounded"
+            f"{candidate_path}.expectedChangedPaths: must be non-empty, unique, and bounded"
         )
     migration_digest = candidate["projectMigrationSha256"]
     if migration_digest is not None:
@@ -401,6 +400,66 @@ def validate_authority_transition_request(
     }
 
 
+def _require_candidate_semantics(
+    candidate: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    *,
+    path: str,
+    artifacts_path: str,
+) -> None:
+    artifact_names = [item["name"] for item in artifacts]
+    if artifact_names != sorted(set(artifact_names)):
+        raise ContractError(f"{artifacts_path}: must be sorted by name and unique")
+    selected = candidate["selectedSkills"]
+    if selected != sorted(selected):
+        raise ContractError(f"{path}.selectedSkills: must use canonical order")
+    changed = candidate["expectedChangedPaths"]
+    if changed != sorted(changed):
+        raise ContractError(f"{path}.expectedChangedPaths: must use canonical order")
+    action_pins = candidate["actionPins"]
+    identities: list[tuple[str, str]] = []
+    for index, item in enumerate(action_pins):
+        item_path = f"{path}.actionPins[{index}]"
+        if (
+            PurePosixPath(item["path"]).parent
+            != PurePosixPath(".github/workflows")
+            or not item["path"].endswith((".yml", ".yaml"))
+        ):
+            raise ContractError(f"{item_path}.path: must name a workflow file")
+        if item["previousCommit"] == item["targetCommit"]:
+            raise ContractError(f"{item_path}: action pin must change commit")
+        identities.append((item["path"], item["repository"]))
+    if len(identities) != len(set(identities)) or identities != sorted(identities):
+        raise ContractError(
+            f"{path}.actionPins: must use unique canonical path/repository order"
+        )
+
+
+def require_authority_transition_request_semantics(
+    request: dict[str, Any], *, path: str = "authority-transition-request"
+) -> None:
+    source = request["source"]
+    target = request["target"]
+    if target["tag"] != f"v{target['version']}":
+        raise ContractError(f"{path}.target.tag: must be v{target['version']}")
+    if target["version"] == source["authority"]["version"]:
+        raise ContractError(
+            f"{path}.target.version: must differ from source authority"
+        )
+    if target["processDigest"] == source["authority"]["digest"]:
+        raise ContractError(
+            f"{path}.target.processDigest: must differ from source authority"
+        )
+    if target["commit"] == source["checkpoint"]:
+        raise ContractError(f"{path}.target.commit: must differ from source checkpoint")
+    _require_candidate_semantics(
+        request["candidate"],
+        target["artifacts"],
+        path=f"{path}.candidate",
+        artifacts_path=f"{path}.target.artifacts",
+    )
+
+
 def validate_authority_transition_evidence(
     document: Any, path: str = "authority-transition-evidence"
 ) -> dict[str, Any]:
@@ -456,8 +515,8 @@ def validate_authority_transition_evidence(
         _relative_path(item, f"{candidate_path}.changedPaths[{index}]")
         for index, item in enumerate(candidate["changedPaths"])
     ] if isinstance(candidate["changedPaths"], list) else []
-    if changed_paths != sorted(set(changed_paths)) or len(changed_paths) > MAX_TRANSITION_PATHS:
-        raise ContractError(f"{candidate_path}.changedPaths: must be sorted, unique, and bounded")
+    if len(changed_paths) != len(set(changed_paths)) or len(changed_paths) > MAX_TRANSITION_PATHS:
+        raise ContractError(f"{candidate_path}.changedPaths: must be unique and bounded")
 
     bindings_path = f"{path}.bindings"
     bindings = _object(value["bindings"], bindings_path)
@@ -483,20 +542,52 @@ def validate_authority_transition_evidence(
     materialization = _object(value["materialization"], materialization_path)
     _exact_keys(
         materialization,
-        required={"status", "finalStateChecks", "issues"},
+        required={
+            "status",
+            "applyTree",
+            "idempotentTree",
+            "checkRuns",
+            "rollback",
+            "issues",
+        },
         path=materialization_path,
     )
     issues = materialization["issues"]
     if not isinstance(issues, list) or any(not isinstance(item, str) for item in issues):
         raise ContractError(f"{materialization_path}.issues: must be an array of strings")
+    rollback_path = f"{materialization_path}.rollback"
+    rollback = _object(materialization["rollback"], rollback_path)
+    _exact_keys(
+        rollback,
+        required={"status", "beforeTree", "afterTree", "probe"},
+        path=rollback_path,
+    )
+    rollback_before = _git_oid(
+        rollback["beforeTree"], f"{rollback_path}.beforeTree"
+    )
+    rollback_after = _git_oid(
+        rollback["afterTree"], f"{rollback_path}.afterTree"
+    )
     if (
         materialization["status"] != "passed"
-        or materialization["finalStateChecks"] != 2
+        or materialization["checkRuns"] != 2
+        or rollback.get("status") != "restored"
+        or rollback.get("probe") != "after-authority-write"
         or issues
     ):
         raise ContractError(
-            f"{materialization_path}: requires two clean final-state checks"
+            f"{materialization_path}: requires observed apply/check/idempotence and rollback"
         )
+    apply_tree = _git_oid(
+        materialization["applyTree"], f"{materialization_path}.applyTree"
+    )
+    idempotent_tree = _git_oid(
+        materialization["idempotentTree"],
+        f"{materialization_path}.idempotentTree",
+    )
+    candidate_tree = _git_oid(
+        candidate["tree"], f"{candidate_path}.tree"
+    )
 
     return {
         "schemaVersion": 1,
@@ -510,7 +601,7 @@ def validate_authority_transition_evidence(
         "candidate": {
             "baseCheckpoint": _git_oid(candidate["baseCheckpoint"], f"{candidate_path}.baseCheckpoint"),
             "checkpoint": _git_oid(candidate["checkpoint"], f"{candidate_path}.checkpoint"),
-            "tree": _git_oid(candidate["tree"], f"{candidate_path}.tree"),
+            "tree": candidate_tree,
             "workspaceFingerprint": _digest(candidate["workspaceFingerprint"], f"{candidate_path}.workspaceFingerprint"),
             "workingTreeDirty": False,
             "changedPaths": changed_paths,
@@ -518,12 +609,45 @@ def validate_authority_transition_evidence(
         "bindings": validated_bindings,
         "materialization": {
             "status": "passed",
-            "finalStateChecks": 2,
+            "applyTree": apply_tree,
+            "idempotentTree": idempotent_tree,
+            "checkRuns": 2,
+            "rollback": {
+                "status": "restored",
+                "beforeTree": rollback_before,
+                "afterTree": rollback_after,
+                "probe": "after-authority-write",
+            },
             "issues": [],
         },
         "generatedBy": _actor(value["generatedBy"], f"{path}.generatedBy"),
         "generatedAt": _timestamp(value["generatedAt"], f"{path}.generatedAt"),
     }
+
+
+def require_authority_transition_evidence_semantics(
+    evidence: dict[str, Any], *, path: str = "authority-transition-evidence"
+) -> None:
+    candidate = evidence["candidate"]
+    materialization = evidence["materialization"]
+    rollback = materialization["rollback"]
+    if candidate["changedPaths"] != sorted(candidate["changedPaths"]):
+        raise ContractError(f"{path}.candidate.changedPaths: must use canonical order")
+    if evidence["sourceAuthority"] == evidence["targetAuthority"]:
+        raise ContractError(f"{path}: source and target authorities must differ")
+    if candidate["baseCheckpoint"] == candidate["checkpoint"]:
+        raise ContractError(f"{path}.candidate: checkpoint must advance from base")
+    if (
+        materialization["applyTree"] != candidate["tree"]
+        or materialization["idempotentTree"] != candidate["tree"]
+    ):
+        raise ContractError(
+            f"{path}.materialization: apply/idempotent trees must equal candidate tree"
+        )
+    if rollback["beforeTree"] != rollback["afterTree"]:
+        raise ContractError(
+            f"{path}.materialization.rollback: input tree was not restored"
+        )
 
 
 def _bootstrap_common(value: dict[str, Any], path: str, *, kind: str) -> dict[str, Any]:
@@ -557,8 +681,6 @@ def validate_bootstrap_adoption_intent(
         path=target_path,
     )
     target_version = _version(target["version"], f"{target_path}.version")
-    if target["tag"] != f"v{target_version}":
-        raise ContractError(f"{target_path}.tag: must be v{target_version}")
     candidate_path = f"{path}.candidate"
     candidate = _object(value["candidate"], candidate_path)
     _exact_keys(
@@ -567,10 +689,10 @@ def validate_bootstrap_adoption_intent(
         path=candidate_path,
     )
     selected = _string_list(candidate["selectedSkills"], f"{candidate_path}.selectedSkills", pattern=PROFILE_PATTERN, maximum=256)
-    if not selected or selected != sorted(set(selected)):
-        raise ContractError(f"{candidate_path}.selectedSkills: must be non-empty, sorted, and unique")
+    if not selected or len(selected) != len(set(selected)):
+        raise ContractError(f"{candidate_path}.selectedSkills: must be non-empty and unique")
     changed = [_relative_path(item, f"{candidate_path}.expectedChangedPaths[{index}]") for index, item in enumerate(candidate["expectedChangedPaths"])] if isinstance(candidate["expectedChangedPaths"], list) else []
-    if not changed or changed != sorted(set(changed)) or len(changed) > MAX_TRANSITION_PATHS:
+    if not changed or len(changed) != len(set(changed)) or len(changed) > MAX_TRANSITION_PATHS:
         raise ContractError(f"{candidate_path}.expectedChangedPaths: invalid")
     migration = candidate["projectMigrationSha256"]
     if migration is not None:
@@ -608,6 +730,28 @@ def validate_bootstrap_adoption_intent(
     }
 
 
+def require_bootstrap_adoption_intent_semantics(
+    intent: dict[str, Any], *, path: str = "bootstrap-adoption-intent"
+) -> None:
+    target = intent["targetRelease"]
+    if target["tag"] != f"v{target['version']}":
+        raise ContractError(f"{path}.targetRelease.tag: must be v{target['version']}")
+    if target["version"] == intent["sourceAuthority"]["version"]:
+        raise ContractError(
+            f"{path}.targetRelease.version: must differ from source authority"
+        )
+    if target["processDigest"] == intent["sourceAuthority"]["digest"]:
+        raise ContractError(
+            f"{path}.targetRelease.processDigest: must differ from source authority"
+        )
+    _require_candidate_semantics(
+        intent["candidate"],
+        target["artifacts"],
+        path=f"{path}.candidate",
+        artifacts_path=f"{path}.targetRelease.artifacts",
+    )
+
+
 def validate_protected_transition_policy(
     document: Any, path: str = "protected-transition-policy"
 ) -> dict[str, Any]:
@@ -626,14 +770,29 @@ def validate_protected_transition_policy(
     target = _object(value["target"], target_path)
     _exact_keys(target, required={"version", "tag", "commit", "processDigest"}, path=target_path)
     target_version = _version(target["version"], f"{target_path}.version")
-    if target["tag"] != f"v{target_version}":
-        raise ContractError(f"{target_path}.tag: must be v{target_version}")
     verifier_path = f"{path}.verifier"
     verifier = _object(value["verifier"], verifier_path)
     _exact_keys(verifier, required={"repository", "commit", "entrypoint"}, path=verifier_path)
     workflow_path = f"{path}.workflow"
     workflow = _object(value["workflow"], workflow_path)
-    _exact_keys(workflow, required={"repository", "path", "checkContext"}, path=workflow_path)
+    _exact_keys(
+        workflow,
+        required={
+            "repository",
+            "path",
+            "checkContext",
+            "checkAppId",
+            "consumptionContext",
+        },
+        path=workflow_path,
+    )
+    check_app_id = workflow["checkAppId"]
+    if (
+        isinstance(check_app_id, bool)
+        or not isinstance(check_app_id, int)
+        or not 1 <= check_app_id <= 9_223_372_036_854_775_807
+    ):
+        raise ContractError(f"{workflow_path}.checkAppId: invalid GitHub App id")
     merge_path = f"{path}.merge"
     merge = _object(value["merge"], merge_path)
     _exact_keys(merge, required={"method", "requireCurrentBase", "requireExactHead", "requireRequiredChecks"}, path=merge_path)
@@ -662,8 +821,6 @@ def validate_protected_transition_policy(
     if value["singleUse"] is not True or value["postMergeMutation"] is not False:
         raise ContractError(f"{path}: must be single-use with no post-merge mutation")
     verifier_commit = _git_oid(verifier["commit"], f"{verifier_path}.commit")
-    if verifier_commit == target["commit"]:
-        raise ContractError(f"{verifier_path}.commit: target release cannot be its own verifier")
     return {
         "schemaVersion": 1,
         "kind": POLICY_KIND,
@@ -685,12 +842,232 @@ def validate_protected_transition_policy(
             "repository": _repository(workflow["repository"], f"{workflow_path}.repository"),
             "path": _relative_path(workflow["path"], f"{workflow_path}.path"),
             "checkContext": _string(workflow["checkContext"], f"{workflow_path}.checkContext", max_length=128),
+            "checkAppId": check_app_id,
+            "consumptionContext": _string(
+                workflow["consumptionContext"],
+                f"{workflow_path}.consumptionContext",
+                max_length=128,
+            ),
         },
         "merge": merge,
         "authorizationTransport": transport,
         "singleUse": True,
         "postMergeMutation": False,
         "expiresAt": _timestamp(value["expiresAt"], f"{path}.expiresAt"),
+    }
+
+
+def require_protected_transition_policy_semantics(
+    policy: dict[str, Any], *, path: str = "protected-transition-policy"
+) -> None:
+    target = policy["target"]
+    if target["tag"] != f"v{target['version']}":
+        raise ContractError(f"{path}.target.tag: must be v{target['version']}")
+    if target["version"] == policy["sourceAuthority"]["version"]:
+        raise ContractError(f"{path}.target.version: must differ from source authority")
+    if target["processDigest"] == policy["sourceAuthority"]["digest"]:
+        raise ContractError(f"{path}.target.processDigest: must differ from source authority")
+    if policy["verifier"]["commit"] == target["commit"]:
+        raise ContractError(
+            f"{path}.verifier.commit: target release cannot be its own verifier"
+        )
+    if (
+        policy["verifier"]["repository"] != policy["repository"]
+        or policy["workflow"]["repository"] != policy["repository"]
+    ):
+        raise ContractError(f"{path}: verifier and workflow repositories must match policy")
+
+
+def _service_decimal(value: Any, path: str) -> str:
+    text = _string(value, path, max_length=64)
+    if re.fullmatch(r"[1-9][0-9]{0,63}", text) is None:
+        raise ContractError(f"{path}: invalid service id")
+    return text
+
+
+def _service_attempt(value: Any, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1000:
+        raise ContractError(f"{path}: invalid run attempt")
+    return value
+
+
+def _service_url(value: Any, path: str, *, run_id: str, attempt: int) -> str:
+    url = _string(value, path, max_length=2_048)
+    if not url.startswith("https://") or not url.endswith(
+        f"/actions/runs/{run_id}/attempts/{attempt}"
+    ):
+        raise ContractError(f"{path}: does not bind the run id and attempt")
+    return url
+
+
+def _validate_transition_validation_service(
+    document: Any,
+    *,
+    policy: dict[str, Any],
+    protected_base: str,
+) -> dict[str, Any]:
+    path = "authority-transition validation service"
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "repository",
+            "workflowPath",
+            "workflowSha",
+            "runId",
+            "runAttempt",
+            "runUrl",
+            "event",
+            "headSha",
+            "checkContext",
+            "checkAppId",
+        },
+        path=path,
+    )
+    if (
+        value["schemaVersion"] != 1
+        or value["kind"]
+        != "engineering-process-transition-validation-service"
+    ):
+        raise ContractError(f"{path}: invalid schemaVersion or kind")
+    run_id = _service_decimal(value["runId"], f"{path}.runId")
+    run_attempt = _service_attempt(value["runAttempt"], f"{path}.runAttempt")
+    service = {
+        "schemaVersion": 1,
+        "kind": "engineering-process-transition-validation-service",
+        "repository": _repository(value["repository"], f"{path}.repository"),
+        "workflowPath": _relative_path(
+            value["workflowPath"], f"{path}.workflowPath"
+        ),
+        "workflowSha": _git_oid(value["workflowSha"], f"{path}.workflowSha"),
+        "runId": run_id,
+        "runAttempt": run_attempt,
+        "runUrl": _service_url(
+            value["runUrl"], f"{path}.runUrl", run_id=run_id, attempt=run_attempt
+        ),
+        "event": _string(value["event"], f"{path}.event", max_length=64),
+        "headSha": _git_oid(value["headSha"], f"{path}.headSha"),
+        "checkContext": _string(
+            value["checkContext"], f"{path}.checkContext", max_length=128
+        ),
+        "checkAppId": value["checkAppId"],
+    }
+    if (
+        service["repository"] != policy["repository"]
+        or service["workflowPath"] != policy["workflow"]["path"]
+        or service["workflowSha"] != protected_base
+        or service["event"] != "workflow_dispatch"
+        or service["headSha"] != protected_base
+        or service["checkContext"] != policy["workflow"]["checkContext"]
+        or service["checkAppId"] != policy["workflow"]["checkAppId"]
+    ):
+        raise ContractError(
+            "authority-transition validation service does not match protected policy"
+        )
+    return service
+
+
+def _validate_transition_consumption_service(
+    document: Any,
+    *,
+    expected: Any,
+    validation: dict[str, Any],
+    artifact: dict[str, Any],
+) -> dict[str, Any]:
+    path = "authority-transition consumption service"
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "repository",
+            "workflowPath",
+            "workflowSha",
+            "runId",
+            "runAttempt",
+            "runUrl",
+            "event",
+            "headSha",
+            "runStatus",
+            "runConclusion",
+            "checkContext",
+            "checkAppId",
+            "checkRunId",
+            "checkHeadSha",
+            "checkConclusion",
+        },
+        path=path,
+    )
+    if (
+        value["schemaVersion"] != 1
+        or value["kind"]
+        != "engineering-process-transition-consumption-service"
+        or not isinstance(expected, dict)
+    ):
+        raise ContractError(f"{path}: invalid schemaVersion, kind, or expected service")
+    common = {
+        key: value[key]
+        for key in (
+            "repository",
+            "workflowPath",
+            "workflowSha",
+            "runId",
+            "runAttempt",
+            "runUrl",
+            "event",
+            "headSha",
+            "checkContext",
+            "checkAppId",
+        )
+    }
+    expected_common = {
+        key: expected[key]
+        for key in common
+    }
+    if common != expected_common:
+        raise ContractError(
+            "authority-transition consumption service does not match validation service"
+        )
+    if (
+        artifact.get("runId") != expected["runId"]
+        or artifact.get("runAttempt") != expected["runAttempt"]
+        or artifact.get("runUrl") != expected["runUrl"]
+        or artifact.get("name")
+        != f"authority-transition-validation-{validation['headCheckpoint']}"
+    ):
+        raise ContractError(
+            "authority-transition validation artifact is not owned by the validation run"
+        )
+    status = _string(value["runStatus"], f"{path}.runStatus", max_length=32)
+    conclusion = value["runConclusion"]
+    if not (
+        (status == "in_progress" and conclusion is None)
+        or (status == "completed" and conclusion == "success")
+    ):
+        raise ContractError(f"{path}: validation workflow is not successful or active")
+    check_run_id = _service_decimal(value["checkRunId"], f"{path}.checkRunId")
+    check_head = _git_oid(value["checkHeadSha"], f"{path}.checkHeadSha")
+    if (
+        value["checkConclusion"] != "success"
+        or check_head != validation["headCheckpoint"]
+        or value["checkContext"] != validation["checkContext"]
+        or value["checkAppId"] != expected["checkAppId"]
+    ):
+        raise ContractError(
+            "authority-transition completion check is not policy-authenticated"
+        )
+    return {
+        "schemaVersion": 1,
+        "kind": "engineering-process-transition-consumption-service",
+        **common,
+        "runStatus": status,
+        "runConclusion": conclusion,
+        "checkRunId": check_run_id,
+        "checkHeadSha": check_head,
+        "checkConclusion": "success",
     }
 
 
@@ -703,7 +1080,8 @@ def validate_bootstrap_adoption_consumption(
         required={
             "schemaVersion", "kind", "project", "repository", "policySha256",
             "intentSha256", "authorizationSha256", "baseCheckpoint", "headCheckpoint",
-            "headTree", "mergeCheckpoint", "checkContext", "validationArtifact", "consumedAt"
+            "headTree", "mergeCheckpoint", "checkContext", "validationArtifact",
+            "validationService", "consumedAt"
         },
         path=path,
     )
@@ -725,6 +1103,67 @@ def validate_bootstrap_adoption_consumption(
     run_url = _string(validation["runUrl"], f"{validation_path}.runUrl", max_length=2048)
     if not run_url.startswith("https://"):
         raise ContractError(f"{validation_path}.runUrl: must use HTTPS")
+    service_path = f"{path}.validationService"
+    service = _object(value["validationService"], service_path)
+    _exact_keys(
+        service,
+        required={
+            "schemaVersion", "kind", "repository", "workflowPath", "workflowSha",
+            "runId", "runAttempt", "runUrl", "event", "headSha", "runStatus",
+            "runConclusion", "checkContext", "checkAppId", "checkRunId",
+            "checkHeadSha", "checkConclusion",
+        },
+        path=service_path,
+    )
+    if (
+        service["schemaVersion"] != 1
+        or service["kind"]
+        != "engineering-process-transition-consumption-service"
+    ):
+        raise ContractError(f"{service_path}: invalid schemaVersion or kind")
+    service_run_id = _service_decimal(service["runId"], f"{service_path}.runId")
+    service_attempt = _service_attempt(
+        service["runAttempt"], f"{service_path}.runAttempt"
+    )
+    service_run_url = _string(
+        service["runUrl"], f"{service_path}.runUrl", max_length=2_048
+    )
+    if not service_run_url.startswith("https://"):
+        raise ContractError(f"{service_path}.runUrl: must use HTTPS")
+    service_status = _string(
+        service["runStatus"], f"{service_path}.runStatus", max_length=32
+    )
+    if service_status not in {"in_progress", "completed"} or service[
+        "runConclusion"
+    ] not in {None, "success"}:
+        raise ContractError(f"{service_path}: invalid validation run state fields")
+    check_app_id = service["checkAppId"]
+    if (
+        isinstance(check_app_id, bool)
+        or not isinstance(check_app_id, int)
+        or not 1 <= check_app_id <= 9_223_372_036_854_775_807
+    ):
+        raise ContractError(f"{service_path}.checkAppId: invalid GitHub App id")
+    service_repository = _repository(
+        service["repository"], f"{service_path}.repository"
+    )
+    service_workflow_path = _relative_path(
+        service["workflowPath"], f"{service_path}.workflowPath"
+    )
+    service_workflow_sha = _git_oid(
+        service["workflowSha"], f"{service_path}.workflowSha"
+    )
+    service_head = _git_oid(service["headSha"], f"{service_path}.headSha")
+    service_check_head = _git_oid(
+        service["checkHeadSha"], f"{service_path}.checkHeadSha"
+    )
+    service_check_context = _string(
+        service["checkContext"], f"{service_path}.checkContext", max_length=128
+    )
+    if service["event"] != "workflow_dispatch" or service[
+        "checkConclusion"
+    ] != "success":
+        raise ContractError(f"{service_path}: invalid event or check conclusion")
     return {
         "schemaVersion": 1,
         "kind": BOOTSTRAP_CONSUMPTION_KIND,
@@ -745,8 +1184,69 @@ def validate_bootstrap_adoption_consumption(
             "runAttempt": run_attempt,
             "runUrl": run_url,
         },
+        "validationService": {
+            "schemaVersion": 1,
+            "kind": "engineering-process-transition-consumption-service",
+            "repository": service_repository,
+            "workflowPath": service_workflow_path,
+            "workflowSha": service_workflow_sha,
+            "runId": service_run_id,
+            "runAttempt": service_attempt,
+            "runUrl": service_run_url,
+            "event": "workflow_dispatch",
+            "headSha": service_head,
+            "runStatus": service_status,
+            "runConclusion": service["runConclusion"],
+            "checkContext": service_check_context,
+            "checkAppId": check_app_id,
+            "checkRunId": _service_decimal(
+                service["checkRunId"], f"{service_path}.checkRunId"
+            ),
+            "checkHeadSha": service_check_head,
+            "checkConclusion": "success",
+        },
         "consumedAt": _timestamp(value["consumedAt"], f"{path}.consumedAt"),
     }
+
+
+def require_bootstrap_adoption_consumption_semantics(
+    consumption: dict[str, Any], *, path: str = "bootstrap-adoption-consumption"
+) -> None:
+    artifact = consumption["validationArtifact"]
+    service = consumption["validationService"]
+    if not service["runUrl"].endswith(
+        f"/actions/runs/{service['runId']}/attempts/{service['runAttempt']}"
+    ):
+        raise ContractError(f"{path}.validationService.runUrl: run binding mismatch")
+    if not (
+        (service["runStatus"] == "in_progress" and service["runConclusion"] is None)
+        or (
+            service["runStatus"] == "completed"
+            and service["runConclusion"] == "success"
+        )
+    ):
+        raise ContractError(f"{path}.validationService: invalid run state relation")
+    if (
+        service["repository"] != consumption["repository"]
+        or service["workflowSha"] != consumption["baseCheckpoint"]
+        or service["headSha"] != consumption["baseCheckpoint"]
+        or service["checkContext"] != consumption["checkContext"]
+        or service["checkHeadSha"] != consumption["headCheckpoint"]
+        or artifact["runId"] != service["runId"]
+        or artifact["runAttempt"] != service["runAttempt"]
+        or artifact["runUrl"] != service["runUrl"]
+        or artifact["name"]
+        != f"authority-transition-validation-{consumption['headCheckpoint']}"
+    ):
+        raise ContractError(f"{path}: service, artifact, and transition bindings differ")
+    if len(
+        {
+            consumption["baseCheckpoint"],
+            consumption["headCheckpoint"],
+            consumption["mergeCheckpoint"],
+        }
+    ) != 3:
+        raise ContractError(f"{path}: base, head, and merge checkpoints must differ")
 
 
 def _file_digest(path: Path, *, maximum: int = 1_000_000) -> str:
@@ -760,6 +1260,40 @@ def _git_output(root: Path, arguments: list[str], *, label: str, maximum: int = 
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise ContractError(f"{label} failed" + (f": {detail}" if detail else ""))
     return result.stdout
+
+
+def _checkout_repository(root: Path) -> str:
+    raw = _git_output(
+        root,
+        ["remote", "get-url", "origin"],
+        label="resolve authority-transition target repository",
+        maximum=2_048,
+    )
+    try:
+        remote = raw.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise ContractError(
+            "authority-transition target repository URL must be UTF-8"
+        ) from error
+    if not remote or "\x00" in remote:
+        raise ContractError("authority-transition target repository URL is invalid")
+    scp = re.fullmatch(r"[^@\s]+@[^:\s]+:(?P<path>[^\s]+)", remote)
+    if scp is not None:
+        path = scp.group("path")
+    else:
+        parsed = urlparse(remote)
+        if parsed.scheme not in {"https", "ssh"} or not parsed.netloc:
+            raise ContractError(
+                "authority-transition target repository must use an authenticated remote URL"
+            )
+        path = parsed.path.lstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if REPOSITORY_PATTERN.fullmatch(path) is None:
+        raise ContractError(
+            "authority-transition target repository URL has no valid repository identity"
+        )
+    return path
 
 
 def _installed_package_root(process_root: Path) -> Path:
@@ -836,6 +1370,274 @@ def inspect_transition_candidate(
     }
 
 
+def _target_authority_command(target_process_root: Path) -> list[str]:
+    target_process_root = target_process_root.resolve(strict=True)
+    source_entrypoint = target_process_root / "processctl.py"
+    source_package = target_process_root / "engineering_process"
+    if (
+        source_entrypoint.is_file()
+        and not source_entrypoint.is_symlink()
+        and source_package.is_dir()
+        and not source_package.is_symlink()
+    ):
+        return [sys.executable, str(source_entrypoint)]
+    candidates = (
+        target_process_root / "Scripts" / "python.exe",
+        target_process_root / "bin" / "python",
+    )
+    available = [path for path in candidates if path.exists() and path.is_file()]
+    if len(available) != 1:
+        raise ContractError("cannot resolve one exact target authority interpreter")
+    return [str(available[0]), "-I", "-m", "engineering_process"]
+
+
+def _target_environment(temporary_root: Path) -> dict[str, str]:
+    environment: dict[str, str] = {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+        "TEMP": str(temporary_root),
+        "TMP": str(temporary_root),
+        "TMPDIR": str(temporary_root),
+    }
+    for name in ("COMSPEC", "PATHEXT", "SystemRoot", "WINDIR"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    return environment
+
+
+def _run_target_adoption(
+    target_process_root: Path,
+    workspace: Path,
+    *,
+    action: str,
+    deadline: float,
+    rollback_probe: bool = False,
+) -> dict[str, Any] | None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ContractError("authority-transition materialization exceeded its time budget")
+    command = [
+        *_target_authority_command(target_process_root),
+        "adoption",
+        action,
+        "--project-root",
+        str(workspace),
+        "--requirements-lock",
+        str(workspace / "requirements" / "process.txt"),
+        "--json",
+    ]
+    if rollback_probe:
+        command.append("--rollback-probe")
+    try:
+        result = run_bounded_process(
+            command,
+            working_directory=workspace,
+            environment=_target_environment(workspace.parent),
+            timeout_seconds=remaining,
+            max_stream_bytes=MATERIALIZATION_OUTPUT_BYTES,
+            max_total_bytes=MATERIALIZATION_OUTPUT_BYTES,
+        )
+    except (OSError, ValueError) as error:
+        raise ContractError(
+            f"cannot execute target authority materialization: {error}"
+        ) from error
+    if (
+        result.timed_out
+        or result.output_exceeded
+        or result.descendants_found
+        or result.cleanup_error is not None
+        or result.input_error
+    ):
+        raise ContractError(
+            result.cleanup_error
+            or "target authority materialization lost its bounded execution boundary"
+        )
+    if rollback_probe:
+        try:
+            failure_document = json.loads(result.stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ContractError(
+                "target authority rollback probe returned invalid JSON"
+            ) from error
+        if (
+            result.returncode != 2
+            or result.stderr
+            or not isinstance(failure_document, dict)
+            or failure_document.get("status") != "failed"
+            or failure_document.get("errors")
+            != ["controlled authority-transition rollback probe"]
+        ):
+            raise ContractError(
+                "target authority did not execute the controlled rollback probe"
+            )
+        return None
+    if result.returncode != 0 or result.stderr:
+        raise ContractError("target authority adoption command failed")
+    try:
+        document = json.loads(result.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ContractError(
+            "target authority adoption command returned invalid JSON"
+        ) from error
+    if not isinstance(document, dict) or document.get("status") != "passed":
+        raise ContractError("target authority adoption command did not pass")
+    return document
+
+
+@contextmanager
+def _materialization_worktree(candidate_root: Path, base_checkpoint: str):
+    with tempfile.TemporaryDirectory(
+        prefix="engineering-process-transition-materialization-"
+    ) as directory:
+        workspace = Path(directory) / "workspace"
+        _git_output(
+            candidate_root,
+            ["worktree", "add", "--detach", str(workspace), base_checkpoint],
+            label="create authority-transition materialization worktree",
+            maximum=4_096,
+        )
+        try:
+            yield workspace
+        finally:
+            _git_output(
+                candidate_root,
+                ["worktree", "remove", "--force", str(workspace)],
+                label="remove authority-transition materialization worktree",
+                maximum=4_096,
+            )
+
+
+def _write_materialization_input(
+    workspace: Path, relative: str, content: bytes
+) -> None:
+    destination = workspace / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.parent.resolve(strict=True).relative_to(
+            workspace.resolve(strict=True)
+        )
+    except (OSError, ValueError) as error:
+        raise ContractError(
+            "authority-transition materialization input escapes its worktree"
+        ) from error
+    if os.path.lexists(destination) and destination.is_symlink():
+        raise ContractError(
+            "authority-transition materialization input must not replace a symlink"
+        )
+    destination.write_bytes(content)
+
+
+def _prepare_materialization_inputs(
+    candidate_root: Path, workspace: Path, request: dict[str, Any]
+) -> None:
+    relative_paths = {
+        "requirements/process.in",
+        "requirements/process.txt",
+        *(item["path"] for item in request["candidate"]["actionPins"]),
+    }
+    migration_digest = request["candidate"]["projectMigrationSha256"]
+    if migration_digest is not None:
+        relative_paths.add(
+            ".process/adoption-migrations/"
+            f"{request['target']['version']}.json"
+        )
+    total = 0
+    for relative in sorted(relative_paths):
+        content = _stable_file_bytes(candidate_root / relative)
+        total += len(content)
+        if total > 16_000_000:
+            raise ContractError(
+                "authority-transition materialization inputs exceed 16000000 bytes"
+            )
+        _write_materialization_input(workspace, relative, content)
+
+
+def _materialization_tree(workspace: Path) -> str:
+    _git_output(
+        workspace,
+        ["add", "-A"],
+        label="stage authority-transition materialization tree",
+        maximum=4_096,
+    )
+    return _git_output(
+        workspace,
+        ["write-tree"],
+        label="resolve authority-transition materialization tree",
+        maximum=128,
+    ).decode("ascii").strip()
+
+
+def observe_candidate_materialization(
+    candidate_root: Path,
+    request: dict[str, Any],
+    *,
+    target_process_root: Path,
+    expected_tree: str,
+) -> dict[str, Any]:
+    candidate_root = candidate_root.resolve(strict=True)
+    target_process_root = target_process_root.resolve(strict=True)
+    deadline = time.monotonic() + MATERIALIZATION_TIMEOUT_SECONDS
+    with _materialization_worktree(
+        candidate_root, request["candidate"]["baseCheckpoint"]
+    ) as workspace:
+        _prepare_materialization_inputs(candidate_root, workspace, request)
+        _run_target_adoption(
+            target_process_root, workspace, action="apply", deadline=deadline
+        )
+        _run_target_adoption(
+            target_process_root, workspace, action="check", deadline=deadline
+        )
+        apply_tree = _materialization_tree(workspace)
+        if apply_tree != expected_tree:
+            raise ContractError(
+                "target authority materialization does not reproduce the candidate tree"
+            )
+        _run_target_adoption(
+            target_process_root, workspace, action="apply", deadline=deadline
+        )
+        _run_target_adoption(
+            target_process_root, workspace, action="check", deadline=deadline
+        )
+        idempotent_tree = _materialization_tree(workspace)
+        if idempotent_tree != apply_tree:
+            raise ContractError(
+                "target authority adoption apply/check is not idempotent"
+            )
+    with _materialization_worktree(
+        candidate_root, request["candidate"]["baseCheckpoint"]
+    ) as rollback_workspace:
+        _prepare_materialization_inputs(
+            candidate_root, rollback_workspace, request
+        )
+        rollback_before = _materialization_tree(rollback_workspace)
+        _run_target_adoption(
+            target_process_root,
+            rollback_workspace,
+            action="apply",
+            deadline=deadline,
+            rollback_probe=True,
+        )
+        rollback_after = _materialization_tree(rollback_workspace)
+        if rollback_after != rollback_before:
+            raise ContractError(
+                "target authority adoption rollback did not restore the input tree"
+            )
+    return {
+        "status": "passed",
+        "applyTree": apply_tree,
+        "idempotentTree": idempotent_tree,
+        "checkRuns": 2,
+        "rollback": {
+            "status": "restored",
+            "beforeTree": rollback_before,
+            "afterTree": rollback_after,
+            "probe": "after-authority-write",
+        },
+        "issues": [],
+    }
+
+
 def validate_registered_candidate(
     candidate_root: Path,
     request_document: dict[str, Any],
@@ -844,7 +1646,9 @@ def validate_registered_candidate(
     target_process_root: Path,
 ) -> dict[str, Any]:
     request = validate_authority_transition_request(request_document)
+    require_authority_transition_request_semantics(request)
     evidence = validate_authority_transition_evidence(evidence_document)
+    require_authority_transition_evidence_semantics(evidence)
     if evidence["requestSha256"] != canonical_json_digest(request_document):
         raise ContractError("authority-transition evidence does not bind the request")
     for field in ("project", "changeId", "cycle"):
@@ -871,6 +1675,16 @@ def validate_registered_candidate(
     }
     if candidate != expected:
         raise ContractError("authority-transition candidate evidence is stale")
+    observed_materialization = observe_candidate_materialization(
+        candidate_root,
+        request,
+        target_process_root=target_process_root,
+        expected_tree=inspected["tree"],
+    )
+    if evidence["materialization"] != observed_materialization:
+        raise ContractError(
+            "authority-transition materialization evidence is stale or unobserved"
+        )
     if evidence["bindings"]["processLockSha256"] != _file_digest(
         Path(candidate_root) / ".process" / "process.lock"
     ):
@@ -1099,18 +1913,17 @@ def create_authority_transition_evidence(
     actor_kind: str,
 ) -> dict[str, Any]:
     request = validate_authority_transition_request(request_document)
+    require_authority_transition_request_semantics(request)
     _require_not_expired(request["candidate"]["expiresAt"], label="authority-transition request")
     inspected = inspect_transition_candidate(
         candidate_root, request, target_process_root=target_process_root
     )
-    repeated = inspect_transition_candidate(
-        candidate_root, request, target_process_root=target_process_root
+    materialization = observe_candidate_materialization(
+        candidate_root,
+        request,
+        target_process_root=target_process_root,
+        expected_tree=inspected["tree"],
     )
-    if any(
-        inspected[name] != repeated[name]
-        for name in ("checkpoint", "tree", "workspaceFingerprint", "changedPaths")
-    ):
-        raise ContractError("authority-transition candidate check is not idempotent")
     candidate_root = candidate_root.resolve(strict=True)
     migration_path = (
         candidate_root
@@ -1165,11 +1978,7 @@ def create_authority_transition_evidence(
                 declarations=request["candidate"]["actionPins"],
             ),
         },
-        "materialization": {
-            "status": "passed",
-            "finalStateChecks": 2,
-            "issues": [],
-        },
+        "materialization": materialization,
         "generatedBy": _actor(
             {"actorId": actor_id, "contextId": context_id, "kind": actor_kind},
             "authority-transition evidence generatedBy",
@@ -1186,7 +1995,8 @@ def create_authority_transition_evidence(
             raise ContractError(
                 f"authority-transition candidate {field} does not match request"
             )
-    validate_authority_transition_evidence(evidence)
+    validated_evidence = validate_authority_transition_evidence(evidence)
+    require_authority_transition_evidence_semantics(validated_evidence)
     return evidence
 
 
@@ -1261,6 +2071,7 @@ def _require_not_expired(value: str, *, label: str) -> None:
 
 def require_authority_transition_current(request: dict[str, Any]) -> None:
     validated = validate_authority_transition_request(request)
+    require_authority_transition_request_semantics(validated)
     _require_not_expired(
         validated["candidate"]["expiresAt"], label="authority-transition request"
     )
@@ -1282,6 +2093,10 @@ def validate_transition_target_provenance(
     target_checkout = target_checkout.resolve(strict=True)
     artifact_root = artifact_root.resolve(strict=True)
     target = request["target"]
+    if _checkout_repository(target_checkout).casefold() != target[
+        "repository"
+    ].casefold():
+        raise ContractError("authority-transition target repository mismatch")
     release_result = validate_release_checkpoint(
         target_checkout,
         tag=target["tag"],
@@ -1358,6 +2173,7 @@ def validate_bootstrap_transition_candidate(
     release_receipt_path: Path,
     artifact_attestation_path: Path,
     protected_base_ref: str,
+    validation_service_path: Path,
 ) -> dict[str, Any]:
     from .artifact_attestation import validate_distribution_attestation
     from .evidence import validate_bootstrap_authorization
@@ -1372,6 +2188,8 @@ def validate_bootstrap_transition_candidate(
     intent = validate_bootstrap_adoption_intent(
         read_json(intent_path), str(intent_path)
     )
+    require_bootstrap_adoption_intent_semantics(intent)
+    require_protected_transition_policy_semantics(policy)
     authorization = validate_bootstrap_authorization(authorization_path)
     authorization_document = read_json(authorization_path)
     _require_not_expired(policy["expiresAt"], label="protected transition policy")
@@ -1483,6 +2301,11 @@ def validate_bootstrap_transition_candidate(
         "digest": base_lock.digest,
     }:
         raise ContractError("protected-base process lock does not match source authority")
+    validation_service = _validate_transition_validation_service(
+        read_json(validation_service_path),
+        policy=policy,
+        protected_base=protected_base,
+    )
 
     target = intent["targetRelease"]
     release_result = validate_release_checkpoint(
@@ -1523,6 +2346,8 @@ def validate_bootstrap_transition_candidate(
         "candidate": {
             "baseCheckpoint": protected_base,
             "expectedChangedPaths": intent["candidate"]["expectedChangedPaths"],
+            "actionPins": intent["candidate"]["actionPins"],
+            "projectMigrationSha256": intent["candidate"]["projectMigrationSha256"],
         },
         "target": {
             "version": target["version"],
@@ -1531,6 +2356,12 @@ def validate_bootstrap_transition_candidate(
     }
     inspected = inspect_transition_candidate(
         candidate_root, request, target_process_root=target_process_root
+    )
+    materialization = observe_candidate_materialization(
+        candidate_root,
+        request,
+        target_process_root=target_process_root,
+        expected_tree=inspected["tree"],
     )
     if list(inspected["lock"].skills) != intent["candidate"]["selectedSkills"]:
         raise ContractError("bootstrap candidate selected skills mismatch")
@@ -1586,9 +2417,11 @@ def validate_bootstrap_transition_candidate(
         "headCheckpoint": inspected["checkpoint"],
         "headTree": inspected["tree"],
         "checkContext": policy["workflow"]["checkContext"],
+        "validationService": validation_service,
         "targetVersion": target["version"],
         "targetCommit": target["commit"],
         "verifierCommit": policy["verifier"]["commit"],
+        "materialization": materialization,
         "grantsMerge": True,
         "postMergeMutation": False,
     }
@@ -1600,6 +2433,7 @@ def create_bootstrap_adoption_consumption(
     *,
     merge_checkpoint: str,
     validation_artifact: dict[str, Any],
+    validation_service: dict[str, Any],
     consumed_at: str,
 ) -> dict[str, Any]:
     candidate_root = candidate_root.resolve(strict=True)
@@ -1612,7 +2446,23 @@ def create_bootstrap_adoption_consumption(
     ).decode("ascii").strip()
     if merge_tree != validation.get("headTree"):
         raise ContractError("protected merge tree does not match validated candidate")
-    return validate_bootstrap_adoption_consumption(
+    merge_parents = _git_output(
+        candidate_root,
+        ["rev-list", "--parents", "-n", "1", merge_checkpoint],
+        label="inspect protected transition merge parents",
+        maximum=256,
+    ).decode("ascii").split()
+    if len(merge_parents) != 2 or merge_parents[1] != validation.get(
+        "baseCheckpoint"
+    ):
+        raise ContractError("protected merge is not rooted at the validated base")
+    observed_service = _validate_transition_consumption_service(
+        validation_service,
+        expected=validation.get("validationService"),
+        validation=validation,
+        artifact=validation_artifact,
+    )
+    consumption = validate_bootstrap_adoption_consumption(
         {
             "schemaVersion": 1,
             "kind": BOOTSTRAP_CONSUMPTION_KIND,
@@ -1627,6 +2477,9 @@ def create_bootstrap_adoption_consumption(
             "mergeCheckpoint": merge_checkpoint,
             "checkContext": validation["checkContext"],
             "validationArtifact": validation_artifact,
+            "validationService": observed_service,
             "consumedAt": consumed_at,
         }
     )
+    require_bootstrap_adoption_consumption_semantics(consumption)
+    return consumption

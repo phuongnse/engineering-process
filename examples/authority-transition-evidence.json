@@ -24,7 +24,19 @@
     "managedDistributionSha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
     "actionPinsSha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
   },
-  "materialization": {"status": "passed", "finalStateChecks": 2, "issues": []},
+  "materialization": {
+    "status": "passed",
+    "applyTree": "3333333333333333333333333333333333333333",
+    "idempotentTree": "3333333333333333333333333333333333333333",
+    "checkRuns": 2,
+    "rollback": {
+      "status": "restored",
+      "beforeTree": "4444444444444444444444444444444444444444",
+      "afterTree": "4444444444444444444444444444444444444444",
+      "probe": "after-authority-write"
+    },
+    "issues": []
+  },
   "generatedBy": {"actorId": "candidate-materializer", "contextId": "candidate-context", "kind": "agent"},
   "generatedAt": "2026-01-02T00:00:00Z"
 }

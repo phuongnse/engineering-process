@@ -116,6 +116,7 @@ engineering_process = ["requirements-*.txt"]
   "examples/remote-verification-evidence.json",
   "examples/remote-verification-request.json",
   "examples/release.json",
+  "examples/release-authority-transition.json",
   "examples/release-change.json",
   "examples/review.json",
 ]

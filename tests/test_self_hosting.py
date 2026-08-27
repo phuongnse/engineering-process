@@ -33,6 +33,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("-le 128000000", workflow)
         self.assertIn("-le 256000000", workflow)
         self.assertNotIn("processctl change finish", workflow)
+        self.assertIn("validate_protected_transition_callback.py", workflow)
+        self.assertIn("build_transition_validation_service.py", workflow)
+        self.assertIn("--validation-service", workflow)
         for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
             if uses.startswith("./"):
                 continue
@@ -46,6 +49,9 @@ class SelfHostingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("authority-transition bootstrap consume", consumption)
         self.assertIn("github.event.pull_request.merged_at", consumption)
+        self.assertIn("resolve_transition_consumption_service.py", consumption)
+        self.assertIn("consumption-check-request.json", consumption)
+        self.assertIn("consumptionContext", consumption)
         self.assertIn("validationArtifact", (PROCESS_ROOT / "schemas" / "bootstrap-adoption-consumption.schema.json").read_text(encoding="utf-8"))
         workflow_document = yaml.safe_load(workflow)
         steps = workflow_document["jobs"]["validate-and-merge"]["steps"]
