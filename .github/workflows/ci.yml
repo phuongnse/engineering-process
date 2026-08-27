@@ -148,6 +148,9 @@ jobs:
           python verification/verify_transition_release_rendering.py
           --public-python "$PROCESS_ACTION_PYTHON"
           --controller processctl.py
+          --controller-requirement engineering_process/requirements-runtime.txt
+          --controller-requirement engineering_process/requirements-dev.txt
+          --controller-requirement engineering_process/requirements-build.txt
           --release examples/release-authority-transition.json
 
       - name: Verify real Windows Job Object boundary

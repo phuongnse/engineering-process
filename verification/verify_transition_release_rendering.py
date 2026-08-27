@@ -52,6 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--public-python", type=Path, required=True)
     parser.add_argument("--controller", type=Path, required=True)
+    parser.add_argument(
+        "--controller-requirement",
+        action="append",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--release", type=Path, required=True)
     args = parser.parse_args(argv)
     public_python = Path(os.path.abspath(os.fspath(args.public_python)))
@@ -60,6 +66,36 @@ def main(argv: list[str] | None = None) -> int:
     controller = args.controller.resolve(strict=True)
     release_path = args.release.resolve(strict=True)
     validate_release(read_json(release_path), str(release_path))
+    controller_root = controller.parent
+    expected_requirements = [
+        controller_root / "engineering_process" / "requirements-runtime.txt",
+        controller_root / "engineering_process" / "requirements-dev.txt",
+        controller_root / "engineering_process" / "requirements-build.txt",
+    ]
+    requirements = [path.resolve(strict=True) for path in args.controller_requirement]
+    if requirements != expected_requirements:
+        raise ContractError(
+            "transition release rendering requires exact runtime, development, and build controller requirements"
+        )
+    install_command = [
+        str(public_python),
+        "-I",
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+    ]
+    for requirement in requirements:
+        install_command.extend(("-r", str(requirement)))
+    install_code, _install_stdout, install_stderr = _run(
+        install_command,
+        cwd=controller_root,
+    )
+    if install_code != 0 or install_stderr:
+        raise ContractError(
+            "public authority proof could not install exact controller dependencies"
+        )
 
     version_code, version_stdout, version_stderr = _run(
         [
@@ -134,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "publicAuthority": "0.7.0",
+                "controllerRequirementCount": len(requirements),
                 "releaseSchema": 4,
                 "sourceReader": str(controller),
                 "status": "passed",

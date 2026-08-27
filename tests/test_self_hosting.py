@@ -85,6 +85,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("process-action-smoke/Scripts/python.exe", ci)
         self.assertIn("process-action-smoke/bin/python", ci)
         self.assertIn("Verify shared install action authority", ci)
+        self.assertEqual(3, ci.count("--controller-requirement engineering_process/requirements-"))
         windows_job = ci.index("Verify real Windows Job Object boundary")
         install_wheel = ci.index("Install built wheel")
         windows_job_block = ci[windows_job:install_wheel]
