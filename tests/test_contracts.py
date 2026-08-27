@@ -1123,6 +1123,59 @@ class ArtifactContractTests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     semantic_validator(shaped)
 
+    def test_transition_schemas_and_core_reject_nul_in_every_string_family(self):
+        validators = {
+            "authority-transition-request": validate_authority_transition_request,
+            "authority-transition-evidence": validate_authority_transition_evidence,
+            "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
+            "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+            "protected-transition-policy": validate_protected_transition_policy,
+        }
+        cases = []
+        for name, core_validator in validators.items():
+            schema = json.loads(
+                (PROCESS_ROOT / "schemas" / f"{name}.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            document = json.loads(
+                (PROCESS_ROOT / "examples" / f"{name}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            cases.append((name, schema, document, core_validator))
+
+        mutations = {
+            "authority-transition-request": [
+                lambda value: value["registeredBy"].__setitem__("actorId", "worker\x00id"),
+                lambda value: value["candidate"].__setitem__("expectedChangedPaths", ["requirements/\x00.txt"]),
+            ],
+            "authority-transition-evidence": [
+                lambda value: value["generatedBy"].__setitem__("contextId", "context\x00id"),
+                lambda value: value["candidate"].__setitem__("changedPaths", ["requirements/\x00.txt"]),
+            ],
+            "bootstrap-adoption-intent": [
+                lambda value: value["candidate"].__setitem__("expectedChangedPaths", ["requirements/\x00.txt"]),
+            ],
+            "bootstrap-adoption-consumption": [
+                lambda value: value.__setitem__("checkContext", "authority\x00transition"),
+                lambda value: value["validationArtifact"].__setitem__("runUrl", "https://example.invalid/\x00run"),
+            ],
+            "protected-transition-policy": [
+                lambda value: value["workflow"].__setitem__("checkContext", "authority\x00transition"),
+                lambda value: value["verifier"].__setitem__("entrypoint", "verification/\x00validator.py"),
+            ],
+        }
+        for name, schema, document, core_validator in cases:
+            for index, mutate in enumerate(mutations[name]):
+                invalid = copy.deepcopy(document)
+                mutate(invalid)
+                with self.subTest(name=name, mutation=index):
+                    with self.assertRaises(ValidationError):
+                        Draft202012Validator(schema).validate(invalid)
+                    with self.assertRaises(ContractError):
+                        core_validator(invalid)
+
     def test_transition_evidence_does_not_claim_unobserved_rollback(self):
         document = json.loads(
             (PROCESS_ROOT / "examples" / "authority-transition-evidence.json").read_text(

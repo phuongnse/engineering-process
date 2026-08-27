@@ -159,6 +159,11 @@ class AuthorityTransitionTests(unittest.TestCase):
                 )
             self.assertEqual(proof, observed)
 
+            adapter.unlink()
+            with self.assertRaisesRegex(ContractError, "unavailable"):
+                _resolve_target_repository_proof(root, request)
+            adapter.write_text("# fixed adapter\n", encoding="utf-8")
+
             adapter.write_text("# changed adapter\n", encoding="utf-8")
             with self.assertRaisesRegex(ContractError, "not fixed"):
                 _resolve_target_repository_proof(root, request)
@@ -250,6 +255,25 @@ class AuthorityTransitionTests(unittest.TestCase):
                 None,
             )
 
+        wrong_release = json.loads(json.dumps(release))
+        wrong_release["tag_name"] = "v9.9.9"
+        with self.assertRaisesRegex(ContractError, "release"):
+            build_repository_proof(
+                identity, repository, wrong_release, tag_ref, None
+            )
+        wrong_ref = json.loads(json.dumps(tag_ref))
+        wrong_ref["object"]["sha"] = "f" * 40
+        with self.assertRaisesRegex(ContractError, "target commit"):
+            build_repository_proof(
+                identity, repository, release, wrong_ref, None
+            )
+        wrong_assets = json.loads(json.dumps(release))
+        wrong_assets["assets"][0]["digest"] = f"sha256:{'f' * 64}"
+        with self.assertRaisesRegex(ContractError, "registered target"):
+            build_repository_proof(
+                identity, repository, wrong_assets, tag_ref, None
+            )
+
         service_documents = {
             repository["url"]: repository,
             f"{repository['url']}/releases/tags/{target['tag']}": release,
@@ -306,6 +330,23 @@ class AuthorityTransitionTests(unittest.TestCase):
                 context=context,
                 app_id=app_id,
                 expected_count=0,
+                head_sha=head,
+            )
+        with self.assertRaisesRegex(ExclusivityError, "expected 1"):
+            validate_exclusivity(
+                [first_page],
+                context=context,
+                app_id=app_id,
+                expected_count=1,
+                head_sha=head,
+            )
+        second_exact = {**exact, "id": 102}
+        with self.assertRaisesRegex(ExclusivityError, "found 2"):
+            validate_exclusivity(
+                [first_page, {"check_runs": [exact, second_exact]}],
+                context=context,
+                app_id=app_id,
+                expected_count=1,
                 head_sha=head,
             )
         with self.assertRaisesRegex(ExclusivityError, "exceeds 10"):
