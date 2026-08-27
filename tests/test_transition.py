@@ -104,14 +104,24 @@ class AuthorityTransitionTests(unittest.TestCase):
             workflow = workflows / "ci.yml"
             previous = "b" * 40
             target = "c" * 40
-            workflow.write_text(
-                "steps:\n  - uses: actions/checkout@" + "a" * 40 + " # v1.0.0\n  - uses: owner/process@" + previous + " # v0.7.0\n",
-                encoding="utf-8",
+            workflow.write_bytes(
+                (
+                    "steps:\r\n  - uses: actions/checkout@"
+                    + "a" * 40
+                    + " # v1.0.0\r\n  - uses: owner/process@"
+                    + previous
+                    + " # v0.7.0\r\n"
+                ).encode("utf-8")
             )
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
             base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
-            workflow.write_text(workflow.read_text(encoding="utf-8").replace(previous + " # v0.7.0", target + " # v0.9.0"), encoding="utf-8")
+            workflow.write_bytes(
+                workflow.read_bytes().replace(
+                    (previous + " # v0.7.0").encode("utf-8"),
+                    (target + " # v0.9.0").encode("utf-8"),
+                )
+            )
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "pin update"], cwd=root, check=True)
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
@@ -122,7 +132,7 @@ class AuthorityTransitionTests(unittest.TestCase):
             self.assertTrue(digest.startswith("sha256:"))
             with self.assertRaisesRegex(ContractError, "do not match declared"):
                 _validate_action_pin_changes(root, base_checkpoint=base, head_checkpoint=head, declarations=[])
-            workflow.write_text(workflow.read_text(encoding="utf-8") + "  - run: echo unrelated\n", encoding="utf-8")
+            workflow.write_bytes(workflow.read_bytes() + b"  - run: echo unrelated\r\n")
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "unrelated"], cwd=root, check=True)
             unrelated = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()

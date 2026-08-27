@@ -1064,7 +1064,7 @@ def _validate_action_pin_changes(
             pattern = re.compile(
                 rf"(?m)(uses[ \t]*:[ \t]*(?P<quote>['\"]?){re.escape(pin['repository'])}@)"
                 rf"{pin['previousCommit']}(?P=quote)([ \t]+#[ \t]*)"
-                rf"{re.escape(pin['previousReleaseTag'])}([ \t]*)$"
+                rf"{re.escape(pin['previousReleaseTag'])}([ \t]*)(?P<line_ending>\r?)$"
             )
             expected, replacements = pattern.subn(
                 lambda match: (
@@ -1074,6 +1074,7 @@ def _validate_action_pin_changes(
                     + match.group(3)
                     + pin["targetReleaseTag"]
                     + match.group(4)
+                    + match.group("line_ending")
                 ),
                 expected,
             )
