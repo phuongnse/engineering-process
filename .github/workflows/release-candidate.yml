@@ -225,8 +225,9 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             --arg reviewerActor "independent-plan-reviewer" \
             --arg reviewerContext "$REVIEWER_CONTEXT" \
+            --arg plannedRunAttempt "$GITHUB_RUN_ATTEMPT" \
             --arg runId "$GITHUB_RUN_ID" \
-            '{event_type: "engineering-process-plan-review-required", client_payload: {artifact: $artifact, comparisonBase: $base, changeId: $changeId, commit: $commit, continuationWorkflow: $continuationWorkflow, maxPlanDecisionReviewBytes: ($maxPlanDecisionReviewBytes | tonumber), planDecisionReviewEncoding: $planDecisionReviewEncoding, repository: $repository, reviewer: {actorId: $reviewerActor, contextId: $reviewerContext, kind: "agent"}, plannedRunId: $runId}}' \
+            '{event_type: "engineering-process-plan-review-required", client_payload: {artifact: $artifact, comparisonBase: $base, changeId: $changeId, commit: $commit, continuationWorkflow: $continuationWorkflow, maxPlanDecisionReviewBytes: ($maxPlanDecisionReviewBytes | tonumber), planDecisionReviewEncoding: $planDecisionReviewEncoding, repository: $repository, reviewer: {actorId: $reviewerActor, contextId: $reviewerContext, kind: "agent"}, plannedRunId: $runId, plannedRunAttempt: ($plannedRunAttempt | tonumber)}}' \
             > "$RUNNER_TEMP/plan-review-required-event.json"
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/dispatches" \

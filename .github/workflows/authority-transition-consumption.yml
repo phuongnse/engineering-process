@@ -7,7 +7,7 @@ on:
 
 permissions:
   actions: read
-  checks: write
+  checks: read
   contents: read
 
 concurrency:
@@ -151,6 +151,7 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: phuongnse
           repositories: engineering-process
+          permission-checks: write
 
       - name: Preserve durable exclusive consumption on the merge commit
         if: steps.applicability.outputs.applicable == 'true'

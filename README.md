@@ -834,10 +834,13 @@ authored schema-3 plan readable by immutable public 0.7. The initial workflow ru
 `change start`, `change plan`, and `change decision start`, then emits
 `engineering-process-plan-review-required` without implementing the candidate. A
 fresh read-only plan reviewer returns the exact assigned report to
-`release-plan-approval.yml`; that protected-main callback restores the same source
-and lifecycle, submits the report, implements, verifies, consumes the single-use
-planned artifact, and only then emits the ordinary source-review handoff. It cannot
-finish, publish, or merge the Release.
+`release-plan-approval.yml`; that protected-main callback authenticates the producing
+workflow path, protected-base SHA, run id and attempt before restoring the same source
+and lifecycle. It submits the report, implements, verifies, and emits the ordinary
+source-review handoff. On every terminal success, failure, timeout, or interruption
+after artifact resolution, it preserves bounded diagnostics and consumes the
+single-use planned artifact so a retry requires a fresh planned run and assignment.
+It cannot finish, publish, or merge the Release.
 The consumer-selected host restores that lifecycle, chooses an agent or human,
 registers the assignment, submits the exact report, resolves any finding loop, runs
 `change finish`, and exports completion evidence. It sends only that bounded

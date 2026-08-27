@@ -447,10 +447,26 @@
         "required": ["schemaVersion"]
       },
       "then": {
-        "required": ["authorityTransition"],
+        "required": ["authorityTransition", "impact"],
         "properties": {
           "checks": {
-            "items": {"required": ["diagnostics"]}
+            "maxItems": 256,
+            "items": {
+              "properties": {
+                "command": {"maxItems": 256}
+              },
+              "required": [
+                "impactSha256",
+                "impactIntegrity",
+                "stdoutBytes",
+                "stderrBytes",
+                "stdoutSha256",
+                "stderrSha256",
+                "diagnostics",
+                "outputTruncated",
+                "streamOutputTruncated"
+              ]
+            }
           }
         }
       }

@@ -7,6 +7,10 @@ on:
         description: Run containing the exact planned candidate and assignment
         required: true
         type: string
+      planned_run_attempt:
+        description: Exact attempt that produced the planned candidate and assignment
+        required: true
+        type: string
       comparison_base:
         description: Exact protected-main base of the candidate
         required: true
@@ -38,10 +42,12 @@ jobs:
         env:
           BASE_SHA: ${{ inputs.comparison_base }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
+          PLANNED_RUN_ATTEMPT: ${{ inputs.planned_run_attempt }}
           PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
           REVIEW_BASE64: ${{ inputs.plan_decision_review_gzip_base64 }}
         run: |
           printf '%s' "$PLANNED_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$PLANNED_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$BASE_SHA$HEAD_SHA" | grep -Eq '^[0-9a-f]{80}$'
           test -n "$REVIEW_BASE64"
           test "${#REVIEW_BASE64}" -le 60000
@@ -65,16 +71,24 @@ jobs:
       - name: Resolve the exact single-use planned artifact
         id: planned
         env:
+          BASE_SHA: ${{ inputs.comparison_base }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
+          PLANNED_RUN_ATTEMPT: ${{ inputs.planned_run_attempt }}
           PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
         run: |
-          gh run view "$PLANNED_RUN_ID" \
-            --json conclusion,event,workflowName \
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PLANNED_RUN_ID" \
             > "$RUNNER_TEMP/planned-run.json"
-          test "$(jq -r .event "$RUNNER_TEMP/planned-run.json")" = workflow_dispatch
-          test "$(jq -r .workflowName "$RUNNER_TEMP/planned-run.json")" = "Verify unpublished Release candidate"
-          test "$(jq -r .conclusion "$RUNNER_TEMP/planned-run.json")" = success
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-candidate.yml" \
+            > "$RUNNER_TEMP/planned-workflow.json"
+          python verification/validate_release_plan_continuation.py \
+            --run "$RUNNER_TEMP/planned-run.json" \
+            --workflow "$RUNNER_TEMP/planned-workflow.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --planned-run-id "$PLANNED_RUN_ID" \
+            --planned-run-attempt "$PLANNED_RUN_ATTEMPT" \
+            --protected-base "$BASE_SHA" \
+            --output "$RUNNER_TEMP/planned-run-source.json"
           artifact="planned-release-candidate-$HEAD_SHA"
           gh api --paginate --slurp \
             "repos/$GITHUB_REPOSITORY/actions/runs/$PLANNED_RUN_ID/artifacts?per_page=100" \
@@ -187,14 +201,6 @@ jobs:
           compression-level: 9
           include-hidden-files: true
 
-      - name: Consume the single-use planned artifact
-        env:
-          ARTIFACT_ID: ${{ steps.planned.outputs.artifact_id }}
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh api --method DELETE
-          "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
-
       - name: Dispatch the immutable checkpoint to the consumer-selected source reviewer
         env:
           BASE_SHA: ${{ inputs.comparison_base }}
@@ -221,3 +227,52 @@ jobs:
             fi
           done
           exit 1
+
+      - name: Preserve bounded plan-continuation terminal diagnostics
+        if: ${{ always() && steps.planned.outputs.artifact_id != '' }}
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+          CONTINUATION_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CONTINUATION_RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          PLANNED_ARTIFACT_ID: ${{ steps.planned.outputs.artifact_id }}
+          PLANNED_RUN_ATTEMPT: ${{ inputs.planned_run_attempt }}
+          PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
+          TERMINAL_STATUS: ${{ job.status }}
+        run: |
+          jq -n \
+            --arg base "$BASE_SHA" \
+            --arg continuationRunAttempt "$CONTINUATION_RUN_ATTEMPT" \
+            --arg continuationRunId "$CONTINUATION_RUN_ID" \
+            --arg head "$HEAD_SHA" \
+            --arg plannedArtifactId "$PLANNED_ARTIFACT_ID" \
+            --arg plannedRunAttempt "$PLANNED_RUN_ATTEMPT" \
+            --arg plannedRunId "$PLANNED_RUN_ID" \
+            --arg status "$TERMINAL_STATUS" \
+            '{schemaVersion: 1, kind: "engineering-process-release-plan-continuation-terminal", status: $status, base: $base, head: $head, plannedRun: {id: $plannedRunId, attempt: $plannedRunAttempt, artifactId: $plannedArtifactId}, continuationRun: {id: $continuationRunId, attempt: $continuationRunAttempt}, controls: {grantsImplementation: false, grantsReview: false, grantsCompletion: false, grantsPublication: false}}' \
+            > "$RUNNER_TEMP/plan-continuation-terminal.json"
+
+      - name: Upload bounded plan-continuation terminal diagnostics
+        if: ${{ always() && steps.planned.outputs.artifact_id != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-plan-continuation-terminal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan-continuation-terminal.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+          include-hidden-files: false
+
+      - name: Consume and reconcile the single-use planned artifact
+        if: ${{ always() && steps.planned.outputs.artifact_id != '' }}
+        env:
+          ARTIFACT_ID: ${{ steps.planned.outputs.artifact_id }}
+          GH_TOKEN: ${{ github.token }}
+          PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
+        run: |
+          gh api --method DELETE \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PLANNED_RUN_ID/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/remaining-planned-artifact-pages.json"
+          test "$(jq --argjson id "$ARTIFACT_ID" '[.[].artifacts[] | select(.id == $id)] | length' "$RUNNER_TEMP/remaining-planned-artifact-pages.json")" = 0

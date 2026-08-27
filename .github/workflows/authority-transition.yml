@@ -21,9 +21,9 @@ on:
         type: string
 
 permissions:
-  checks: write
+  checks: read
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   group: authority-transition-${{ inputs.source_base }}-${{ inputs.candidate_head }}
@@ -240,6 +240,9 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: phuongnse
           repositories: engineering-process
+          permission-checks: write
+          permission-pull-requests: write
+
       - name: Authorize only the validated exact head
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

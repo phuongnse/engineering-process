@@ -61,9 +61,27 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("consumptionContext", consumption)
         self.assertIn("validationArtifact", (PROCESS_ROOT / "schemas" / "bootstrap-adoption-consumption.schema.json").read_text(encoding="utf-8"))
         workflow_document = yaml.safe_load(workflow)
+        self.assertEqual(
+            {"checks": "read", "contents": "read", "pull-requests": "read"},
+            workflow_document["permissions"],
+        )
         steps = workflow_document["jobs"]["validate-and-merge"]["steps"]
+        app_token = next(step for step in steps if step.get("id") == "app-token")
+        self.assertEqual("write", app_token["with"]["permission-checks"])
+        self.assertEqual("write", app_token["with"]["permission-pull-requests"])
         base_step = next(step for step in steps if step.get("name") == "Require current base and exact PR identity")
         self.assertEqual("${{ github.workflow_sha }}", base_step["env"]["WORKFLOW_SHA"])
+        consumption_document = yaml.safe_load(consumption)
+        self.assertEqual(
+            {"actions": "read", "checks": "read", "contents": "read"},
+            consumption_document["permissions"],
+        )
+        consumption_steps = consumption_document["jobs"]["record"]["steps"]
+        consumption_token = next(
+            step for step in consumption_steps if step.get("id") == "app-token"
+        )
+        self.assertEqual("write", consumption_token["with"]["permission-checks"])
+        self.assertNotIn("permission-pull-requests", consumption_token["with"])
 
     def test_public_install_action_uses_immutable_checkout_source_and_safe_inputs(self):
         action = (PROCESS_ROOT / "action.yml").read_text(encoding="utf-8")
@@ -142,6 +160,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("gh pr create", candidate)
         self.assertIn("engineering-process-review-required", candidate)
         self.assertIn("engineering-process-plan-review-required", candidate)
+        self.assertIn("plannedRunAttempt", candidate)
         self.assertIn("planned-release-candidate", candidate)
         self.assertIn("transfer_review_context_reservation.py export", candidate)
         self.assertIn("processctl change decision start", candidate)
@@ -283,6 +302,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertNotIn("host-review.json", approval)
         self.assertIn("plan_decision_review_gzip_base64", plan_approval)
+        self.assertIn("planned_run_attempt", plan_approval)
         self.assertIn("planned-release-candidate", plan_approval)
         self.assertIn("transfer-review-context-reservation.py", plan_approval)
         self.assertIn("review-contexts", plan_approval)
@@ -291,8 +311,22 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("--profile development", plan_approval)
         self.assertIn("--profile review", plan_approval)
         self.assertIn("engineering-process-review-required", plan_approval)
+        self.assertIn("actions/workflows/release-candidate.yml", plan_approval)
+        self.assertIn("validate_release_plan_continuation.py", plan_approval)
+        self.assertIn('--protected-base "$BASE_SHA"', plan_approval)
+        self.assertIn('--planned-run-attempt "$PLANNED_RUN_ATTEMPT"', plan_approval)
+        self.assertNotIn("gh run view", plan_approval)
         self.assertIn("actions/artifacts/$ARTIFACT_ID", plan_approval)
         self.assertIn("--method DELETE", plan_approval)
+        self.assertIn("plan-continuation-terminal.json", plan_approval)
+        self.assertIn("${{ job.status }}", plan_approval)
+        self.assertEqual(
+            3,
+            plan_approval.count(
+                "always() && steps.planned.outputs.artifact_id != ''"
+            ),
+        )
+        self.assertIn("remaining-planned-artifact-pages.json", plan_approval)
         self.assertNotIn("processctl change finish", plan_approval)
         self.assertNotIn("git push", plan_approval)
         self.assertNotIn("gh pr create", plan_approval)
@@ -309,7 +343,10 @@ class SelfHostingTests(unittest.TestCase):
             "Upload the host-neutral source-review handoff"
         )
         consume_planned = plan_approval.index(
-            "Consume the single-use planned artifact"
+            "Consume and reconcile the single-use planned artifact"
+        )
+        preserve_terminal = plan_approval.index(
+            "Preserve bounded plan-continuation terminal diagnostics"
         )
         dispatch_source_review = plan_approval.index(
             "Dispatch the immutable checkpoint to the consumer-selected source reviewer"
@@ -318,8 +355,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertLess(submit_plan_review, implement_plan)
         self.assertLess(implement_plan, authorize_plan)
         self.assertLess(implement_plan, upload_verified)
-        self.assertLess(upload_verified, consume_planned)
-        self.assertLess(consume_planned, dispatch_source_review)
+        self.assertLess(upload_verified, dispatch_source_review)
+        self.assertLess(dispatch_source_review, preserve_terminal)
+        self.assertLess(preserve_terminal, consume_planned)
         for workflow in (candidate, plan_approval):
             for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
                 if uses.startswith("./"):
