@@ -116,6 +116,12 @@ class SelfHostingTests(unittest.TestCase):
         candidate = (
             PROCESS_ROOT / ".github" / "workflows" / "release-candidate.yml"
         ).read_text(encoding="utf-8")
+        plan_approval = (
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "release-plan-approval.yml"
+        ).read_text(encoding="utf-8")
         approval = (
             PROCESS_ROOT / ".github" / "workflows" / "release-approval.yml"
         ).read_text(encoding="utf-8")
@@ -135,6 +141,13 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("git push", candidate)
         self.assertNotIn("gh pr create", candidate)
         self.assertIn("engineering-process-review-required", candidate)
+        self.assertIn("engineering-process-plan-review-required", candidate)
+        self.assertIn("planned-release-candidate", candidate)
+        self.assertIn("processctl change decision start", candidate)
+        self.assertIn("steps.identity.outputs.plan_kind == 'authored'", candidate)
+        self.assertIn(
+            "steps.identity.outputs.plan_kind == 'process-generated'", candidate
+        )
         self.assertIn("consumer-selected reviewer host", candidate)
         self.assertIn('publicationWorkflow: $publicationWorkflow', candidate)
         self.assertIn('completionEvidenceEncoding: $completionEvidenceEncoding', candidate)
@@ -254,6 +267,7 @@ class SelfHostingTests(unittest.TestCase):
             generator.index("git bundle create"),
         )
         self.assertIn('gh workflow run release-candidate.yml', generator)
+        self.assertIn('".github/workflows/release-plan-approval.yml"', generator)
         self.assertIn("policy-verification:", ci)
         self.assertIn(
             "phuongnse/renovate-ops/.github/workflows/policy-verification.yml@"
@@ -267,6 +281,41 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertNotIn("host-review.json", approval)
+        self.assertIn("plan_decision_review_gzip_base64", plan_approval)
+        self.assertIn("planned-release-candidate", plan_approval)
+        self.assertIn("processctl change decision submit", plan_approval)
+        self.assertIn("processctl change implement", plan_approval)
+        self.assertIn("--profile development", plan_approval)
+        self.assertIn("--profile review", plan_approval)
+        self.assertIn("engineering-process-review-required", plan_approval)
+        self.assertIn("actions/artifacts/$ARTIFACT_ID", plan_approval)
+        self.assertIn("--method DELETE", plan_approval)
+        self.assertNotIn("processctl change finish", plan_approval)
+        self.assertNotIn("git push", plan_approval)
+        self.assertNotIn("gh pr create", plan_approval)
+        self.assertNotIn("gh pr merge", plan_approval)
+        submit_plan_review = plan_approval.index(
+            "processctl change decision submit"
+        )
+        implement_plan = plan_approval.index("processctl change implement")
+        upload_verified = plan_approval.index(
+            "Upload the host-neutral source-review handoff"
+        )
+        consume_planned = plan_approval.index(
+            "Consume the single-use planned artifact"
+        )
+        dispatch_source_review = plan_approval.index(
+            "Dispatch the immutable checkpoint to the consumer-selected source reviewer"
+        )
+        self.assertLess(submit_plan_review, implement_plan)
+        self.assertLess(implement_plan, upload_verified)
+        self.assertLess(upload_verified, consume_planned)
+        self.assertLess(consume_planned, dispatch_source_review)
+        for workflow in (candidate, plan_approval):
+            for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
+                if uses.startswith("./"):
+                    continue
+                self.assertRegex(uses, r"@[0-9a-f]{40}$")
         self.assertIn("enables exact-head protected auto-merge", readme)
         self.assertIn("No workflow bypasses branch protection", readme)
         self.assertIn("candidate source base", readme)

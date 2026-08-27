@@ -606,6 +606,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.initialize_project(root)
+            self.enable_plan_decision_policy(root)
             (root / "pyproject.toml").write_text(
                 '[project]\nname = "sample"\nversion = "0.8.0"\n',
                 encoding="utf-8",
@@ -651,9 +652,25 @@ class ReleaseCandidateTests(unittest.TestCase):
 
             self.assertEqual("authority-transition-bootstrap", result["provenanceMode"])
             release = json.loads((root / "release.json").read_text(encoding="utf-8"))
+            plan = json.loads(
+                (root / ".release" / "plan.json").read_text(encoding="utf-8")
+            )
             self.assertEqual(4, release["schemaVersion"])
             self.assertEqual("0.7.0", release["provenance"]["authorityTransition"]["sourceAuthority"]["version"])
             self.assertEqual("0.8.0", release["provenance"]["authorityTransition"]["skippedRelease"]["version"])
+            self.assertEqual("authored", plan["provenance"]["kind"])
+            self.assertEqual(
+                {
+                    "actorId": "github-release-bot",
+                    "contextId": "release-plan-release-0-9-0",
+                    "kind": "agent",
+                },
+                plan["provenance"]["author"],
+            )
+            self.assertEqual(
+                {"version": "0.7.0", "digest": f"sha256:{'7' * 64}"},
+                plan["provenance"]["authority"],
+            )
 
 
     def test_rejects_a_release_change_directory_symlink(self):

@@ -1,0 +1,213 @@
+name: Continue independently reviewed Release plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      planned_run_id:
+        description: Run containing the exact planned candidate and assignment
+        required: true
+        type: string
+      comparison_base:
+        description: Exact protected-main base of the candidate
+        required: true
+        type: string
+      release_head_sha:
+        description: Exact unpublished candidate checkpoint
+        required: true
+        type: string
+      plan_decision_review_gzip_base64:
+        description: Assigned independent plan review encoded by the consumer host
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: release-plan-continuation-${{ inputs.release_head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  continue:
+    name: Validate plan review and verify exact unpublished checkpoint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Validate bounded continuation identity
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
+          REVIEW_BASE64: ${{ inputs.plan_decision_review_gzip_base64 }}
+        run: |
+          printf '%s' "$PLANNED_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$BASE_SHA$HEAD_SHA" | grep -Eq '^[0-9a-f]{80}$'
+          test -n "$REVIEW_BASE64"
+          test "${#REVIEW_BASE64}" -le 60000
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.comparison_base }}
+
+      - name: Require current protected base and preserve its decoder
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+        run: |
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          cp verification/decode_completion_evidence.py \
+            "$RUNNER_TEMP/decode-plan-review.py"
+
+      - name: Resolve the exact single-use planned artifact
+        id: planned
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
+        run: |
+          gh run view "$PLANNED_RUN_ID" \
+            --json conclusion,event,workflowName \
+            > "$RUNNER_TEMP/planned-run.json"
+          test "$(jq -r .event "$RUNNER_TEMP/planned-run.json")" = workflow_dispatch
+          test "$(jq -r .workflowName "$RUNNER_TEMP/planned-run.json")" = "Verify unpublished Release candidate"
+          test "$(jq -r .conclusion "$RUNNER_TEMP/planned-run.json")" = success
+          artifact="planned-release-candidate-$HEAD_SHA"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PLANNED_RUN_ID/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/planned-artifact-pages.json"
+          jq '[.[].artifacts[] | select(.name == $name and .expired == false)]' \
+            --arg name "$artifact" "$RUNNER_TEMP/planned-artifact-pages.json" \
+            > "$RUNNER_TEMP/planned-artifacts.json"
+          test "$(jq length "$RUNNER_TEMP/planned-artifacts.json")" = 1
+          artifact_id="$(jq -er '.[0].id' "$RUNNER_TEMP/planned-artifacts.json")"
+          printf 'artifact_id=%s\n' "$artifact_id" >> "$GITHUB_OUTPUT"
+          printf 'artifact_name=%s\n' "$artifact" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the exact planned source and N-1 lifecycle
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/planned-candidate"
+          gh run download "$PLANNED_RUN_ID" \
+            --name "${{ steps.planned.outputs.artifact_name }}" \
+            --dir "$RUNNER_TEMP/planned-candidate"
+          test "$(jq -r .repository "$RUNNER_TEMP/planned-candidate/candidate.json")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r .baseSha "$RUNNER_TEMP/planned-candidate/candidate.json")" = "$BASE_SHA"
+          test "$(jq -r .headSha "$RUNNER_TEMP/planned-candidate/candidate.json")" = "$HEAD_SHA"
+          git fetch "$RUNNER_TEMP/planned-candidate/source.bundle" "$HEAD_SHA"
+          git checkout --detach "$HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          change_id="$(jq -er .id .release/change.json)"
+          test ! -e ".process/runs/$change_id"
+          mkdir -p ".process/runs/$change_id"
+          cp -R "$RUNNER_TEMP/planned-candidate/lifecycle/." \
+            ".process/runs/$change_id/"
+          printf 'CHANGE_ID=%s\n' "$change_id" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+
+      - name: Install the exact public N-1 authority and project dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/process-authority"
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            --require-hashes -r requirements/process.txt
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            -r engineering_process/requirements-runtime.txt \
+            -r engineering_process/requirements-dev.txt \
+            -r engineering_process/requirements-build.txt
+          printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
+
+      - name: Submit only the assigned independent plan review
+        env:
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+          REVIEW_BASE64: ${{ inputs.plan_decision_review_gzip_base64 }}
+        run: |
+          printf '%s' "$REVIEW_BASE64" > "$RUNNER_TEMP/plan-review.txt"
+          "$RUNNER_TEMP/process-authority/bin/python" \
+            "$RUNNER_TEMP/decode-plan-review.py" \
+            --input "$RUNNER_TEMP/plan-review.txt" \
+            --output "$RUNNER_TEMP/plan-review.json"
+          processctl doctor
+          processctl contract validate --kind plan-decision-review \
+            "$RUNNER_TEMP/plan-review.json"
+          test "$(processctl change status --change-id "$CHANGE_ID" --json | jq -r .phase)" = planned
+          processctl change decision submit --change-id "$CHANGE_ID" \
+            --review "$RUNNER_TEMP/plan-review.json"
+          status="$(processctl change status --change-id "$CHANGE_ID" --json)"
+          test "$(jq -r .phase <<<"$status")" = planned
+          test "$(jq -r .planDecision.authorized <<<"$status")" = true
+
+      - name: Implement and verify the plan-approved candidate under N-1
+        env:
+          CONTEXT_ID: release-candidate-${{ inputs.release_head_sha }}
+        run: |
+          processctl change implement \
+            --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
+            --change-id "$CHANGE_ID"
+          processctl change verify \
+            --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
+            --change-id "$CHANGE_ID" --profile development
+          processctl change verify \
+            --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
+            --change-id "$CHANGE_ID" --profile review
+          test "$(processctl change status --change-id "$CHANGE_ID" --json | jq -r .phase)" = verified
+
+      - name: Preserve the exact verified checkpoint and lifecycle
+        run: |
+          mkdir -p "$RUNNER_TEMP/verified-candidate/lifecycle"
+          cp "$RUNNER_TEMP/planned-candidate/source.bundle" "$RUNNER_TEMP/verified-candidate/source.bundle"
+          cp "$RUNNER_TEMP/planned-candidate/candidate.json" "$RUNNER_TEMP/verified-candidate/candidate.json"
+          cp -R ".process/runs/$CHANGE_ID/." "$RUNNER_TEMP/verified-candidate/lifecycle/"
+
+      - name: Upload the host-neutral source-review handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-release-candidate-${{ inputs.release_head_sha }}
+          path: ${{ runner.temp }}/verified-candidate
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+          include-hidden-files: true
+
+      - name: Consume the single-use planned artifact
+        env:
+          ARTIFACT_ID: ${{ steps.planned.outputs.artifact_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh api --method DELETE
+          "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID"
+
+      - name: Dispatch the immutable checkpoint to the consumer-selected source reviewer
+        env:
+          BASE_SHA: ${{ inputs.comparison_base }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.release_head_sha }}
+        run: |
+          jq -n \
+            --arg artifact "verified-release-candidate-$HEAD_SHA" \
+            --arg base "$BASE_SHA" \
+            --arg changeId "$CHANGE_ID" \
+            --arg commit "$HEAD_SHA" \
+            --arg maxCompletionEvidenceBytes "60000" \
+            --arg publicationWorkflow "release-approval.yml" \
+            --arg completionEvidenceEncoding "gzip+base64" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg runId "$GITHUB_RUN_ID" \
+            '{event_type: "engineering-process-review-required", client_payload: {artifact: $artifact, comparisonBase: $base, changeId: $changeId, commit: $commit, completionEvidenceEncoding: $completionEvidenceEncoding, maxCompletionEvidenceBytes: ($maxCompletionEvidenceBytes | tonumber), publicationWorkflow: $publicationWorkflow, repository: $repository, verifiedRunId: $runId}}' \
+            > "$RUNNER_TEMP/review-required-event.json"
+          for attempt in 1 2 3; do
+            if gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/dispatches" \
+              --input "$RUNNER_TEMP/review-required-event.json"; then
+              exit 0
+            fi
+          done
+          exit 1

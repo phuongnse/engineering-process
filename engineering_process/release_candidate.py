@@ -29,6 +29,7 @@ from .release import _git, _project_metadata, _runtime_version
 MAX_RELEASE_CHANGE_BYTES = 8_000_000
 SCHEMA_IMPACT_ORDER = {"unchanged": 0, "additive": 1, "breaking": 2}
 RELEASE_LIFECYCLE_PLAN_GENERATOR = "release-lifecycle-v1"
+TRANSITION_RELEASE_PLAN_ACTOR = "github-release-bot"
 
 
 def _json_bytes(document: dict[str, Any]) -> bytes:
@@ -103,6 +104,26 @@ def _release_plan_provenance(
         authority_version=authority_version,
         authority_digest=authority_digest,
     )
+
+
+def _transition_release_plan_provenance(
+    *,
+    change_id: str,
+    authority_version: str,
+    authority_digest: str,
+) -> dict[str, Any]:
+    return {
+        "kind": "authored",
+        "author": {
+            "actorId": TRANSITION_RELEASE_PLAN_ACTOR,
+            "contextId": f"release-plan-{change_id}",
+            "kind": "agent",
+        },
+        "authority": {
+            "version": authority_version,
+            "digest": authority_digest,
+        },
+    }
 
 
 def _bounded_file(path: Path, *, label: str) -> bytes:
@@ -764,13 +785,20 @@ def prepare_release_candidate(
         and configured_project.plan_decision_mode is not None
     ):
         assert project_bytes is not None
-        provenance = _release_plan_provenance(
-            project_manifest=project_bytes,
-            lifecycle_contract=lifecycle_contract,
-            release_contract=release_bytes,
-            authority_version=lock.version,
-            authority_digest=lock.digest,
-        )
+        if transition_bootstrap:
+            provenance = _transition_release_plan_provenance(
+                change_id=change_id,
+                authority_version=lock.version,
+                authority_digest=lock.digest,
+            )
+        else:
+            provenance = _release_plan_provenance(
+                project_manifest=project_bytes,
+                lifecycle_contract=lifecycle_contract,
+                release_contract=release_bytes,
+                authority_version=lock.version,
+                authority_digest=lock.digest,
+            )
         lifecycle_contract, lifecycle_plan = _release_lifecycle_documents(
             project=package_name,
             version=version,

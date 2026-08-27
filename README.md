@@ -825,10 +825,19 @@ carried findings; the attesting host or human boundary, not local process state,
 authenticates who produced it.
 
 The producer release workflows implement the same host-neutral chain with explicit
-artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle;
-`release-candidate.yml` restores it and runs `change start`, `change plan`,
-`change implement`, and every required `change verify`; the resulting
-`engineering-process-review-required` event names the exact artifact and checkpoint.
+artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle.
+For an ordinary governed Release, `release-candidate.yml` restores it and runs
+`change start`, `change plan`, `change implement`, and every required `change verify`;
+the resulting `engineering-process-review-required` event names the exact artifact
+and checkpoint. The one `authority-transition-bootstrap` Release instead contains an
+authored schema-3 plan readable by immutable public 0.7. The initial workflow runs
+`change start`, `change plan`, and `change decision start`, then emits
+`engineering-process-plan-review-required` without implementing the candidate. A
+fresh read-only plan reviewer returns the exact assigned report to
+`release-plan-approval.yml`; that protected-main callback restores the same source
+and lifecycle, submits the report, implements, verifies, consumes the single-use
+planned artifact, and only then emits the ordinary source-review handoff. It cannot
+finish, publish, or merge the Release.
 The consumer-selected host restores that lifecycle, chooses an agent or human,
 registers the assignment, submits the exact report, resolves any finding loop, runs
 `change finish`, and exports completion evidence. It sends only that bounded

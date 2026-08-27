@@ -204,12 +204,35 @@ def qualify_release_lifecycle(
             capture=True,
         )
         release_change = _read_object(candidate / ".release" / "change.json", "release change")
+        release_plan = _read_object(candidate / ".release" / "plan.json", "release plan")
         change_id = release_change.get("id")
         if not isinstance(change_id, str) or not change_id:
             raise ContractError("generated release change id is invalid")
-        context = f"qualification-only-{checkpoint}"
+        provenance = release_plan.get("provenance")
+        if not isinstance(provenance, dict):
+            raise ContractError("release qualification plan provenance is missing")
+        plan_kind = provenance.get("kind")
+        if plan_kind == "authored":
+            author = provenance.get("author")
+            if not isinstance(author, dict):
+                raise ContractError("release qualification plan author is missing")
+            actor_id = author.get("actorId")
+            context = author.get("contextId")
+            actor_kind = author.get("kind")
+            if (
+                not isinstance(actor_id, str)
+                or not isinstance(context, str)
+                or actor_kind not in {"agent", "human"}
+            ):
+                raise ContractError("release qualification plan author is invalid")
+        elif plan_kind == "process-generated":
+            actor_id = "qualification-release-bot"
+            context = f"qualification-only-{checkpoint}"
+            actor_kind = "agent"
+        else:
+            raise ContractError("release qualification plan provenance kind is invalid")
         authority_command = str(authority)
-        lifecycle_commands: tuple[tuple[Sequence[str], int], ...] = (
+        lifecycle_commands: list[tuple[Sequence[str], int]] = [
             ((authority_command, "doctor"), COMMAND_TIMEOUT_SECONDS),
             (
                 (
@@ -239,11 +262,11 @@ def qualify_release_lifecycle(
                     "change",
                     "start",
                     "--actor",
-                    "qualification-release-bot",
+                    actor_id,
                     "--context",
                     context,
                     "--actor-kind",
-                    "agent",
+                    actor_kind,
                     "--contract",
                     ".release/change.json",
                 ),
@@ -255,11 +278,11 @@ def qualify_release_lifecycle(
                     "change",
                     "plan",
                     "--actor",
-                    "qualification-release-bot",
+                    actor_id,
                     "--context",
                     context,
                     "--actor-kind",
-                    "agent",
+                    actor_kind,
                     "--change-id",
                     change_id,
                     "--plan",
@@ -267,7 +290,38 @@ def qualify_release_lifecycle(
                 ),
                 COMMAND_TIMEOUT_SECONDS,
             ),
-            (
+        ]
+        if plan_kind == "authored":
+            lifecycle_commands.append(
+                (
+                    (
+                        authority_command,
+                        "change",
+                        "decision",
+                        "start",
+                        "--actor",
+                        "qualification-plan-reviewer",
+                        "--context",
+                        f"qualification-plan-review-{checkpoint}",
+                        "--actor-kind",
+                        "agent",
+                        "--change-id",
+                        change_id,
+                        "--method",
+                        "isolated-context",
+                        "--attested-by",
+                        "release-qualification",
+                        "--attestation-evidence",
+                        "Ephemeral read-only qualification assignment; no review, implementation, completion, or publication occurs",
+                    ),
+                    COMMAND_TIMEOUT_SECONDS,
+                )
+            )
+            expected_phase = "planned"
+            next_skill = "plan-decision-review"
+        else:
+            lifecycle_commands.extend((
+                (
                 (
                     authority_command,
                     "change",
@@ -319,7 +373,9 @@ def qualify_release_lifecycle(
                 ),
                 PROFILE_TIMEOUT_SECONDS,
             ),
-        )
+            ))
+            expected_phase = "verified"
+            next_skill = "review-change"
         for command, timeout_seconds in lifecycle_commands:
             _run(command, cwd=candidate, timeout_seconds=timeout_seconds)
         raw_status = _run(
@@ -341,12 +397,23 @@ def qualify_release_lifecycle(
         if (
             not isinstance(lifecycle_status, dict)
             or lifecycle_status.get("status") != "passed"
-            or lifecycle_status.get("phase") != "verified"
+            or lifecycle_status.get("phase") != expected_phase
             or lifecycle_status.get("current") is not True
         ):
             raise ContractError(
-                "release qualification did not stop at the verified reviewer handoff"
+                "release qualification did not stop at the expected reviewer handoff"
             )
+        if plan_kind == "authored":
+            decision = lifecycle_status.get("planDecision")
+            if (
+                not isinstance(decision, dict)
+                or decision.get("authorized") is not False
+                or decision.get("assignment") is None
+                or decision.get("review") is not None
+            ):
+                raise ContractError(
+                    "release qualification did not preserve the pending plan review"
+                )
     final_status = _run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=root,
@@ -359,8 +426,9 @@ def qualify_release_lifecycle(
         "sourceCheckpoint": source_checkpoint,
         "candidateCheckpoint": checkpoint,
         "changeId": change_id,
-        "phase": "verified",
-        "nextSkill": "review-change",
+        "phase": expected_phase,
+        "nextSkill": next_skill,
+        "planKind": plan_kind,
         "authority": str(authority),
         "pendingChanges": [path.name for path in changes],
     }

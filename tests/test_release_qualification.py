@@ -96,7 +96,10 @@ class ReleaseQualificationTests(unittest.TestCase):
         self.assertNotIn("qualification_semantic_review", source)
         self.assertNotIn('"verdict": "approved"', source)
         self.assertNotIn('"change",\n                    "review",', source)
-        self.assertIn('lifecycle_status.get("phase") != "verified"', source)
+        self.assertIn('next_skill = "plan-decision-review"', source)
+        self.assertIn('next_skill = "review-change"', source)
+        self.assertIn('decision.get("authorized") is not False', source)
+        self.assertNotIn('"change",\n                        "decision",\n                        "submit"', source)
 
     def test_qualification_subprocesses_do_not_receive_secret_environment(self):
         environment = {
