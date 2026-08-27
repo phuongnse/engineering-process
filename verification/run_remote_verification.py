@@ -294,9 +294,7 @@ def _dispatch(
     }
     if len(workflow_shas) != 1:
         raise AdapterError("request requirements do not share one workflow checkpoint")
-    payload = {
-        "ref": dispatch_ref,
-        "inputs": {
+    inputs = {
             "remote_source_ref": source_ref,
             "remote_change_id": request["changeId"],
             "remote_checkpoint": request["checkpoint"],
@@ -306,14 +304,16 @@ def _dispatch(
             "remote_bootstrap_authorization_sha256": (
                 bootstrap_authorization_sha256 or ""
             ),
-            "remote_authority_transition": json.dumps(
-                request.get("authorityTransition"),
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            if request.get("authorityTransition") is not None
-            else "",
-        },
+        }
+    if request.get("authorityTransition") is not None:
+        inputs["remote_authority_transition"] = json.dumps(
+            request["authorityTransition"],
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    payload = {
+        "ref": dispatch_ref,
+        "inputs": inputs,
     }
     result = _run(
         [

@@ -12,6 +12,7 @@ from engineering_process.contracts import canonical_json_digest, read_json
 from verification.run_remote_verification import (
     AdapterError,
     _artifact_manifest,
+    _dispatch,
     _selector_identity,
     run_adapter,
     verification_tag,
@@ -24,6 +25,47 @@ from verification.validate_remote_verification_dispatch import (
 
 
 class RemoteVerificationAdapterTests(unittest.TestCase):
+    def test_dispatch_omits_transition_input_for_schema_one_workflows(self):
+        request = self.request()
+        response = subprocess.CompletedProcess(
+            ["gh"], 0, stdout=b'{"workflow_run_id":10}\n', stderr=b""
+        )
+        with mock.patch(
+            "verification.run_remote_verification._run", return_value=response
+        ) as run:
+            _dispatch(
+                Path("."),
+                repository="example/example-service",
+                workflow="ci.yml",
+                dispatch_ref="main",
+                source_ref="refs/tags/test",
+                request=request,
+            )
+        payload = json.loads(run.call_args.kwargs["input_bytes"])
+        self.assertNotIn("remote_authority_transition", payload["inputs"])
+
+        request["schemaVersion"] = 2
+        request["authorityTransition"] = {
+            "request": {"path": ".process/runs/x/request.json", "digest": f"sha256:{'1' * 64}"},
+            "candidateEvidence": {"path": ".process/runs/x/evidence.json", "digest": f"sha256:{'2' * 64}"},
+        }
+        with mock.patch(
+            "verification.run_remote_verification._run", return_value=response
+        ) as run:
+            _dispatch(
+                Path("."),
+                repository="example/example-service",
+                workflow="ci.yml",
+                dispatch_ref="main",
+                source_ref="refs/tags/test",
+                request=request,
+            )
+        payload = json.loads(run.call_args.kwargs["input_bytes"])
+        self.assertEqual(
+            request["authorityTransition"],
+            json.loads(payload["inputs"]["remote_authority_transition"]),
+        )
+
     def request(self) -> dict:
         return read_json(
             Path(__file__).resolve().parent.parent
