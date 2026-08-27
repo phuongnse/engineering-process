@@ -56,7 +56,6 @@ def main(argv: list[str] | None = None) -> int:
         "--controller-requirement",
         action="append",
         type=Path,
-        required=True,
     )
     parser.add_argument("--release", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -72,7 +71,11 @@ def main(argv: list[str] | None = None) -> int:
         controller_root / "engineering_process" / "requirements-dev.txt",
         controller_root / "engineering_process" / "requirements-build.txt",
     ]
-    requirements = [path.resolve(strict=True) for path in args.controller_requirement]
+    requirements = (
+        [path.resolve(strict=True) for path in args.controller_requirement]
+        if args.controller_requirement
+        else expected_requirements
+    )
     if requirements != expected_requirements:
         raise ContractError(
             "transition release rendering requires exact runtime, development, and build controller requirements"
