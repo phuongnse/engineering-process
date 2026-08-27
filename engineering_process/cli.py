@@ -419,6 +419,15 @@ def command_authority_transition_bootstrap_consume(
         args.candidate_root,
         validation,
         merge_checkpoint=args.merge_checkpoint,
+        validation_artifact={
+            "artifactId": args.validation_artifact_id,
+            "name": args.validation_artifact_name,
+            "digest": args.validation_artifact_digest,
+            "runId": args.validation_run_id,
+            "runAttempt": args.validation_run_attempt,
+            "runUrl": args.validation_run_url,
+        },
+        consumed_at=args.consumed_at,
     )
     if args.output.exists():
         raise ContractError(f"{args.output}: refusing to replace existing consumption")
@@ -824,6 +833,10 @@ def command_change_transition_register(args: argparse.Namespace) -> int:
         args.project_root,
         args.change_id,
         args.request,
+        args.target_checkout,
+        args.artifact_root,
+        args.release_receipt,
+        args.artifact_attestation,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -1909,6 +1922,13 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_consume.add_argument("--candidate-root", type=_root, required=True)
     bootstrap_consume.add_argument("--validation", type=Path, required=True)
     bootstrap_consume.add_argument("--merge-checkpoint", required=True)
+    bootstrap_consume.add_argument("--validation-artifact-id", required=True)
+    bootstrap_consume.add_argument("--validation-artifact-name", required=True)
+    bootstrap_consume.add_argument("--validation-artifact-digest", required=True)
+    bootstrap_consume.add_argument("--validation-run-id", required=True)
+    bootstrap_consume.add_argument("--validation-run-attempt", type=int, required=True)
+    bootstrap_consume.add_argument("--validation-run-url", required=True)
+    bootstrap_consume.add_argument("--consumed-at", required=True)
     bootstrap_consume.add_argument("--output", type=Path, required=True)
     _add_json(bootstrap_consume)
     bootstrap_consume.set_defaults(
@@ -2781,6 +2801,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_actor(transition_register)
     transition_register.add_argument("--change-id", required=True)
     transition_register.add_argument("--request", type=Path, required=True)
+    transition_register.add_argument("--target-checkout", type=_root, required=True)
+    transition_register.add_argument("--artifact-root", type=_root, required=True)
+    transition_register.add_argument("--release-receipt", type=Path, required=True)
+    transition_register.add_argument("--artifact-attestation", type=Path, required=True)
     transition_register.set_defaults(handler=command_change_transition_register)
 
     transition_ingest = transition_commands.add_parser(

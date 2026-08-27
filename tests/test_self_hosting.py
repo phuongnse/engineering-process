@@ -7,6 +7,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+import yaml
 
 from engineering_process import VERSION
 
@@ -21,17 +22,35 @@ class SelfHostingTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("bootstrap_authorization_gzip_base64", workflow)
         self.assertIn('test "${#AUTHORIZATION_BASE64}" -le 60000', workflow)
-        self.assertIn(".transition-controller/verification/validate_authority_transition.py", workflow)
+        self.assertIn('".transition-controller/$VERIFIER_ENTRYPOINT"', workflow)
         self.assertIn("ref: ${{ env.VERIFIER_COMMIT }}", workflow)
         self.assertIn("ref: ${{ inputs.candidate_head }}", workflow)
         self.assertIn("authority-transition-completion", (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(encoding="utf-8"))
         self.assertIn('gh pr merge "$PR_NUMBER"', workflow)
         self.assertIn("--auto --squash", workflow)
+        self.assertIn('--match-head-commit "$HEAD_SHA"', workflow)
+        self.assertIn("expected-target-assets.txt", workflow)
+        self.assertIn("-le 128000000", workflow)
+        self.assertIn("-le 256000000", workflow)
         self.assertNotIn("processctl change finish", workflow)
         for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
             if uses.startswith("./"):
                 continue
             self.assertRegex(uses, r"@[0-9a-f]{40}$")
+
+        consumption = (
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "authority-transition-consumption.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("authority-transition bootstrap consume", consumption)
+        self.assertIn("github.event.pull_request.merged_at", consumption)
+        self.assertIn("validationArtifact", (PROCESS_ROOT / "schemas" / "bootstrap-adoption-consumption.schema.json").read_text(encoding="utf-8"))
+        workflow_document = yaml.safe_load(workflow)
+        steps = workflow_document["jobs"]["validate-and-merge"]["steps"]
+        base_step = next(step for step in steps if step.get("name") == "Require current base and exact PR identity")
+        self.assertEqual("${{ github.workflow_sha }}", base_step["env"]["WORKFLOW_SHA"])
 
     def test_public_install_action_uses_immutable_checkout_source_and_safe_inputs(self):
         action = (PROCESS_ROOT / "action.yml").read_text(encoding="utf-8")
@@ -109,6 +128,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("--review-report", approval)
         self.assertNotIn("processctl change finish", approval)
         self.assertIn("completion_evidence_gzip_base64", approval)
+        self.assertIn(
+            '"$RUNNER_TEMP/process-authority/bin/python" processctl.py', approval
+        )
+        self.assertIn("publication release-pr-body", approval)
         self.assertIn("verification/decode_completion_evidence.py", approval)
         self.assertIn("verification/validate_release_completion_identity.py", approval)
         self.assertIn(

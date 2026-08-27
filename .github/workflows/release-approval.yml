@@ -139,7 +139,8 @@ jobs:
         run: |
           version="$(jq -r .version release.json)"
           title="chore(release): prepare v$version"
-          processctl publication release-pr-body \
+          "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
+            publication release-pr-body \
             --state approved --output "$RUNNER_TEMP/release-pr.md"
           evidence_sha256="$(sha256sum "$RUNNER_TEMP/completion-evidence.json" | cut -d ' ' -f1)"
           cat >> "$RUNNER_TEMP/release-pr.md" <<EOF

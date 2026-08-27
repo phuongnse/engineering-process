@@ -8,13 +8,58 @@
   "properties": {
     "schemaVersion": {"const": 1},
     "kind": {"const": "engineering-process-authority-transition-request"},
-    "project": {"type": "string"},
-    "changeId": {"type": "string"},
+    "project": {"$ref": "#/$defs/project"},
+    "changeId": {"$ref": "#/$defs/id"},
     "cycle": {"type": "integer", "minimum": 1},
-    "source": {"type": "object"},
-    "target": {"type": "object"},
-    "candidate": {"type": "object"},
-    "registeredBy": {"type": "object"},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authority", "checkpoint", "workspaceFingerprint", "processLockSha256", "requirementsLockSha256"],
+      "properties": {
+        "authority": {"$ref": "#/$defs/authority"}, "checkpoint": {"$ref": "#/$defs/gitOid"},
+        "workspaceFingerprint": {"$ref": "#/$defs/digest"}, "processLockSha256": {"$ref": "#/$defs/digest"},
+        "requirementsLockSha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "version", "tag", "commit", "processDigest", "releaseContractSha256", "distributionAttestationSha256", "lifecycleReceiptSha256", "artifacts"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"}, "version": {"$ref": "#/$defs/version"},
+        "tag": {"$ref": "#/$defs/tag"}, "commit": {"$ref": "#/$defs/gitOid"}, "processDigest": {"$ref": "#/$defs/digest"},
+        "releaseContractSha256": {"$ref": "#/$defs/digest"}, "distributionAttestationSha256": {"$ref": "#/$defs/digest"},
+        "lifecycleReceiptSha256": {"$ref": "#/$defs/digest"},
+        "artifacts": {"type": "array", "minItems": 2, "maxItems": 16, "items": {"$ref": "#/$defs/artifact"}}
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baseCheckpoint", "selectedSkills", "projectMigrationSha256", "requirementsInputSha256", "requirementsLockSha256", "projectManifestSha256", "actionPinsSha256", "actionPins", "expectedChangedPaths", "expiresAt"],
+      "properties": {
+        "baseCheckpoint": {"$ref": "#/$defs/gitOid"},
+        "selectedSkills": {"type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "projectMigrationSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "requirementsInputSha256": {"$ref": "#/$defs/digest"}, "requirementsLockSha256": {"$ref": "#/$defs/digest"},
+        "projectManifestSha256": {"$ref": "#/$defs/digest"}, "actionPinsSha256": {"$ref": "#/$defs/digest"},
+        "actionPins": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/actionPin"}},
+        "expectedChangedPaths": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/path"}},
+        "expiresAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "registeredBy": {"$ref": "#/$defs/actor"},
     "registeredAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "project": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
+    "repository": {"type": "string", "maxLength": 256, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+    "tag": {"type": "string", "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["version", "digest"], "properties": {"version": {"$ref": "#/$defs/version"}, "digest": {"$ref": "#/$defs/digest"}}},
+    "actor": {"type": "object", "additionalProperties": false, "required": ["actorId", "contextId", "kind"], "properties": {"actorId": {"type": "string", "minLength": 1, "maxLength": 256}, "contextId": {"type": "string", "minLength": 1, "maxLength": 256}, "kind": {"enum": ["agent", "human"]}}},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["name", "sha256", "sizeBytes"], "properties": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 200}, "sha256": {"$ref": "#/$defs/digest"}, "sizeBytes": {"type": "integer", "minimum": 1, "maximum": 1000000000}}},
+    "actionPin": {"type": "object", "additionalProperties": false, "required": ["path", "repository", "previousCommit", "targetCommit", "previousReleaseTag", "targetReleaseTag"], "properties": {"path": {"$ref": "#/$defs/path"}, "repository": {"$ref": "#/$defs/repository"}, "previousCommit": {"$ref": "#/$defs/gitOid"}, "targetCommit": {"$ref": "#/$defs/gitOid"}, "previousReleaseTag": {"$ref": "#/$defs/tag"}, "targetReleaseTag": {"$ref": "#/$defs/tag"}}}
   }
 }

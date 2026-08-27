@@ -3,6 +3,7 @@ import hashlib
 import json
 import unittest
 from pathlib import Path
+from jsonschema import Draft202012Validator, ValidationError
 
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
@@ -325,6 +326,94 @@ class ProjectContractTests(unittest.TestCase):
 
         document["observedControls"]["automerge"] = True
         with self.assertRaisesRegex(ContractError, "automerge: must be false"):
+            validate_automation_proposal(document)
+
+    def test_process_adoption_accepts_transition_release_source_split(self):
+        document = json.loads(
+            json.dumps(
+                json.loads(
+                    (
+                        PROCESS_ROOT
+                        / "examples"
+                        / "automation-process-adoption-proposal.json"
+                    ).read_text(encoding="utf-8")
+                )
+            ).replace("0.8.0", "0.9.0")
+        )
+        adoption = document["processAdoption"]
+        producer = adoption["producerRelease"]
+        release_binding = producer["releaseContract"]
+        release = json.loads(release_binding["content"])
+        release.update(
+            {
+                "schemaVersion": 4,
+                "previousVersion": "0.8.0",
+                "classification": "minor",
+                "compatibility": "incompatible",
+                "schemaImpact": "breaking",
+                "migration": "Use the authority-transition protocol.",
+            }
+        )
+        release["changes"] = [
+            {
+                "id": "authority-transition-protocol",
+                "type": "breaking",
+                "surfaces": ["lifecycle"],
+                "rationale": "Introduce exact authority transitions.",
+            }
+        ]
+        release["provenance"] = {
+            "mode": "authority-transition-bootstrap",
+            "statement": "Public 0.7.0 governs the transition release.",
+            "lifecycleReceipt": {
+                "asset": release["identity"]["receiptAsset"],
+                "project": "engineering-process",
+                "changeId": "release-0-9-0",
+                "cycle": 1,
+            },
+            "authorityTransition": {
+                "sourceAuthority": {
+                    "version": "0.7.0",
+                    "digest": adoption["sourceAuthority"]["processDigest"],
+                },
+                "skippedRelease": {"version": "0.8.0", "tag": "v0.8.0"},
+                "bootstrapChangeId": "authority-transition-protocol",
+            },
+        }
+        release_binding["content"] = (
+            json.dumps(release, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        release_binding["sha256"] = "sha256:" + hashlib.sha256(
+            release_binding["content"].encode("utf-8")
+        ).hexdigest()
+
+        attestation_binding = producer["distributionAttestation"]
+        attestation = json.loads(attestation_binding["content"])
+        attestation["schemaVersion"] = 2
+        attestation["release"]["contractSha256"] = release_binding["sha256"]
+        attestation["release"]["version"] = "0.9.0"
+        attestation["release"]["tag"] = "v0.9.0"
+        attestation["release"]["releaseName"] = "v0.9.0"
+        attestation["release"]["artifacts"] = release["identity"]["artifacts"]
+        attestation["lifecycleReceipt"]["asset"] = release["identity"]["receiptAsset"]
+        attestation["lifecycleReceipt"]["changeId"] = "release-0-9-0"
+        attestation["authorityTransition"] = {
+            "sourceAuthority": release["provenance"]["authorityTransition"]["sourceAuthority"],
+            "skippedRelease": "0.8.0",
+            "bootstrapChangeId": "authority-transition-protocol",
+        }
+        attestation_binding["content"] = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        attestation_binding["sha256"] = "sha256:" + hashlib.sha256(
+            attestation_binding["content"].encode("utf-8")
+        ).hexdigest()
+
+        proposal = validate_automation_proposal(document)
+
+        self.assertEqual("process-adoption", proposal.proposal_kind)
+        adoption["sourceAuthority"]["version"] = "0.8.0"
+        with self.assertRaisesRegex(ContractError, "source authority"):
             validate_automation_proposal(document)
 
     def test_process_adoption_proposal_rejects_merge_escalation_and_partial_evidence(self):
@@ -803,6 +892,49 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_transition_json_schemas_match_core_exact_fields(self):
+        validators = {
+            "authority-transition-evidence": validate_authority_transition_evidence,
+            "authority-transition-request": validate_authority_transition_request,
+            "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+            "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
+            "protected-transition-policy": validate_protected_transition_policy,
+        }
+        for name, core_validator in validators.items():
+            with self.subTest(name=name):
+                schema = json.loads((PROCESS_ROOT / "schemas" / f"{name}.schema.json").read_text(encoding="utf-8"))
+                document = json.loads((PROCESS_ROOT / "examples" / f"{name}.json").read_text(encoding="utf-8"))
+                validator = Draft202012Validator(schema)
+                validator.validate(document)
+                core_validator(document)
+                invalid = copy.deepcopy(document)
+                invalid["unexpected"] = True
+                with self.assertRaises(ValidationError):
+                    validator.validate(invalid)
+                with self.assertRaisesRegex(ContractError, "unknown properties"):
+                    core_validator(invalid)
+
+    def test_historical_schema_majors_reject_transition_fields(self):
+        transition = {
+            "request": {"path": ".process/runs/change/request.json", "digest": f"sha256:{'1' * 64}"},
+            "candidateEvidence": {"path": ".process/runs/change/evidence.json", "digest": f"sha256:{'2' * 64}"},
+        }
+        request = json.loads((PROCESS_ROOT / "examples" / "remote-verification-request.json").read_text(encoding="utf-8"))
+        request["authorityTransition"] = transition
+        request_schema = json.loads((PROCESS_ROOT / "schemas" / "remote-verification-request.schema.json").read_text(encoding="utf-8"))
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(request_schema).validate(request)
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_remote_verification_request(request)
+
+        review = json.loads((PROCESS_ROOT / "examples" / "review.json").read_text(encoding="utf-8"))
+        review["authorityTransition"] = transition
+        review_schema = json.loads((PROCESS_ROOT / "schemas" / "review.schema.json").read_text(encoding="utf-8"))
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(review_schema).validate(review)
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_review(review)
+
     def test_remote_transition_uses_new_request_and_evidence_majors(self):
         transition = {
             "request": {"path": ".process/runs/change/request.json", "digest": f"sha256:{'1' * 64}"},
@@ -849,6 +981,23 @@ class ArtifactContractTests(unittest.TestCase):
         document["candidate"]["expectedChangedPaths"] = []
         with self.assertRaisesRegex(ContractError, "non-empty"):
             validate_authority_transition_request(document)
+
+    def test_transition_evidence_does_not_claim_unobserved_rollback(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-evidence.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["materialization"]["rollbackStatus"] = "clean"
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "authority-transition-evidence.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schema).validate(document)
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_authority_transition_evidence(document)
 
     def test_protected_transition_policy_is_exactly_single_use(self):
         document = json.loads(

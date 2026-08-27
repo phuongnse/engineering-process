@@ -74,8 +74,8 @@
       "additionalProperties": false,
       "required": ["request", "candidateEvidence"],
       "properties": {
-        "request": {"type": "object"},
-        "candidateEvidence": {"type": "object"}
+        "request": {"$ref": "#/$defs/artifact"},
+        "candidateEvidence": {"$ref": "#/$defs/artifact"}
       }
     },
     "findings": {
@@ -131,12 +131,13 @@
   "allOf": [
     {
       "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
-      "then": {"not": {"required": ["quality"]}}
+      "then": {"not": {"anyOf": [{"required": ["quality"]}, {"required": ["authorityTransition"]}]}}
     },
     {
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
       "then": {
         "required": ["quality"],
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "findings": {"maxItems": 256}
         }
@@ -203,6 +204,15 @@
     }
   ],
   "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
     "qualityAssessment": {
       "type": "object",
       "additionalProperties": false,

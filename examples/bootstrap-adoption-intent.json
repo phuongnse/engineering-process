@@ -23,6 +23,7 @@
     "projectManifestSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "projectMigrationSha256": null,
     "actionPinsSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actionPins": [],
     "selectedSkills": ["run-change"],
     "expectedChangedPaths": [".agents/skills/run-change/SKILL.md", ".process/process.lock", "requirements/process.txt"]
   },

@@ -2,22 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/bootstrap-adoption-consumption.schema.json",
   "title": "Terminal one-time bootstrap adoption consumption",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schemaVersion", "kind", "project", "repository", "policySha256", "intentSha256", "authorizationSha256", "baseCheckpoint", "headCheckpoint", "headTree", "mergeCheckpoint", "checkContext", "consumedAt"],
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "repository", "policySha256", "intentSha256", "authorizationSha256", "baseCheckpoint", "headCheckpoint", "headTree", "mergeCheckpoint", "checkContext", "validationArtifact", "consumedAt"],
   "properties": {
-    "schemaVersion": {"const": 1},
-    "kind": {"const": "engineering-process-bootstrap-adoption-consumption"},
-    "project": {"type": "string"},
-    "repository": {"type": "string"},
-    "policySha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "intentSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "authorizationSha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "baseCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "headCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "headTree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "mergeCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "checkContext": {"type": "string"},
-    "consumedAt": {"type": "string", "format": "date-time"}
+    "schemaVersion": {"const": 1}, "kind": {"const": "engineering-process-bootstrap-adoption-consumption"},
+    "project": {"$ref": "#/$defs/project"}, "repository": {"$ref": "#/$defs/repository"},
+    "policySha256": {"$ref": "#/$defs/digest"}, "intentSha256": {"$ref": "#/$defs/digest"}, "authorizationSha256": {"$ref": "#/$defs/digest"},
+    "baseCheckpoint": {"$ref": "#/$defs/gitOid"}, "headCheckpoint": {"$ref": "#/$defs/gitOid"}, "headTree": {"$ref": "#/$defs/gitOid"}, "mergeCheckpoint": {"$ref": "#/$defs/gitOid"},
+    "checkContext": {"type": "string", "minLength": 1, "maxLength": 128},
+    "validationArtifact": {"$ref": "#/$defs/serviceArtifact"}, "consumedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "project": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"}, "repository": {"type": "string", "maxLength": 256, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "serviceArtifact": {"type": "object", "additionalProperties": false, "required": ["artifactId", "name", "digest", "runId", "runAttempt", "runUrl"], "properties": {"artifactId": {"type": "string", "pattern": "^[1-9][0-9]{0,63}$"}, "name": {"type": "string", "minLength": 1, "maxLength": 128}, "digest": {"$ref": "#/$defs/digest"}, "runId": {"type": "string", "pattern": "^[1-9][0-9]{0,63}$"}, "runAttempt": {"type": "integer", "minimum": 1, "maximum": 1000}, "runUrl": {"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048}}}
   }
 }

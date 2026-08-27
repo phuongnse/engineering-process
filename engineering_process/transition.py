@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -151,6 +152,67 @@ def _artifact_bindings(value: Any, path: str) -> list[dict[str, Any]]:
     return result
 
 
+def _action_pin_changes(value: Any, path: str) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > 256:
+        raise ContractError(f"{path}: must contain at most 256 action-pin changes")
+    result: list[dict[str, str]] = []
+    identities: list[tuple[str, str]] = []
+    for index, raw in enumerate(value):
+        item_path = f"{path}[{index}]"
+        item = _object(raw, item_path)
+        _exact_keys(
+            item,
+            required={
+                "path",
+                "repository",
+                "previousCommit",
+                "targetCommit",
+                "previousReleaseTag",
+                "targetReleaseTag",
+            },
+            path=item_path,
+        )
+        relative = _relative_path(item["path"], f"{item_path}.path")
+        if not relative.startswith(".github/workflows/") or not relative.endswith(
+            (".yml", ".yaml")
+        ):
+            raise ContractError(f"{item_path}.path: must name a workflow file")
+        repository = _repository(item["repository"], f"{item_path}.repository")
+        previous = _git_oid(item["previousCommit"], f"{item_path}.previousCommit")
+        target = _git_oid(item["targetCommit"], f"{item_path}.targetCommit")
+        if previous == target:
+            raise ContractError(f"{item_path}: action pin must change commit")
+        previous_tag = _string(
+            item["previousReleaseTag"],
+            f"{item_path}.previousReleaseTag",
+            max_length=80,
+        )
+        target_tag = _string(
+            item["targetReleaseTag"],
+            f"{item_path}.targetReleaseTag",
+            max_length=80,
+        )
+        if re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", previous_tag) is None or re.fullmatch(
+            r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+            target_tag,
+        ) is None:
+            raise ContractError(f"{item_path}: action release tags must be final SemVer tags")
+        identities.append((relative, repository))
+        result.append(
+            {
+                "path": relative,
+                "repository": repository,
+                "previousCommit": previous,
+                "targetCommit": target,
+                "previousReleaseTag": previous_tag,
+                "targetReleaseTag": target_tag,
+            }
+        )
+    if identities != sorted(set(identities)):
+        raise ContractError(f"{path}: must be sorted by path/repository and unique")
+    return result
+
+
 def validate_authority_transition_request(
     document: Any, path: str = "authority-transition-request"
 ) -> dict[str, Any]:
@@ -231,6 +293,7 @@ def validate_authority_transition_request(
             "requirementsLockSha256",
             "projectManifestSha256",
             "actionPinsSha256",
+            "actionPins",
             "expectedChangedPaths",
             "expiresAt",
         },
@@ -262,6 +325,9 @@ def validate_authority_transition_request(
     if migration_digest is not None:
         _digest(migration_digest, f"{candidate_path}.projectMigrationSha256")
 
+    action_pins = _action_pin_changes(
+        candidate["actionPins"], f"{candidate_path}.actionPins"
+    )
     return {
         "schemaVersion": 1,
         "kind": REQUEST_KIND,
@@ -326,6 +392,7 @@ def validate_authority_transition_request(
                 candidate["actionPinsSha256"],
                 f"{candidate_path}.actionPinsSha256",
             ),
+            "actionPins": action_pins,
             "expectedChangedPaths": changed_paths,
             "expiresAt": _timestamp(candidate["expiresAt"], f"{candidate_path}.expiresAt"),
         },
@@ -416,7 +483,7 @@ def validate_authority_transition_evidence(
     materialization = _object(value["materialization"], materialization_path)
     _exact_keys(
         materialization,
-        required={"status", "complete", "idempotent", "rollbackStatus", "issues"},
+        required={"status", "finalStateChecks", "issues"},
         path=materialization_path,
     )
     issues = materialization["issues"]
@@ -424,12 +491,12 @@ def validate_authority_transition_evidence(
         raise ContractError(f"{materialization_path}.issues: must be an array of strings")
     if (
         materialization["status"] != "passed"
-        or materialization["complete"] is not True
-        or materialization["idempotent"] is not True
-        or materialization["rollbackStatus"] != "clean"
+        or materialization["finalStateChecks"] != 2
         or issues
     ):
-        raise ContractError(f"{materialization_path}: candidate must be complete, idempotent, and clean")
+        raise ContractError(
+            f"{materialization_path}: requires two clean final-state checks"
+        )
 
     return {
         "schemaVersion": 1,
@@ -451,9 +518,7 @@ def validate_authority_transition_evidence(
         "bindings": validated_bindings,
         "materialization": {
             "status": "passed",
-            "complete": True,
-            "idempotent": True,
-            "rollbackStatus": "clean",
+            "finalStateChecks": 2,
             "issues": [],
         },
         "generatedBy": _actor(value["generatedBy"], f"{path}.generatedBy"),
@@ -498,7 +563,7 @@ def validate_bootstrap_adoption_intent(
     candidate = _object(value["candidate"], candidate_path)
     _exact_keys(
         candidate,
-        required={"requirementsInputSha256", "requirementsLockSha256", "projectManifestSha256", "projectMigrationSha256", "actionPinsSha256", "selectedSkills", "expectedChangedPaths"},
+        required={"requirementsInputSha256", "requirementsLockSha256", "projectManifestSha256", "projectMigrationSha256", "actionPinsSha256", "actionPins", "selectedSkills", "expectedChangedPaths"},
         path=candidate_path,
     )
     selected = _string_list(candidate["selectedSkills"], f"{candidate_path}.selectedSkills", pattern=PROFILE_PATTERN, maximum=256)
@@ -531,6 +596,9 @@ def validate_bootstrap_adoption_intent(
             "projectManifestSha256": _digest(candidate["projectManifestSha256"], f"{candidate_path}.projectManifestSha256"),
             "projectMigrationSha256": migration,
             "actionPinsSha256": _digest(candidate["actionPinsSha256"], f"{candidate_path}.actionPinsSha256"),
+            "actionPins": _action_pin_changes(
+                candidate["actionPins"], f"{candidate_path}.actionPins"
+            ),
             "selectedSkills": selected,
             "expectedChangedPaths": changed,
         },
@@ -635,11 +703,28 @@ def validate_bootstrap_adoption_consumption(
         required={
             "schemaVersion", "kind", "project", "repository", "policySha256",
             "intentSha256", "authorizationSha256", "baseCheckpoint", "headCheckpoint",
-            "headTree", "mergeCheckpoint", "checkContext", "consumedAt"
+            "headTree", "mergeCheckpoint", "checkContext", "validationArtifact", "consumedAt"
         },
         path=path,
     )
     common = _bootstrap_common(value, path, kind=BOOTSTRAP_CONSUMPTION_KIND)
+    validation_path = f"{path}.validationArtifact"
+    validation = _object(value["validationArtifact"], validation_path)
+    _exact_keys(
+        validation,
+        required={"artifactId", "name", "digest", "runId", "runAttempt", "runUrl"},
+        path=validation_path,
+    )
+    artifact_id = _string(validation["artifactId"], f"{validation_path}.artifactId", max_length=64)
+    run_id = _string(validation["runId"], f"{validation_path}.runId", max_length=64)
+    if re.fullmatch(r"[1-9][0-9]{0,63}", artifact_id) is None or re.fullmatch(r"[1-9][0-9]{0,63}", run_id) is None:
+        raise ContractError(f"{validation_path}: invalid service ids")
+    run_attempt = validation["runAttempt"]
+    if isinstance(run_attempt, bool) or not isinstance(run_attempt, int) or not 1 <= run_attempt <= 1000:
+        raise ContractError(f"{validation_path}.runAttempt: invalid attempt")
+    run_url = _string(validation["runUrl"], f"{validation_path}.runUrl", max_length=2048)
+    if not run_url.startswith("https://"):
+        raise ContractError(f"{validation_path}.runUrl: must use HTTPS")
     return {
         "schemaVersion": 1,
         "kind": BOOTSTRAP_CONSUMPTION_KIND,
@@ -652,17 +737,20 @@ def validate_bootstrap_adoption_consumption(
         "headTree": _git_oid(value["headTree"], f"{path}.headTree"),
         "mergeCheckpoint": _git_oid(value["mergeCheckpoint"], f"{path}.mergeCheckpoint"),
         "checkContext": _string(value["checkContext"], f"{path}.checkContext", max_length=128),
+        "validationArtifact": {
+            "artifactId": artifact_id,
+            "name": _string(validation["name"], f"{validation_path}.name", max_length=128),
+            "digest": _digest(validation["digest"], f"{validation_path}.digest"),
+            "runId": run_id,
+            "runAttempt": run_attempt,
+            "runUrl": run_url,
+        },
         "consumedAt": _timestamp(value["consumedAt"], f"{path}.consumedAt"),
     }
 
 
 def _file_digest(path: Path, *, maximum: int = 1_000_000) -> str:
-    try:
-        content = path.read_bytes()
-    except OSError as error:
-        raise ContractError(f"{path}: cannot read transition input: {error}") from error
-    if len(content) > maximum:
-        raise ContractError(f"{path}: transition input exceeds {maximum} bytes")
+    content = _stable_file_bytes(path, maximum=maximum)
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
 
@@ -820,7 +908,13 @@ def validate_registered_candidate(
         raise ContractError("authority-transition project migration binding is stale")
     if evidence["bindings"]["managedDistributionSha256"] != request["target"]["processDigest"]:
         raise ContractError("authority-transition managed distribution binding is stale")
-    if evidence["bindings"]["actionPinsSha256"] != _action_pins_digest(candidate_root):
+    action_pins_digest = _validate_action_pin_changes(
+        candidate_root,
+        base_checkpoint=request["candidate"]["baseCheckpoint"],
+        head_checkpoint=inspected["checkpoint"],
+        declarations=request["candidate"]["actionPins"],
+    )
+    if evidence["bindings"]["actionPinsSha256"] != action_pins_digest:
         raise ContractError("authority-transition action pin binding is stale")
     if evidence["bindings"]["actionPinsSha256"] != request["candidate"]["actionPinsSha256"]:
         raise ContractError("authority-transition action pins are not pre-registered")
@@ -860,6 +954,138 @@ def _action_pins_digest(project_root: Path) -> str:
                 }
             )
     return canonical_json_digest(entries)
+
+
+def _workflow_snapshot(
+    project_root: Path, checkpoint: str
+) -> dict[str, tuple[str, str]]:
+    output = _git_output(
+        project_root,
+        ["ls-tree", "-rz", checkpoint, "--", ".github/workflows"],
+        label="inspect authority-transition workflow tree",
+        maximum=2_000_000,
+    )
+    snapshot: dict[str, tuple[str, str]] = {}
+    total = 0
+    for raw in (item for item in output.split(b"\0") if item):
+        try:
+            metadata, encoded_path = raw.split(b"\t", 1)
+            mode, kind, _oid = metadata.decode("ascii").split(" ")
+            relative = encoded_path.decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as error:
+            raise ContractError("authority-transition workflow tree is invalid") from error
+        if kind != "blob" or mode not in {"100644", "100755"}:
+            raise ContractError(f"workflow must be a regular blob: {relative}")
+        if not relative.endswith((".yml", ".yaml")):
+            continue
+        content = _git_file(
+            project_root,
+            checkpoint,
+            relative,
+            label=f"read workflow {relative}",
+        )
+        total += len(content)
+        if len(content) > 1_000_000 or total > 8_000_000:
+            raise ContractError("authority-transition workflow tree exceeds bounds")
+        try:
+            snapshot[relative] = (mode, content.decode("utf-8"))
+        except UnicodeDecodeError as error:
+            raise ContractError(f"workflow must be UTF-8: {relative}") from error
+    if len(snapshot) > 256:
+        raise ContractError("authority-transition workflow count exceeds 256")
+    return snapshot
+
+
+USES_PATTERN = re.compile(
+    r"(?m)^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*['\"]?(?P<value>[^'\"# \t\r\n]+)"
+)
+
+
+def _validate_pinned_uses(workflows: dict[str, tuple[str, str]]) -> None:
+    for path, (_mode, content) in workflows.items():
+        for match in USES_PATTERN.finditer(content):
+            value = match.group("value")
+            if value.startswith("./"):
+                continue
+            if value.startswith("docker://"):
+                if re.fullmatch(r"docker://[^@\s]+@sha256:[0-9a-f]{64}", value) is None:
+                    raise ContractError(f"workflow {path} contains an unpinned Docker action")
+                continue
+            if re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}", value
+            ) is None:
+                raise ContractError(f"workflow {path} contains a non-full-SHA action use")
+
+
+def _validate_action_pin_changes(
+    project_root: Path,
+    *,
+    base_checkpoint: str,
+    head_checkpoint: str,
+    declarations: list[dict[str, str]],
+) -> str:
+    base = _workflow_snapshot(project_root, base_checkpoint)
+    head = _workflow_snapshot(project_root, head_checkpoint)
+    _validate_pinned_uses(base)
+    _validate_pinned_uses(head)
+    declared_paths = {item["path"] for item in declarations}
+    changed_paths = {
+        path for path in set(base).union(head) if base.get(path) != head.get(path)
+    }
+    if changed_paths != declared_paths:
+        raise ContractError(
+            "authority-transition workflow changes do not match declared action pins"
+        )
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for item in declarations:
+        grouped.setdefault(item["path"], []).append(item)
+    declared_repositories = {item["repository"] for item in declarations}
+    for repository in declared_repositories:
+        declared_repository_paths = {
+            item["path"] for item in declarations if item["repository"] == repository
+        }
+        observed_paths = {
+            path
+            for path, (_mode, content) in base.items()
+            if re.search(
+                rf"(?m)^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*['\"]?{re.escape(repository)}@",
+                content,
+            )
+        }
+        if observed_paths != declared_repository_paths:
+            raise ContractError(
+                f"authority-transition action group for {repository} is incomplete"
+            )
+    for path, pins in grouped.items():
+        if path not in base or path not in head or base[path][0] != head[path][0]:
+            raise ContractError(f"authority-transition workflow mode changed: {path}")
+        expected = base[path][1]
+        for pin in pins:
+            pattern = re.compile(
+                rf"(?m)(uses[ \t]*:[ \t]*(?P<quote>['\"]?){re.escape(pin['repository'])}@)"
+                rf"{pin['previousCommit']}(?P=quote)([ \t]+#[ \t]*)"
+                rf"{re.escape(pin['previousReleaseTag'])}([ \t]*)$"
+            )
+            expected, replacements = pattern.subn(
+                lambda match: (
+                    match.group(1)
+                    + pin["targetCommit"]
+                    + match.group("quote")
+                    + match.group(3)
+                    + pin["targetReleaseTag"]
+                    + match.group(4)
+                ),
+                expected,
+            )
+            if replacements < 1:
+                raise ContractError(
+                    f"authority-transition workflow lacks declared previous pin: {path}"
+                )
+        if expected != head[path][1]:
+            raise ContractError(
+                f"authority-transition workflow contains changes beyond declared pins: {path}"
+            )
+    return _action_pins_digest(project_root)
 
 
 def create_authority_transition_evidence(
@@ -931,13 +1157,16 @@ def create_authority_transition_evidence(
             ),
             "projectMigrationSha256": migration_digest,
             "managedDistributionSha256": request["target"]["processDigest"],
-            "actionPinsSha256": _action_pins_digest(candidate_root),
+            "actionPinsSha256": _validate_action_pin_changes(
+                candidate_root,
+                base_checkpoint=request["candidate"]["baseCheckpoint"],
+                head_checkpoint=inspected["checkpoint"],
+                declarations=request["candidate"]["actionPins"],
+            ),
         },
         "materialization": {
             "status": "passed",
-            "complete": True,
-            "idempotent": True,
-            "rollbackStatus": "clean",
+            "finalStateChecks": 2,
             "issues": [],
         },
         "generatedBy": _actor(
@@ -980,19 +1209,44 @@ def _git_file(root: Path, checkpoint: str, relative: str, *, label: str) -> byte
 
 
 def _stable_file_bytes(path: Path, *, maximum: int = 1_000_000) -> bytes:
+    descriptor = -1
     try:
-        before = path.stat()
-        content = path.read_bytes()
-        after = path.stat()
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise ContractError(f"transition artifact must be a regular non-symlink file: {path}")
+        if before.st_size > maximum:
+            raise ContractError(f"transition artifact exceeds {maximum} bytes: {path}")
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+        ):
+            raise ContractError(f"transition artifact changed while opening: {path}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            content = stream.read(maximum + 1)
+        after = path.lstat()
+    except ContractError:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
     except OSError as error:
+        if descriptor >= 0:
+            os.close(descriptor)
         raise ContractError(f"cannot read transition artifact {path}: {error}") from error
-    if len(content) > maximum:
+    if len(content) > maximum or len(content) != before.st_size:
         raise ContractError(f"transition artifact exceeds {maximum} bytes: {path}")
     if (
-        len(content) != before.st_size
-        or after.st_size != before.st_size
+        after.st_size != before.st_size
         or after.st_mtime_ns != before.st_mtime_ns
         or after.st_mode != before.st_mode
+        or after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
     ):
         raise ContractError(f"transition artifact changed while reading: {path}")
     return content
@@ -1002,6 +1256,92 @@ def _require_not_expired(value: str, *, label: str) -> None:
     expires = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if expires <= datetime.now(UTC):
         raise ContractError(f"{label} has expired")
+
+
+def require_authority_transition_current(request: dict[str, Any]) -> None:
+    validated = validate_authority_transition_request(request)
+    _require_not_expired(
+        validated["candidate"]["expiresAt"], label="authority-transition request"
+    )
+
+
+def validate_transition_target_provenance(
+    request_document: dict[str, Any],
+    *,
+    target_checkout: Path,
+    artifact_root: Path,
+    release_receipt_path: Path,
+    artifact_attestation_path: Path,
+) -> dict[str, Any]:
+    from .artifact_attestation import validate_distribution_attestation
+    from .release import validate_release_checkpoint
+
+    request = validate_authority_transition_request(request_document)
+    require_authority_transition_current(request)
+    target_checkout = target_checkout.resolve(strict=True)
+    artifact_root = artifact_root.resolve(strict=True)
+    target = request["target"]
+    release_result = validate_release_checkpoint(
+        target_checkout,
+        tag=target["tag"],
+        release_name=target["tag"],
+        commit=target["commit"],
+        main_ref=target["commit"],
+        receipt_path=release_receipt_path,
+    )
+    if (
+        release_result["version"] != target["version"]
+        or release_result["provenanceMode"]
+        not in {"governed", "authority-transition-bootstrap"}
+        or _file_digest(target_checkout / "release.json")
+        != target["releaseContractSha256"]
+        or _file_digest(release_receipt_path, maximum=8_000_000)
+        != target["lifecycleReceiptSha256"]
+    ):
+        raise ContractError("authority-transition target release provenance mismatch")
+    receipt = release_result["lifecycleReceipt"]
+    if not isinstance(receipt, dict) or {
+        "version": receipt["processVersion"],
+        "digest": receipt["processDigest"],
+    } != request["source"]["authority"]:
+        raise ContractError(
+            "authority-transition target receipt is not governed by the source authority"
+        )
+    attestation = validate_distribution_attestation(
+        target_checkout,
+        artifact_root,
+        artifact_attestation_path,
+        receipt_path=release_receipt_path,
+        checkpoint=target["commit"],
+    )
+    if (
+        _file_digest(artifact_attestation_path)
+        != target["distributionAttestationSha256"]
+    ):
+        raise ContractError("authority-transition target attestation digest mismatch")
+    actual_artifacts = [
+        {
+            "name": item["name"],
+            "sha256": item["sha256"],
+            "sizeBytes": item["sizeBytes"],
+        }
+        for item in attestation["artifacts"]
+    ]
+    if actual_artifacts != target["artifacts"]:
+        raise ContractError("authority-transition target artifact bytes mismatch")
+    return {
+        "version": target["version"],
+        "tag": target["tag"],
+        "commit": target["commit"],
+        "processDigest": target["processDigest"],
+        "releaseContractSha256": target["releaseContractSha256"],
+        "lifecycleReceiptSha256": target["lifecycleReceiptSha256"],
+        "distributionAttestationSha256": target[
+            "distributionAttestationSha256"
+        ],
+        "artifacts": target["artifacts"],
+        "sourceAuthority": request["source"]["authority"],
+    }
 
 
 def validate_bootstrap_transition_candidate(
@@ -1205,7 +1545,12 @@ def validate_bootstrap_transition_candidate(
         "candidate"
     ]["projectManifestSha256"]:
         raise ContractError("bootstrap candidate project manifest mismatch")
-    if _action_pins_digest(candidate_root) != intent["candidate"]["actionPinsSha256"]:
+    if _validate_action_pin_changes(
+        candidate_root,
+        base_checkpoint=protected_base,
+        head_checkpoint=inspected["checkpoint"],
+        declarations=intent["candidate"]["actionPins"],
+    ) != intent["candidate"]["actionPinsSha256"]:
         raise ContractError("bootstrap candidate action pin set mismatch")
     migration_digest = intent["candidate"]["projectMigrationSha256"]
     migration_path = (
@@ -1253,6 +1598,8 @@ def create_bootstrap_adoption_consumption(
     validation: dict[str, Any],
     *,
     merge_checkpoint: str,
+    validation_artifact: dict[str, Any],
+    consumed_at: str,
 ) -> dict[str, Any]:
     candidate_root = candidate_root.resolve(strict=True)
     merge_checkpoint = _git_oid(merge_checkpoint, "merge checkpoint")
@@ -1278,6 +1625,7 @@ def create_bootstrap_adoption_consumption(
             "headTree": validation["headTree"],
             "mergeCheckpoint": merge_checkpoint,
             "checkContext": validation["checkContext"],
-            "consumedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "validationArtifact": validation_artifact,
+            "consumedAt": consumed_at,
         }
     )

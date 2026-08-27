@@ -11,5 +11,6 @@
   "headTree": "2222222222222222222222222222222222222222",
   "mergeCheckpoint": "3333333333333333333333333333333333333333",
   "checkContext": "authority-transition-completion",
+  "validationArtifact": {"artifactId": "123", "name": "authority-transition-validation-head", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444", "runId": "456", "runAttempt": 1, "runUrl": "https://example.invalid/runs/456"},
   "consumedAt": "2026-01-03T00:00:00Z"
 }

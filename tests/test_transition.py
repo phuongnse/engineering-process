@@ -22,10 +22,139 @@ from engineering_process.lifecycle import (
 )
 from engineering_process.evidence import export_receipt, validate_receipt
 from engineering_process.runner import source_state
-from engineering_process.transition import validate_registered_candidate
+from engineering_process.transition import (
+    _validate_action_pin_changes,
+    create_bootstrap_adoption_consumption,
+    validate_registered_candidate,
+    validate_transition_target_provenance,
+)
 
 
 class AuthorityTransitionTests(unittest.TestCase):
+    def test_target_provenance_resolves_exact_release_bytes(self):
+        request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkout = root / "target"
+            artifacts = root / "artifacts"
+            checkout.mkdir()
+            artifacts.mkdir()
+            (checkout / "release.json").write_text("{}\n", encoding="utf-8")
+            receipt = root / "receipt.json"
+            receipt.write_text("{}\n", encoding="utf-8")
+            attestation = root / "attestation.json"
+            attestation.write_text("{}\n", encoding="utf-8")
+            digest = lambda path: f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+            request["target"]["releaseContractSha256"] = digest(checkout / "release.json")
+            request["target"]["lifecycleReceiptSha256"] = digest(receipt)
+            request["target"]["distributionAttestationSha256"] = digest(attestation)
+            release_result = {
+                "version": request["target"]["version"],
+                "provenanceMode": "governed",
+                "lifecycleReceipt": {
+                    "processVersion": request["source"]["authority"]["version"],
+                    "processDigest": request["source"]["authority"]["digest"],
+                },
+            }
+            attestation_document = {"artifacts": request["target"]["artifacts"]}
+            with mock.patch("engineering_process.release.validate_release_checkpoint", return_value=release_result) as release_check, mock.patch("engineering_process.artifact_attestation.validate_distribution_attestation", return_value=attestation_document) as attestation_check:
+                result = validate_transition_target_provenance(
+                    request,
+                    target_checkout=checkout,
+                    artifact_root=artifacts,
+                    release_receipt_path=receipt,
+                    artifact_attestation_path=attestation,
+                )
+            self.assertEqual(request["target"]["commit"], result["commit"])
+            release_check.assert_called_once()
+            attestation_check.assert_called_once()
+            receipt.write_text("tampered\n", encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "provenance mismatch"):
+                with mock.patch("engineering_process.release.validate_release_checkpoint", return_value=release_result):
+                    validate_transition_target_provenance(
+                        request,
+                        target_checkout=checkout,
+                        artifact_root=artifacts,
+                        release_receipt_path=receipt,
+                        artifact_attestation_path=attestation,
+                    )
+
+    def test_expired_request_is_rejected_before_registration(self):
+        request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
+        request["candidate"]["expiresAt"] = "2020-01-01T00:00:00Z"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ContractError, "expired"):
+                validate_transition_target_provenance(
+                    request,
+                    target_checkout=root,
+                    artifact_root=root,
+                    release_receipt_path=root / "receipt.json",
+                    artifact_attestation_path=root / "attestation.json",
+                )
+
+    def test_action_pin_changes_are_grouped_and_pin_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Transition Test"], cwd=root, check=True)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            workflow = workflows / "ci.yml"
+            previous = "b" * 40
+            target = "c" * 40
+            workflow.write_text(
+                "steps:\n  - uses: actions/checkout@" + "a" * 40 + " # v1.0.0\n  - uses: owner/process@" + previous + " # v0.7.0\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            workflow.write_text(workflow.read_text(encoding="utf-8").replace(previous + " # v0.7.0", target + " # v0.9.0"), encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "pin update"], cwd=root, check=True)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            declarations = [{"path": ".github/workflows/ci.yml", "repository": "owner/process", "previousCommit": previous, "targetCommit": target, "previousReleaseTag": "v0.7.0", "targetReleaseTag": "v0.9.0"}]
+
+            digest = _validate_action_pin_changes(root, base_checkpoint=base, head_checkpoint=head, declarations=declarations)
+
+            self.assertTrue(digest.startswith("sha256:"))
+            with self.assertRaisesRegex(ContractError, "do not match declared"):
+                _validate_action_pin_changes(root, base_checkpoint=base, head_checkpoint=head, declarations=[])
+            workflow.write_text(workflow.read_text(encoding="utf-8") + "  - run: echo unrelated\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "unrelated"], cwd=root, check=True)
+            unrelated = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            with self.assertRaisesRegex(ContractError, "beyond declared pins"):
+                _validate_action_pin_changes(root, base_checkpoint=base, head_checkpoint=unrelated, declarations=declarations)
+
+    def test_consumption_binds_merge_tree_and_validation_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Transition Test"], cwd=root, check=True)
+            (root / "tracked.txt").write_text("merged\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "merge"], cwd=root, check=True)
+            merge = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            validation = {
+                "project": "engineering-process", "repository": "owner/engineering-process",
+                "policySha256": f"sha256:{'1' * 64}", "intentSha256": f"sha256:{'2' * 64}",
+                "authorizationSha256": f"sha256:{'3' * 64}", "baseCheckpoint": "0" * 40,
+                "headCheckpoint": "1" * 40, "headTree": tree, "checkContext": "authority-transition-completion",
+            }
+            service = {"artifactId": "123", "name": "authority-transition-validation-head", "digest": f"sha256:{'4' * 64}", "runId": "456", "runAttempt": 1, "runUrl": "https://example.invalid/runs/456"}
+
+            consumption = create_bootstrap_adoption_consumption(root, validation, merge_checkpoint=merge, validation_artifact=service, consumed_at="2026-01-03T00:00:00Z")
+
+            self.assertEqual(service, consumption["validationArtifact"])
+            validation["headTree"] = "f" * 40
+            with self.assertRaisesRegex(ContractError, "merge tree"):
+                create_bootstrap_adoption_consumption(root, validation, merge_checkpoint=merge, validation_artifact=service, consumed_at="2026-01-03T00:00:00Z")
+
     def project(self) -> Project:
         check = Check(
             identifier="unit",
@@ -132,13 +261,14 @@ class AuthorityTransitionTests(unittest.TestCase):
             request_path = root / ".process" / "runs" / "_inputs" / "request.json"
             request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
 
-            state, _ = register_authority_transition(root, "adopt-process-0-9-0", request_path, actor_id="worker", context_id="ctx", kind="agent")
+            with mock.patch("engineering_process.lifecycle.validate_transition_target_provenance", return_value={}):
+                state, _ = register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
 
             self.assertEqual(3, state["schemaVersion"])
             self.assertIsNone(state["authorityTransition"]["candidateEvidence"])
             self.assertEqual(3, load_state(root, "adopt-process-0-9-0")["schemaVersion"])
             with self.assertRaisesRegex(ContractError, "already registered"):
-                register_authority_transition(root, "adopt-process-0-9-0", request_path, actor_id="worker", context_id="ctx", kind="agent")
+                register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
 
     def test_candidate_evidence_is_recomputed_not_trusted(self):
         request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
@@ -164,7 +294,7 @@ class AuthorityTransitionTests(unittest.TestCase):
         request["candidate"]["actionPinsSha256"] = evidence["bindings"]["actionPinsSha256"]
         evidence["bindings"]["managedDistributionSha256"] = request["target"]["processDigest"]
         evidence["requestSha256"] = canonical_json_digest(request)
-        with mock.patch("engineering_process.transition.inspect_transition_candidate", return_value=inspected), mock.patch("engineering_process.transition._file_digest", return_value=f"sha256:{'a' * 64}"), mock.patch("engineering_process.transition._action_pins_digest", return_value=evidence["bindings"]["actionPinsSha256"]):
+        with mock.patch("engineering_process.transition.inspect_transition_candidate", return_value=inspected), mock.patch("engineering_process.transition._file_digest", return_value=f"sha256:{'a' * 64}"), mock.patch("engineering_process.transition._validate_action_pin_changes", return_value=evidence["bindings"]["actionPinsSha256"]):
             validate_registered_candidate(Path("."), request, evidence, target_process_root=Path("."))
             evidence["candidate"]["tree"] = "f" * 40
             with self.assertRaisesRegex(ContractError, "stale"):
@@ -192,7 +322,8 @@ class AuthorityTransitionTests(unittest.TestCase):
             request["candidate"]["expectedChangedPaths"] = [".process/process.lock", "tracked.txt"]
             request_path = root / ".process" / "runs" / "_inputs" / "request.json"
             request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
-            register_authority_transition(root, "adopt-process-0-9-0", request_path, actor_id="worker", context_id="ctx", kind="agent")
+            with mock.patch("engineering_process.lifecycle.validate_transition_target_provenance", return_value={}):
+                register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
 
             candidate = Path(directory) / "candidate"
             subprocess.run(["git", "clone", "-q", str(root), str(candidate)], check=True)
@@ -229,6 +360,11 @@ class AuthorityTransitionTests(unittest.TestCase):
             validated = {"evidence": evidence, "candidate": {"checkpoint": candidate_source["checkpoint"], "tree": tree}}
             with mock.patch("engineering_process.lifecycle.validate_registered_candidate", return_value=validated):
                 ingest_authority_transition_evidence(root, "adopt-process-0-9-0", candidate, evidence_path, Path(__file__).resolve().parent.parent, actor_id="worker", context_id="ctx", kind="agent")
+
+            (root / "tracked.txt").write_text("dirty-control\n", encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "control workspace"):
+                verify_change(root, self.project(), "adopt-process-0-9-0", "development", candidate_root=candidate, actor_id="worker", context_id="ctx", kind="agent")
+            (root / "tracked.txt").write_text("base\n", encoding="utf-8")
 
             state, report = verify_change(root, self.project(), "adopt-process-0-9-0", "development", candidate_root=candidate, actor_id="worker", context_id="ctx", kind="agent")
             self.assertEqual(4, report["schemaVersion"])

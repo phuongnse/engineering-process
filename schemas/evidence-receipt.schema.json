@@ -170,5 +170,15 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
+      "then": {"properties": {"artifacts": {"not": {"required": ["authorityTransition"]}}}}
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {"properties": {"artifacts": {"required": ["authorityTransition"]}}}
+    }
+  ]
 }

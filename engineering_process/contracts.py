@@ -3710,11 +3710,21 @@ def _automation_process_adoption(value: Any, path: str) -> dict[str, Any]:
         raise ContractError(
             f"{path}.targetAuthority.processDigest: must differ from source authority"
         )
+    expected_source_version = (
+        release.transition_source_version
+        if release.provenance_mode == "authority-transition-bootstrap"
+        else release.previous_version
+    )
     if (
-        release.previous_version != authorities["sourceAuthority"]["version"]
+        expected_source_version != authorities["sourceAuthority"]["version"]
         or receipt["processVersion"] != authorities["sourceAuthority"]["version"]
         or receipt["processDigest"]
         != authorities["sourceAuthority"]["processDigest"]
+        or (
+            release.provenance_mode == "authority-transition-bootstrap"
+            and release.transition_source_digest
+            != authorities["sourceAuthority"]["processDigest"]
+        )
     ):
         raise ContractError(
             f"{producer_path}: release provenance does not bind the source authority"

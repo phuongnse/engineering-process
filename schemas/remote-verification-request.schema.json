@@ -53,7 +53,7 @@
         "grantsReview": {"const": false}
       }
     },
-    "authorityTransition": {"type": "object"}
+    "authorityTransition": {"$ref": "#/$defs/authorityTransition"}
   },
   "$defs": {
     "id": {
@@ -68,6 +68,24 @@
     },
     "gitOid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
     "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "authorityTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "candidateEvidence"],
+      "properties": {
+        "request": {"$ref": "#/$defs/artifact"},
+        "candidateEvidence": {"$ref": "#/$defs/artifact"}
+      }
+    },
     "requirement": {
       "type": "object",
       "additionalProperties": false,
@@ -115,6 +133,10 @@
     }
   },
   "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
+      "then": {"not": {"required": ["authorityTransition"]}}
+    },
     {
       "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
       "then": {"required": ["authorityTransition"]}

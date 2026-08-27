@@ -238,5 +238,28 @@
         "reproduction": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
+      "then": {"not": {"required": ["authorityTransition"]}}
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["authorityTransition"],
+        "properties": {
+          "authorityTransition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request", "candidateEvidence"],
+            "properties": {
+              "request": {"$ref": "#/$defs/artifact"},
+              "candidateEvidence": {"anyOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]}
+            }
+          }
+        }
+      }
+    }
+  ]
 }

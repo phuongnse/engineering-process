@@ -41,7 +41,6 @@ jobs:
           BASE_SHA: ${{ inputs.source_base }}
           HEAD_SHA: ${{ inputs.candidate_head }}
           PR_NUMBER: ${{ inputs.pull_request_number }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           printf '%s' "$BASE_SHA$HEAD_SHA" | grep -Eq '^[0-9a-f]{80}$'
           printf '%s' "$PR_NUMBER" | grep -Eq '^[1-9][0-9]*$'
@@ -61,6 +60,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ inputs.candidate_head }}
           PR_NUMBER: ${{ inputs.pull_request_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
           test "$(gh pr view "$PR_NUMBER" --json baseRefOid --jq .baseRefOid)" = "$BASE_SHA"
@@ -103,6 +103,7 @@ jobs:
             contract validate --kind bootstrap-adoption-intent "$intent_path"
           printf 'INTENT_PATH=%s\n' "$intent_path" >> "$GITHUB_ENV"
           printf 'VERIFIER_COMMIT=%s\n' "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["verifier"]["commit"])')" >> "$GITHUB_ENV"
+          printf 'VERIFIER_ENTRYPOINT=%s\n' "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["verifier"]["entrypoint"])')" >> "$GITHUB_ENV"
           printf 'TARGET_TAG=%s\n' "$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["target"]["tag"])')" >> "$GITHUB_ENV"
           printf 'AUTH_CHECKPOINT=%s\n' "$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/bootstrap-authorization-summary.json", encoding="utf-8"))["checkpoint"])')" >> "$GITHUB_ENV"
 
@@ -133,14 +134,30 @@ jobs:
           git -C .transition-candidate fetch --no-tags origin "$AUTH_CHECKPOINT"
           git -C .transition-candidate cat-file -e "$AUTH_CHECKPOINT^{commit}"
           mkdir -p "$RUNNER_TEMP/target-assets" "$RUNNER_TEMP/target-distributions"
-          gh release download "$TARGET_TAG" --dir "$RUNNER_TEMP/target-assets"
           receipt="$(python -c 'import json; print(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["receiptAsset"])')"
           package="$(python -c 'import json; print(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["package"])')"
+          attestation="$package-$TARGET_TAG-artifacts.json"
+          {
+            printf '%s\n' "$receipt" "$attestation"
+            python -c 'import json; print("\n".join(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["artifacts"]))'
+          } | LC_ALL=C sort > "$RUNNER_TEMP/expected-target-assets.txt"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TARGET_TAG" \
+            > "$RUNNER_TEMP/target-release-metadata.json"
+          test "$(jq -r '.immutable // false' "$RUNNER_TEMP/target-release-metadata.json")" = true
+          jq -r '.assets[].name' "$RUNNER_TEMP/target-release-metadata.json" \
+            | LC_ALL=C sort > "$RUNNER_TEMP/actual-target-assets.txt"
+          cmp "$RUNNER_TEMP/expected-target-assets.txt" "$RUNNER_TEMP/actual-target-assets.txt"
+          test "$(jq '[.assets[].size] | max' "$RUNNER_TEMP/target-release-metadata.json")" -le 128000000
+          test "$(jq '[.assets[].size] | add' "$RUNNER_TEMP/target-release-metadata.json")" -le 256000000
+          while IFS= read -r asset; do
+            gh release download "$TARGET_TAG" --pattern "$asset" \
+              --dir "$RUNNER_TEMP/target-assets"
+          done < "$RUNNER_TEMP/expected-target-assets.txt"
           while IFS= read -r artifact; do
             cp "$RUNNER_TEMP/target-assets/$artifact" "$RUNNER_TEMP/target-distributions/$artifact"
           done < <(python -c 'import json; print("\n".join(json.load(open(".transition-target/release.json", encoding="utf-8"))["identity"]["artifacts"]))')
           printf 'RECEIPT_PATH=%s\n' "$RUNNER_TEMP/target-assets/$receipt" >> "$GITHUB_ENV"
-          printf 'ATTESTATION_PATH=%s\n' "$RUNNER_TEMP/target-assets/$package-$TARGET_TAG-artifacts.json" >> "$GITHUB_ENV"
+          printf 'ATTESTATION_PATH=%s\n' "$RUNNER_TEMP/target-assets/$attestation" >> "$GITHUB_ENV"
           python -m venv "$RUNNER_TEMP/target-process"
           "$RUNNER_TEMP/target-process/bin/python" -m pip install \
             --no-deps "$RUNNER_TEMP"/target-distributions/*.whl
@@ -150,7 +167,7 @@ jobs:
           BASE_SHA: ${{ inputs.source_base }}
         run: |
           "$RUNNER_TEMP/source-authority/bin/python" \
-            .transition-controller/verification/validate_authority_transition.py \
+            ".transition-controller/$VERIFIER_ENTRYPOINT" \
             --controller-root .transition-controller \
             --candidate-root .transition-candidate \
             --policy .transition-candidate/.process/protected-transition-policy.json \
@@ -164,6 +181,16 @@ jobs:
             --protected-base "$BASE_SHA" \
             --output "$RUNNER_TEMP/authority-transition-validation.json"
           test "$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/authority-transition-validation.json", encoding="utf-8"))["headCheckpoint"])')" = "${{ inputs.candidate_head }}"
+
+      - name: Preserve exact source-owned transition validation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authority-transition-validation-${{ inputs.candidate_head }}
+          path: ${{ runner.temp }}/authority-transition-validation.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9
+          include-hidden-files: false
 
       - name: Create exact transition check and enable protected auto-merge
         id: app-token
@@ -188,4 +215,12 @@ jobs:
               -f name="$check_context" -f head_sha="$HEAD_SHA" \
               -f status=completed -f conclusion=success >/dev/null
           fi
-          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash \
+            --match-head-commit "$HEAD_SHA"
+
+      - name: Clean transition target and candidate state
+        if: ${{ always() }}
+        run: |
+          rm -rf .transition-controller .transition-candidate .transition-target \
+            "$RUNNER_TEMP/target-assets" "$RUNNER_TEMP/target-distributions" \
+            "$RUNNER_TEMP/target-process"

@@ -121,7 +121,15 @@
       "maxItems": 16,
       "items": {"$ref": "#/$defs/report"}
     },
-    "authorityTransition": {"type": "object"}
+    "authorityTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "candidateEvidence"],
+      "properties": {
+        "request": {"$ref": "#/$defs/artifactReference"},
+        "candidateEvidence": {"$ref": "#/$defs/artifactReference"}
+      }
+    }
   },
   "$defs": {
     "gitOid": {
@@ -131,6 +139,15 @@
     "sha256": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "digest": {"$ref": "#/$defs/sha256"}
+      }
     },
     "hexSha256": {
       "type": "string",
@@ -317,6 +334,7 @@
         "required": ["schemaVersion"]
       },
       "then": {
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "reports": {
             "items": {
@@ -337,6 +355,7 @@
         "required": ["schemaVersion"]
       },
       "then": {
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "reports": {
             "items": {

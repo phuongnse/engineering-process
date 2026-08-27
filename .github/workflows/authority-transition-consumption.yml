@@ -1,0 +1,123 @@
+name: Record protected process authority transition consumption
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: authority-transition-consumption-${{ github.event.pull_request.merge_commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  record:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Select only the exact source-to-target transition merge
+        id: applicability
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          applicable=false
+          if git cat-file -e "$BASE_SHA:.process/protected-transition-policy.json" 2>/dev/null; then
+            git show "$BASE_SHA:.process/protected-transition-policy.json" > "$RUNNER_TEMP/policy.json"
+            git show "$BASE_SHA:.process/process.lock" > "$RUNNER_TEMP/base-lock.json"
+            git show "$HEAD_SHA:.process/process.lock" > "$RUNNER_TEMP/head-lock.json"
+            if python - "$RUNNER_TEMP/policy.json" "$RUNNER_TEMP/base-lock.json" "$RUNNER_TEMP/head-lock.json" <<'PY'
+          import json
+          import sys
+          policy, base, head = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+          source = policy["sourceAuthority"]
+          target = policy["target"]
+          assert base["process"] == source
+          assert head["process"] == {"version": target["version"], "digest": target["processDigest"]}
+          PY
+            then
+              applicable=true
+            fi
+          fi
+          printf 'applicable=%s\n' "$applicable" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: steps.applicability.outputs.applicable == 'true'
+        with:
+          python-version: "3.14"
+
+      - name: Resolve the exact validation service artifact
+        if: steps.applicability.outputs.applicable == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          name="authority-transition-validation-$HEAD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name&per_page=100" \
+            > "$RUNNER_TEMP/artifacts.json"
+          test "$(jq '[.artifacts[] | select(.expired == false)] | length' "$RUNNER_TEMP/artifacts.json")" = 1
+          artifact_id="$(jq -r '.artifacts[] | select(.expired == false) | .id' "$RUNNER_TEMP/artifacts.json")"
+          artifact_digest="$(jq -r '.artifacts[] | select(.expired == false) | .digest' "$RUNNER_TEMP/artifacts.json")"
+          run_id="$(jq -r '.artifacts[] | select(.expired == false) | .workflow_run.id' "$RUNNER_TEMP/artifacts.json")"
+          gh run download "$run_id" --name "$name" --dir "$RUNNER_TEMP/validation"
+          run_attempt="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq .run_attempt)"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$run_attempt"
+          test "$(jq -r .headCheckpoint "$RUNNER_TEMP/validation/authority-transition-validation.json")" = "$HEAD_SHA"
+          printf 'VALIDATION_ARTIFACT_ID=%s\n' "$artifact_id" >> "$GITHUB_ENV"
+          printf 'VALIDATION_ARTIFACT_NAME=%s\n' "$name" >> "$GITHUB_ENV"
+          printf 'VALIDATION_ARTIFACT_DIGEST=%s\n' "$artifact_digest" >> "$GITHUB_ENV"
+          printf 'VALIDATION_RUN_ID=%s\n' "$run_id" >> "$GITHUB_ENV"
+          printf 'VALIDATION_RUN_ATTEMPT=%s\n' "$run_attempt" >> "$GITHUB_ENV"
+          printf 'VALIDATION_RUN_URL=%s\n' "$run_url" >> "$GITHUB_ENV"
+          printf 'VERIFIER_COMMIT=%s\n' "$(jq -r .verifierCommit "$RUNNER_TEMP/validation/authority-transition-validation.json")" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.applicability.outputs.applicable == 'true'
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ env.VERIFIER_COMMIT }}
+          path: .transition-controller
+
+      - name: Create deterministic terminal consumption evidence
+        if: steps.applicability.outputs.applicable == 'true'
+        env:
+          CONSUMED_AT: ${{ github.event.pull_request.merged_at }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          python -m pip install \
+            -r .transition-controller/engineering_process/requirements-runtime.txt
+          python .transition-controller/processctl.py authority-transition bootstrap consume \
+            --candidate-root . \
+            --validation "$RUNNER_TEMP/validation/authority-transition-validation.json" \
+            --merge-checkpoint "$MERGE_SHA" \
+            --validation-artifact-id "$VALIDATION_ARTIFACT_ID" \
+            --validation-artifact-name "$VALIDATION_ARTIFACT_NAME" \
+            --validation-artifact-digest "$VALIDATION_ARTIFACT_DIGEST" \
+            --validation-run-id "$VALIDATION_RUN_ID" \
+            --validation-run-attempt "$VALIDATION_RUN_ATTEMPT" \
+            --validation-run-url "$VALIDATION_RUN_URL" \
+            --consumed-at "$CONSUMED_AT" \
+            --output "$RUNNER_TEMP/bootstrap-adoption-consumption.json"
+
+      - name: Preserve immutable terminal consumption evidence
+        if: steps.applicability.outputs.applicable == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authority-transition-consumption-${{ github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/bootstrap-adoption-consumption.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9
+          include-hidden-files: false

@@ -24,7 +24,7 @@
     "managedDistributionSha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
     "actionPinsSha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
   },
-  "materialization": {"status": "passed", "complete": true, "idempotent": true, "rollbackStatus": "clean", "issues": []},
+  "materialization": {"status": "passed", "finalStateChecks": 2, "issues": []},
   "generatedBy": {"actorId": "candidate-materializer", "contextId": "candidate-context", "kind": "agent"},
   "generatedAt": "2026-01-02T00:00:00Z"
 }

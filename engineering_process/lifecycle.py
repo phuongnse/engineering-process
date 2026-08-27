@@ -47,9 +47,11 @@ from .remote_verification import (
     validate_remote_evidence_set,
 )
 from .transition import (
+    require_authority_transition_current,
     validate_authority_transition_evidence,
     validate_authority_transition_request,
     validate_registered_candidate,
+    validate_transition_target_provenance,
 )
 
 
@@ -915,6 +917,30 @@ def _lifecycle_source(
         raise ContractError(
             "authority-transition candidate evidence must be ingested before lifecycle verification"
         )
+    request = _transition_request(project_root, state)
+    assert request is not None
+    require_authority_transition_current(request)
+    control_source = source_state(project_root)
+    control_lock_path = project_root / ".process" / "process.lock"
+    control_requirements_path = project_root / "requirements" / "process.txt"
+    control_lock = validate_process_lock(
+        read_json(control_lock_path), str(control_lock_path)
+    )
+    if (
+        control_source.get("dirty") is not False
+        or control_source.get("checkpoint") != request["source"]["checkpoint"]
+        or control_source.get("fingerprint")
+        != request["source"]["workspaceFingerprint"]
+        or request["source"]["authority"]
+        != {"version": control_lock.version, "digest": control_lock.digest}
+        or request["source"]["processLockSha256"]
+        != _digest_file(control_lock_path)
+        or request["source"]["requirementsLockSha256"]
+        != _digest_file(control_requirements_path)
+    ):
+        raise ContractError(
+            "authority-transition control workspace is stale, dirty, or no longer governed by N-1"
+        )
     evidence = read_json(
         _artifact_path(project_root, transition["candidateEvidence"])
     )
@@ -939,6 +965,10 @@ def _register_authority_transition_unlocked(
     project_root: Path,
     change_id: str,
     request_path: Path,
+    target_checkout: Path,
+    artifact_root: Path,
+    release_receipt_path: Path,
+    artifact_attestation_path: Path,
     *,
     actor_id: str,
     context_id: str,
@@ -959,6 +989,7 @@ def _register_authority_transition_unlocked(
         )
     request = read_json(request_path)
     validate_authority_transition_request(request, str(request_path))
+    require_authority_transition_current(request)
     if (
         request["project"] != state["project"]
         or request["changeId"] != change_id
@@ -995,6 +1026,13 @@ def _register_authority_transition_unlocked(
         raise ContractError(
             "authority-transition request requirements lock digest is stale"
         )
+    target_provenance = validate_transition_target_provenance(
+        request,
+        target_checkout=target_checkout,
+        artifact_root=artifact_root,
+        release_receipt_path=release_receipt_path,
+        artifact_attestation_path=artifact_attestation_path,
+    )
     destination = _run_root(project_root, change_id) / "authority-transition-request.json"
     reference = _copy_document(project_root, request_path, destination)
     state["schemaVersion"] = 3
@@ -1012,6 +1050,7 @@ def _register_authority_transition_unlocked(
             "version": request["target"]["version"],
             "digest": request["target"]["processDigest"],
         },
+        targetProvenance=target_provenance,
     )
     _save_state(project_root, state)
     return state, request
@@ -1038,6 +1077,7 @@ def _ingest_authority_transition_evidence_unlocked(
     request = _transition_request(project_root, state)
     if request is None:
         raise ContractError("authority transition is not registered")
+    require_authority_transition_current(request)
     evidence = read_json(evidence_path)
     validated = validate_registered_candidate(
         candidate_root,
@@ -3862,6 +3902,10 @@ def register_authority_transition(
     project_root: Path,
     change_id: str,
     request_path: Path,
+    target_checkout: Path,
+    artifact_root: Path,
+    release_receipt_path: Path,
+    artifact_attestation_path: Path,
     *,
     actor_id: str,
     context_id: str,
@@ -3872,6 +3916,10 @@ def register_authority_transition(
             project_root,
             change_id,
             request_path,
+            target_checkout,
+            artifact_root,
+            release_receipt_path,
+            artifact_attestation_path,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,

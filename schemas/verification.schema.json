@@ -272,15 +272,34 @@
       "additionalProperties": false,
       "required": ["request", "candidateEvidence", "sourceAuthority", "targetAuthority", "controlCheckpoint"],
       "properties": {
-        "request": {"type": "object"},
-        "candidateEvidence": {"type": "object"},
-        "sourceAuthority": {"type": "object"},
-        "targetAuthority": {"type": "object"},
+        "request": {"$ref": "#/$defs/artifact"},
+        "candidateEvidence": {"$ref": "#/$defs/artifact"},
+        "sourceAuthority": {"$ref": "#/$defs/authority"},
+        "targetAuthority": {"$ref": "#/$defs/authority"},
         "controlCheckpoint": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
       }
     }
   },
   "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
     "diagnostics": {
       "type": "object",
       "additionalProperties": false,
@@ -351,6 +370,7 @@
         "required": ["schemaVersion"]
       },
       "then": {
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "checks": {
             "minItems": 1,
@@ -366,6 +386,7 @@
       },
       "then": {
         "required": ["impact"],
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "checks": {
             "maxItems": 256,
@@ -396,6 +417,7 @@
       },
       "then": {
         "required": ["impact"],
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "checks": {
             "maxItems": 256,

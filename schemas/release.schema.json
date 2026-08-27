@@ -133,7 +133,13 @@
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
       "then": {
         "required": ["identity", "provenance", "changes"],
-        "properties": {"identity": {"required": ["authorizationAsset"]}}
+        "properties": {
+          "identity": {"required": ["authorizationAsset"]},
+          "provenance": {
+            "not": {"required": ["authorityTransition"]},
+            "properties": {"mode": {"enum": ["bootstrap-history", "bootstrap-authority", "governed"]}}
+          }
+        }
       }
     },
     {
