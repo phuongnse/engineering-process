@@ -115,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if install_code != 0 or install_stderr:
         raise ContractError(
-            "public authority proof could not install exact controller dependencies"
+            "public authority proof could not install exact controller dependencies: "
+            f"returncode={install_code}; stderr={install_stderr.decode('utf-8', errors='replace')[:2000]!r}"
         )
 
     version_code, version_stdout, version_stderr = _run(
@@ -129,7 +130,11 @@ def main(argv: list[str] | None = None) -> int:
         venv_launcher=public_python,
     )
     if version_code != 0 or version_stderr or version_stdout.strip() != b"0.7.0":
-        raise ContractError("release rendering proof requires exact public 0.7.0")
+        raise ContractError(
+            "release rendering proof requires exact public 0.7.0: "
+            f"returncode={version_code}; stdout={version_stdout.decode('utf-8', errors='replace')[:256]!r}; "
+            f"stderr={version_stderr.decode('utf-8', errors='replace')[:1000]!r}"
+        )
 
     with tempfile.TemporaryDirectory(
         prefix="engineering-process-transition-rendering-"
