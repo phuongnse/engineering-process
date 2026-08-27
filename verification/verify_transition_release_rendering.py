@@ -21,27 +21,8 @@ OUTPUT_LIMIT = 128_000
 
 
 def _run(command: list[str], *, cwd: Path) -> tuple[int, bytes, bytes]:
-    safe_names = {
-        "APPDATA",
-        "COMSPEC",
-        "HOME",
-        "LOCALAPPDATA",
-        "PATHEXT",
-        "PATH",
-        "PIP_CERT",
-        "PROGRAMDATA",
-        "REQUESTS_CA_BUNDLE",
-        "SSL_CERT_FILE",
-        "SystemDrive",
-        "SystemRoot",
-        "TEMP",
-        "TMP",
-        "USERPROFILE",
-        "WINDIR",
-    }
-    environment = {
-        key: value for key, value in os.environ.items() if key in safe_names
-    } | {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    environment = os.environ.copy()
+    environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
     result = run_bounded_process(
         command,
         working_directory=cwd,
