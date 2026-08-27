@@ -12,7 +12,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import urlparse
 
 from .contracts import (
     ContractError,
@@ -267,6 +266,7 @@ def validate_authority_transition_request(
         target,
         required={
             "repository",
+            "repositoryProofSha256",
             "version",
             "tag",
             "commit",
@@ -279,6 +279,7 @@ def validate_authority_transition_request(
         path=target_path,
     )
     target_version = _version(target["version"], f"{target_path}.version")
+    target_tag = _string(target["tag"], f"{target_path}.tag", max_length=80)
 
     candidate_path = f"{path}.candidate"
     candidate = _object(value["candidate"], candidate_path)
@@ -349,8 +350,12 @@ def validate_authority_transition_request(
         },
         "target": {
             "repository": _repository(target["repository"], f"{target_path}.repository"),
+            "repositoryProofSha256": _digest(
+                target["repositoryProofSha256"],
+                f"{target_path}.repositoryProofSha256",
+            ),
             "version": target_version,
-            "tag": target["tag"],
+            "tag": target_tag,
             "commit": _git_oid(target["commit"], f"{target_path}.commit"),
             "processDigest": _digest(
                 target["processDigest"], f"{target_path}.processDigest"
@@ -677,10 +682,11 @@ def validate_bootstrap_adoption_intent(
     target = _object(value["targetRelease"], target_path)
     _exact_keys(
         target,
-        required={"version", "tag", "commit", "processDigest", "releaseContractSha256", "distributionAttestationSha256", "artifacts"},
+        required={"version", "tag", "commit", "processDigest", "releaseContractSha256", "distributionAttestationSha256", "repositoryProofSha256", "artifacts"},
         path=target_path,
     )
     target_version = _version(target["version"], f"{target_path}.version")
+    target_tag = _string(target["tag"], f"{target_path}.tag", max_length=80)
     candidate_path = f"{path}.candidate"
     candidate = _object(value["candidate"], candidate_path)
     _exact_keys(
@@ -705,11 +711,15 @@ def validate_bootstrap_adoption_intent(
         "sourceAuthority": _authority(value["sourceAuthority"], f"{path}.sourceAuthority"),
         "targetRelease": {
             "version": target_version,
-            "tag": target["tag"],
+            "tag": target_tag,
             "commit": _git_oid(target["commit"], f"{target_path}.commit"),
             "processDigest": _digest(target["processDigest"], f"{target_path}.processDigest"),
             "releaseContractSha256": _digest(target["releaseContractSha256"], f"{target_path}.releaseContractSha256"),
             "distributionAttestationSha256": _digest(target["distributionAttestationSha256"], f"{target_path}.distributionAttestationSha256"),
+            "repositoryProofSha256": _digest(
+                target["repositoryProofSha256"],
+                f"{target_path}.repositoryProofSha256",
+            ),
             "artifacts": _artifact_bindings(target["artifacts"], f"{target_path}.artifacts"),
         },
         "candidate": {
@@ -770,6 +780,7 @@ def validate_protected_transition_policy(
     target = _object(value["target"], target_path)
     _exact_keys(target, required={"version", "tag", "commit", "processDigest"}, path=target_path)
     target_version = _version(target["version"], f"{target_path}.version")
+    target_tag = _string(target["tag"], f"{target_path}.tag", max_length=80)
     verifier_path = f"{path}.verifier"
     verifier = _object(value["verifier"], verifier_path)
     _exact_keys(verifier, required={"repository", "commit", "entrypoint"}, path=verifier_path)
@@ -828,7 +839,7 @@ def validate_protected_transition_policy(
         "sourceAuthority": _authority(value["sourceAuthority"], f"{path}.sourceAuthority"),
         "target": {
             "version": target_version,
-            "tag": target["tag"],
+            "tag": target_tag,
             "commit": _git_oid(target["commit"], f"{target_path}.commit"),
             "processDigest": _digest(target["processDigest"], f"{target_path}.processDigest"),
         },
@@ -1262,38 +1273,112 @@ def _git_output(root: Path, arguments: list[str], *, label: str, maximum: int = 
     return result.stdout
 
 
-def _checkout_repository(root: Path) -> str:
-    raw = _git_output(
-        root,
-        ["remote", "get-url", "origin"],
-        label="resolve authority-transition target repository",
-        maximum=2_048,
+def validate_target_repository_proof(
+    document: Any,
+    target: dict[str, Any],
+    *,
+    path: str = "target-repository-proof",
+) -> dict[str, Any]:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={
+            "schemaVersion",
+            "kind",
+            "provider",
+            "repository",
+            "repositoryId",
+            "repositoryUrl",
+            "releaseId",
+            "releaseUrl",
+            "tag",
+            "commit",
+            "immutable",
+            "assets",
+        },
+        path=path,
     )
-    try:
-        remote = raw.decode("utf-8").strip()
-    except UnicodeDecodeError as error:
-        raise ContractError(
-            "authority-transition target repository URL must be UTF-8"
-        ) from error
-    if not remote or "\x00" in remote:
-        raise ContractError("authority-transition target repository URL is invalid")
-    scp = re.fullmatch(r"[^@\s]+@[^:\s]+:(?P<path>[^\s]+)", remote)
-    if scp is not None:
-        path = scp.group("path")
-    else:
-        parsed = urlparse(remote)
-        if parsed.scheme not in {"https", "ssh"} or not parsed.netloc:
-            raise ContractError(
-                "authority-transition target repository must use an authenticated remote URL"
-            )
-        path = parsed.path.lstrip("/")
-    if path.endswith(".git"):
-        path = path[:-4]
-    if REPOSITORY_PATTERN.fullmatch(path) is None:
-        raise ContractError(
-            "authority-transition target repository URL has no valid repository identity"
+    if (
+        value["schemaVersion"] != 1
+        or value["kind"] != "engineering-process-target-repository-proof"
+        or value["provider"] != "github"
+        or value["immutable"] is not True
+    ):
+        raise ContractError(f"{path}: invalid schemaVersion, kind, provider, or mutability")
+    repository = _repository(value["repository"], f"{path}.repository")
+    repository_id = _service_decimal(value["repositoryId"], f"{path}.repositoryId")
+    release_id = _service_decimal(value["releaseId"], f"{path}.releaseId")
+    repository_url = _string(
+        value["repositoryUrl"], f"{path}.repositoryUrl", max_length=2_048
+    )
+    release_url = _string(value["releaseUrl"], f"{path}.releaseUrl", max_length=2_048)
+    if (
+        not repository_url.startswith("https://")
+        or not repository_url.endswith(f"/repos/{repository}")
+        or release_url != f"{repository_url}/releases/{release_id}"
+    ):
+        raise ContractError(f"{path}: repository and release service URLs are inconsistent")
+    raw_assets = value["assets"]
+    if not isinstance(raw_assets, list) or not 2 <= len(raw_assets) <= MAX_TRANSITION_ARTIFACTS:
+        raise ContractError(f"{path}.assets: invalid bounded asset set")
+    assets: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_assets):
+        item_path = f"{path}.assets[{index}]"
+        item = _object(raw, item_path)
+        _exact_keys(
+            item,
+            required={"artifactId", "name", "url", "sizeBytes", "sha256"},
+            path=item_path,
         )
-    return path
+        artifact_id = _service_decimal(item["artifactId"], f"{item_path}.artifactId")
+        url = _string(item["url"], f"{item_path}.url", max_length=2_048)
+        if url != f"{repository_url}/releases/assets/{artifact_id}":
+            raise ContractError(f"{item_path}.url: does not bind repository asset id")
+        size = item["sizeBytes"]
+        if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= 1_000_000_000:
+            raise ContractError(f"{item_path}.sizeBytes: invalid bounded size")
+        assets.append(
+            {
+                "artifactId": artifact_id,
+                "name": _string(item["name"], f"{item_path}.name", max_length=200),
+                "url": url,
+                "sizeBytes": size,
+                "sha256": _digest(item["sha256"], f"{item_path}.sha256"),
+            }
+        )
+    if [item["name"] for item in assets] != sorted(
+        {item["name"] for item in assets}
+    ):
+        raise ContractError(f"{path}.assets: must be sorted and unique")
+    if (
+        repository != target["repository"]
+        or value["tag"] != target["tag"]
+        or value["commit"] != target["commit"]
+        or [
+            {
+                "name": item["name"],
+                "sha256": item["sha256"],
+                "sizeBytes": item["sizeBytes"],
+            }
+            for item in assets
+        ]
+        != target["artifacts"]
+    ):
+        raise ContractError(f"{path}: does not authenticate the registered target")
+    return {
+        "schemaVersion": 1,
+        "kind": "engineering-process-target-repository-proof",
+        "provider": "github",
+        "repository": repository,
+        "repositoryId": repository_id,
+        "repositoryUrl": repository_url,
+        "releaseId": release_id,
+        "releaseUrl": release_url,
+        "tag": target["tag"],
+        "commit": target["commit"],
+        "immutable": True,
+        "assets": assets,
+    }
 
 
 def _installed_package_root(process_root: Path) -> Path:
@@ -2101,6 +2186,7 @@ def validate_transition_target_provenance(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
+    repository_proof_path: Path,
 ) -> dict[str, Any]:
     from .artifact_attestation import validate_distribution_attestation
     from .release import validate_release_checkpoint
@@ -2110,10 +2196,12 @@ def validate_transition_target_provenance(
     target_checkout = target_checkout.resolve(strict=True)
     artifact_root = artifact_root.resolve(strict=True)
     target = request["target"]
-    if _checkout_repository(target_checkout).casefold() != target[
-        "repository"
-    ].casefold():
-        raise ContractError("authority-transition target repository mismatch")
+    repository_proof_document = read_json(repository_proof_path)
+    if canonical_json_digest(repository_proof_document) != target["repositoryProofSha256"]:
+        raise ContractError("authority-transition target repository proof digest mismatch")
+    repository_proof = validate_target_repository_proof(
+        repository_proof_document, target
+    )
     release_result = validate_release_checkpoint(
         target_checkout,
         tag=target["tag"],
@@ -2173,6 +2261,12 @@ def validate_transition_target_provenance(
             "distributionAttestationSha256"
         ],
         "artifacts": target["artifacts"],
+        "repositoryProofSha256": target["repositoryProofSha256"],
+        "repositoryService": {
+            "provider": repository_proof["provider"],
+            "repositoryId": repository_proof["repositoryId"],
+            "releaseId": repository_proof["releaseId"],
+        },
         "sourceAuthority": request["source"]["authority"],
     }
 
@@ -2189,6 +2283,7 @@ def validate_bootstrap_transition_candidate(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
+    repository_proof_path: Path,
     protected_base_ref: str,
     validation_service_path: Path,
 ) -> dict[str, Any]:
@@ -2325,6 +2420,16 @@ def validate_bootstrap_transition_candidate(
     )
 
     target = intent["targetRelease"]
+    target_repository_identity = {
+        **target,
+        "repository": intent["repository"],
+    }
+    repository_proof_document = read_json(repository_proof_path)
+    if canonical_json_digest(repository_proof_document) != target["repositoryProofSha256"]:
+        raise ContractError("bootstrap target repository proof digest mismatch")
+    validate_target_repository_proof(
+        repository_proof_document, target_repository_identity
+    )
     release_result = validate_release_checkpoint(
         target_checkout,
         tag=target["tag"],

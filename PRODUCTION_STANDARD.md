@@ -204,6 +204,11 @@ registration, evidence ingestion, protected validation and terminal consumption;
 shape-only validation never grants authority. Candidate evidence includes observed
 apply/check/idempotence trees and an after-write rollback probe executed in disposable
 worktrees under a bounded target process.
+Repository identity comes from deterministic provider service evidence resolved by
+the existing project adapter: repository/release/tag/asset ids and URLs, immutable
+release state, peeled tag commit and artifact digests are pre-bound by canonical
+digest. Mutable local Git remote configuration is never repository provenance, and
+the provider adapter gains no acceptance authority.
 
 Proposal merge authority derives from proposal origin and publication state. An
 agent-host review object created only after full lifecycle completion may use standing

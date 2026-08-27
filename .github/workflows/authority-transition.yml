@@ -151,6 +151,25 @@ jobs:
           } | LC_ALL=C sort > "$RUNNER_TEMP/expected-target-assets.txt"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TARGET_TAG" \
             > "$RUNNER_TEMP/target-release-metadata.json"
+          gh api "repos/$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/target-repository-metadata.json"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TARGET_TAG" \
+            > "$RUNNER_TEMP/target-tag-ref.json"
+          tag_object_args=()
+          if test "$(jq -r .object.type "$RUNNER_TEMP/target-tag-ref.json")" = tag; then
+            tag_object_sha="$(jq -r .object.sha "$RUNNER_TEMP/target-tag-ref.json")"
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" \
+              > "$RUNNER_TEMP/target-tag-object.json"
+            tag_object_args=(--tag-object "$RUNNER_TEMP/target-tag-object.json")
+          fi
+          "$RUNNER_TEMP/source-authority/bin/python" \
+            .transition-controller/verification/build_target_repository_proof.py \
+            --identity ".transition-candidate/$INTENT_PATH" \
+            --repository "$RUNNER_TEMP/target-repository-metadata.json" \
+            --release "$RUNNER_TEMP/target-release-metadata.json" \
+            --tag-ref "$RUNNER_TEMP/target-tag-ref.json" \
+            "${tag_object_args[@]}" --verify-bound-digest \
+            --output "$RUNNER_TEMP/target-repository-proof.json"
           test "$(jq -r '.immutable // false' "$RUNNER_TEMP/target-release-metadata.json")" = true
           jq -r '.assets[].name' "$RUNNER_TEMP/target-release-metadata.json" \
             | LC_ALL=C sort > "$RUNNER_TEMP/actual-target-assets.txt"
@@ -197,6 +216,7 @@ jobs:
             --artifact-root "$RUNNER_TEMP/target-distributions" \
             --release-receipt "$RECEIPT_PATH" \
             --artifact-attestation "$ATTESTATION_PATH" \
+            --target-repository-proof "$RUNNER_TEMP/target-repository-proof.json" \
             --protected-base "$BASE_SHA" \
             --validation-service "$RUNNER_TEMP/transition-validation-service.json" \
             --output "$RUNNER_TEMP/authority-transition-validation.json"
@@ -228,23 +248,27 @@ jobs:
         run: |
           check_context="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkContext"])')"
           check_app_id="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkAppId"])')"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
             > "$RUNNER_TEMP/head-checks.json"
-          existing_count="$(jq --arg name "$check_context" --argjson app "$check_app_id" \
-            '[.check_runs[] | select(.name == $name and .app.id == $app)] | length' \
-            "$RUNNER_TEMP/head-checks.json")"
-          if test "$existing_count" = 1; then
-            test "$(jq -r --arg name "$check_context" --argjson app "$check_app_id" \
-              '.check_runs[] | select(.name == $name and .app.id == $app) | .conclusion' \
-              "$RUNNER_TEMP/head-checks.json")" = success
-          else
-            test "$existing_count" = 0
-            gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
-              -f name="$check_context" -f head_sha="$HEAD_SHA" \
-              -f status=completed -f conclusion=success \
-              > "$RUNNER_TEMP/created-transition-check.json"
-            test "$(jq -r .app.id "$RUNNER_TEMP/created-transition-check.json")" = "$check_app_id"
-          fi
+          python .transition-controller/verification/validate_transition_check_exclusivity.py \
+            --checks "$RUNNER_TEMP/head-checks.json" \
+            --context "$check_context" --app-id "$check_app_id" \
+            --expected-count 0 --head-sha "$HEAD_SHA"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="$check_context" -f head_sha="$HEAD_SHA" \
+            -f status=completed -f conclusion=success \
+            > "$RUNNER_TEMP/created-transition-check.json"
+          test "$(jq -r .app.id "$RUNNER_TEMP/created-transition-check.json")" = "$check_app_id"
+          check_id="$(jq -r .id "$RUNNER_TEMP/created-transition-check.json")"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+            > "$RUNNER_TEMP/recorded-head-checks.json"
+          python .transition-controller/verification/validate_transition_check_exclusivity.py \
+            --checks "$RUNNER_TEMP/recorded-head-checks.json" \
+            --context "$check_context" --app-id "$check_app_id" \
+            --expected-count 1 --expected-check-id "$check_id" \
+            --head-sha "$HEAD_SHA"
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --auto --squash \
             --match-head-commit "$HEAD_SHA"
 

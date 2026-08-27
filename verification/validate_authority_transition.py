@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--release-receipt", type=Path, required=True)
     parser.add_argument("--artifact-attestation", type=Path, required=True)
+    parser.add_argument("--target-repository-proof", type=Path, required=True)
     parser.add_argument("--protected-base", required=True)
     parser.add_argument("--validation-service", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         artifact_root=args.artifact_root,
         release_receipt_path=args.release_receipt,
         artifact_attestation_path=args.artifact_attestation,
+        repository_proof_path=args.target_repository_proof,
         protected_base_ref=args.protected_base,
         validation_service_path=args.validation_service,
     )

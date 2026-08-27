@@ -93,7 +93,8 @@ jobs:
           gh run download "$run_id" --name "$name" --dir "$RUNNER_TEMP/validation"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
             > "$RUNNER_TEMP/validation-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
             > "$RUNNER_TEMP/validation-checks.json"
           run_attempt="$(jq -r .run_attempt "$RUNNER_TEMP/validation-run.json")"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$run_attempt"
@@ -159,11 +160,13 @@ jobs:
         run: |
           context="$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["workflow"]["consumptionContext"])')"
           check_app_id="$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["workflow"]["checkAppId"])')"
-          gh api "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100" \
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100" \
             > "$RUNNER_TEMP/merge-checks.json"
-          test "$(jq --arg name "$context" --argjson app "$check_app_id" \
-            '[.check_runs[] | select(.name == $name and .app.id == $app)] | length' \
-            "$RUNNER_TEMP/merge-checks.json")" = 0
+          python .transition-controller/verification/validate_transition_check_exclusivity.py \
+            --checks "$RUNNER_TEMP/merge-checks.json" \
+            --context "$context" --app-id "$check_app_id" \
+            --expected-count 0 --head-sha "$MERGE_SHA"
           jq -n --arg name "$context" --arg head "$MERGE_SHA" \
             --rawfile summary "$RUNNER_TEMP/bootstrap-adoption-consumption.json" \
             '{name:$name, head_sha:$head, status:"completed", conclusion:"success", output:{title:"Protected authority transition consumed", summary:$summary}}' \
@@ -173,3 +176,12 @@ jobs:
             > "$RUNNER_TEMP/consumption-check-response.json"
           test "$(jq -r .app.id "$RUNNER_TEMP/consumption-check-response.json")" = "$check_app_id"
           test "$(jq -r .head_sha "$RUNNER_TEMP/consumption-check-response.json")" = "$MERGE_SHA"
+          check_id="$(jq -r .id "$RUNNER_TEMP/consumption-check-response.json")"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100" \
+            > "$RUNNER_TEMP/recorded-merge-checks.json"
+          python .transition-controller/verification/validate_transition_check_exclusivity.py \
+            --checks "$RUNNER_TEMP/recorded-merge-checks.json" \
+            --context "$context" --app-id "$check_app_id" \
+            --expected-count 1 --expected-check-id "$check_id" \
+            --head-sha "$MERGE_SHA"

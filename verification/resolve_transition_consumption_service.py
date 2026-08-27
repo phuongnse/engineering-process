@@ -7,16 +7,23 @@ from pathlib import Path
 import sys
 from typing import Any
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from verification.validate_transition_check_exclusivity import (
+    ExclusivityError,
+    bounded_check_runs,
+)
+
 
 MAX_SERVICE_INPUT_BYTES = 2_000_000
-MAX_CHECK_RUNS = 100
 
 
 class ServiceError(RuntimeError):
     pass
 
 
-def _read_bounded(path: Path) -> dict[str, Any]:
+def _read_bounded(path: Path) -> Any:
     if path.is_symlink() or not path.is_file():
         raise ServiceError(f"{path}: must be a regular non-symlink file")
     content = path.read_bytes()
@@ -26,16 +33,16 @@ def _read_bounded(path: Path) -> dict[str, Any]:
         value = json.loads(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ServiceError(f"{path}: must contain UTF-8 JSON") from error
-    if not isinstance(value, dict):
-        raise ServiceError(f"{path}: must contain a JSON object")
     return value
 
 
 def resolve(
     validation: dict[str, Any],
     run: dict[str, Any],
-    checks: dict[str, Any],
+    checks: Any,
 ) -> dict[str, Any]:
+    if not isinstance(validation, dict) or not isinstance(run, dict):
+        raise ServiceError("validation and run inputs must contain JSON objects")
     expected = validation.get("validationService")
     if not isinstance(expected, dict):
         raise ServiceError("validation artifact has no bound service identity")
@@ -59,9 +66,10 @@ def resolve(
         or (status == "completed" and conclusion == "success")
     ):
         raise ServiceError("validation run is not successful or active")
-    check_runs = checks.get("check_runs")
-    if not isinstance(check_runs, list) or len(check_runs) > MAX_CHECK_RUNS:
-        raise ServiceError("completion check set is missing or oversized")
+    try:
+        check_runs = bounded_check_runs(checks)
+    except ExclusivityError as error:
+        raise ServiceError(str(error)) from error
     matching = [
         item
         for item in check_runs

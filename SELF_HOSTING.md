@@ -43,6 +43,12 @@ evidence, changed path sets, partial assets, inferred migrations and target-auth
 lifecycle evidence all fail closed. Completion exports receipt schema 2 with both
 authority identities and both transition artifacts. Protected merge alone activates
 N+1; no post-merge synchronization follows.
+The target repository is not inferred from mutable local Git configuration. The
+project adapter resolves repository, immutable release, tag and asset identities from
+the existing provider API, emits deterministic bounded repository proof, and the
+request pre-binds its canonical digest. N-1 independently relates that proof to the
+registered tag, commit and artifact bytes; provider transport gains no decision
+authority.
 
 The packaged transition JSON Schemas and `contract validate` own the same exact
 serialized shape, nesting, bounds and field syntax. Cross-field relations that JSON

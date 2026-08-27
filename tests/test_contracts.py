@@ -1021,6 +1021,15 @@ class ArtifactContractTests(unittest.TestCase):
         nested_extra = copy.deepcopy(document)
         nested_extra["target"]["unexpected"] = True
         invalid_shapes.append(nested_extra)
+        non_string_tag = copy.deepcopy(document)
+        non_string_tag["target"]["tag"] = 900
+        invalid_shapes.append(non_string_tag)
+        dotted_path = copy.deepcopy(document)
+        dotted_path["candidate"]["expectedChangedPaths"] = ["./requirements/process.txt"]
+        invalid_shapes.append(dotted_path)
+        whitespace_actor = copy.deepcopy(document)
+        whitespace_actor["registeredBy"]["actorId"] = "   "
+        invalid_shapes.append(whitespace_actor)
         for invalid in invalid_shapes:
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValidationError):

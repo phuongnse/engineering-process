@@ -35,6 +35,9 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("processctl change finish", workflow)
         self.assertIn("validate_protected_transition_callback.py", workflow)
         self.assertIn("build_transition_validation_service.py", workflow)
+        self.assertIn("build_target_repository_proof.py", workflow)
+        self.assertIn("target-repository-proof.json", workflow)
+        self.assertIn("--paginate --slurp", workflow)
         self.assertIn("--validation-service", workflow)
         for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
             if uses.startswith("./"):
@@ -50,6 +53,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("authority-transition bootstrap consume", consumption)
         self.assertIn("github.event.pull_request.merged_at", consumption)
         self.assertIn("resolve_transition_consumption_service.py", consumption)
+        self.assertIn("validate_transition_check_exclusivity.py", consumption)
+        self.assertIn("--paginate --slurp", consumption)
         self.assertIn("consumption-check-request.json", consumption)
         self.assertIn("consumptionContext", consumption)
         self.assertIn("validationArtifact", (PROCESS_ROOT / "schemas" / "bootstrap-adoption-consumption.schema.json").read_text(encoding="utf-8"))

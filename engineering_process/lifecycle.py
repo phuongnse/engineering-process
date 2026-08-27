@@ -976,6 +976,7 @@ def _register_authority_transition_unlocked(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
+    repository_proof_path: Path,
     *,
     actor_id: str,
     context_id: str,
@@ -1039,6 +1040,7 @@ def _register_authority_transition_unlocked(
         artifact_root=artifact_root,
         release_receipt_path=release_receipt_path,
         artifact_attestation_path=artifact_attestation_path,
+        repository_proof_path=repository_proof_path,
     )
     destination = _run_root(project_root, change_id) / "authority-transition-request.json"
     reference = _copy_document(project_root, request_path, destination)
@@ -3913,6 +3915,7 @@ def register_authority_transition(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
+    repository_proof_path: Path,
     *,
     actor_id: str,
     context_id: str,
@@ -3927,6 +3930,7 @@ def register_authority_transition(
             artifact_root,
             release_receipt_path,
             artifact_attestation_path,
+            repository_proof_path,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
