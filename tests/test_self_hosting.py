@@ -586,6 +586,17 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertIn("verification/qualify_release_lifecycle.py", workflow)
         self.assertIn(
+            "verification/verify_public_n1_review_context_handoff.py", workflow
+        )
+        self.assertLess(
+            workflow.index(
+                "Qualify generated release candidate to the reviewer handoff under N-1"
+            ),
+            workflow.index(
+                "Prove reviewed plan continuation under exact public N-1"
+            ),
+        )
+        self.assertIn(
             '--processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"',
             workflow,
         )

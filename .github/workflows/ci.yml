@@ -204,6 +204,18 @@ jobs:
           --project-root .
           --processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"
 
+      - name: Prove reviewed plan continuation under exact public N-1
+        if: >-
+          github.event_name == 'pull_request' &&
+          matrix.os == 'ubuntu-latest' &&
+          matrix.python-version == '3.14' &&
+          github.head_ref != 'automation/release/next'
+        run: >-
+          "$RUNNER_TEMP/release-qualification-authority/bin/python"
+          verification/verify_public_n1_review_context_handoff.py
+          --project-root .
+          --processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"
+
       - name: Validate complete self-adoption candidate
         if: >-
           github.event_name == 'pull_request' &&
