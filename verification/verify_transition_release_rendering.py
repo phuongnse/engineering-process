@@ -19,16 +19,32 @@ from engineering_process.contracts import ContractError, read_json, validate_rel
 OUTPUT_LIMIT = 128_000
 
 
-def _run(command: list[str], *, cwd: Path) -> tuple[int, bytes, bytes]:
+def _run(
+    command: list[str], *, cwd: Path, venv_launcher: Path | None = None
+) -> tuple[int, bytes, bytes]:
+    safe_names = {
+        "APPDATA",
+        "COMSPEC",
+        "HOME",
+        "LOCALAPPDATA",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "SystemDrive",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "WINDIR",
+    }
+    environment = {
+        key: value for key, value in os.environ.items() if key in safe_names
+    } | {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    if venv_launcher is not None and os.name != "nt":
+        environment["__PYVENV_LAUNCHER__"] = str(venv_launcher)
     result = run_bounded_process(
         command,
         working_directory=cwd,
-        environment={
-            key: value
-            for key, value in os.environ.items()
-            if key in {"COMSPEC", "PATHEXT", "SystemRoot", "WINDIR"}
-        }
-        | {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        environment=environment,
         timeout_seconds=60,
         max_stream_bytes=OUTPUT_LIMIT,
         max_total_bytes=OUTPUT_LIMIT,
@@ -88,12 +104,14 @@ def main(argv: list[str] | None = None) -> int:
         "install",
         "--disable-pip-version-check",
         "--no-input",
+        "--no-warn-script-location",
     ]
     for requirement in requirements:
         install_command.extend(("-r", str(requirement)))
     install_code, _install_stdout, install_stderr = _run(
         install_command,
         cwd=controller_root,
+        venv_launcher=public_python,
     )
     if install_code != 0 or install_stderr:
         raise ContractError(
@@ -108,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             "import engineering_process; print(engineering_process.VERSION)",
         ],
         cwd=PROJECT_ROOT,
+        venv_launcher=public_python,
     )
     if version_code != 0 or version_stderr or version_stdout.strip() != b"0.7.0":
         raise ContractError("release rendering proof requires exact public 0.7.0")
@@ -135,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--json",
             ],
             cwd=root,
+            venv_launcher=public_python,
         )
         if old_code == 0 or old_output.exists() or not (old_stdout or old_stderr):
             raise ContractError("public 0.7.0 unexpectedly interpreted release schema 4")
@@ -155,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--json",
             ],
             cwd=root,
+            venv_launcher=public_python,
         )
         if source_code != 0 or source_stderr:
             raise ContractError("fixed source reader failed under public 0.7.0 runtime")
