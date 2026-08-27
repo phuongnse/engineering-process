@@ -153,7 +153,6 @@ jobs:
             --review "$RUNNER_TEMP/plan-review.json"
           status="$(processctl change status --change-id "$CHANGE_ID" --json)"
           test "$(jq -r .phase <<<"$status")" = planned
-          test "$(jq -r .planDecision.authorized ".process/runs/$CHANGE_ID/state.json")" = true
 
       - name: Implement and verify the plan-approved candidate under N-1
         env:
@@ -162,6 +161,7 @@ jobs:
           processctl change implement \
             --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
             --change-id "$CHANGE_ID"
+          test "$(jq -r .planDecision.authorized ".process/runs/$CHANGE_ID/state.json")" = true
           processctl change verify \
             --actor github-release-bot --context "$CONTEXT_ID" --actor-kind agent \
             --change-id "$CHANGE_ID" --profile development

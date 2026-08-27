@@ -304,6 +304,7 @@ class SelfHostingTests(unittest.TestCase):
             "Restore the exact assignment-bound context reservation"
         )
         implement_plan = plan_approval.index("processctl change implement")
+        authorize_plan = plan_approval.index(".planDecision.authorized")
         upload_verified = plan_approval.index(
             "Upload the host-neutral source-review handoff"
         )
@@ -315,6 +316,7 @@ class SelfHostingTests(unittest.TestCase):
         )
         self.assertLess(restore_context, submit_plan_review)
         self.assertLess(submit_plan_review, implement_plan)
+        self.assertLess(implement_plan, authorize_plan)
         self.assertLess(implement_plan, upload_verified)
         self.assertLess(upload_verified, consume_planned)
         self.assertLess(consume_planned, dispatch_source_review)

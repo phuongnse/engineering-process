@@ -275,16 +275,47 @@ def verify_handoff(
         review_path = inputs / "review.json"
         _write_json(review_path, _mechanical_review(assignment))
         implementation_context = f"fixture-implementation-{checkpoint}"
+        _run(
+            [
+                command,
+                "change",
+                "decision",
+                "submit",
+                "--change-id",
+                change_id,
+                "--review",
+                str(review_path),
+            ],
+            cwd=restored,
+        )
+        state_path = restored_run / "state.json"
+        submitted_state = json.loads(state_path.read_text(encoding="utf-8"))
+        if submitted_state["planDecision"]["authorized"] is not False:
+            raise ContractError(
+                "public N-1 authorized the authored plan before implementation"
+            )
+        _run(
+            [
+                command,
+                "change",
+                "implement",
+                "--actor",
+                "fixture-implementer",
+                "--context",
+                implementation_context,
+                "--actor-kind",
+                "agent",
+                "--change-id",
+                change_id,
+            ],
+            cwd=restored,
+        )
+        implementing_state = json.loads(state_path.read_text(encoding="utf-8"))
+        if implementing_state["planDecision"]["authorized"] is not True:
+            raise ContractError(
+                "public N-1 did not authorize the reviewed plan at implementation"
+            )
         for arguments in (
-            (
-                "change", "decision", "submit", "--change-id", change_id,
-                "--review", str(review_path),
-            ),
-            (
-                "change", "implement", "--actor", "fixture-implementer",
-                "--context", implementation_context, "--actor-kind", "agent",
-                "--change-id", change_id,
-            ),
             (
                 "change", "verify", "--actor", "fixture-implementer", "--context",
                 implementation_context, "--actor-kind", "agent", "--change-id",
