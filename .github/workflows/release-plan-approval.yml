@@ -59,6 +59,8 @@ jobs:
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
           cp verification/decode_completion_evidence.py \
             "$RUNNER_TEMP/decode-plan-review.py"
+          cp verification/transfer_review_context_reservation.py \
+            "$RUNNER_TEMP/transfer-review-context-reservation.py"
 
       - name: Resolve the exact single-use planned artifact
         id: planned
@@ -124,6 +126,14 @@ jobs:
             -r engineering_process/requirements-dev.txt \
             -r engineering_process/requirements-build.txt
           printf '%s\n' "$RUNNER_TEMP/process-authority/bin" >> "$GITHUB_PATH"
+
+      - name: Restore the exact assignment-bound context reservation
+        run: |
+          assignment="$(jq -er .planDecision.assignment.path ".process/runs/$CHANGE_ID/state.json")"
+          "$RUNNER_TEMP/process-authority/bin/python" \
+            "$RUNNER_TEMP/transfer-review-context-reservation.py" restore \
+            --project-root . --assignment "$assignment" \
+            --input-root "$RUNNER_TEMP/planned-candidate/review-contexts"
 
       - name: Submit only the assigned independent plan review
         env:

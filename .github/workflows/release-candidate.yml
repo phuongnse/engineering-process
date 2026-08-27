@@ -158,6 +158,10 @@ jobs:
           cp "$RUNNER_TEMP/candidate/source.bundle" "$RUNNER_TEMP/planned-candidate/source.bundle"
           cp "$RUNNER_TEMP/candidate/candidate.json" "$RUNNER_TEMP/planned-candidate/candidate.json"
           cp -R ".process/runs/$CHANGE_ID/." "$RUNNER_TEMP/planned-candidate/lifecycle/"
+          assignment="$(jq -er .planDecision.assignment.path ".process/runs/$CHANGE_ID/state.json")"
+          python verification/transfer_review_context_reservation.py export \
+            --project-root . --assignment "$assignment" \
+            --output-root "$RUNNER_TEMP/planned-candidate/review-contexts"
 
       - name: Upload the host-neutral reviewer handoff
         if: steps.identity.outputs.plan_kind == 'process-generated'

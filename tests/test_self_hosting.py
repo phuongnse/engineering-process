@@ -143,6 +143,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("engineering-process-review-required", candidate)
         self.assertIn("engineering-process-plan-review-required", candidate)
         self.assertIn("planned-release-candidate", candidate)
+        self.assertIn("transfer_review_context_reservation.py export", candidate)
         self.assertIn("processctl change decision start", candidate)
         self.assertIn("steps.identity.outputs.plan_kind == 'authored'", candidate)
         self.assertIn(
@@ -283,6 +284,8 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("host-review.json", approval)
         self.assertIn("plan_decision_review_gzip_base64", plan_approval)
         self.assertIn("planned-release-candidate", plan_approval)
+        self.assertIn("transfer-review-context-reservation.py", plan_approval)
+        self.assertIn("review-contexts", plan_approval)
         self.assertIn("processctl change decision submit", plan_approval)
         self.assertIn("processctl change implement", plan_approval)
         self.assertIn("--profile development", plan_approval)
@@ -297,6 +300,9 @@ class SelfHostingTests(unittest.TestCase):
         submit_plan_review = plan_approval.index(
             "processctl change decision submit"
         )
+        restore_context = plan_approval.index(
+            "Restore the exact assignment-bound context reservation"
+        )
         implement_plan = plan_approval.index("processctl change implement")
         upload_verified = plan_approval.index(
             "Upload the host-neutral source-review handoff"
@@ -307,6 +313,7 @@ class SelfHostingTests(unittest.TestCase):
         dispatch_source_review = plan_approval.index(
             "Dispatch the immutable checkpoint to the consumer-selected source reviewer"
         )
+        self.assertLess(restore_context, submit_plan_review)
         self.assertLess(submit_plan_review, implement_plan)
         self.assertLess(implement_plan, upload_verified)
         self.assertLess(upload_verified, consume_planned)
