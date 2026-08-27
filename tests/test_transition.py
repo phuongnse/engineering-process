@@ -257,6 +257,9 @@ class AuthorityTransitionTests(unittest.TestCase):
             )
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "candidate"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "core.autocrlf", "true"], cwd=root, check=True
+            )
             tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
             changed = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.splitlines()
             target_lock = json.loads(lock_path.read_text(encoding="utf-8"))

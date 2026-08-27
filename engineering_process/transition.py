@@ -1493,7 +1493,17 @@ def _materialization_worktree(candidate_root: Path, base_checkpoint: str):
         workspace = Path(directory) / "workspace"
         _git_output(
             candidate_root,
-            ["worktree", "add", "--detach", str(workspace), base_checkpoint],
+            [
+                "-c",
+                "core.autocrlf=false",
+                "-c",
+                "core.safecrlf=true",
+                "worktree",
+                "add",
+                "--detach",
+                str(workspace),
+                base_checkpoint,
+            ],
             label="create authority-transition materialization worktree",
             maximum=4_096,
         )
@@ -1556,7 +1566,14 @@ def _prepare_materialization_inputs(
 def _materialization_tree(workspace: Path) -> str:
     _git_output(
         workspace,
-        ["add", "-A"],
+        [
+            "-c",
+            "core.autocrlf=false",
+            "-c",
+            "core.safecrlf=true",
+            "add",
+            "-A",
+        ],
         label="stage authority-transition materialization tree",
         maximum=4_096,
     )
