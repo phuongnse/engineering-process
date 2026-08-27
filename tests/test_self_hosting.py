@@ -315,6 +315,25 @@ class SelfHostingTests(unittest.TestCase):
         for workflow in (release, prepare, publish):
             self.assertIn(".release-controller", workflow)
             self.assertIn("github.workflow_sha", workflow)
+        controller_runtime_lock = (
+            "$GITHUB_WORKSPACE/.release-controller/engineering_process/"
+            "requirements-runtime.txt"
+        )
+        self.assertEqual(1, prepare.count(controller_runtime_lock))
+        self.assertLess(
+            prepare.index(controller_runtime_lock),
+            prepare.index(".release-controller/processctl.py"),
+        )
+        publish_environments = publish.split(
+            "- name: Install exact public authority and release dependencies"
+        )[1:]
+        self.assertEqual(2, len(publish_environments))
+        for environment in publish_environments:
+            self.assertEqual(1, environment.count(controller_runtime_lock))
+            self.assertLess(
+                environment.index(controller_runtime_lock),
+                environment.index(".release-controller/processctl.py"),
+            )
         self.assertIn('--project-root "$GITHUB_WORKSPACE"', release)
         self.assertIn("repository_dispatch:", publish)
         self.assertIn("types: [engineering-process-release-ready]", publish)

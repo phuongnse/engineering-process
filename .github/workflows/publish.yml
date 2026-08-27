@@ -89,6 +89,8 @@ jobs:
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
             --require-hashes -r requirements/process.txt
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            -r "$GITHUB_WORKSPACE/.release-controller/engineering_process/requirements-runtime.txt"
           python -m pip install --require-hashes \
             -r engineering_process/requirements-release.txt
 
@@ -255,6 +257,8 @@ jobs:
           python -m venv "$RUNNER_TEMP/process-authority"
           "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
             --require-hashes -r requirements/process.txt
+          "$RUNNER_TEMP/process-authority/bin/python" -m pip install \
+            -r "$GITHUB_WORKSPACE/.release-controller/engineering_process/requirements-runtime.txt"
           python -m pip install --require-hashes \
             -r engineering_process/requirements-release.txt
 
