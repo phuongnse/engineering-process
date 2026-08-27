@@ -123,10 +123,13 @@ class ReviewContextHandoffTests(unittest.TestCase):
             reservation_path = next(mismatch.iterdir())
             reservation = json.loads(reservation_path.read_text(encoding="utf-8"))
             reservation["actorId"] = "different-reviewer"
-            reservation_path.write_text(
-                json.dumps(reservation, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n",
-                encoding="utf-8",
+            reservation_path.write_bytes(
+                (
+                    json.dumps(
+                        reservation, ensure_ascii=False, indent=2, sort_keys=True
+                    )
+                    + "\n"
+                ).encode("utf-8")
             )
 
             for label, reservation_root, message in (
