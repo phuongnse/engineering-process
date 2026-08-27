@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import sys
 import tempfile
 
@@ -19,16 +20,18 @@ from engineering_process.contracts import ContractError, read_json, validate_rel
 OUTPUT_LIMIT = 128_000
 
 
-def _run(
-    command: list[str], *, cwd: Path, venv_launcher: Path | None = None
-) -> tuple[int, bytes, bytes]:
+def _run(command: list[str], *, cwd: Path) -> tuple[int, bytes, bytes]:
     safe_names = {
         "APPDATA",
         "COMSPEC",
         "HOME",
         "LOCALAPPDATA",
         "PATHEXT",
+        "PATH",
+        "PIP_CERT",
         "PROGRAMDATA",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
         "SystemDrive",
         "SystemRoot",
         "TEMP",
@@ -39,8 +42,6 @@ def _run(
     environment = {
         key: value for key, value in os.environ.items() if key in safe_names
     } | {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-    if venv_launcher is not None and os.name != "nt":
-        environment["__PYVENV_LAUNCHER__"] = str(venv_launcher)
     result = run_bounded_process(
         command,
         working_directory=cwd,
@@ -96,8 +97,22 @@ def main(argv: list[str] | None = None) -> int:
         raise ContractError(
             "transition release rendering requires exact runtime, development, and build controller requirements"
         )
+    launcher_directory = None
+    if os.name == "nt":
+        public_command = [str(public_python)]
+    else:
+        launcher_directory = tempfile.TemporaryDirectory(
+            prefix="engineering-process-public-authority-launcher-"
+        )
+        launcher = Path(launcher_directory.name) / "python"
+        launcher.write_text(
+            "#!/bin/sh\nexec " + shlex.quote(str(public_python)) + " \"$@\"\n",
+            encoding="utf-8",
+        )
+        launcher.chmod(0o700)
+        public_command = [str(launcher)]
     install_command = [
-        str(public_python),
+        *public_command,
         "-I",
         "-m",
         "pip",
@@ -111,7 +126,6 @@ def main(argv: list[str] | None = None) -> int:
     install_code, _install_stdout, install_stderr = _run(
         install_command,
         cwd=controller_root,
-        venv_launcher=public_python,
     )
     if install_code != 0 or install_stderr:
         raise ContractError(
@@ -121,13 +135,12 @@ def main(argv: list[str] | None = None) -> int:
 
     version_code, version_stdout, version_stderr = _run(
         [
-            str(public_python),
+            *public_command,
             "-I",
             "-c",
             "import engineering_process; print(engineering_process.VERSION)",
         ],
         cwd=PROJECT_ROOT,
-        venv_launcher=public_python,
     )
     if version_code != 0 or version_stderr or version_stdout.strip() != b"0.7.0":
         raise ContractError(
@@ -144,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         old_output = root / "old-reader.md"
         old_code, old_stdout, old_stderr = _run(
             [
-                str(public_python),
+                *public_command,
                 "-I",
                 "-m",
                 "engineering_process",
@@ -159,7 +172,6 @@ def main(argv: list[str] | None = None) -> int:
                 "--json",
             ],
             cwd=root,
-            venv_launcher=public_python,
         )
         if old_code == 0 or old_output.exists() or not (old_stdout or old_stderr):
             raise ContractError("public 0.7.0 unexpectedly interpreted release schema 4")
@@ -167,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         source_output = root / "source-reader.md"
         source_code, source_stdout, source_stderr = _run(
             [
-                str(public_python),
+                *public_command,
                 str(controller),
                 "publication",
                 "release-pr-body",
@@ -180,7 +192,6 @@ def main(argv: list[str] | None = None) -> int:
                 "--json",
             ],
             cwd=root,
-            venv_launcher=public_python,
         )
         if source_code != 0 or source_stderr:
             raise ContractError("fixed source reader failed under public 0.7.0 runtime")
