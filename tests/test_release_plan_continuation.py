@@ -3,6 +3,8 @@ import unittest
 
 from verification.validate_release_plan_continuation import (
     ContinuationError,
+    require_artifact_absent,
+    select_planned_artifact,
     validate_continuation,
 )
 
@@ -80,6 +82,33 @@ class ReleasePlanContinuationTests(unittest.TestCase):
         run["conclusion"] = None
         with self.assertRaisesRegex(ContinuationError, "terminal"):
             self.validate(run=run)
+
+    def test_single_use_artifact_selection_and_replay_rejection(self):
+        name = f"planned-release-candidate-{'c' * 40}"
+        pages = [{"artifacts": [{"id": 123, "name": name, "expired": False}]}]
+        self.assertEqual(
+            {"id": 123, "name": name},
+            select_planned_artifact(pages, expected_name=name),
+        )
+        require_artifact_absent([{"artifacts": []}], artifact_id=123)
+        with self.assertRaisesRegex(ContinuationError, "exactly one"):
+            select_planned_artifact([{"artifacts": []}], expected_name=name)
+
+    def test_rejects_duplicate_expired_or_surviving_artifact(self):
+        name = f"planned-release-candidate-{'d' * 40}"
+        duplicate = {
+            "artifacts": [
+                {"id": 123, "name": name, "expired": False},
+                {"id": 124, "name": name, "expired": False},
+            ]
+        }
+        with self.assertRaisesRegex(ContinuationError, "exactly one"):
+            select_planned_artifact([duplicate], expected_name=name)
+        expired = {"artifacts": [{"id": 123, "name": name, "expired": True}]}
+        with self.assertRaisesRegex(ContinuationError, "exactly one"):
+            select_planned_artifact([expired], expected_name=name)
+        with self.assertRaisesRegex(ContinuationError, "still exists"):
+            require_artifact_absent([duplicate], artifact_id=123)
 
 
 if __name__ == "__main__":

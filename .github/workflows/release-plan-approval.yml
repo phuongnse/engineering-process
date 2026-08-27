@@ -35,6 +35,8 @@ concurrency:
 jobs:
   continue:
     name: Validate plan review and verify exact unpublished checkpoint
+    outputs:
+      planned_artifact_id: ${{ steps.planned.outputs.artifact_id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -81,23 +83,21 @@ jobs:
             > "$RUNNER_TEMP/planned-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-candidate.yml" \
             > "$RUNNER_TEMP/planned-workflow.json"
+          artifact="planned-release-candidate-$HEAD_SHA"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PLANNED_RUN_ID/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/planned-artifact-pages.json"
           python verification/validate_release_plan_continuation.py \
             --run "$RUNNER_TEMP/planned-run.json" \
             --workflow "$RUNNER_TEMP/planned-workflow.json" \
+            --artifacts "$RUNNER_TEMP/planned-artifact-pages.json" \
+            --artifact-name "$artifact" \
             --repository "$GITHUB_REPOSITORY" \
             --planned-run-id "$PLANNED_RUN_ID" \
             --planned-run-attempt "$PLANNED_RUN_ATTEMPT" \
             --protected-base "$BASE_SHA" \
             --output "$RUNNER_TEMP/planned-run-source.json"
-          artifact="planned-release-candidate-$HEAD_SHA"
-          gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$PLANNED_RUN_ID/artifacts?per_page=100" \
-            > "$RUNNER_TEMP/planned-artifact-pages.json"
-          jq '[.[].artifacts[] | select(.name == $name and .expired == false)]' \
-            --arg name "$artifact" "$RUNNER_TEMP/planned-artifact-pages.json" \
-            > "$RUNNER_TEMP/planned-artifacts.json"
-          test "$(jq length "$RUNNER_TEMP/planned-artifacts.json")" = 1
-          artifact_id="$(jq -er '.[0].id' "$RUNNER_TEMP/planned-artifacts.json")"
+          artifact_id="$(jq -er .artifact.id "$RUNNER_TEMP/planned-run-source.json")"
           printf 'artifact_id=%s\n' "$artifact_id" >> "$GITHUB_OUTPUT"
           printf 'artifact_name=%s\n' "$artifact" >> "$GITHUB_OUTPUT"
 
@@ -228,17 +228,26 @@ jobs:
           done
           exit 1
 
+
+  consume-planned-artifact:
+    name: Preserve terminal state and consume the single-use planned artifact
+    needs: continue
+    if: ${{ always() && needs.continue.outputs.planned_artifact_id != '' }}
+    permissions:
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
       - name: Preserve bounded plan-continuation terminal diagnostics
-        if: ${{ always() && steps.planned.outputs.artifact_id != '' }}
         env:
           BASE_SHA: ${{ inputs.comparison_base }}
           CONTINUATION_RUN_ATTEMPT: ${{ github.run_attempt }}
           CONTINUATION_RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ inputs.release_head_sha }}
-          PLANNED_ARTIFACT_ID: ${{ steps.planned.outputs.artifact_id }}
+          PLANNED_ARTIFACT_ID: ${{ needs.continue.outputs.planned_artifact_id }}
           PLANNED_RUN_ATTEMPT: ${{ inputs.planned_run_attempt }}
           PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
-          TERMINAL_STATUS: ${{ job.status }}
+          PRIMARY_RESULT: ${{ needs.continue.result }}
         run: |
           jq -n \
             --arg base "$BASE_SHA" \
@@ -248,12 +257,12 @@ jobs:
             --arg plannedArtifactId "$PLANNED_ARTIFACT_ID" \
             --arg plannedRunAttempt "$PLANNED_RUN_ATTEMPT" \
             --arg plannedRunId "$PLANNED_RUN_ID" \
-            --arg status "$TERMINAL_STATUS" \
+            --arg status "$PRIMARY_RESULT" \
             '{schemaVersion: 1, kind: "engineering-process-release-plan-continuation-terminal", status: $status, base: $base, head: $head, plannedRun: {id: $plannedRunId, attempt: $plannedRunAttempt, artifactId: $plannedArtifactId}, continuationRun: {id: $continuationRunId, attempt: $continuationRunAttempt}, controls: {grantsImplementation: false, grantsReview: false, grantsCompletion: false, grantsPublication: false}}' \
             > "$RUNNER_TEMP/plan-continuation-terminal.json"
 
       - name: Upload bounded plan-continuation terminal diagnostics
-        if: ${{ always() && steps.planned.outputs.artifact_id != '' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-plan-continuation-terminal-${{ github.run_id }}-${{ github.run_attempt }}
@@ -264,9 +273,9 @@ jobs:
           include-hidden-files: false
 
       - name: Consume and reconcile the single-use planned artifact
-        if: ${{ always() && steps.planned.outputs.artifact_id != '' }}
+        if: ${{ always() }}
         env:
-          ARTIFACT_ID: ${{ steps.planned.outputs.artifact_id }}
+          ARTIFACT_ID: ${{ needs.continue.outputs.planned_artifact_id }}
           GH_TOKEN: ${{ github.token }}
           PLANNED_RUN_ID: ${{ inputs.planned_run_id }}
         run: |

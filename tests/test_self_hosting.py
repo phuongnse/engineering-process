@@ -62,7 +62,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("validationArtifact", (PROCESS_ROOT / "schemas" / "bootstrap-adoption-consumption.schema.json").read_text(encoding="utf-8"))
         workflow_document = yaml.safe_load(workflow)
         self.assertEqual(
-            {"checks": "read", "contents": "read", "pull-requests": "read"},
+            {"contents": "read", "pull-requests": "read"},
             workflow_document["permissions"],
         )
         steps = workflow_document["jobs"]["validate-and-merge"]["steps"]
@@ -319,12 +319,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("actions/artifacts/$ARTIFACT_ID", plan_approval)
         self.assertIn("--method DELETE", plan_approval)
         self.assertIn("plan-continuation-terminal.json", plan_approval)
-        self.assertIn("${{ job.status }}", plan_approval)
-        self.assertEqual(
-            3,
-            plan_approval.count(
-                "always() && steps.planned.outputs.artifact_id != ''"
-            ),
+        self.assertIn("${{ needs.continue.result }}", plan_approval)
+        self.assertIn(
+            "always() && needs.continue.outputs.planned_artifact_id != ''",
+            plan_approval,
         )
         self.assertIn("remaining-planned-artifact-pages.json", plan_approval)
         self.assertNotIn("processctl change finish", plan_approval)
@@ -358,6 +356,36 @@ class SelfHostingTests(unittest.TestCase):
         self.assertLess(upload_verified, dispatch_source_review)
         self.assertLess(dispatch_source_review, preserve_terminal)
         self.assertLess(preserve_terminal, consume_planned)
+        plan_document = yaml.safe_load(plan_approval)
+        continuation_job = plan_document["jobs"]["continue"]
+        cleanup_job = plan_document["jobs"]["consume-planned-artifact"]
+        self.assertEqual(
+            "${{ steps.planned.outputs.artifact_id }}",
+            continuation_job["outputs"]["planned_artifact_id"],
+        )
+        self.assertEqual("continue", cleanup_job["needs"])
+        self.assertIn("always()", cleanup_job["if"])
+        self.assertEqual(5, cleanup_job["timeout-minutes"])
+        self.assertEqual({"actions": "write"}, cleanup_job["permissions"])
+        primary_step_names = {
+            step.get("name") for step in continuation_job["steps"]
+        }
+        self.assertNotIn(
+            "Consume and reconcile the single-use planned artifact",
+            primary_step_names,
+        )
+        cleanup_steps = {
+            step.get("name"): step for step in cleanup_job["steps"]
+        }
+        self.assertIn(
+            "Preserve bounded plan-continuation terminal diagnostics", cleanup_steps
+        )
+        self.assertEqual(
+            "${{ always() }}",
+            cleanup_steps[
+                "Consume and reconcile the single-use planned artifact"
+            ]["if"],
+        )
         for workflow in (candidate, plan_approval):
             for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
                 if uses.startswith("./"):

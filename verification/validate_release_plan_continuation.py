@@ -9,6 +9,8 @@ from typing import Any
 
 
 MAX_PROVIDER_DOCUMENT_BYTES = 1_000_000
+MAX_PROVIDER_PAGES = 100
+MAX_PROVIDER_ARTIFACTS = 1_000
 RELEASE_CANDIDATE_WORKFLOW_PATH = ".github/workflows/release-candidate.yml"
 
 
@@ -16,7 +18,7 @@ class ContinuationError(ValueError):
     pass
 
 
-def _read_object(path: Path, label: str) -> dict[str, Any]:
+def _read_json(path: Path, label: str) -> Any:
     try:
         file_stat = path.lstat()
         if stat.S_ISLNK(file_stat.st_mode) or not stat.S_ISREG(file_stat.st_mode):
@@ -32,8 +34,20 @@ def _read_object(path: Path, label: str) -> dict[str, Any]:
         value = json.loads(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ContinuationError(f"{label} is not valid UTF-8 JSON") from error
+    return value
+
+
+def _read_object(path: Path, label: str) -> dict[str, Any]:
+    value = _read_json(path, label)
     if not isinstance(value, dict):
         raise ContinuationError(f"{label} must be a JSON object")
+    return value
+
+
+def _read_array(path: Path, label: str) -> list[Any]:
+    value = _read_json(path, label)
+    if not isinstance(value, list):
+        raise ContinuationError(f"{label} must be a JSON array")
     return value
 
 
@@ -47,6 +61,58 @@ def _repository(value: Any, label: str) -> str:
     if not isinstance(value, dict) or value.get("full_name") != label:
         raise ContinuationError("planned run repository identity does not match")
     return label
+
+
+def select_planned_artifact(
+    pages: list[Any], *, expected_name: str
+) -> dict[str, Any]:
+    if (
+        re.fullmatch(r"planned-release-candidate-[0-9a-f]{40}", expected_name)
+        is None
+    ):
+        raise ContinuationError("planned artifact name is invalid")
+    if not pages or len(pages) > MAX_PROVIDER_PAGES:
+        raise ContinuationError("planned artifact pages are missing or exceed their limit")
+    artifacts: list[dict[str, Any]] = []
+    for index, raw_page in enumerate(pages):
+        if not isinstance(raw_page, dict) or not isinstance(
+            raw_page.get("artifacts"), list
+        ):
+            raise ContinuationError(
+                f"planned artifact page {index} has an invalid contract"
+            )
+        for artifact in raw_page["artifacts"]:
+            if not isinstance(artifact, dict):
+                raise ContinuationError("planned artifact entry must be an object")
+            artifacts.append(artifact)
+            if len(artifacts) > MAX_PROVIDER_ARTIFACTS:
+                raise ContinuationError("planned artifacts exceed their count limit")
+    candidates = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("name") == expected_name and artifact.get("expired") is False
+    ]
+    if len(candidates) != 1:
+        raise ContinuationError(
+            "planned run must contain exactly one unexpired expected artifact"
+        )
+    artifact_id = _provider_integer(candidates[0].get("id"), "planned artifact id")
+    return {"id": artifact_id, "name": expected_name}
+
+
+def require_artifact_absent(pages: list[Any], *, artifact_id: int) -> None:
+    _provider_integer(artifact_id, "planned artifact id")
+    remaining: list[int] = []
+    for raw_page in pages:
+        if not isinstance(raw_page, dict) or not isinstance(
+            raw_page.get("artifacts"), list
+        ):
+            raise ContinuationError("remaining artifact pages have an invalid contract")
+        for artifact in raw_page["artifacts"]:
+            if isinstance(artifact, dict) and artifact.get("id") == artifact_id:
+                remaining.append(artifact_id)
+    if remaining:
+        raise ContinuationError("planned artifact still exists after terminal cleanup")
 
 
 def validate_continuation(
@@ -113,6 +179,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--workflow", type=Path, required=True)
+    parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument("--artifact-name", required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--planned-run-id", type=int, required=True)
     parser.add_argument("--planned-run-attempt", type=int, required=True)
@@ -127,6 +195,10 @@ def main() -> None:
             planned_run_id=arguments.planned_run_id,
             planned_run_attempt=arguments.planned_run_attempt,
             protected_base=arguments.protected_base,
+        )
+        result["artifact"] = select_planned_artifact(
+            _read_array(arguments.artifacts, "planned artifact pages"),
+            expected_name=arguments.artifact_name,
         )
         arguments.output.write_text(
             json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
