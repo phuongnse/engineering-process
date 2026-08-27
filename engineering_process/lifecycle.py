@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import stat
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -37,6 +39,7 @@ from .contracts import (
     validate_review,
     validate_verification,
 )
+from .bounded_process import run_bounded_process
 from .environment import require_environment_profile
 from .git import run_git
 from .lifecycle_routes import INTERNAL_PHASES, lifecycle_next_state
@@ -52,6 +55,7 @@ from .transition import (
     validate_authority_transition_request,
     validate_registered_candidate,
     validate_transition_target_provenance,
+    validate_target_repository_proof,
 )
 
 
@@ -968,6 +972,110 @@ def _validate_authority_transition_control(
     return control_source
 
 
+def _resolve_target_repository_proof(
+    project_root: Path,
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    relative = "verification/fetch_target_repository_proof.py"
+    adapter = project_root / relative
+    if adapter.is_symlink() or not adapter.is_file():
+        raise ContractError("authority-transition repository adapter is unavailable")
+    adapter_content = adapter.read_bytes()
+    if len(adapter_content) > 1_000_000:
+        raise ContractError("authority-transition repository adapter exceeds 1000000 bytes")
+    registered = run_git(
+        project_root,
+        ["show", f"{request['source']['checkpoint']}:{relative}"],
+        label="read registered repository-proof adapter",
+        timeout_seconds=30,
+        max_stdout_bytes=1_000_000,
+    )
+    if registered.returncode != 0 or registered.stdout != adapter_content:
+        raise ContractError(
+            "authority-transition repository adapter is not fixed by the clean N-1 checkpoint"
+        )
+    nonce = secrets.token_hex(32)
+    with tempfile.TemporaryDirectory(
+        prefix="engineering-process-repository-proof-"
+    ) as directory:
+        request_snapshot = Path(directory) / "authority-transition-request.json"
+        request_snapshot.write_text(
+            json.dumps(request, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        output = Path(directory) / "repository-proof-envelope.json"
+        environment = {
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "TEMP": directory,
+            "TMP": directory,
+            "TMPDIR": directory,
+        }
+        for name in ("COMSPEC", "GH_TOKEN", "PATHEXT", "SystemRoot", "WINDIR"):
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
+        try:
+            result = run_bounded_process(
+                [
+                    sys.executable,
+                    str(adapter),
+                    "--identity",
+                    str(request_snapshot),
+                    "--nonce",
+                    nonce,
+                    "--output",
+                    str(output),
+                ],
+                working_directory=project_root,
+                environment=environment,
+                timeout_seconds=60,
+                max_stream_bytes=128_000,
+                max_total_bytes=128_000,
+            )
+        except (OSError, ValueError) as error:
+            raise ContractError(
+                f"cannot execute authority-transition repository adapter: {error}"
+            ) from error
+        if (
+            result.returncode != 0
+            or result.stderr
+            or result.timed_out
+            or result.output_exceeded
+            or result.descendants_found
+            or result.cleanup_error is not None
+            or result.input_error
+        ):
+            raise ContractError(
+                result.cleanup_error
+                or "authority-transition repository adapter failed its bounded execution"
+            )
+        envelope = read_json(output)
+        if (
+            not isinstance(envelope, dict)
+            or set(envelope) != {"schemaVersion", "kind", "nonce", "proof"}
+            or envelope.get("schemaVersion") != 1
+            or envelope.get("kind")
+            != "engineering-process-target-repository-proof-envelope"
+            or envelope.get("nonce") != nonce
+            or not isinstance(envelope.get("proof"), dict)
+        ):
+            raise ContractError(
+                "authority-transition repository adapter returned an invalid nonce envelope"
+            )
+        proof = validate_target_repository_proof(
+            envelope["proof"], request["target"]
+        )
+        if canonical_json_digest(proof) != request["target"][
+            "repositoryProofSha256"
+        ]:
+            raise ContractError(
+                "authority-transition request does not bind authenticated repository proof"
+            )
+        return proof
+
+
 def _register_authority_transition_unlocked(
     project_root: Path,
     change_id: str,
@@ -976,7 +1084,6 @@ def _register_authority_transition_unlocked(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
-    repository_proof_path: Path,
     *,
     actor_id: str,
     context_id: str,
@@ -1034,16 +1141,22 @@ def _register_authority_transition_unlocked(
         raise ContractError(
             "authority-transition request requirements lock digest is stale"
         )
+    repository_proof = _resolve_target_repository_proof(project_root, request)
     target_provenance = validate_transition_target_provenance(
         request,
         target_checkout=target_checkout,
         artifact_root=artifact_root,
         release_receipt_path=release_receipt_path,
         artifact_attestation_path=artifact_attestation_path,
-        repository_proof_path=repository_proof_path,
+        repository_proof_document=repository_proof,
     )
+    _validate_authority_transition_control(project_root, request)
     destination = _run_root(project_root, change_id) / "authority-transition-request.json"
-    reference = _copy_document(project_root, request_path, destination)
+    _write_atomic(destination, request)
+    reference = {
+        "path": _relative(project_root, destination),
+        "digest": _digest_file(destination),
+    }
     state["schemaVersion"] = 3
     state["authorityTransition"] = {
         "request": reference,
@@ -3915,7 +4028,6 @@ def register_authority_transition(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
-    repository_proof_path: Path,
     *,
     actor_id: str,
     context_id: str,
@@ -3930,7 +4042,6 @@ def register_authority_transition(
             artifact_root,
             release_receipt_path,
             artifact_attestation_path,
-            repository_proof_path,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,

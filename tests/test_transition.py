@@ -14,6 +14,7 @@ from engineering_process.adoption import apply_adoption
 from engineering_process.bootstrap import initialize_project
 from engineering_process.lifecycle import (
     begin_implementation,
+    _resolve_target_repository_proof,
     finish_change,
     ingest_authority_transition_evidence,
     load_state,
@@ -43,9 +44,162 @@ from verification.validate_transition_check_exclusivity import (
     validate_exclusivity,
 )
 from verification.build_target_repository_proof import build as build_repository_proof
+from verification.fetch_target_repository_proof import (
+    _fetch as fetch_repository_document,
+    fetch as fetch_repository_proof,
+)
 
 
 class AuthorityTransitionTests(unittest.TestCase):
+    def test_repository_provider_fetch_rejects_redirects_and_oversized_responses(self):
+        url = "https://api.github.com/repos/owner/engineering-process"
+        redirected = mock.MagicMock()
+        redirected.__enter__.return_value.geturl.return_value = url + "/redirected"
+        redirected.__enter__.return_value.status = 200
+        with (
+            mock.patch(
+                "verification.fetch_target_repository_proof.urlopen",
+                return_value=redirected,
+            ),
+            self.assertRaisesRegex(ContractError, "redirected"),
+        ):
+            fetch_repository_document(url)
+
+        oversized = mock.MagicMock()
+        oversized.__enter__.return_value.geturl.return_value = url
+        oversized.__enter__.return_value.status = 200
+        oversized.__enter__.return_value.read.return_value = b"x" * 2_000_001
+        with (
+            mock.patch(
+                "verification.fetch_target_repository_proof.urlopen",
+                return_value=oversized,
+            ),
+            self.assertRaisesRegex(ContractError, "exceeds"),
+        ):
+            fetch_repository_document(url)
+
+    def test_registration_accepts_only_nonce_bound_fixed_adapter_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "verification").mkdir()
+            adapter = root / "verification" / "fetch_target_repository_proof.py"
+            adapter.write_text("# fixed adapter\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Transition Test"], cwd=root, check=True)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "adapter"], cwd=root, check=True)
+            checkpoint = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+            request = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "examples"
+                    / "authority-transition-request.json"
+                ).read_text(encoding="utf-8")
+            )
+            request["source"]["checkpoint"] = checkpoint
+            target = request["target"]
+            proof = {
+                "schemaVersion": 1,
+                "kind": "engineering-process-target-repository-proof",
+                "provider": "github",
+                "repository": target["repository"],
+                "repositoryId": "123",
+                "repositoryUrl": f"https://api.github.com/repos/{target['repository']}",
+                "releaseId": "456",
+                "releaseUrl": f"https://api.github.com/repos/{target['repository']}/releases/456",
+                "tag": target["tag"],
+                "commit": target["commit"],
+                "immutable": True,
+                "assets": [
+                    {
+                        "artifactId": str(700 + index),
+                        "name": item["name"],
+                        "url": f"https://api.github.com/repos/{target['repository']}/releases/assets/{700 + index}",
+                        "sizeBytes": item["sizeBytes"],
+                        "sha256": item["sha256"],
+                    }
+                    for index, item in enumerate(target["artifacts"])
+                ],
+            }
+            request["target"]["repositoryProofSha256"] = canonical_json_digest(proof)
+
+            def adapter_result(command, **_kwargs):
+                nonce = command[command.index("--nonce") + 1]
+                output = Path(command[command.index("--output") + 1])
+                output.write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": 1,
+                            "kind": "engineering-process-target-repository-proof-envelope",
+                            "nonce": nonce,
+                            "proof": proof,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return mock.Mock(
+                    returncode=0,
+                    stdout=b'{"status":"passed"}\n',
+                    stderr=b"",
+                    timed_out=False,
+                    output_exceeded=False,
+                    descendants_found=False,
+                    cleanup_error=None,
+                    input_error=False,
+                )
+
+            with mock.patch(
+                "engineering_process.lifecycle.run_bounded_process",
+                side_effect=adapter_result,
+            ):
+                observed = _resolve_target_repository_proof(
+                    root, request
+                )
+            self.assertEqual(proof, observed)
+
+            adapter.write_text("# changed adapter\n", encoding="utf-8")
+            with self.assertRaisesRegex(ContractError, "not fixed"):
+                _resolve_target_repository_proof(root, request)
+            adapter.write_text("# fixed adapter\n", encoding="utf-8")
+
+            timed_out = mock.Mock(
+                returncode=None,
+                stdout=b"",
+                stderr=b"",
+                timed_out=True,
+                output_exceeded=False,
+                descendants_found=False,
+                cleanup_error=None,
+                input_error=False,
+            )
+            with (
+                mock.patch(
+                    "engineering_process.lifecycle.run_bounded_process",
+                    return_value=timed_out,
+                ),
+                self.assertRaisesRegex(ContractError, "bounded execution"),
+            ):
+                _resolve_target_repository_proof(root, request)
+
+            def forged_result(command, **kwargs):
+                result = adapter_result(command, **kwargs)
+                output = Path(command[command.index("--output") + 1])
+                envelope = json.loads(output.read_text(encoding="utf-8"))
+                envelope["nonce"] = "0" * 64
+                output.write_text(json.dumps(envelope) + "\n", encoding="utf-8")
+                return result
+
+            with (
+                mock.patch(
+                    "engineering_process.lifecycle.run_bounded_process",
+                    side_effect=forged_result,
+                ),
+                self.assertRaisesRegex(ContractError, "nonce envelope"),
+            ):
+                _resolve_target_repository_proof(root, request)
+
     def test_target_repository_proof_uses_provider_service_identity(self):
         identity = json.loads(
             (
@@ -96,6 +250,19 @@ class AuthorityTransitionTests(unittest.TestCase):
                 None,
             )
 
+        service_documents = {
+            repository["url"]: repository,
+            f"{repository['url']}/releases/tags/{target['tag']}": release,
+            f"{repository['url']}/git/ref/tags/{target['tag']}": tag_ref,
+        }
+        with mock.patch(
+            "verification.fetch_target_repository_proof._fetch",
+            side_effect=lambda url: service_documents[url],
+        ) as provider_fetch:
+            fetched = fetch_repository_proof(identity)
+        self.assertEqual(proof, fetched)
+        self.assertEqual(3, provider_fetch.call_count)
+
     def test_consumption_check_pagination_and_replay_are_exclusive(self):
         context = "authority-transition-consumption"
         app_id = 12345
@@ -144,6 +311,22 @@ class AuthorityTransitionTests(unittest.TestCase):
         with self.assertRaisesRegex(ExclusivityError, "exceeds 10"):
             validate_exclusivity(
                 [first_page] * 11,
+                context=context,
+                app_id=app_id,
+                expected_count=0,
+                head_sha=head,
+            )
+        with self.assertRaisesRegex(ExclusivityError, "duplicate ids"):
+            validate_exclusivity(
+                [first_page, {"check_runs": [dict(first_page["check_runs"][0])]}],
+                context=context,
+                app_id=app_id,
+                expected_count=0,
+                head_sha=head,
+            )
+        with self.assertRaisesRegex(ExclusivityError, "exceeds 100"):
+            validate_exclusivity(
+                [{"check_runs": first_page["check_runs"] + [exact]}],
                 context=context,
                 app_id=app_id,
                 expected_count=0,
@@ -440,8 +623,6 @@ class AuthorityTransitionTests(unittest.TestCase):
                     for index, item in enumerate(request["target"]["artifacts"])
                 ],
             }
-            proof_path = root / "repository-proof.json"
-            proof_path.write_text(json.dumps(proof) + "\n", encoding="utf-8")
             request["target"]["repositoryProofSha256"] = canonical_json_digest(proof)
             release_result = {
                 "version": request["target"]["version"],
@@ -459,7 +640,7 @@ class AuthorityTransitionTests(unittest.TestCase):
                     artifact_root=artifacts,
                     release_receipt_path=receipt,
                     artifact_attestation_path=attestation,
-                    repository_proof_path=proof_path,
+                    repository_proof_document=proof,
                 )
             self.assertEqual(request["target"]["commit"], result["commit"])
             release_check.assert_called_once()
@@ -472,7 +653,7 @@ class AuthorityTransitionTests(unittest.TestCase):
                     artifact_root=artifacts,
                     release_receipt_path=receipt,
                     artifact_attestation_path=attestation,
-                    repository_proof_path=proof_path,
+                    repository_proof_document=proof,
                 )
             request["target"]["repository"] = "owner/engineering-process"
             receipt.write_text("tampered\n", encoding="utf-8")
@@ -484,7 +665,7 @@ class AuthorityTransitionTests(unittest.TestCase):
                         artifact_root=artifacts,
                         release_receipt_path=receipt,
                         artifact_attestation_path=attestation,
-                        repository_proof_path=proof_path,
+                        repository_proof_document=proof,
                     )
 
     def test_expired_request_is_rejected_before_registration(self):
@@ -499,7 +680,7 @@ class AuthorityTransitionTests(unittest.TestCase):
                     artifact_root=root,
                     release_receipt_path=root / "receipt.json",
                     artifact_attestation_path=root / "attestation.json",
-                    repository_proof_path=root / "repository-proof.json",
+                    repository_proof_document={},
                 )
 
     def test_action_pin_changes_are_grouped_and_pin_only(self):
@@ -713,14 +894,14 @@ class AuthorityTransitionTests(unittest.TestCase):
             request_path = root / ".process" / "runs" / "_inputs" / "request.json"
             request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
 
-            with mock.patch("engineering_process.lifecycle.validate_transition_target_provenance", return_value={}):
-                state, _ = register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
+            with mock.patch("engineering_process.lifecycle._resolve_target_repository_proof", return_value={}), mock.patch("engineering_process.lifecycle.validate_transition_target_provenance", return_value={}):
+                state, _ = register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
 
             self.assertEqual(3, state["schemaVersion"])
             self.assertIsNone(state["authorityTransition"]["candidateEvidence"])
             self.assertEqual(3, load_state(root, "adopt-process-0-9-0")["schemaVersion"])
             with self.assertRaisesRegex(ContractError, "already registered"):
-                register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
+                register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
 
     def test_candidate_evidence_is_recomputed_not_trusted(self):
         request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
@@ -774,8 +955,8 @@ class AuthorityTransitionTests(unittest.TestCase):
             request["candidate"]["expectedChangedPaths"] = [".process/process.lock", "tracked.txt"]
             request_path = root / ".process" / "runs" / "_inputs" / "request.json"
             request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
-            with mock.patch("engineering_process.lifecycle.validate_transition_target_provenance", return_value={}):
-                register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
+            with mock.patch("engineering_process.lifecycle._resolve_target_repository_proof", return_value={}), mock.patch("engineering_process.lifecycle.validate_transition_target_provenance", return_value={}):
+                register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
 
             candidate = Path(directory) / "candidate"
             subprocess.run(["git", "clone", "-q", str(root), str(candidate)], check=True)

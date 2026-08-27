@@ -448,7 +448,6 @@ processctl change transition register --project-root control \
   --change-id adopt-process-0-9-0 --request transition-request.json \
   --target-checkout target-tag-checkout --artifact-root target-artifacts \
   --release-receipt target-evidence.json --artifact-attestation target-artifacts.json \
-  --target-repository-proof target-repository-proof.json \
   --actor worker --context worker-session --actor-kind agent
 
 processctl authority-transition candidate-evidence \

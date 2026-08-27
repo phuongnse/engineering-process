@@ -249,7 +249,7 @@ jobs:
           check_context="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkContext"])')"
           check_app_id="$(python -c 'import json; print(json.load(open(".process/protected-transition-policy.json", encoding="utf-8"))["workflow"]["checkAppId"])')"
           gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100&filter=all" \
             > "$RUNNER_TEMP/head-checks.json"
           python .transition-controller/verification/validate_transition_check_exclusivity.py \
             --checks "$RUNNER_TEMP/head-checks.json" \
@@ -262,7 +262,7 @@ jobs:
           test "$(jq -r .app.id "$RUNNER_TEMP/created-transition-check.json")" = "$check_app_id"
           check_id="$(jq -r .id "$RUNNER_TEMP/created-transition-check.json")"
           gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100&filter=all" \
             > "$RUNNER_TEMP/recorded-head-checks.json"
           python .transition-controller/verification/validate_transition_check_exclusivity.py \
             --checks "$RUNNER_TEMP/recorded-head-checks.json" \

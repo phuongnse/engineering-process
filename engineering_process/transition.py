@@ -2186,7 +2186,7 @@ def validate_transition_target_provenance(
     artifact_root: Path,
     release_receipt_path: Path,
     artifact_attestation_path: Path,
-    repository_proof_path: Path,
+    repository_proof_document: dict[str, Any],
 ) -> dict[str, Any]:
     from .artifact_attestation import validate_distribution_attestation
     from .release import validate_release_checkpoint
@@ -2196,7 +2196,6 @@ def validate_transition_target_provenance(
     target_checkout = target_checkout.resolve(strict=True)
     artifact_root = artifact_root.resolve(strict=True)
     target = request["target"]
-    repository_proof_document = read_json(repository_proof_path)
     if canonical_json_digest(repository_proof_document) != target["repositoryProofSha256"]:
         raise ContractError("authority-transition target repository proof digest mismatch")
     repository_proof = validate_target_repository_proof(

@@ -49,6 +49,12 @@ the existing provider API, emits deterministic bounded repository proof, and the
 request pre-binds its canonical digest. N-1 independently relates that proof to the
 registered tag, commit and artifact bytes; provider transport gains no decision
 authority.
+Permanent registration does not accept a proof path from its caller. N-1 generates a
+fresh nonce, verifies the adapter bytes against the registered clean checkpoint, then
+executes that fixed adapter with a canonical request snapshot and bounded environment.
+Only the matching nonce envelope returned from canonical HTTPS provider endpoints is
+eligible for proof validation; redirects, changed adapter bytes and prebuilt local
+proofs fail closed.
 
 The packaged transition JSON Schemas and `contract validate` own the same exact
 serialized shape, nesting, bounds and field syntax. Cross-field relations that JSON

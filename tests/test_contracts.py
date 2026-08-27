@@ -1027,6 +1027,9 @@ class ArtifactContractTests(unittest.TestCase):
         dotted_path = copy.deepcopy(document)
         dotted_path["candidate"]["expectedChangedPaths"] = ["./requirements/process.txt"]
         invalid_shapes.append(dotted_path)
+        terminal_dot_path = copy.deepcopy(document)
+        terminal_dot_path["candidate"]["expectedChangedPaths"] = ["requirements/."]
+        invalid_shapes.append(terminal_dot_path)
         whitespace_actor = copy.deepcopy(document)
         whitespace_actor["registeredBy"]["actorId"] = "   "
         invalid_shapes.append(whitespace_actor)

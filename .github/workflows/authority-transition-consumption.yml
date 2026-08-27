@@ -94,7 +94,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
             > "$RUNNER_TEMP/validation-run.json"
           gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100" \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100&filter=all" \
             > "$RUNNER_TEMP/validation-checks.json"
           run_attempt="$(jq -r .run_attempt "$RUNNER_TEMP/validation-run.json")"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$run_attempt"
@@ -161,7 +161,7 @@ jobs:
           context="$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["workflow"]["consumptionContext"])')"
           check_app_id="$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["workflow"]["checkAppId"])')"
           gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100" \
+            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100&filter=all" \
             > "$RUNNER_TEMP/merge-checks.json"
           python .transition-controller/verification/validate_transition_check_exclusivity.py \
             --checks "$RUNNER_TEMP/merge-checks.json" \
@@ -178,7 +178,7 @@ jobs:
           test "$(jq -r .head_sha "$RUNNER_TEMP/consumption-check-response.json")" = "$MERGE_SHA"
           check_id="$(jq -r .id "$RUNNER_TEMP/consumption-check-response.json")"
           gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100" \
+            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100&filter=all" \
             > "$RUNNER_TEMP/recorded-merge-checks.json"
           python .transition-controller/verification/validate_transition_check_exclusivity.py \
             --checks "$RUNNER_TEMP/recorded-merge-checks.json" \

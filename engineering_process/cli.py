@@ -841,7 +841,6 @@ def command_change_transition_register(args: argparse.Namespace) -> int:
         args.artifact_root,
         args.release_receipt,
         args.artifact_attestation,
-        args.target_repository_proof,
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
@@ -2818,7 +2817,6 @@ def build_parser() -> argparse.ArgumentParser:
     transition_register.add_argument("--artifact-root", type=_root, required=True)
     transition_register.add_argument("--release-receipt", type=Path, required=True)
     transition_register.add_argument("--artifact-attestation", type=Path, required=True)
-    transition_register.add_argument("--target-repository-proof", type=Path, required=True)
     transition_register.set_defaults(handler=command_change_transition_register)
 
     transition_ingest = transition_commands.add_parser(

@@ -46,7 +46,7 @@
     "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
     "project": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
     "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!\\s)(?!.*\\s$)(?!/)(?!\\./)(?!.*\\/\\.\\/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!\\s)(?!.*\\s$)(?!/)(?!\\./)(?!.*\\/\\.\\/)(?!.*\\/\\.$)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"},
     "authority": {"type": "object", "additionalProperties": false, "required": ["version", "digest"], "properties": {"version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"}, "digest": {"$ref": "#/$defs/digest"}}},
     "actor": {"type": "object", "additionalProperties": false, "required": ["actorId", "contextId", "kind"], "properties": {"actorId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"}, "contextId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S(?:.*\\S)?$"}, "kind": {"enum": ["agent", "human"]}}}
   }
