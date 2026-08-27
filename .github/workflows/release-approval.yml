@@ -106,7 +106,7 @@ jobs:
             --input "$RUNNER_TEMP/completion-evidence.txt" \
             --output "$RUNNER_TEMP/completion-evidence.json"
           mode="$(jq -r .provenance.mode release.json)"
-          if test "$mode" = governed; then
+          if test "$mode" = governed -o "$mode" = authority-transition-bootstrap; then
             processctl evidence validate "$RUNNER_TEMP/completion-evidence.json" --json \
               > "$RUNNER_TEMP/completion-summary.json"
             evidence_kind=receipt
@@ -139,7 +139,8 @@ jobs:
         run: |
           version="$(jq -r .version release.json)"
           title="chore(release): prepare v$version"
-          processctl publication release-pr-body \
+          "$RUNNER_TEMP/process-authority/bin/python" processctl.py \
+            publication release-pr-body \
             --state approved --output "$RUNNER_TEMP/release-pr.md"
           evidence_sha256="$(sha256sum "$RUNNER_TEMP/completion-evidence.json" | cut -d ' ' -f1)"
           cat >> "$RUNNER_TEMP/release-pr.md" <<EOF

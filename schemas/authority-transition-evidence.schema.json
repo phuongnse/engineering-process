@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/authority-transition-evidence.schema.json",
+  "$comment": "This schema and contract validate the complete serialized shape. Evidence ingestion additionally recomputes and relates request, authority, candidate, apply/idempotent, and rollback identities.",
+  "title": "Non-authoritative process authority transition candidate evidence",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "changeId", "cycle", "requestSha256", "sourceAuthority", "targetAuthority", "candidate", "bindings", "materialization", "generatedBy", "generatedAt"],
+  "properties": {
+    "schemaVersion": {"const": 1}, "kind": {"const": "engineering-process-authority-transition-evidence"},
+    "project": {"$ref": "#/$defs/project"}, "changeId": {"$ref": "#/$defs/id"}, "cycle": {"type": "integer", "minimum": 1},
+    "requestSha256": {"$ref": "#/$defs/digest"}, "sourceAuthority": {"$ref": "#/$defs/authority"}, "targetAuthority": {"$ref": "#/$defs/authority"},
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baseCheckpoint", "checkpoint", "tree", "workspaceFingerprint", "workingTreeDirty", "changedPaths"],
+      "properties": {"baseCheckpoint": {"$ref": "#/$defs/gitOid"}, "checkpoint": {"$ref": "#/$defs/gitOid"}, "tree": {"$ref": "#/$defs/gitOid"}, "workspaceFingerprint": {"$ref": "#/$defs/digest"}, "workingTreeDirty": {"const": false}, "changedPaths": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/path"}}}
+    },
+    "bindings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requirementsInputSha256", "requirementsLockSha256", "processLockSha256", "projectManifestSha256", "projectMigrationSha256", "managedDistributionSha256", "actionPinsSha256"],
+      "properties": {"requirementsInputSha256": {"$ref": "#/$defs/digest"}, "requirementsLockSha256": {"$ref": "#/$defs/digest"}, "processLockSha256": {"$ref": "#/$defs/digest"}, "projectManifestSha256": {"$ref": "#/$defs/digest"}, "projectMigrationSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]}, "managedDistributionSha256": {"$ref": "#/$defs/digest"}, "actionPinsSha256": {"$ref": "#/$defs/digest"}}
+    },
+    "materialization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "applyTree", "idempotentTree", "checkRuns", "rollback", "issues"],
+      "properties": {
+        "status": {"const": "passed"},
+        "applyTree": {"$ref": "#/$defs/gitOid"},
+        "idempotentTree": {"$ref": "#/$defs/gitOid"},
+        "checkRuns": {"const": 2},
+        "rollback": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "beforeTree", "afterTree", "probe"],
+          "properties": {
+            "status": {"const": "restored"},
+            "beforeTree": {"$ref": "#/$defs/gitOid"},
+            "afterTree": {"$ref": "#/$defs/gitOid"},
+            "probe": {"const": "after-authority-write"}
+          }
+        },
+        "issues": {"type": "array", "maxItems": 0}
+      }
+    },
+    "generatedBy": {"$ref": "#/$defs/actor"}, "generatedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "project": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!.*\\u0000)(?!\\s)(?!.*\\s$)(?!/)(?!\\./)(?!.*\\/\\.\\/)(?!.*\\/\\.$)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["version", "digest"], "properties": {"version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"}, "digest": {"$ref": "#/$defs/digest"}}},
+    "actor": {"type": "object", "additionalProperties": false, "required": ["actorId", "contextId", "kind"], "properties": {"actorId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!.*\\u0000)\\S(?:.*\\S)?$"}, "contextId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!.*\\u0000)\\S(?:.*\\S)?$"}, "kind": {"enum": ["agent", "human"]}}}
+  }
+}

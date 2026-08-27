@@ -186,6 +186,30 @@ authority, and shares one rollback boundary with the process lock and managed as
 Optional capabilities are never inferred, while configuration required by the target
 authority blocks adoption when it is missing or invalid.
 
+A self-hosted authority transition keeps the governing and candidate workspaces
+separate. N-1 owns lifecycle state and every authoritative decision; N+1 output is
+bounded untrusted input. The pre-registered request fixes source and target authority,
+release provenance, base, paths, migration, selected assets and expiry. Transition
+verification recomputes the clean candidate commit, tree, workspace, lock, hash graph,
+managed distribution and action-pin set. A protected-transition policy is a separate
+schema-1 mutation grant: it fixes the source-owned verifier commit, protected workflow,
+check context and App identity, exact current base and head, target, required checks, no post-merge
+mutation, and one-use protected auto-merge. Target or candidate code can never
+interpret the authorization that activates itself.
+
+Transition artifact schemas and portable contract validation share one serialized
+shape boundary. Operational entrypoints additionally enforce cross-field relations
+that standard JSON Schema cannot represent. Those semantic checks are mandatory at
+registration, evidence ingestion, protected validation and terminal consumption; a
+shape-only validation never grants authority. Candidate evidence includes observed
+apply/check/idempotence trees and an after-write rollback probe executed in disposable
+worktrees under a bounded target process.
+Repository identity comes from deterministic provider service evidence resolved by
+the existing project adapter: repository/release/tag/asset ids and URLs, immutable
+release state, peeled tag commit and artifact digests are pre-bound by canonical
+digest. Mutable local Git remote configuration is never repository provenance, and
+the provider adapter gains no acceptance authority.
+
 Proposal merge authority derives from proposal origin and publication state. An
 agent-host review object created only after full lifecycle completion may use standing
 policy auto-merge for its exact approved head. A Renovate `process-adoption` proposal

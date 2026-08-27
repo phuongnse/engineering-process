@@ -23,6 +23,10 @@ specific checkpoint without changing the reviewed source.
 2. Register the assignment with processctl change review start. Confirm its
    checkpoint, comparison base, contract, plan, and required verification reports
    refer to the same immutable source.
+   For an authority transition, use the candidate root named by the coordinator and
+   require review schema 4 to carry the exact registered request and candidate
+   evidence references. Review the candidate diff while treating target-generated
+   claims as untrusted; the N-1 control lifecycle remains the assignment owner.
 3. Read the diff and only the project-owned contracts needed to evaluate affected
    behavior and trust boundaries. Reconcile every `production-v1` assessment,
    including security, privacy, reliability, performance, observability, operability,

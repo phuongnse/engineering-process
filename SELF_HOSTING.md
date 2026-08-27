@@ -25,6 +25,69 @@ change carries the target-version migration and updates `.process/project.json`
 inside the adoption transaction. N+1 governs only changes opened after the complete
 adoption checkpoint is reviewed and merged.
 
+## Authority transitions
+
+An adoption that changes this producer's own process lock uses separate control and
+candidate workspaces. The control workspace retains the public N-1 lock, managed
+skills, project instructions, lifecycle state, and source authority for the entire
+change. N-1 registers the transition before candidate mutation. The candidate
+workspace begins at that exact control checkpoint; installed N+1 may synchronize it
+and emit bounded candidate evidence but cannot verify, review, finish, publish, or
+merge the lifecycle.
+
+N-1 lifecycle commands accept an external candidate only when the current state is
+lifecycle schema 3, the request and candidate evidence are digest-bound, and the
+candidate root remains the same clean commit, tree and workspace fingerprint. Missing
+candidate roots, ordinary commands with target locks, arbitrary process roots, stale
+evidence, changed path sets, partial assets, inferred migrations and target-authored
+lifecycle evidence all fail closed. Completion exports receipt schema 2 with both
+authority identities and both transition artifacts. Protected merge alone activates
+N+1; no post-merge synchronization follows.
+The target repository is not inferred from mutable local Git configuration. The
+project adapter resolves repository, immutable release, tag and asset identities from
+the existing provider API, emits deterministic bounded repository proof, and the
+request pre-binds its canonical digest. N-1 independently relates that proof to the
+registered tag, commit and artifact bytes; provider transport gains no decision
+authority.
+Permanent registration does not accept a proof path from its caller. N-1 generates a
+fresh nonce, verifies the adapter bytes against the registered clean checkpoint, then
+executes that fixed adapter with a canonical request snapshot and bounded environment.
+Only the matching nonce envelope returned from canonical HTTPS provider endpoints is
+eligible for proof validation; redirects, changed adapter bytes and prebuilt local
+proofs fail closed.
+
+The packaged transition JSON Schemas and `contract validate` own the same exact
+serialized shape, nesting, bounds and field syntax. Cross-field relations that JSON
+Schema cannot express—canonical ordering, source/target inequality, tag/version
+derivation and changed pin commits—are a separate mandatory operational layer run by
+registration and the protected verifier before any lifecycle mutation. A shape-valid
+document is never transition authorization by itself.
+
+Candidate materialization is observed rather than asserted. The source verifier
+creates disposable worktrees at the registered base, supplies only the pre-registered
+requirements, migration and action-pin inputs, runs target adoption apply/check twice,
+compares both Git trees with the exact candidate, and forces the real transaction to
+fail after its first authority write. The rollback worktree must return to its exact
+input tree, including on Windows, before candidate evidence can be ingested.
+
+Immutable 0.7.0 cannot execute that route. Its single bootstrap uses the normal
+0.7.0 lifecycle and bootstrap export to authenticate a fixed intent/policy checkpoint.
+Interpretation is performed by verifier source fixed to the already merged feature
+commit that 0.7.0 reviewed, never by the target release or candidate checkout. The
+project-owned protected workflow may create `authority-transition-completion` and
+merge only the exact current-base candidate authorized by that policy. The merge tree
+must equal the validated candidate tree and the successful base advance consumes the
+authorization exactly once.
+The validation artifact binds its repository, workflow path and SHA, run id/attempt,
+base, check context and GitHub App id. The closed-PR consumer resolves that service
+chain independently, verifies the exact App-authenticated completion check and squash
+merge parent/tree, then records the canonical consumption JSON in an exclusive
+App-authenticated check on the merge commit. The expiring Actions artifact is only a
+transport copy, not the durable terminal record.
+The current base is authenticated by tree equivalence with the checkpoint carried in
+the 0.7.0 bundle; the policy never attempts to contain the hash of the commit that
+contains the policy itself.
+
 ## Initial bootstrap root
 
 The clean prospective self-hosting lineage begins from immutable public release

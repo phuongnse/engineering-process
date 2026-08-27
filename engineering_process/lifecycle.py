@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import stat
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -32,10 +34,12 @@ from .contracts import (
     validate_improvement_disposition,
     validate_plan,
     validate_process_lock,
+    validate_project,
     validate_remote_verification_request,
     validate_review,
     validate_verification,
 )
+from .bounded_process import run_bounded_process
 from .environment import require_environment_profile
 from .git import run_git
 from .lifecycle_routes import INTERNAL_PHASES, lifecycle_next_state
@@ -44,6 +48,14 @@ from .remote_verification import (
     build_remote_verification_request,
     read_remote_evidence_document,
     validate_remote_evidence_set,
+)
+from .transition import (
+    require_authority_transition_current,
+    validate_authority_transition_evidence,
+    validate_authority_transition_request,
+    validate_registered_candidate,
+    validate_transition_target_provenance,
+    validate_target_repository_proof,
 )
 
 
@@ -443,7 +455,12 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
     extra = sorted(
         set(state)
         - required
-        - {"improvements", "planDecision", "remoteVerification"}
+        - {
+            "authorityTransition",
+            "improvements",
+            "planDecision",
+            "remoteVerification",
+        }
     )
     if missing or extra:
         detail = []
@@ -452,8 +469,39 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
         if extra:
             detail.append(f"unknown: {', '.join(extra)}")
         raise ContractError(f"{path}: invalid lifecycle state ({'; '.join(detail)})")
-    if state["schemaVersion"] != 2:
-        raise ContractError(f"{path}.schemaVersion: must be 2")
+    if state["schemaVersion"] not in {2, 3}:
+        raise ContractError(f"{path}.schemaVersion: must be 2 or 3")
+    transition = state.get("authorityTransition")
+    if state["schemaVersion"] == 2 and transition is not None:
+        raise ContractError(
+            f"{path}.authorityTransition: requires lifecycle schemaVersion 3"
+        )
+    if state["schemaVersion"] == 3 and transition is None:
+        raise ContractError(
+            f"{path}.authorityTransition: lifecycle schemaVersion 3 requires a transition"
+        )
+    if transition is not None:
+        if not isinstance(transition, dict) or set(transition) != {
+            "request",
+            "candidateEvidence",
+        }:
+            raise ContractError(f"{path}.authorityTransition: invalid fields")
+        if transition["request"] is None:
+            raise ContractError(f"{path}.authorityTransition.request: required")
+        for field in ("request", "candidateEvidence"):
+            reference = transition[field]
+            if reference is None:
+                continue
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"path", "digest"}
+                or not isinstance(reference["path"], str)
+                or not isinstance(reference["digest"], str)
+                or DIGEST_PATTERN.fullmatch(reference["digest"]) is None
+            ):
+                raise ContractError(
+                    f"{path}.authorityTransition.{field}: invalid artifact reference"
+                )
     if state["phase"] not in PHASES:
         raise ContractError(f"{path}.phase: invalid phase")
     if not isinstance(state["cycle"], int) or state["cycle"] < 1:
@@ -817,9 +865,17 @@ def _plan_decision_target_cycle(state: dict[str, Any]) -> int:
 
 
 def _verified_source_is_current(
-    project_root: Path, state: dict[str, Any]
+    project_root: Path,
+    state: dict[str, Any],
+    *,
+    candidate_root: Path | None = None,
 ) -> bool:
-    source = source_state(project_root)
+    try:
+        _source_root, source = _lifecycle_source(
+            project_root, state, candidate_root=candidate_root
+        )
+    except ContractError:
+        return False
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {
         item["workspaceFingerprint"] for item in state["verification"]
@@ -831,6 +887,341 @@ def _verified_source_is_current(
         and checkpoints == {source["checkpoint"]}
         and fingerprints == {source["fingerprint"]}
     )
+
+
+def _transition_request(
+    project_root: Path, state: dict[str, Any]
+) -> dict[str, Any] | None:
+    transition = state.get("authorityTransition")
+    if transition is None:
+        return None
+    request = read_json(_artifact_path(project_root, transition["request"]))
+    validate_authority_transition_request(request, "registered authority transition")
+    return request
+
+
+def _lifecycle_source(
+    project_root: Path,
+    state: dict[str, Any],
+    *,
+    candidate_root: Path | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    transition = state.get("authorityTransition")
+    if transition is None:
+        if candidate_root is not None:
+            raise ContractError(
+                "--candidate-root is allowed only for a registered authority transition"
+            )
+        return project_root, source_state(project_root)
+    if candidate_root is None:
+        raise ContractError(
+            "registered authority-transition lifecycle commands require --candidate-root"
+        )
+    if transition["candidateEvidence"] is None:
+        raise ContractError(
+            "authority-transition candidate evidence must be ingested before lifecycle verification"
+        )
+    request = _transition_request(project_root, state)
+    assert request is not None
+    _validate_authority_transition_control(project_root, request)
+    evidence = read_json(
+        _artifact_path(project_root, transition["candidateEvidence"])
+    )
+    validate_authority_transition_evidence(
+        evidence, "registered authority-transition evidence"
+    )
+    candidate_root = candidate_root.resolve(strict=True)
+    source = source_state(candidate_root)
+    expected = evidence["candidate"]
+    if (
+        source.get("dirty") is not False
+        or source.get("checkpoint") != expected["checkpoint"]
+        or source.get("fingerprint") != expected["workspaceFingerprint"]
+    ):
+        raise ContractError(
+            "authority-transition candidate workspace is stale or dirty"
+        )
+    return candidate_root, source
+
+
+def _validate_authority_transition_control(
+    project_root: Path, request: dict[str, Any]
+) -> dict[str, Any]:
+    require_authority_transition_current(request)
+    control_source = source_state(project_root)
+    control_lock_path = project_root / ".process" / "process.lock"
+    control_requirements_path = project_root / "requirements" / "process.txt"
+    control_lock = validate_process_lock(
+        read_json(control_lock_path), str(control_lock_path)
+    )
+    if (
+        control_source.get("dirty") is not False
+        or control_source.get("checkpoint") != request["source"]["checkpoint"]
+        or control_source.get("fingerprint")
+        != request["source"]["workspaceFingerprint"]
+        or request["source"]["authority"]
+        != {"version": control_lock.version, "digest": control_lock.digest}
+        or request["source"]["processLockSha256"]
+        != _digest_file(control_lock_path)
+        or request["source"]["requirementsLockSha256"]
+        != _digest_file(control_requirements_path)
+    ):
+        raise ContractError(
+            "authority-transition control workspace is stale, dirty, or no longer governed by N-1"
+        )
+    return control_source
+
+
+def _resolve_target_repository_proof(
+    project_root: Path,
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    relative = "verification/fetch_target_repository_proof.py"
+    adapter = project_root / relative
+    if adapter.is_symlink() or not adapter.is_file():
+        raise ContractError("authority-transition repository adapter is unavailable")
+    adapter_content = adapter.read_bytes()
+    if len(adapter_content) > 1_000_000:
+        raise ContractError("authority-transition repository adapter exceeds 1000000 bytes")
+    registered = run_git(
+        project_root,
+        ["show", f"{request['source']['checkpoint']}:{relative}"],
+        label="read registered repository-proof adapter",
+        timeout_seconds=30,
+        max_stdout_bytes=1_000_000,
+    )
+    if registered.returncode != 0 or registered.stdout != adapter_content:
+        raise ContractError(
+            "authority-transition repository adapter is not fixed by the clean N-1 checkpoint"
+        )
+    nonce = secrets.token_hex(32)
+    with tempfile.TemporaryDirectory(
+        prefix="engineering-process-repository-proof-"
+    ) as directory:
+        request_snapshot = Path(directory) / "authority-transition-request.json"
+        request_snapshot.write_text(
+            json.dumps(request, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        output = Path(directory) / "repository-proof-envelope.json"
+        environment = {
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "TEMP": directory,
+            "TMP": directory,
+            "TMPDIR": directory,
+        }
+        for name in ("COMSPEC", "GH_TOKEN", "PATHEXT", "SystemRoot", "WINDIR"):
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
+        try:
+            result = run_bounded_process(
+                [
+                    sys.executable,
+                    str(adapter),
+                    "--identity",
+                    str(request_snapshot),
+                    "--nonce",
+                    nonce,
+                    "--output",
+                    str(output),
+                ],
+                working_directory=project_root,
+                environment=environment,
+                timeout_seconds=60,
+                max_stream_bytes=128_000,
+                max_total_bytes=128_000,
+            )
+        except (OSError, ValueError) as error:
+            raise ContractError(
+                f"cannot execute authority-transition repository adapter: {error}"
+            ) from error
+        if (
+            result.returncode != 0
+            or result.stderr
+            or result.timed_out
+            or result.output_exceeded
+            or result.descendants_found
+            or result.cleanup_error is not None
+            or result.input_error
+        ):
+            raise ContractError(
+                result.cleanup_error
+                or "authority-transition repository adapter failed its bounded execution"
+            )
+        envelope = read_json(output)
+        if (
+            not isinstance(envelope, dict)
+            or set(envelope) != {"schemaVersion", "kind", "nonce", "proof"}
+            or envelope.get("schemaVersion") != 1
+            or envelope.get("kind")
+            != "engineering-process-target-repository-proof-envelope"
+            or envelope.get("nonce") != nonce
+            or not isinstance(envelope.get("proof"), dict)
+        ):
+            raise ContractError(
+                "authority-transition repository adapter returned an invalid nonce envelope"
+            )
+        proof = validate_target_repository_proof(
+            envelope["proof"], request["target"]
+        )
+        if canonical_json_digest(proof) != request["target"][
+            "repositoryProofSha256"
+        ]:
+            raise ContractError(
+                "authority-transition request does not bind authenticated repository proof"
+            )
+        return proof
+
+
+def _register_authority_transition_unlocked(
+    project_root: Path,
+    change_id: str,
+    request_path: Path,
+    target_checkout: Path,
+    artifact_root: Path,
+    release_receipt_path: Path,
+    artifact_attestation_path: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "implementing")
+    actor = _actor(actor_id, context_id, kind)
+    if actor not in state["implementationActors"]:
+        raise ContractError(
+            "only a registered implementation actor may register an authority transition"
+        )
+    if state.get("authorityTransition") is not None:
+        raise ContractError("authority transition is already registered")
+    if state["verification"] or state["review"] is not None:
+        raise ContractError(
+            "authority transition must be registered before candidate verification"
+        )
+    request = read_json(request_path)
+    validate_authority_transition_request(request, str(request_path))
+    require_authority_transition_current(request)
+    if (
+        request["project"] != state["project"]
+        or request["changeId"] != change_id
+        or request["cycle"] != state["cycle"]
+    ):
+        raise ContractError(
+            "authority-transition request does not identify the current lifecycle"
+        )
+    source = source_state(project_root)
+    if (
+        source.get("dirty") is not False
+        or source.get("checkpoint") != request["source"]["checkpoint"]
+        or source.get("fingerprint") != request["source"]["workspaceFingerprint"]
+        or request["candidate"]["baseCheckpoint"] != source.get("checkpoint")
+    ):
+        raise ContractError(
+            "authority-transition request does not bind the clean control checkpoint"
+        )
+    lock_path = project_root / ".process" / "process.lock"
+    lock = validate_process_lock(read_json(lock_path), str(lock_path))
+    if request["source"]["authority"] != {
+        "version": lock.version,
+        "digest": lock.digest,
+    }:
+        raise ContractError(
+            "authority-transition request source does not match the governing lock"
+        )
+    if request["source"]["processLockSha256"] != _digest_file(lock_path):
+        raise ContractError("authority-transition request process lock digest is stale")
+    requirements_path = project_root / "requirements" / "process.txt"
+    if request["source"]["requirementsLockSha256"] != _digest_file(
+        requirements_path
+    ):
+        raise ContractError(
+            "authority-transition request requirements lock digest is stale"
+        )
+    repository_proof = _resolve_target_repository_proof(project_root, request)
+    target_provenance = validate_transition_target_provenance(
+        request,
+        target_checkout=target_checkout,
+        artifact_root=artifact_root,
+        release_receipt_path=release_receipt_path,
+        artifact_attestation_path=artifact_attestation_path,
+        repository_proof_document=repository_proof,
+    )
+    _validate_authority_transition_control(project_root, request)
+    destination = _run_root(project_root, change_id) / "authority-transition-request.json"
+    _write_atomic(destination, request)
+    reference = {
+        "path": _relative(project_root, destination),
+        "digest": _digest_file(destination),
+    }
+    state["schemaVersion"] = 3
+    state["authorityTransition"] = {
+        "request": reference,
+        "candidateEvidence": None,
+    }
+    _event(
+        state,
+        "authority-transition-registered",
+        actor,
+        request=reference,
+        sourceAuthority=request["source"]["authority"],
+        targetAuthority={
+            "version": request["target"]["version"],
+            "digest": request["target"]["processDigest"],
+        },
+        targetProvenance=target_provenance,
+    )
+    _save_state(project_root, state)
+    return state, request
+
+
+def _ingest_authority_transition_evidence_unlocked(
+    project_root: Path,
+    change_id: str,
+    candidate_root: Path,
+    evidence_path: Path,
+    target_process_root: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = load_state(project_root, change_id)
+    _require_phase(state, "implementing")
+    actor = _actor(actor_id, context_id, kind)
+    if actor not in state["implementationActors"]:
+        raise ContractError(
+            "only a registered implementation actor may ingest transition evidence"
+        )
+    request = _transition_request(project_root, state)
+    if request is None:
+        raise ContractError("authority transition is not registered")
+    _validate_authority_transition_control(project_root, request)
+    evidence = read_json(evidence_path)
+    validated = validate_registered_candidate(
+        candidate_root,
+        request,
+        evidence,
+        target_process_root=target_process_root,
+    )
+    destination = (
+        _run_root(project_root, change_id) / "authority-transition-evidence.json"
+    )
+    reference = _copy_document(project_root, evidence_path, destination)
+    state["authorityTransition"]["candidateEvidence"] = reference
+    _event(
+        state,
+        "authority-transition-evidence-ingested",
+        actor,
+        evidence=reference,
+        checkpoint=validated["candidate"]["checkpoint"],
+        tree=validated["candidate"]["tree"],
+    )
+    _save_state(project_root, state)
+    return state, validated["evidence"]
 
 
 def _plan_decision_artifact(
@@ -887,6 +1278,7 @@ def _authorize_plan_decision_for_implementation(
     *,
     require_current_source: bool,
     implementation_actor: dict[str, str],
+    candidate_root: Path | None,
 ) -> None:
     policy = _plan_decision_policy(project)
     plan = _plan(project_root, state)
@@ -959,7 +1351,9 @@ def _authorize_plan_decision_for_implementation(
     if assignment["source"]["comparisonBase"] != state["comparisonBase"]:
         raise ContractError("plan decision assignment comparison base is stale")
     if require_current_source:
-        source = source_state(project_root)
+        _source_root, source = _lifecycle_source(
+            project_root, state, candidate_root=candidate_root
+        )
         if (
             source["dirty"] is not False
             or source["checkpoint"] != assignment["source"]["checkpoint"]
@@ -1705,6 +2099,7 @@ def _start_plan_decision_review_unlocked(
     project: Project,
     change_id: str,
     *,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -1715,7 +2110,7 @@ def _start_plan_decision_review_unlocked(
     state = load_state(project_root, change_id)
     _require_phase(state, "planned", "changes-requested", "verified")
     if state["phase"] == "verified" and _verified_source_is_current(
-        project_root, state
+        project_root, state, candidate_root=candidate_root
     ):
         raise ContractError(
             "current verified change must enter independent review, not refresh planning"
@@ -1772,7 +2167,9 @@ def _start_plan_decision_review_unlocked(
         raise ContractError("plan decision review cannot be self-attested")
     if not evidence or evidence != evidence.strip() or len(evidence) > 2000:
         raise ContractError("plan decision review independence evidence is invalid")
-    source = source_state(project_root)
+    _source_root, source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
     if (
         source["dirty"] is not False
         or source["checkpoint"] is None
@@ -1968,6 +2365,7 @@ def _begin_implementation_unlocked(
     change_id: str,
     *,
     project: Project | None,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -1977,7 +2375,7 @@ def _begin_implementation_unlocked(
     _plan(project_root, state)
     starting_phase = state["phase"]
     if starting_phase == "verified" and _verified_source_is_current(
-        project_root, state
+        project_root, state, candidate_root=candidate_root
     ):
         raise ContractError(
             "current verified change must enter independent review before "
@@ -1996,6 +2394,7 @@ def _begin_implementation_unlocked(
             require_current_source=starting_phase
             in {"planned", "changes-requested", "verified"},
             implementation_actor=actor,
+            candidate_root=candidate_root,
         )
     classification_required = [
         case["id"]
@@ -2018,6 +2417,9 @@ def _begin_implementation_unlocked(
             state["remoteVerification"]["evidence"] = None
         state["reviewAssignment"] = None
         state["review"] = None
+        if state.get("authorityTransition") is not None:
+            state.pop("authorityTransition")
+            state["schemaVersion"] = 2
         _event(
             state,
             "verification-invalidated",
@@ -2038,6 +2440,9 @@ def _begin_implementation_unlocked(
             state["remoteVerification"]["evidence"] = None
         state["reviewAssignment"] = None
         state["review"] = None
+        if state.get("authorityTransition") is not None:
+            state.pop("authorityTransition")
+            state["schemaVersion"] = 2
     if actor not in state["implementationActors"]:
         state["implementationActors"].append(actor)
     transition_result = {
@@ -2177,6 +2582,7 @@ def _request_remote_verification_unlocked(
     project: Project,
     change_id: str,
     *,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -2193,7 +2599,15 @@ def _request_remote_verification_unlocked(
     remote = state.get("remoteVerification")
     if remote is None:
         raise ContractError(f"change {change_id} requires no remote evidence")
-    source = source_state(project_root)
+    source_root, source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
+    effective_project = project
+    if source_root != project_root:
+        candidate_project_path = source_root / ".process" / "project.json"
+        effective_project = validate_project(
+            read_json(candidate_project_path), str(candidate_project_path)
+        )
     if (
         source.get("dirty") is not False
         or source.get("checkpoint") is None
@@ -2203,13 +2617,16 @@ def _request_remote_verification_unlocked(
             "remote verification requires a clean immutable source checkpoint"
         )
     request = build_remote_verification_request(
-        project,
+        effective_project,
         contract,
         cycle=state["cycle"],
         checkpoint=source["checkpoint"],
         comparison_base=state["comparisonBase"],
         workspace_fingerprint=source["fingerprint"],
     )
+    if state.get("authorityTransition") is not None:
+        request["schemaVersion"] = 2
+        request["authorityTransition"] = state["authorityTransition"]
     existing = remote.get("request")
     if isinstance(existing, dict):
         current = read_json(_artifact_path(project_root, existing))
@@ -2263,6 +2680,7 @@ def _ingest_remote_verification_unlocked(
     change_id: str,
     evidence_path: Path,
     *,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -2281,7 +2699,9 @@ def _ingest_remote_verification_unlocked(
         raise ContractError("remote verification request is missing")
     request = read_json(_artifact_path(project_root, remote["request"]))
     validate_remote_verification_request(request, "registered remote request")
-    source = source_state(project_root)
+    _source_root, source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
     if (
         source.get("dirty") is not False
         or source.get("checkpoint") != request["checkpoint"]
@@ -2421,6 +2841,7 @@ def _verify_change_unlocked(
     change_id: str,
     profile: str,
     *,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -2450,13 +2871,41 @@ def _verify_change_unlocked(
             "verification is blocked by unresolved improvement cases: "
             + ", ".join(improvement_blockers)
         )
-    require_environment_profile(project_root, project, profile=profile)
+    source_root, current_source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
+    effective_project = project
+    if source_root != project_root:
+        candidate_project_path = source_root / ".process" / "project.json"
+        effective_project = validate_project(
+            read_json(candidate_project_path), str(candidate_project_path)
+        )
+        if effective_project.identifier != project.identifier:
+            raise ContractError(
+                "authority-transition candidate project does not match control project"
+            )
+    require_environment_profile(source_root, effective_project, profile=profile)
     report = run_profile(
-        project_root,
-        project,
+        source_root,
+        effective_project,
         profile,
         base_ref=contract["comparisonBase"],
     )
+    if state.get("authorityTransition") is not None:
+        request = _transition_request(project_root, state)
+        assert request is not None
+        transition = state["authorityTransition"]
+        report["schemaVersion"] = 4
+        report["authorityTransition"] = {
+            "request": transition["request"],
+            "candidateEvidence": transition["candidateEvidence"],
+            "sourceAuthority": request["source"]["authority"],
+            "targetAuthority": {
+                "version": request["target"]["version"],
+                "digest": request["target"]["processDigest"],
+            },
+            "controlCheckpoint": request["source"]["checkpoint"],
+        }
     validate_verification(report, f"verification profile {profile}")
     report_path = (
         _run_root(project_root, change_id)
@@ -2524,7 +2973,7 @@ def _verify_change_unlocked(
         required_profiles <= current_profiles
         and len(checkpoints) == 1
         and len(fingerprints) == 1
-        and _remote_evidence_ready(project_root, state)
+        and _remote_evidence_ready(project_root, state, source=current_source)
     ):
         _transition_phase(state, "all-required-passed")
     else:
@@ -2546,6 +2995,7 @@ def _start_review_unlocked(
     project_root: Path,
     change_id: str,
     *,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -2588,7 +3038,9 @@ def _start_review_unlocked(
             "independent review requires a fresh context id unused by earlier "
             "review assignments"
         )
-    source = source_state(project_root)
+    _source_root, source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
     checkpoints = {item["checkpoint"] for item in state["verification"]}
     fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
     if (
@@ -2620,6 +3072,11 @@ def _start_review_unlocked(
         "verification": state["verification"],
         "remoteVerification": state.get("remoteVerification"),
         "pendingFindings": state["pendingFindings"],
+        **(
+            {"authorityTransition": state["authorityTransition"]}
+            if state.get("authorityTransition") is not None
+            else {}
+        ),
     }
     reserve_review_context(project_root, state, reviewer)
     assignment_path = _run_root(project_root, change_id) / f"review-request-{state['cycle']}.json"
@@ -2642,6 +3099,8 @@ def _submit_review_unlocked(
     project_root: Path,
     change_id: str,
     report_path: Path,
+    *,
+    candidate_root: Path | None,
 ) -> dict[str, Any]:
     state = load_state(project_root, change_id)
     _require_phase(state, "review-pending")
@@ -2651,12 +3110,16 @@ def _submit_review_unlocked(
     document = read_json(report_path)
     validate_review(document, str(report_path))
     contract = _contract(project_root, state)
-    required_review_schema = 3 if contract["schemaVersion"] == 3 else 2
+    required_review_schema = (
+        4
+        if state.get("authorityTransition") is not None
+        else (3 if contract["schemaVersion"] == 3 else 2)
+    )
     if document["schemaVersion"] != required_review_schema:
         raise ContractError(
             f"review schemaVersion {required_review_schema} is required for this change"
         )
-    if required_review_schema == 3:
+    if required_review_schema >= 3:
         contract_quality = {
             item["dimension"]: item for item in contract["quality"]["assessments"]
         }
@@ -2694,6 +3157,12 @@ def _submit_review_unlocked(
     ):
         if document[field] != assignment[field]:
             raise ContractError(f"review report {field} does not match its assignment")
+    if required_review_schema == 4 and (
+        document.get("authorityTransition") != assignment.get("authorityTransition")
+    ):
+        raise ContractError(
+            "review report authorityTransition does not match its assignment"
+        )
     findings_by_id = {finding["id"]: finding for finding in document["findings"]}
     for pending in state["pendingFindings"]:
         current = findings_by_id.get(pending["id"])
@@ -2711,7 +3180,9 @@ def _submit_review_unlocked(
                 f"review finding {pending['id']} changed immutable fields: "
                 + ", ".join(changed)
             )
-    source = source_state(project_root)
+    _source_root, source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
     if (
         source["dirty"] is not False
         or source["checkpoint"] != document["checkpoint"]
@@ -2755,6 +3226,7 @@ def _finish_change_unlocked(
     project_root: Path,
     change_id: str,
     *,
+    candidate_root: Path | None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -2787,7 +3259,9 @@ def _finish_change_unlocked(
         )
     review = read_json(_artifact_path(project_root, state["review"]))
     validate_review(review, "registered review")
-    source = source_state(project_root)
+    _source_root, source = _lifecycle_source(
+        project_root, state, candidate_root=candidate_root
+    )
     if (
         source["dirty"] is not False
         or source["checkpoint"] != review["checkpoint"]
@@ -2815,7 +3289,7 @@ def _finish_change_unlocked(
             raise ContractError(f"verification profile {item['profile']} is stale")
     actor = _actor(actor_id, context_id, kind)
     completion = {
-        "schemaVersion": 1,
+        "schemaVersion": 2 if state.get("authorityTransition") is not None else 1,
         "changeId": change_id,
         "cycle": state["cycle"],
         "checkpoint": review["checkpoint"],
@@ -2856,6 +3330,11 @@ def _finish_change_unlocked(
             }
             for case in state["improvements"]
         ],
+        **(
+            {"authorityTransition": state["authorityTransition"]}
+            if state.get("authorityTransition") is not None
+            else {}
+        ),
     }
     validate_completion(completion, "completion")
     completion_path = _run_root(project_root, change_id) / "completion.json"
@@ -2870,7 +3349,12 @@ def _finish_change_unlocked(
     return state, completion
 
 
-def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
+def lifecycle_status(
+    project_root: Path,
+    change_id: str,
+    *,
+    candidate_root: Path | None = None,
+) -> dict[str, Any]:
     state = load_state(project_root, change_id)
     issues: list[str] = []
     for name in ("contract", "plan", "review", "completion"):
@@ -2890,6 +3374,16 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
     if remote is not None:
         for name in ("request", "evidence"):
             artifact = remote.get(name)
+            if artifact is None:
+                continue
+            try:
+                _artifact_path(project_root, artifact)
+            except ContractError as error:
+                issues.append(str(error))
+    transition = state.get("authorityTransition")
+    if transition is not None:
+        for name in ("request", "candidateEvidence"):
+            artifact = transition.get(name)
             if artifact is None:
                 continue
             try:
@@ -2979,7 +3473,13 @@ def lifecycle_status(project_root: Path, change_id: str) -> dict[str, Any]:
     ):
         issues.append("completed lifecycle has unresolved improvement cases")
     if state["phase"] in {"verified", "review-pending", "approved", "completed"}:
-        source = source_state(project_root)
+        try:
+            _source_root, source = _lifecycle_source(
+                project_root, state, candidate_root=candidate_root
+            )
+        except ContractError as error:
+            issues.append(str(error))
+            source = {"dirty": None, "checkpoint": None, "fingerprint": None}
         checkpoints = {item["checkpoint"] for item in state["verification"]}
         fingerprints = {item["workspaceFingerprint"] for item in state["verification"]}
         if (
@@ -3520,11 +4020,64 @@ def register_plan(
         )
 
 
+def register_authority_transition(
+    project_root: Path,
+    change_id: str,
+    request_path: Path,
+    target_checkout: Path,
+    artifact_root: Path,
+    release_receipt_path: Path,
+    artifact_attestation_path: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with _change_lock(project_root, change_id):
+        return _register_authority_transition_unlocked(
+            project_root,
+            change_id,
+            request_path,
+            target_checkout,
+            artifact_root,
+            release_receipt_path,
+            artifact_attestation_path,
+            actor_id=actor_id,
+            context_id=context_id,
+            kind=kind,
+        )
+
+
+def ingest_authority_transition_evidence(
+    project_root: Path,
+    change_id: str,
+    candidate_root: Path,
+    evidence_path: Path,
+    target_process_root: Path,
+    *,
+    actor_id: str,
+    context_id: str,
+    kind: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    with _change_lock(project_root, change_id):
+        return _ingest_authority_transition_evidence_unlocked(
+            project_root,
+            change_id,
+            candidate_root,
+            evidence_path,
+            target_process_root,
+            actor_id=actor_id,
+            context_id=context_id,
+            kind=kind,
+        )
+
+
 def start_plan_decision_review(
     project_root: Path,
     project: Project,
     change_id: str,
     *,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3537,6 +4090,7 @@ def start_plan_decision_review(
             project_root,
             project,
             change_id,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
@@ -3591,6 +4145,7 @@ def begin_implementation(
     change_id: str,
     *,
     project: Project | None = None,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3600,6 +4155,7 @@ def begin_implementation(
             project_root,
             change_id,
             project=project,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
@@ -3612,6 +4168,7 @@ def verify_change(
     change_id: str,
     profile: str,
     *,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3622,6 +4179,7 @@ def verify_change(
             project,
             change_id,
             profile,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
@@ -3633,6 +4191,7 @@ def request_remote_verification(
     project: Project,
     change_id: str,
     *,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3642,6 +4201,7 @@ def request_remote_verification(
             project_root,
             project,
             change_id,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
@@ -3653,6 +4213,7 @@ def ingest_remote_verification(
     change_id: str,
     evidence_path: Path,
     *,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3662,6 +4223,7 @@ def ingest_remote_verification(
             project_root,
             change_id,
             evidence_path,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
@@ -3672,6 +4234,7 @@ def start_review(
     project_root: Path,
     change_id: str,
     *,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3683,6 +4246,7 @@ def start_review(
         return _start_review_unlocked(
             project_root,
             change_id,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,
@@ -3696,15 +4260,23 @@ def submit_review(
     project_root: Path,
     change_id: str,
     report_path: Path,
+    *,
+    candidate_root: Path | None = None,
 ) -> dict[str, Any]:
     with _change_lock(project_root, change_id):
-        return _submit_review_unlocked(project_root, change_id, report_path)
+        return _submit_review_unlocked(
+            project_root,
+            change_id,
+            report_path,
+            candidate_root=candidate_root,
+        )
 
 
 def finish_change(
     project_root: Path,
     change_id: str,
     *,
+    candidate_root: Path | None = None,
     actor_id: str,
     context_id: str,
     kind: str,
@@ -3713,6 +4285,7 @@ def finish_change(
         return _finish_change_unlocked(
             project_root,
             change_id,
+            candidate_root=candidate_root,
             actor_id=actor_id,
             context_id=context_id,
             kind=kind,

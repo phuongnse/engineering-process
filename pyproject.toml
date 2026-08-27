@@ -52,9 +52,13 @@ engineering_process = ["requirements-*.txt"]
 ]
 "share/engineering-process/schemas" = [
   "schemas/adoption-migration.schema.json",
+  "schemas/authority-transition-evidence.schema.json",
+  "schemas/authority-transition-request.schema.json",
   "schemas/automation-policy.schema.json",
   "schemas/automation-proposal-policy.schema.json",
   "schemas/automation-proposal.schema.json",
+  "schemas/bootstrap-adoption-consumption.schema.json",
+  "schemas/bootstrap-adoption-intent.schema.json",
   "schemas/change.schema.json",
   "schemas/evidence-receipt.schema.json",
   "schemas/improvement-catalog.schema.json",
@@ -69,6 +73,7 @@ engineering_process = ["requirements-*.txt"]
   "schemas/process-graph.schema.json",
   "schemas/process-lock.schema.json",
   "schemas/project.schema.json",
+  "schemas/protected-transition-policy.schema.json",
   "schemas/recommendation.schema.json",
   "schemas/recommendation-resolution.schema.json",
   "schemas/recommendation-review.schema.json",
@@ -84,11 +89,15 @@ engineering_process = ["requirements-*.txt"]
 ]
 "share/engineering-process/examples" = [
   "examples/adoption-migration.json",
+  "examples/authority-transition-evidence.json",
+  "examples/authority-transition-request.json",
   "examples/automation-policy.json",
   "examples/automation-proposal-policy.json",
   "examples/automation-proposal.json",
   "examples/automation-process-adoption-policy.json",
   "examples/automation-process-adoption-proposal.json",
+  "examples/bootstrap-adoption-consumption.json",
+  "examples/bootstrap-adoption-intent.json",
   "examples/change.json",
   "examples/improvement-catalog.json",
   "examples/improvement-disposition.json",
@@ -99,6 +108,7 @@ engineering_process = ["requirements-*.txt"]
   "examples/plan-decision-review.json",
   "examples/plan-decision-review-assignment.json",
   "examples/project.json",
+  "examples/protected-transition-policy.json",
   "examples/recommendation.json",
   "examples/recommendation-resolution.json",
   "examples/recommendation-review.json",
@@ -106,6 +116,7 @@ engineering_process = ["requirements-*.txt"]
   "examples/remote-verification-evidence.json",
   "examples/remote-verification-request.json",
   "examples/release.json",
+  "examples/release-authority-transition.json",
   "examples/release-change.json",
   "examples/review.json",
 ]

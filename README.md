@@ -437,6 +437,43 @@ processctl change finish --change-id issue-123 \
 processctl change status --change-id issue-123
 ~~~
 
+### Process authority transition
+
+A trust-root adoption uses a clean N-1 control checkout and a separate N+1 candidate
+checkout. Register the exact transition before the target changes any candidate file,
+then let the installed target emit only non-authoritative evidence:
+
+~~~text
+processctl change transition register --project-root control \
+  --change-id adopt-process-0-9-0 --request transition-request.json \
+  --target-checkout target-tag-checkout --artifact-root target-artifacts \
+  --release-receipt target-evidence.json --artifact-attestation target-artifacts.json \
+  --actor worker --context worker-session --actor-kind agent
+
+processctl authority-transition candidate-evidence \
+  --candidate-root candidate --target-process-root /installed/target \
+  --request transition-request.json --output candidate-evidence.json \
+  --actor candidate-materializer --context candidate-session --actor-kind agent
+
+processctl change transition ingest --project-root control \
+  --change-id adopt-process-0-9-0 --candidate-root candidate \
+  --target-process-root /installed/target --evidence candidate-evidence.json \
+  --actor worker --context worker-session --actor-kind agent
+~~~
+
+Every later `change verify`, `change remote`, `change review`, `change finish`, and
+`change status` command supplies the same `--candidate-root`; lifecycle state and the
+CLI authority remain in `control`. The target lock never becomes an ordinary bypass.
+Transition verification, review, completion, remote evidence and receipt use their
+transition-only schema majors.
+
+The initial producer bootstrap is separate. Public 0.7.0 completes an exact intent
+and protected-transition policy. A verifier checked out from the policy's fixed
+protected-base feature commit validates the 0.7.0 bundle, immutable target release,
+complete candidate and current base. Only its fixed
+`authority-transition-completion` check may feed the policy-bound exact-head merge;
+the successful merge consumes the authorization and activates the target.
+
 One worker owning specification, planning, implementation, and verification is the
 default topology. Bounded helpers are optional optimizations, not required roles;
 only review requires a separate actor and context.
@@ -788,10 +825,23 @@ carried findings; the attesting host or human boundary, not local process state,
 authenticates who produced it.
 
 The producer release workflows implement the same host-neutral chain with explicit
-artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle;
-`release-candidate.yml` restores it and runs `change start`, `change plan`,
-`change implement`, and every required `change verify`; the resulting
-`engineering-process-review-required` event names the exact artifact and checkpoint.
+artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle.
+For an ordinary governed Release, `release-candidate.yml` restores it and runs
+`change start`, `change plan`, `change implement`, and every required `change verify`;
+the resulting `engineering-process-review-required` event names the exact artifact
+and checkpoint. The one `authority-transition-bootstrap` Release instead contains an
+authored schema-3 plan readable by immutable public 0.7. The initial workflow runs
+`change start`, `change plan`, and `change decision start`, then emits
+`engineering-process-plan-review-required` without implementing the candidate. A
+fresh read-only plan reviewer returns the exact assigned report to
+`release-plan-approval.yml`; that protected-main callback authenticates the producing
+workflow path, protected-base SHA, run id and attempt before restoring the same source
+and lifecycle. It submits the report, implements, verifies, and emits the ordinary
+source-review handoff. A separate bounded `needs: continue`, `always()` cleanup job
+runs on another runner after primary-job success, failure, timeout, or interruption;
+after artifact resolution it preserves bounded diagnostics, consumes and reconciles
+the single-use planned artifact, and makes a retry require a fresh planned run and
+assignment. It cannot finish, publish, or merge the Release.
 The consumer-selected host restores that lifecycle, chooses an agent or human,
 registers the assignment, submits the exact report, resolves any finding loop, runs
 `change finish`, and exports completion evidence. It sends only that bounded

@@ -7,6 +7,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+import yaml
 
 from engineering_process import VERSION
 
@@ -15,6 +16,73 @@ PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SelfHostingTests(unittest.TestCase):
+    def test_authority_transition_workflow_uses_source_owned_verifier(self):
+        workflow = (
+            PROCESS_ROOT / ".github" / "workflows" / "authority-transition.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("bootstrap_authorization_gzip_base64", workflow)
+        self.assertIn('test "${#AUTHORIZATION_BASE64}" -le 60000', workflow)
+        self.assertIn('".transition-controller/$VERIFIER_ENTRYPOINT"', workflow)
+        self.assertIn("ref: ${{ env.VERIFIER_COMMIT }}", workflow)
+        self.assertIn("ref: ${{ inputs.candidate_head }}", workflow)
+        self.assertIn("authority-transition-completion", (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(encoding="utf-8"))
+        self.assertIn('gh pr merge "$PR_NUMBER"', workflow)
+        self.assertIn("--auto --squash", workflow)
+        self.assertIn('--match-head-commit "$HEAD_SHA"', workflow)
+        self.assertIn("expected-target-assets.txt", workflow)
+        self.assertIn("-le 128000000", workflow)
+        self.assertIn("-le 256000000", workflow)
+        self.assertNotIn("processctl change finish", workflow)
+        self.assertIn("validate_protected_transition_callback.py", workflow)
+        self.assertIn("build_transition_validation_service.py", workflow)
+        self.assertIn("build_target_repository_proof.py", workflow)
+        self.assertIn("target-repository-proof.json", workflow)
+        self.assertIn("--paginate --slurp", workflow)
+        self.assertIn("filter=all", workflow)
+        self.assertIn("--validation-service", workflow)
+        for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
+            if uses.startswith("./"):
+                continue
+            self.assertRegex(uses, r"@[0-9a-f]{40}$")
+
+        consumption = (
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "authority-transition-consumption.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("authority-transition bootstrap consume", consumption)
+        self.assertIn("github.event.pull_request.merged_at", consumption)
+        self.assertIn("resolve_transition_consumption_service.py", consumption)
+        self.assertIn("validate_transition_check_exclusivity.py", consumption)
+        self.assertIn("--paginate --slurp", consumption)
+        self.assertIn("filter=all", consumption)
+        self.assertIn("consumption-check-request.json", consumption)
+        self.assertIn("consumptionContext", consumption)
+        self.assertIn("validationArtifact", (PROCESS_ROOT / "schemas" / "bootstrap-adoption-consumption.schema.json").read_text(encoding="utf-8"))
+        workflow_document = yaml.safe_load(workflow)
+        self.assertEqual(
+            {"contents": "read", "pull-requests": "read"},
+            workflow_document["permissions"],
+        )
+        steps = workflow_document["jobs"]["validate-and-merge"]["steps"]
+        app_token = next(step for step in steps if step.get("id") == "app-token")
+        self.assertEqual("write", app_token["with"]["permission-checks"])
+        self.assertEqual("write", app_token["with"]["permission-pull-requests"])
+        base_step = next(step for step in steps if step.get("name") == "Require current base and exact PR identity")
+        self.assertEqual("${{ github.workflow_sha }}", base_step["env"]["WORKFLOW_SHA"])
+        consumption_document = yaml.safe_load(consumption)
+        self.assertEqual(
+            {"actions": "read", "checks": "read", "contents": "read"},
+            consumption_document["permissions"],
+        )
+        consumption_steps = consumption_document["jobs"]["record"]["steps"]
+        consumption_token = next(
+            step for step in consumption_steps if step.get("id") == "app-token"
+        )
+        self.assertEqual("write", consumption_token["with"]["permission-checks"])
+        self.assertNotIn("permission-pull-requests", consumption_token["with"])
+
     def test_public_install_action_uses_immutable_checkout_source_and_safe_inputs(self):
         action = (PROCESS_ROOT / "action.yml").read_text(encoding="utf-8")
         ci = (
@@ -35,6 +103,7 @@ class SelfHostingTests(unittest.TestCase):
         self.assertIn("process-action-smoke/Scripts/python.exe", ci)
         self.assertIn("process-action-smoke/bin/python", ci)
         self.assertIn("Verify shared install action authority", ci)
+        self.assertEqual(3, ci.count("--controller-requirement engineering_process/requirements-"))
         windows_job = ci.index("Verify real Windows Job Object boundary")
         install_wheel = ci.index("Install built wheel")
         windows_job_block = ci[windows_job:install_wheel]
@@ -65,6 +134,12 @@ class SelfHostingTests(unittest.TestCase):
         candidate = (
             PROCESS_ROOT / ".github" / "workflows" / "release-candidate.yml"
         ).read_text(encoding="utf-8")
+        plan_approval = (
+            PROCESS_ROOT
+            / ".github"
+            / "workflows"
+            / "release-plan-approval.yml"
+        ).read_text(encoding="utf-8")
         approval = (
             PROCESS_ROOT / ".github" / "workflows" / "release-approval.yml"
         ).read_text(encoding="utf-8")
@@ -84,6 +159,15 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("git push", candidate)
         self.assertNotIn("gh pr create", candidate)
         self.assertIn("engineering-process-review-required", candidate)
+        self.assertIn("engineering-process-plan-review-required", candidate)
+        self.assertIn("plannedRunAttempt", candidate)
+        self.assertIn("planned-release-candidate", candidate)
+        self.assertIn("transfer_review_context_reservation.py export", candidate)
+        self.assertIn("processctl change decision start", candidate)
+        self.assertIn("steps.identity.outputs.plan_kind == 'authored'", candidate)
+        self.assertIn(
+            "steps.identity.outputs.plan_kind == 'process-generated'", candidate
+        )
         self.assertIn("consumer-selected reviewer host", candidate)
         self.assertIn('publicationWorkflow: $publicationWorkflow', candidate)
         self.assertIn('completionEvidenceEncoding: $completionEvidenceEncoding', candidate)
@@ -91,6 +175,10 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("--review-report", approval)
         self.assertNotIn("processctl change finish", approval)
         self.assertIn("completion_evidence_gzip_base64", approval)
+        self.assertIn(
+            '"$RUNNER_TEMP/process-authority/bin/python" processctl.py', approval
+        )
+        self.assertIn("publication release-pr-body", approval)
         self.assertIn("verification/decode_completion_evidence.py", approval)
         self.assertIn("verification/validate_release_completion_identity.py", approval)
         self.assertIn(
@@ -199,6 +287,7 @@ class SelfHostingTests(unittest.TestCase):
             generator.index("git bundle create"),
         )
         self.assertIn('gh workflow run release-candidate.yml', generator)
+        self.assertIn('".github/workflows/release-plan-approval.yml"', generator)
         self.assertIn("policy-verification:", ci)
         self.assertIn(
             "phuongnse/renovate-ops/.github/workflows/policy-verification.yml@"
@@ -212,6 +301,96 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("processctl adoption check", ci)
         self.assertNotIn("python .process/adopt-process.py", ci)
         self.assertNotIn("host-review.json", approval)
+        self.assertIn("plan_decision_review_gzip_base64", plan_approval)
+        self.assertIn("planned_run_attempt", plan_approval)
+        self.assertIn("planned-release-candidate", plan_approval)
+        self.assertIn("transfer-review-context-reservation.py", plan_approval)
+        self.assertIn("review-contexts", plan_approval)
+        self.assertIn("processctl change decision submit", plan_approval)
+        self.assertIn("processctl change implement", plan_approval)
+        self.assertIn("--profile development", plan_approval)
+        self.assertIn("--profile review", plan_approval)
+        self.assertIn("engineering-process-review-required", plan_approval)
+        self.assertIn("actions/workflows/release-candidate.yml", plan_approval)
+        self.assertIn("validate_release_plan_continuation.py", plan_approval)
+        self.assertIn('--protected-base "$BASE_SHA"', plan_approval)
+        self.assertIn('--planned-run-attempt "$PLANNED_RUN_ATTEMPT"', plan_approval)
+        self.assertNotIn("gh run view", plan_approval)
+        self.assertIn("actions/artifacts/$ARTIFACT_ID", plan_approval)
+        self.assertIn("--method DELETE", plan_approval)
+        self.assertIn("plan-continuation-terminal.json", plan_approval)
+        self.assertIn("${{ needs.continue.result }}", plan_approval)
+        self.assertIn(
+            "always() && needs.continue.outputs.planned_artifact_id != ''",
+            plan_approval,
+        )
+        self.assertIn("remaining-planned-artifact-pages.json", plan_approval)
+        self.assertNotIn("processctl change finish", plan_approval)
+        self.assertNotIn("git push", plan_approval)
+        self.assertNotIn("gh pr create", plan_approval)
+        self.assertNotIn("gh pr merge", plan_approval)
+        submit_plan_review = plan_approval.index(
+            "processctl change decision submit"
+        )
+        restore_context = plan_approval.index(
+            "Restore the exact assignment-bound context reservation"
+        )
+        implement_plan = plan_approval.index("processctl change implement")
+        authorize_plan = plan_approval.index(".planDecision.authorized")
+        upload_verified = plan_approval.index(
+            "Upload the host-neutral source-review handoff"
+        )
+        consume_planned = plan_approval.index(
+            "Consume and reconcile the single-use planned artifact"
+        )
+        preserve_terminal = plan_approval.index(
+            "Preserve bounded plan-continuation terminal diagnostics"
+        )
+        dispatch_source_review = plan_approval.index(
+            "Dispatch the immutable checkpoint to the consumer-selected source reviewer"
+        )
+        self.assertLess(restore_context, submit_plan_review)
+        self.assertLess(submit_plan_review, implement_plan)
+        self.assertLess(implement_plan, authorize_plan)
+        self.assertLess(implement_plan, upload_verified)
+        self.assertLess(upload_verified, dispatch_source_review)
+        self.assertLess(dispatch_source_review, preserve_terminal)
+        self.assertLess(preserve_terminal, consume_planned)
+        plan_document = yaml.safe_load(plan_approval)
+        continuation_job = plan_document["jobs"]["continue"]
+        cleanup_job = plan_document["jobs"]["consume-planned-artifact"]
+        self.assertEqual(
+            "${{ steps.planned.outputs.artifact_id }}",
+            continuation_job["outputs"]["planned_artifact_id"],
+        )
+        self.assertEqual("continue", cleanup_job["needs"])
+        self.assertIn("always()", cleanup_job["if"])
+        self.assertEqual(5, cleanup_job["timeout-minutes"])
+        self.assertEqual({"actions": "write"}, cleanup_job["permissions"])
+        primary_step_names = {
+            step.get("name") for step in continuation_job["steps"]
+        }
+        self.assertNotIn(
+            "Consume and reconcile the single-use planned artifact",
+            primary_step_names,
+        )
+        cleanup_steps = {
+            step.get("name"): step for step in cleanup_job["steps"]
+        }
+        self.assertIn(
+            "Preserve bounded plan-continuation terminal diagnostics", cleanup_steps
+        )
+        self.assertEqual(
+            "${{ always() }}",
+            cleanup_steps[
+                "Consume and reconcile the single-use planned artifact"
+            ]["if"],
+        )
+        for workflow in (candidate, plan_approval):
+            for uses in re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", workflow):
+                if uses.startswith("./"):
+                    continue
+                self.assertRegex(uses, r"@[0-9a-f]{40}$")
         self.assertIn("enables exact-head protected auto-merge", readme)
         self.assertIn("No workflow bypasses branch protection", readme)
         self.assertIn("candidate source base", readme)
@@ -474,6 +653,17 @@ class SelfHostingTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("verification/qualify_release_lifecycle.py", workflow)
+        self.assertIn(
+            "verification/verify_public_n1_review_context_handoff.py", workflow
+        )
+        self.assertLess(
+            workflow.index(
+                "Qualify generated release candidate to the reviewer handoff under N-1"
+            ),
+            workflow.index(
+                "Prove reviewed plan continuation under exact public N-1"
+            ),
+        )
         self.assertIn(
             '--processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"',
             workflow,

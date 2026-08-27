@@ -1,4 +1,6 @@
+import copy
 import io
+import json
 import sys
 import subprocess
 import tempfile
@@ -7,6 +9,8 @@ import os
 import py_compile
 from pathlib import Path
 from unittest.mock import patch
+
+import jsonschema
 
 from engineering_process.contracts import (
     Check,
@@ -112,6 +116,97 @@ class RunnerTests(unittest.TestCase):
 
             self.assertEqual("passed", report["status"])
             self.assertEqual("python", report["checks"][0]["command"][0])
+
+    def test_transition_verification_schema_preserves_core_evidence_and_bounds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = Project(
+                identifier="sample",
+                profiles={
+                    "development": (
+                        Check(
+                            identifier="pass",
+                            run=(sys.executable, "-c", "raise SystemExit(0)"),
+                            timeout_seconds=10,
+                            working_directory=".",
+                        ),
+                    )
+                },
+            )
+            with patch(
+                "engineering_process.environment.sys.stderr", io.StringIO()
+            ):
+                report = run_profile(root, project, "development")
+            report["schemaVersion"] = 4
+            report["authorityTransition"] = {
+                "request": {
+                    "path": "request.json",
+                    "digest": f"sha256:{'1' * 64}",
+                },
+                "candidateEvidence": {
+                    "path": "evidence.json",
+                    "digest": f"sha256:{'2' * 64}",
+                },
+                "sourceAuthority": {
+                    "version": "0.7.0",
+                    "digest": f"sha256:{'3' * 64}",
+                },
+                "targetAuthority": {
+                    "version": "0.9.0",
+                    "digest": f"sha256:{'4' * 64}",
+                },
+                "controlCheckpoint": "5" * 40,
+            }
+            schema = json.loads(
+                (
+                    Path(__file__).resolve().parent.parent
+                    / "schemas"
+                    / "verification.schema.json"
+                ).read_text(encoding="utf-8")
+            )
+            validator = jsonschema.Draft202012Validator(schema)
+            validator.validate(report)
+            validate_verification(report)
+
+            without_impact = copy.deepcopy(report)
+            without_impact.pop("impact")
+            self.assertFalse(validator.is_valid(without_impact))
+            with self.assertRaises(ContractError):
+                validate_verification(without_impact)
+
+            evidence_fields = (
+                "impactSha256",
+                "impactIntegrity",
+                "stdoutBytes",
+                "stderrBytes",
+                "stdoutSha256",
+                "stderrSha256",
+                "diagnostics",
+                "outputTruncated",
+                "streamOutputTruncated",
+            )
+            for field in evidence_fields:
+                with self.subTest(missing_check_field=field):
+                    missing = copy.deepcopy(report)
+                    missing["checks"][0].pop(field)
+                    self.assertFalse(validator.is_valid(missing))
+                    with self.assertRaises(ContractError):
+                        validate_verification(missing)
+
+            too_many_checks = copy.deepcopy(report)
+            too_many_checks["checks"] = [
+                {**copy.deepcopy(report["checks"][0]), "id": f"check-{index}"}
+                for index in range(257)
+            ]
+            self.assertFalse(validator.is_valid(too_many_checks))
+            with self.assertRaises(ContractError):
+                validate_verification(too_many_checks)
+
+            too_many_arguments = copy.deepcopy(report)
+            too_many_arguments["checks"][0]["command"] = ["argument"] * 257
+            self.assertFalse(validator.is_valid(too_many_arguments))
+            with self.assertRaises(ContractError):
+                validate_verification(too_many_arguments)
 
     def test_warning_after_evidence_prefix_and_split_across_writes_fails(self):
         with tempfile.TemporaryDirectory() as directory:

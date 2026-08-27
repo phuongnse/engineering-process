@@ -186,9 +186,9 @@ def _request(
     actor: str,
     context: str,
     actor_kind: str,
+    candidate_root: Path | None,
 ) -> tuple[dict[str, Any], Path]:
-    result = _run(
-        [
+    command = [
             processctl,
             "change",
             "remote",
@@ -203,8 +203,12 @@ def _request(
             context,
             "--actor-kind",
             actor_kind,
-            "--json",
-        ],
+        ]
+    if candidate_root is not None:
+        command.extend(["--candidate-root", str(candidate_root)])
+    command.append("--json")
+    result = _run(
+        command,
         cwd=project_root,
         timeout=60,
     )
@@ -290,9 +294,7 @@ def _dispatch(
     }
     if len(workflow_shas) != 1:
         raise AdapterError("request requirements do not share one workflow checkpoint")
-    payload = {
-        "ref": dispatch_ref,
-        "inputs": {
+    inputs = {
             "remote_source_ref": source_ref,
             "remote_change_id": request["changeId"],
             "remote_checkpoint": request["checkpoint"],
@@ -302,7 +304,16 @@ def _dispatch(
             "remote_bootstrap_authorization_sha256": (
                 bootstrap_authorization_sha256 or ""
             ),
-        },
+        }
+    if request.get("authorityTransition") is not None:
+        inputs["remote_authority_transition"] = json.dumps(
+            request["authorityTransition"],
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    payload = {
+        "ref": dispatch_ref,
+        "inputs": inputs,
     }
     result = _run(
         [
@@ -667,12 +678,18 @@ def _download_evidence(
     evidence_artifacts.sort(
         key=lambda item: (item["requirementId"], item["selectorId"])
     )
+    transition = request.get("authorityTransition")
     evidence = {
-        "schemaVersion": 1,
+        "schemaVersion": 2 if transition is not None else 1,
         "kind": "engineering-process-remote-verification-evidence",
         "requestSha256": canonical_json_digest(request),
         "capturedAt": run["updated_at"],
         "artifacts": evidence_artifacts,
+        **(
+            {"authorityTransition": transition}
+            if transition is not None
+            else {}
+        ),
     }
     evidence_path = output_root / "remote-evidence.json"
     with evidence_path.open("x", encoding="utf-8") as stream:
@@ -692,9 +709,9 @@ def _ingest(
     context: str,
     actor_kind: str,
     evidence_path: Path,
+    candidate_root: Path | None,
 ) -> dict[str, Any]:
-    result = _run(
-        [
+    command = [
             processctl,
             "change",
             "remote",
@@ -711,8 +728,12 @@ def _ingest(
             context,
             "--actor-kind",
             actor_kind,
-            "--json",
-        ],
+        ]
+    if candidate_root is not None:
+        command.extend(["--candidate-root", str(candidate_root)])
+    command.append("--json")
+    result = _run(
+        command,
         cwd=project_root,
         timeout=120,
     )
@@ -786,6 +807,7 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
         raise AdapterError(
             "bootstrap request and durable evidence output must be provided together"
         )
+    candidate_root = getattr(args, "candidate_root", None)
     evidence_output = (
         args.evidence_output.resolve() if args.evidence_output is not None else None
     )
@@ -837,6 +859,7 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
                     actor=args.actor,
                     context=args.context,
                     actor_kind=args.actor_kind,
+                    candidate_root=candidate_root,
                 )
             executions = {json.dumps(item["execution"], sort_keys=True) for item in request["requirements"]}
             if len(executions) != 1:
@@ -915,6 +938,7 @@ def run_adapter(args: argparse.Namespace) -> dict[str, Any]:
                     context=args.context,
                     actor_kind=args.actor_kind,
                     evidence_path=evidence_path,
+                    candidate_root=candidate_root,
                 )
             outcome = {
                 "schemaVersion": 1,
@@ -984,6 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--processctl", default="processctl")
     parser.add_argument("--change-id", required=True)
+    parser.add_argument("--candidate-root", type=Path)
     parser.add_argument("--actor", required=True)
     parser.add_argument("--context", required=True)
     parser.add_argument("--actor-kind", choices=("agent", "human"), required=True)

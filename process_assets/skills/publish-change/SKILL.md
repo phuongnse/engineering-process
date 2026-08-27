@@ -51,6 +51,12 @@ without duplicating implementation, verification, or review.
    permitted next version from the ordered `release.json` change types, derive every
    identity surface from that contract, and require GitHub tag and title to be the
    exact same `v<SemVer>` before publication.
+   A normal completed authority transition publishes the external candidate checkpoint
+   named by the N-1 receipt. The initial producer bootstrap instead requires a
+   project-owner-installed protected-transition policy and a verifier fixed to the
+   exact N-1-governed protected-base feature commit. Target and candidate code are
+   untrusted inputs. Only the policy's exact current-base/head check and protected
+   merge may consume the one use and activate N+1; no post-merge mutation follows.
 6. Continue every standing-policy-authorized release, deployment, adoption, and
    ephemeral-cleanup action after merge. Record each remote identifier and terminal
    status. Treat any later source change as a new lifecycle cycle with invalidated

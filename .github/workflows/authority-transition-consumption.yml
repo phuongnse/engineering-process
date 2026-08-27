@@ -1,0 +1,188 @@
+name: Record protected process authority transition consumption
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+concurrency:
+  group: authority-transition-consumption-${{ github.event.pull_request.merge_commit_sha }}
+  cancel-in-progress: false
+
+jobs:
+  record:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Select only the exact source-to-target transition merge
+        id: applicability
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          applicable=false
+          if git cat-file -e "$BASE_SHA:.process/protected-transition-policy.json" 2>/dev/null; then
+            git show "$BASE_SHA:.process/protected-transition-policy.json" > "$RUNNER_TEMP/policy.json"
+            git show "$BASE_SHA:.process/process.lock" > "$RUNNER_TEMP/base-lock.json"
+            git show "$HEAD_SHA:.process/process.lock" > "$RUNNER_TEMP/head-lock.json"
+            if python - "$RUNNER_TEMP/policy.json" "$RUNNER_TEMP/base-lock.json" "$RUNNER_TEMP/head-lock.json" <<'PY'
+          import json
+          import sys
+          policy, base, head = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+          source = policy["sourceAuthority"]
+          target = policy["target"]
+          assert base["process"] == source
+          assert head["process"] == {"version": target["version"], "digest": target["processDigest"]}
+          PY
+            then
+              applicable=true
+            fi
+          fi
+          printf 'applicable=%s\n' "$applicable" >> "$GITHUB_OUTPUT"
+          if test "$applicable" = true; then
+            printf 'VERIFIER_COMMIT=%s\n' "$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["verifier"]["commit"])')" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: steps.applicability.outputs.applicable == 'true'
+        with:
+          python-version: "3.14"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.applicability.outputs.applicable == 'true'
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ env.VERIFIER_COMMIT }}
+          path: .transition-controller
+
+      - name: Validate the protected-base policy with its fixed controller
+        if: steps.applicability.outputs.applicable == 'true'
+        run: |
+          python -m pip install \
+            -r .transition-controller/engineering_process/requirements-runtime.txt
+          python .transition-controller/processctl.py contract validate \
+            --kind protected-transition-policy "$RUNNER_TEMP/policy.json"
+
+      - name: Resolve the exact validation service artifact
+        if: steps.applicability.outputs.applicable == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          name="authority-transition-validation-$HEAD_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name&per_page=100" \
+            > "$RUNNER_TEMP/artifacts.json"
+          test "$(jq '[.artifacts[] | select(.expired == false)] | length' "$RUNNER_TEMP/artifacts.json")" = 1
+          artifact_id="$(jq -r '.artifacts[] | select(.expired == false) | .id' "$RUNNER_TEMP/artifacts.json")"
+          artifact_digest="$(jq -r '.artifacts[] | select(.expired == false) | .digest' "$RUNNER_TEMP/artifacts.json")"
+          run_id="$(jq -r '.artifacts[] | select(.expired == false) | .workflow_run.id' "$RUNNER_TEMP/artifacts.json")"
+          gh run download "$run_id" --name "$name" --dir "$RUNNER_TEMP/validation"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+            > "$RUNNER_TEMP/validation-run.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?per_page=100&filter=all" \
+            > "$RUNNER_TEMP/validation-checks.json"
+          run_attempt="$(jq -r .run_attempt "$RUNNER_TEMP/validation-run.json")"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$run_attempt"
+          test "$(jq -r .headCheckpoint "$RUNNER_TEMP/validation/authority-transition-validation.json")" = "$HEAD_SHA"
+          python .transition-controller/verification/resolve_transition_consumption_service.py \
+            --validation "$RUNNER_TEMP/validation/authority-transition-validation.json" \
+            --run "$RUNNER_TEMP/validation-run.json" \
+            --checks "$RUNNER_TEMP/validation-checks.json" \
+            --output "$RUNNER_TEMP/transition-consumption-service.json"
+          printf 'VALIDATION_ARTIFACT_ID=%s\n' "$artifact_id" >> "$GITHUB_ENV"
+          printf 'VALIDATION_ARTIFACT_NAME=%s\n' "$name" >> "$GITHUB_ENV"
+          printf 'VALIDATION_ARTIFACT_DIGEST=%s\n' "$artifact_digest" >> "$GITHUB_ENV"
+          printf 'VALIDATION_RUN_ID=%s\n' "$run_id" >> "$GITHUB_ENV"
+          printf 'VALIDATION_RUN_ATTEMPT=%s\n' "$run_attempt" >> "$GITHUB_ENV"
+          printf 'VALIDATION_RUN_URL=%s\n' "$run_url" >> "$GITHUB_ENV"
+
+      - name: Create deterministic terminal consumption evidence
+        if: steps.applicability.outputs.applicable == 'true'
+        env:
+          CONSUMED_AT: ${{ github.event.pull_request.merged_at }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          python .transition-controller/processctl.py authority-transition bootstrap consume \
+            --candidate-root . \
+            --validation "$RUNNER_TEMP/validation/authority-transition-validation.json" \
+            --merge-checkpoint "$MERGE_SHA" \
+            --validation-artifact-id "$VALIDATION_ARTIFACT_ID" \
+            --validation-artifact-name "$VALIDATION_ARTIFACT_NAME" \
+            --validation-artifact-digest "$VALIDATION_ARTIFACT_DIGEST" \
+            --validation-run-id "$VALIDATION_RUN_ID" \
+            --validation-run-attempt "$VALIDATION_RUN_ATTEMPT" \
+            --validation-run-url "$VALIDATION_RUN_URL" \
+            --validation-service "$RUNNER_TEMP/transition-consumption-service.json" \
+            --consumed-at "$CONSUMED_AT" \
+            --output "$RUNNER_TEMP/bootstrap-adoption-consumption.json"
+
+      - name: Preserve immutable terminal consumption evidence
+        if: steps.applicability.outputs.applicable == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authority-transition-consumption-${{ github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/bootstrap-adoption-consumption.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9
+          include-hidden-files: false
+
+      - name: Create exact transition-consumption App token
+        id: app-token
+        if: steps.applicability.outputs.applicable == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+          permission-checks: write
+
+      - name: Preserve durable exclusive consumption on the merge commit
+        if: steps.applicability.outputs.applicable == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          context="$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["workflow"]["consumptionContext"])')"
+          check_app_id="$(python -c 'import json; print(json.load(open("'$RUNNER_TEMP'/policy.json", encoding="utf-8"))["workflow"]["checkAppId"])')"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100&filter=all" \
+            > "$RUNNER_TEMP/merge-checks.json"
+          python .transition-controller/verification/validate_transition_check_exclusivity.py \
+            --checks "$RUNNER_TEMP/merge-checks.json" \
+            --context "$context" --app-id "$check_app_id" \
+            --expected-count 0 --head-sha "$MERGE_SHA"
+          jq -n --arg name "$context" --arg head "$MERGE_SHA" \
+            --rawfile summary "$RUNNER_TEMP/bootstrap-adoption-consumption.json" \
+            '{name:$name, head_sha:$head, status:"completed", conclusion:"success", output:{title:"Protected authority transition consumed", summary:$summary}}' \
+            > "$RUNNER_TEMP/consumption-check-request.json"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            --input "$RUNNER_TEMP/consumption-check-request.json" \
+            > "$RUNNER_TEMP/consumption-check-response.json"
+          test "$(jq -r .app.id "$RUNNER_TEMP/consumption-check-response.json")" = "$check_app_id"
+          test "$(jq -r .head_sha "$RUNNER_TEMP/consumption-check-response.json")" = "$MERGE_SHA"
+          check_id="$(jq -r .id "$RUNNER_TEMP/consumption-check-response.json")"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/commits/$MERGE_SHA/check-runs?per_page=100&filter=all" \
+            > "$RUNNER_TEMP/recorded-merge-checks.json"
+          python .transition-controller/verification/validate_transition_check_exclusivity.py \
+            --checks "$RUNNER_TEMP/recorded-merge-checks.json" \
+            --context "$context" --app-id "$check_app_id" \
+            --expected-count 1 --expected-check-id "$check_id" \
+            --head-sha "$MERGE_SHA"

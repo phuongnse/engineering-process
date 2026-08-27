@@ -147,9 +147,13 @@ def validate_release_checkpoint(
 ) -> dict[str, Any]:
     release_path = project_root / "release.json"
     release = validate_release(read_json(release_path), str(release_path))
-    if release.provenance_mode not in {"governed", "bootstrap-authority"}:
+    if release.provenance_mode not in {
+        "governed",
+        "bootstrap-authority",
+        "authority-transition-bootstrap",
+    }:
         raise ContractError(
-            "publication requires a governed or bootstrap-authority release "
+            "publication requires a governed, transition-bootstrap, or bootstrap-authority release "
             "contract; bootstrap history and legacy contracts are read-only"
         )
     package_name, package_version = _project_metadata(project_root)
@@ -194,7 +198,10 @@ def validate_release_checkpoint(
     receipt: dict[str, Any] | None = None
     authorization: dict[str, Any] | None = None
     evidence_checkpoint: str | None = None
-    if release.provenance_mode == "governed":
+    if release.provenance_mode in {
+        "governed",
+        "authority-transition-bootstrap",
+    }:
         if authorization_path is not None:
             raise ContractError(
                 "governed releases must not claim bootstrap authorization evidence"
@@ -224,6 +231,19 @@ def validate_release_checkpoint(
         ):
             raise ContractError(
                 "lifecycle receipt authority does not match the pinned process lock"
+            )
+        if release.provenance_mode == "authority-transition-bootstrap" and (
+            release.transition_source_version != lock.version
+            or release.transition_source_digest != lock.digest
+            or release.transition_skipped_version != release.previous_version
+            or release.transition_change_id not in {
+                change.get("id")
+                for change in read_json(release_path).get("changes", [])
+                if isinstance(change, dict)
+            }
+        ):
+            raise ContractError(
+                "authority transition release does not match its pinned source authority"
             )
     else:
         if receipt_path is not None:

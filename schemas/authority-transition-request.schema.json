@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/authority-transition-request.schema.json",
+  "$comment": "This schema and contract validate the complete serialized shape. Operational registration additionally enforces canonical ordering and cross-field authority, tag, commit, and action-pin invariants.",
+  "title": "Pre-registered process authority transition request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "project", "changeId", "cycle", "source", "target", "candidate", "registeredBy", "registeredAt"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "engineering-process-authority-transition-request"},
+    "project": {"$ref": "#/$defs/project"},
+    "changeId": {"$ref": "#/$defs/id"},
+    "cycle": {"type": "integer", "minimum": 1},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authority", "checkpoint", "workspaceFingerprint", "processLockSha256", "requirementsLockSha256"],
+      "properties": {
+        "authority": {"$ref": "#/$defs/authority"}, "checkpoint": {"$ref": "#/$defs/gitOid"},
+        "workspaceFingerprint": {"$ref": "#/$defs/digest"}, "processLockSha256": {"$ref": "#/$defs/digest"},
+        "requirementsLockSha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "repositoryProofSha256", "version", "tag", "commit", "processDigest", "releaseContractSha256", "distributionAttestationSha256", "lifecycleReceiptSha256", "artifacts"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"}, "repositoryProofSha256": {"$ref": "#/$defs/digest"}, "version": {"$ref": "#/$defs/version"},
+        "tag": {"$ref": "#/$defs/tag"}, "commit": {"$ref": "#/$defs/gitOid"}, "processDigest": {"$ref": "#/$defs/digest"},
+        "releaseContractSha256": {"$ref": "#/$defs/digest"}, "distributionAttestationSha256": {"$ref": "#/$defs/digest"},
+        "lifecycleReceiptSha256": {"$ref": "#/$defs/digest"},
+        "artifacts": {"type": "array", "minItems": 2, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/artifact"}}
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baseCheckpoint", "selectedSkills", "projectMigrationSha256", "requirementsInputSha256", "requirementsLockSha256", "projectManifestSha256", "actionPinsSha256", "actionPins", "expectedChangedPaths", "expiresAt"],
+      "properties": {
+        "baseCheckpoint": {"$ref": "#/$defs/gitOid"},
+        "selectedSkills": {"type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+        "projectMigrationSha256": {"anyOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+        "requirementsInputSha256": {"$ref": "#/$defs/digest"}, "requirementsLockSha256": {"$ref": "#/$defs/digest"},
+        "projectManifestSha256": {"$ref": "#/$defs/digest"}, "actionPinsSha256": {"$ref": "#/$defs/digest"},
+        "actionPins": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/actionPin"}},
+        "expectedChangedPaths": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/path"}},
+        "expiresAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "registeredBy": {"$ref": "#/$defs/actor"},
+    "registeredAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "id": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+    "project": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"},
+    "repository": {"type": "string", "maxLength": 256, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+    "tag": {"type": "string", "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
+    "gitOid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!.*\\u0000)(?!\\s)(?!.*\\s$)(?!/)(?!\\./)(?!.*\\/\\.\\/)(?!.*\\/\\.$)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"},
+    "workflowPath": {"type": "string", "minLength": 23, "maxLength": 512, "pattern": "^(?!.*\\u0000)\\.github/workflows/(?!.*\\.\\.)(?!.*//)[^/\\\\]+\\.ya?ml$"},
+    "authority": {"type": "object", "additionalProperties": false, "required": ["version", "digest"], "properties": {"version": {"$ref": "#/$defs/version"}, "digest": {"$ref": "#/$defs/digest"}}},
+    "actor": {"type": "object", "additionalProperties": false, "required": ["actorId", "contextId", "kind"], "properties": {"actorId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!.*\\u0000)\\S(?:.*\\S)?$"}, "contextId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^(?!.*\\u0000)\\S(?:.*\\S)?$"}, "kind": {"enum": ["agent", "human"]}}},
+    "artifact": {"type": "object", "additionalProperties": false, "required": ["name", "sha256", "sizeBytes"], "properties": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "maxLength": 200}, "sha256": {"$ref": "#/$defs/digest"}, "sizeBytes": {"type": "integer", "minimum": 1, "maximum": 1000000000}}},
+    "actionPin": {"type": "object", "additionalProperties": false, "required": ["path", "repository", "previousCommit", "targetCommit", "previousReleaseTag", "targetReleaseTag"], "properties": {"path": {"$ref": "#/$defs/workflowPath"}, "repository": {"$ref": "#/$defs/repository"}, "previousCommit": {"$ref": "#/$defs/gitOid"}, "targetCommit": {"$ref": "#/$defs/gitOid"}, "previousReleaseTag": {"$ref": "#/$defs/tag"}, "targetReleaseTag": {"$ref": "#/$defs/tag"}}}
+  }
+}

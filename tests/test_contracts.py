@@ -3,6 +3,7 @@ import hashlib
 import json
 import unittest
 from pathlib import Path
+from jsonschema import Draft202012Validator, ValidationError
 
 from engineering_process.contracts import (
     CORE_QUALITY_DIMENSIONS,
@@ -26,7 +27,21 @@ from engineering_process.contracts import (
     validate_project,
     validate_release,
     validate_release_change,
+    validate_remote_verification_evidence,
+    validate_remote_verification_request,
     validate_review,
+)
+from engineering_process.transition import (
+    validate_authority_transition_evidence,
+    validate_authority_transition_request,
+    require_authority_transition_request_semantics,
+    require_authority_transition_evidence_semantics,
+    require_bootstrap_adoption_consumption_semantics,
+    require_bootstrap_adoption_intent_semantics,
+    require_protected_transition_policy_semantics,
+    validate_bootstrap_adoption_consumption,
+    validate_bootstrap_adoption_intent,
+    validate_protected_transition_policy,
 )
 
 
@@ -316,6 +331,94 @@ class ProjectContractTests(unittest.TestCase):
 
         document["observedControls"]["automerge"] = True
         with self.assertRaisesRegex(ContractError, "automerge: must be false"):
+            validate_automation_proposal(document)
+
+    def test_process_adoption_accepts_transition_release_source_split(self):
+        document = json.loads(
+            json.dumps(
+                json.loads(
+                    (
+                        PROCESS_ROOT
+                        / "examples"
+                        / "automation-process-adoption-proposal.json"
+                    ).read_text(encoding="utf-8")
+                )
+            ).replace("0.8.0", "0.9.0")
+        )
+        adoption = document["processAdoption"]
+        producer = adoption["producerRelease"]
+        release_binding = producer["releaseContract"]
+        release = json.loads(release_binding["content"])
+        release.update(
+            {
+                "schemaVersion": 4,
+                "previousVersion": "0.8.0",
+                "classification": "minor",
+                "compatibility": "incompatible",
+                "schemaImpact": "breaking",
+                "migration": "Use the authority-transition protocol.",
+            }
+        )
+        release["changes"] = [
+            {
+                "id": "authority-transition-protocol",
+                "type": "breaking",
+                "surfaces": ["lifecycle"],
+                "rationale": "Introduce exact authority transitions.",
+            }
+        ]
+        release["provenance"] = {
+            "mode": "authority-transition-bootstrap",
+            "statement": "Public 0.7.0 governs the transition release.",
+            "lifecycleReceipt": {
+                "asset": release["identity"]["receiptAsset"],
+                "project": "engineering-process",
+                "changeId": "release-0-9-0",
+                "cycle": 1,
+            },
+            "authorityTransition": {
+                "sourceAuthority": {
+                    "version": "0.7.0",
+                    "digest": adoption["sourceAuthority"]["processDigest"],
+                },
+                "skippedRelease": {"version": "0.8.0", "tag": "v0.8.0"},
+                "bootstrapChangeId": "authority-transition-protocol",
+            },
+        }
+        release_binding["content"] = (
+            json.dumps(release, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        release_binding["sha256"] = "sha256:" + hashlib.sha256(
+            release_binding["content"].encode("utf-8")
+        ).hexdigest()
+
+        attestation_binding = producer["distributionAttestation"]
+        attestation = json.loads(attestation_binding["content"])
+        attestation["schemaVersion"] = 2
+        attestation["release"]["contractSha256"] = release_binding["sha256"]
+        attestation["release"]["version"] = "0.9.0"
+        attestation["release"]["tag"] = "v0.9.0"
+        attestation["release"]["releaseName"] = "v0.9.0"
+        attestation["release"]["artifacts"] = release["identity"]["artifacts"]
+        attestation["lifecycleReceipt"]["asset"] = release["identity"]["receiptAsset"]
+        attestation["lifecycleReceipt"]["changeId"] = "release-0-9-0"
+        attestation["authorityTransition"] = {
+            "sourceAuthority": release["provenance"]["authorityTransition"]["sourceAuthority"],
+            "skippedRelease": "0.8.0",
+            "bootstrapChangeId": "authority-transition-protocol",
+        }
+        attestation_binding["content"] = (
+            json.dumps(attestation, separators=(",", ":"), sort_keys=True) + "\n"
+        )
+        attestation_binding["sha256"] = "sha256:" + hashlib.sha256(
+            attestation_binding["content"].encode("utf-8")
+        ).hexdigest()
+
+        proposal = validate_automation_proposal(document)
+
+        self.assertEqual("process-adoption", proposal.proposal_kind)
+        adoption["sourceAuthority"]["version"] = "0.8.0"
+        with self.assertRaisesRegex(ContractError, "source authority"):
             validate_automation_proposal(document)
 
     def test_process_adoption_proposal_rejects_merge_escalation_and_partial_evidence(self):
@@ -794,6 +897,353 @@ class ProjectContractTests(unittest.TestCase):
 
 
 class ArtifactContractTests(unittest.TestCase):
+    def test_transition_json_schemas_match_core_exact_fields(self):
+        validators = {
+            "authority-transition-evidence": validate_authority_transition_evidence,
+            "authority-transition-request": validate_authority_transition_request,
+            "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+            "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
+            "protected-transition-policy": validate_protected_transition_policy,
+        }
+        for name, core_validator in validators.items():
+            with self.subTest(name=name):
+                schema = json.loads((PROCESS_ROOT / "schemas" / f"{name}.schema.json").read_text(encoding="utf-8"))
+                document = json.loads((PROCESS_ROOT / "examples" / f"{name}.json").read_text(encoding="utf-8"))
+                validator = Draft202012Validator(schema)
+                validator.validate(document)
+                core_validator(document)
+                invalid = copy.deepcopy(document)
+                invalid["unexpected"] = True
+                with self.assertRaises(ValidationError):
+                    validator.validate(invalid)
+                with self.assertRaisesRegex(ContractError, "unknown properties"):
+                    core_validator(invalid)
+
+    def test_historical_schema_majors_reject_transition_fields(self):
+        transition = {
+            "request": {"path": ".process/runs/change/request.json", "digest": f"sha256:{'1' * 64}"},
+            "candidateEvidence": {"path": ".process/runs/change/evidence.json", "digest": f"sha256:{'2' * 64}"},
+        }
+        request = json.loads((PROCESS_ROOT / "examples" / "remote-verification-request.json").read_text(encoding="utf-8"))
+        request["authorityTransition"] = transition
+        request_schema = json.loads((PROCESS_ROOT / "schemas" / "remote-verification-request.schema.json").read_text(encoding="utf-8"))
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(request_schema).validate(request)
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_remote_verification_request(request)
+
+        review = json.loads((PROCESS_ROOT / "examples" / "review.json").read_text(encoding="utf-8"))
+        review["authorityTransition"] = transition
+        review_schema = json.loads((PROCESS_ROOT / "schemas" / "review.schema.json").read_text(encoding="utf-8"))
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(review_schema).validate(review)
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_review(review)
+
+    def test_remote_transition_uses_new_request_and_evidence_majors(self):
+        transition = {
+            "request": {"path": ".process/runs/change/request.json", "digest": f"sha256:{'1' * 64}"},
+            "candidateEvidence": {"path": ".process/runs/change/evidence.json", "digest": f"sha256:{'2' * 64}"},
+        }
+        request = json.loads((PROCESS_ROOT / "examples" / "remote-verification-request.json").read_text(encoding="utf-8"))
+        request["schemaVersion"] = 2
+        request["authorityTransition"] = transition
+        validate_remote_verification_request(request)
+        evidence = json.loads((PROCESS_ROOT / "examples" / "remote-verification-evidence.json").read_text(encoding="utf-8"))
+        evidence["schemaVersion"] = 2
+        evidence["authorityTransition"] = transition
+        validate_remote_verification_evidence(evidence)
+
+    def test_authority_transition_contracts_validate_packaged_examples(self):
+        validators = {
+            "authority-transition-evidence": validate_authority_transition_evidence,
+            "authority-transition-request": validate_authority_transition_request,
+            "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+            "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
+            "protected-transition-policy": validate_protected_transition_policy,
+        }
+        for name, validator in validators.items():
+            with self.subTest(name=name):
+                document = json.loads(
+                    (PROCESS_ROOT / "examples" / f"{name}.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                validator(document)
+
+    def test_transition_request_rejects_same_authority_and_partial_paths(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-request.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["target"]["version"] = "0.7.0"
+        document["target"]["tag"] = "v0.7.0"
+        shaped = validate_authority_transition_request(document)
+        with self.assertRaisesRegex(ContractError, "must differ"):
+            require_authority_transition_request_semantics(shaped)
+        document["target"]["version"] = "0.9.0"
+        document["target"]["tag"] = "v0.9.0"
+        document["candidate"]["expectedChangedPaths"] = []
+        with self.assertRaisesRegex(ContractError, "non-empty"):
+            validate_authority_transition_request(document)
+
+    def test_transition_request_schema_and_core_share_shape_while_operations_enforce_relations(self):
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "authority-transition-request.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validator = Draft202012Validator(schema)
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-request.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        invalid_shapes = []
+        wrong_workflow = copy.deepcopy(document)
+        wrong_workflow["candidate"]["actionPins"] = [
+            {
+                "path": "README.md",
+                "repository": "owner/process",
+                "previousCommit": "1" * 40,
+                "targetCommit": "2" * 40,
+                "previousReleaseTag": "v0.7.0",
+                "targetReleaseTag": "v0.9.0",
+            }
+        ]
+        invalid_shapes.append(wrong_workflow)
+        duplicate_skill = copy.deepcopy(document)
+        duplicate_skill["candidate"]["selectedSkills"].append(
+            duplicate_skill["candidate"]["selectedSkills"][0]
+        )
+        invalid_shapes.append(duplicate_skill)
+        nested_extra = copy.deepcopy(document)
+        nested_extra["target"]["unexpected"] = True
+        invalid_shapes.append(nested_extra)
+        non_string_tag = copy.deepcopy(document)
+        non_string_tag["target"]["tag"] = 900
+        invalid_shapes.append(non_string_tag)
+        dotted_path = copy.deepcopy(document)
+        dotted_path["candidate"]["expectedChangedPaths"] = ["./requirements/process.txt"]
+        invalid_shapes.append(dotted_path)
+        terminal_dot_path = copy.deepcopy(document)
+        terminal_dot_path["candidate"]["expectedChangedPaths"] = ["requirements/."]
+        invalid_shapes.append(terminal_dot_path)
+        whitespace_actor = copy.deepcopy(document)
+        whitespace_actor["registeredBy"]["actorId"] = "   "
+        invalid_shapes.append(whitespace_actor)
+        for invalid in invalid_shapes:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    validator.validate(invalid)
+                with self.assertRaises(ContractError):
+                    validate_authority_transition_request(invalid)
+
+        relational = copy.deepcopy(document)
+        relational["target"]["version"] = relational["source"]["authority"]["version"]
+        relational["target"]["tag"] = "v0.7.0"
+        validator.validate(relational)
+        shaped = validate_authority_transition_request(relational)
+        with self.assertRaisesRegex(ContractError, "must differ"):
+            require_authority_transition_request_semantics(shaped)
+
+    def test_transition_relational_invariants_are_mandatory_operational_gates(self):
+        cases = []
+
+        evidence = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-evidence.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        evidence["materialization"]["applyTree"] = "f" * 40
+        cases.append(
+            (
+                "authority-transition-evidence",
+                evidence,
+                validate_authority_transition_evidence,
+                require_authority_transition_evidence_semantics,
+            )
+        )
+
+        intent = json.loads(
+            (PROCESS_ROOT / "examples" / "bootstrap-adoption-intent.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        intent["targetRelease"]["tag"] = "v1.0.0"
+        cases.append(
+            (
+                "bootstrap-adoption-intent",
+                intent,
+                validate_bootstrap_adoption_intent,
+                require_bootstrap_adoption_intent_semantics,
+            )
+        )
+
+        policy = json.loads(
+            (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        policy["verifier"]["commit"] = policy["target"]["commit"]
+        cases.append(
+            (
+                "protected-transition-policy",
+                policy,
+                validate_protected_transition_policy,
+                require_protected_transition_policy_semantics,
+            )
+        )
+
+        consumption = json.loads(
+            (PROCESS_ROOT / "examples" / "bootstrap-adoption-consumption.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        consumption["validationArtifact"]["runId"] = "999"
+        cases.append(
+            (
+                "bootstrap-adoption-consumption",
+                consumption,
+                validate_bootstrap_adoption_consumption,
+                require_bootstrap_adoption_consumption_semantics,
+            )
+        )
+
+        for name, document, shape_validator, semantic_validator in cases:
+            with self.subTest(name=name):
+                schema = json.loads(
+                    (PROCESS_ROOT / "schemas" / f"{name}.schema.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                Draft202012Validator(schema).validate(document)
+                shaped = shape_validator(document)
+                with self.assertRaises(ContractError):
+                    semantic_validator(shaped)
+
+    def test_transition_schemas_and_core_reject_nul_in_every_string_family(self):
+        validators = {
+            "authority-transition-request": validate_authority_transition_request,
+            "authority-transition-evidence": validate_authority_transition_evidence,
+            "bootstrap-adoption-intent": validate_bootstrap_adoption_intent,
+            "bootstrap-adoption-consumption": validate_bootstrap_adoption_consumption,
+            "protected-transition-policy": validate_protected_transition_policy,
+        }
+        cases = []
+        for name, core_validator in validators.items():
+            schema = json.loads(
+                (PROCESS_ROOT / "schemas" / f"{name}.schema.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            document = json.loads(
+                (PROCESS_ROOT / "examples" / f"{name}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            cases.append((name, schema, document, core_validator))
+
+        mutations = {
+            "authority-transition-request": [
+                lambda value: value["registeredBy"].__setitem__("actorId", "worker\x00id"),
+                lambda value: value["candidate"].__setitem__("expectedChangedPaths", ["requirements/\x00.txt"]),
+            ],
+            "authority-transition-evidence": [
+                lambda value: value["generatedBy"].__setitem__("contextId", "context\x00id"),
+                lambda value: value["candidate"].__setitem__("changedPaths", ["requirements/\x00.txt"]),
+            ],
+            "bootstrap-adoption-intent": [
+                lambda value: value["candidate"].__setitem__("expectedChangedPaths", ["requirements/\x00.txt"]),
+            ],
+            "bootstrap-adoption-consumption": [
+                lambda value: value.__setitem__("checkContext", "authority\x00transition"),
+                lambda value: value["validationArtifact"].__setitem__("runUrl", "https://example.invalid/\x00run"),
+            ],
+            "protected-transition-policy": [
+                lambda value: value["workflow"].__setitem__("checkContext", "authority\x00transition"),
+                lambda value: value["verifier"].__setitem__("entrypoint", "verification/\x00validator.py"),
+            ],
+        }
+        for name, schema, document, core_validator in cases:
+            for index, mutate in enumerate(mutations[name]):
+                invalid = copy.deepcopy(document)
+                mutate(invalid)
+                with self.subTest(name=name, mutation=index):
+                    with self.assertRaises(ValidationError):
+                        Draft202012Validator(schema).validate(invalid)
+                    with self.assertRaises(ContractError):
+                        core_validator(invalid)
+
+    def test_transition_evidence_does_not_claim_unobserved_rollback(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "authority-transition-evidence.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["materialization"]["rollbackStatus"] = "clean"
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "authority-transition-evidence.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schema).validate(document)
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_authority_transition_evidence(document)
+
+    def test_protected_transition_policy_is_exactly_single_use(self):
+        document = json.loads(
+            (PROCESS_ROOT / "examples" / "protected-transition-policy.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        document["singleUse"] = False
+        with self.assertRaisesRegex(ContractError, "single-use"):
+            validate_protected_transition_policy(document)
+        document["singleUse"] = True
+        document["sourceBase"] = "0" * 40
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_protected_transition_policy(document)
+
+    def test_release_schema_four_binds_stale_source_authority(self):
+        document = {
+            "schemaVersion": 4,
+            "previousVersion": "0.8.0",
+            "version": "0.9.0",
+            "classification": "minor",
+            "compatibility": "incompatible",
+            "schemaImpact": "breaking",
+            "migration": "Use the authority-transition protocol for trust-root cutovers.",
+            "identity": {
+                "package": "engineering-process",
+                "distribution": "engineering_process",
+                "tag": "v0.9.0",
+                "releaseName": "v0.9.0",
+                "runtimeVersion": {"path": "engineering_process/__init__.py", "variable": "VERSION"},
+                "artifacts": ["engineering_process-0.9.0-py3-none-any.whl", "engineering_process-0.9.0.tar.gz"],
+                "receiptAsset": "engineering-process-v0.9.0-evidence.json",
+                "authorizationAsset": None,
+            },
+            "provenance": {
+                "mode": "authority-transition-bootstrap",
+                "statement": "Public 0.7.0 governs the transition release.",
+                "lifecycleReceipt": {"asset": "engineering-process-v0.9.0-evidence.json", "project": "engineering-process", "changeId": "release-0-9-0", "cycle": 1},
+                "authorityTransition": {
+                    "sourceAuthority": {"version": "0.7.0", "digest": f"sha256:{'0' * 64}"},
+                    "skippedRelease": {"version": "0.8.0", "tag": "v0.8.0"},
+                    "bootstrapChangeId": "authority-transition-protocol",
+                },
+            },
+            "changes": [{"id": "authority-transition-protocol", "type": "breaking", "surfaces": ["lifecycle"], "rationale": "Introduce exact transitions."}],
+        }
+        release = validate_release(document)
+        self.assertEqual("0.7.0", release.transition_source_version)
+        document["provenance"]["authorityTransition"]["sourceAuthority"]["version"] = "0.8.0"
+        with self.assertRaisesRegex(ContractError, "stale source authority"):
+            validate_release(document)
+
     def test_release_schema_three_separates_bootstrap_authorization_from_receipts(self):
         document = {
             "schemaVersion": 3,

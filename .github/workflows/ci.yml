@@ -36,6 +36,10 @@ on:
         description: One-time owner-decision digest for the scoped introduction bootstrap
         required: false
         type: string
+      remote_authority_transition:
+        description: Canonical authority-transition binding from the N-1 request
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -137,6 +141,18 @@ jobs:
           python -m pip install -r engineering_process/requirements-runtime.txt -r engineering_process/requirements-dev.txt -r engineering_process/requirements-build.txt
           python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"
 
+      - name: Prove transition release rendering under the real public authority
+        env:
+          PROCESS_ACTION_PYTHON: ${{ runner.os == 'Windows' && format('{0}/process-action-smoke/Scripts/python.exe', runner.temp) || format('{0}/process-action-smoke/bin/python', runner.temp) }}
+        run: >-
+          python verification/verify_transition_release_rendering.py
+          --public-python "$PROCESS_ACTION_PYTHON"
+          --controller processctl.py
+          --controller-requirement engineering_process/requirements-runtime.txt
+          --controller-requirement engineering_process/requirements-dev.txt
+          --controller-requirement engineering_process/requirements-build.txt
+          --release examples/release-authority-transition.json
+
       - name: Verify real Windows Job Object boundary
         if: runner.os == 'Windows'
         run: python -m unittest tests.test_windows_job
@@ -188,6 +204,18 @@ jobs:
           --project-root .
           --processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"
 
+      - name: Prove reviewed plan continuation under exact public N-1
+        if: >-
+          github.event_name == 'pull_request' &&
+          matrix.os == 'ubuntu-latest' &&
+          matrix.python-version == '3.14' &&
+          github.head_ref != 'automation/release/next'
+        run: >-
+          "$RUNNER_TEMP/release-qualification-authority/bin/python"
+          verification/verify_public_n1_review_context_handoff.py
+          --project-root .
+          --processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"
+
       - name: Validate complete self-adoption candidate
         if: >-
           github.event_name == 'pull_request' &&
@@ -218,31 +246,44 @@ jobs:
           processctl skills validate
 
       - name: Produce bounded supplemental verification evidence
-        run: >-
-          python verification/generate_ci_evidence.py
-          --project-root "$GITHUB_WORKSPACE"
-          --output-root "$RUNNER_TEMP/engineering-process-ci-evidence"
-          --expected-checkpoint "$CI_CHECKPOINT"
-          --comparison-base "$CI_COMPARISON_BASE"
-          --producer-actor "github-actions"
-          --producer-context "$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_JOB:$RUNNER_OS:python-${{ matrix.python-version }}"
-          --provider "github-actions"
-          --repository "$GITHUB_REPOSITORY"
-          --event-name "$GITHUB_EVENT_NAME"
-          --workflow-name "$GITHUB_WORKFLOW"
-          --workflow-ref "$GITHUB_WORKFLOW_REF"
-          --workflow-sha "$CI_WORKFLOW_SHA"
-          --run-id "$GITHUB_RUN_ID"
-          --run-attempt "$GITHUB_RUN_ATTEMPT"
-          --job "$GITHUB_JOB"
-          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
-          --runner-os "$RUNNER_OS"
-          --runner-arch "$RUNNER_ARCH"
-          --triggered-by "$GITHUB_ACTOR"
+        run: |
+          transition_args=()
+          if test -n "$REMOTE_AUTHORITY_TRANSITION"; then
+            printf '%s\n' "$REMOTE_AUTHORITY_TRANSITION" > "$RUNNER_TEMP/authority-transition.json"
+            transition_args=(--remote-request "$RUNNER_TEMP/authority-transition-request.json")
+            python - "$RUNNER_TEMP/authority-transition.json" "$RUNNER_TEMP/authority-transition-request.json" <<'PY'
+          import json
+          import sys
+          transition = json.load(open(sys.argv[1], encoding="utf-8"))
+          json.dump({"authorityTransition": transition}, open(sys.argv[2], "x", encoding="utf-8"), sort_keys=True)
+          PY
+          fi
+          python verification/generate_ci_evidence.py \
+          --project-root "$GITHUB_WORKSPACE" \
+          --output-root "$RUNNER_TEMP/engineering-process-ci-evidence" \
+          --expected-checkpoint "$CI_CHECKPOINT" \
+          --comparison-base "$CI_COMPARISON_BASE" \
+          --producer-actor "github-actions" \
+          --producer-context "$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_JOB:$RUNNER_OS:python-${{ matrix.python-version }}" \
+          --provider "github-actions" \
+          --repository "$GITHUB_REPOSITORY" \
+          --event-name "$GITHUB_EVENT_NAME" \
+          --workflow-name "$GITHUB_WORKFLOW" \
+          --workflow-ref "$GITHUB_WORKFLOW_REF" \
+          --workflow-sha "$CI_WORKFLOW_SHA" \
+          --run-id "$GITHUB_RUN_ID" \
+          --run-attempt "$GITHUB_RUN_ATTEMPT" \
+          --job "$GITHUB_JOB" \
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
+          --runner-os "$RUNNER_OS" \
+          --runner-arch "$RUNNER_ARCH" \
+          --triggered-by "$GITHUB_ACTOR" \
+          "${transition_args[@]}"
         env:
           CI_CHECKPOINT: ${{ inputs.remote_checkpoint || github.event.pull_request.head.sha || github.sha }}
           CI_COMPARISON_BASE: ${{ inputs.remote_comparison_base || github.event.pull_request.base.sha || github.event.before }}
           CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          REMOTE_AUTHORITY_TRANSITION: ${{ inputs.remote_authority_transition }}
 
       - name: Upload supplemental verification evidence
         id: upload-evidence

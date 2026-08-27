@@ -37,6 +37,10 @@ semantics shared by every project.
 3. Apply the nearest AGENTS.md and domain skill inside each phase. Project policy may
    add stronger gates but cannot remove lifecycle phases, baseline profiles,
    independent review, evidence freshness, or finding closure.
+   When the change rotates the process authority, keep lifecycle state in the clean
+   N-1 control workspace, pre-register the transition, and route candidate commands
+   through the explicit external candidate root. Target materialization evidence is
+   never lifecycle authority; protected merge alone activates the target.
 4. When a command, gate, release, adoption, or external integration fails, apply the
    failure-to-invariant protocol in the required execution reference before any
    corrective mutation. The lifecycle enters `improvement-required`; keep dependent

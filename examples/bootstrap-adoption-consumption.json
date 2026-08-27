@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-bootstrap-adoption-consumption",
+  "project": "engineering-process",
+  "repository": "owner/engineering-process",
+  "policySha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "intentSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "authorizationSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "baseCheckpoint": "0000000000000000000000000000000000000000",
+  "headCheckpoint": "1111111111111111111111111111111111111111",
+  "headTree": "2222222222222222222222222222222222222222",
+  "mergeCheckpoint": "3333333333333333333333333333333333333333",
+  "checkContext": "authority-transition-completion",
+  "validationArtifact": {"artifactId": "123", "name": "authority-transition-validation-1111111111111111111111111111111111111111", "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444", "runId": "456", "runAttempt": 1, "runUrl": "https://github.com/owner/engineering-process/actions/runs/456/attempts/1"},
+  "validationService": {"schemaVersion": 1, "kind": "engineering-process-transition-consumption-service", "repository": "owner/engineering-process", "workflowPath": ".github/workflows/authority-transition.yml", "workflowSha": "0000000000000000000000000000000000000000", "runId": "456", "runAttempt": 1, "runUrl": "https://github.com/owner/engineering-process/actions/runs/456/attempts/1", "event": "workflow_dispatch", "headSha": "0000000000000000000000000000000000000000", "runStatus": "completed", "runConclusion": "success", "checkContext": "authority-transition-completion", "checkAppId": 12345, "checkRunId": "789", "checkHeadSha": "1111111111111111111111111111111111111111", "checkConclusion": "success"},
+  "consumedAt": "2026-01-03T00:00:00Z"
+}

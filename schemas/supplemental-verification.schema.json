@@ -20,7 +20,7 @@
     "reports"
   ],
   "properties": {
-    "schemaVersion": {"enum": [1, 2]},
+    "schemaVersion": {"enum": [1, 2, 3]},
     "kind": {"const": "engineering-process-supplemental-verification"},
     "status": {"enum": ["passed", "failed"]},
     "checkpoint": {"$ref": "#/$defs/gitOid"},
@@ -120,6 +120,15 @@
       "minItems": 1,
       "maxItems": 16,
       "items": {"$ref": "#/$defs/report"}
+    },
+    "authorityTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request", "candidateEvidence"],
+      "properties": {
+        "request": {"$ref": "#/$defs/artifactReference"},
+        "candidateEvidence": {"$ref": "#/$defs/artifactReference"}
+      }
     }
   },
   "$defs": {
@@ -130,6 +139,15 @@
     "sha256": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "digest": {"$ref": "#/$defs/sha256"}
+      }
     },
     "hexSha256": {
       "type": "string",
@@ -265,7 +283,7 @@
         },
         "bytes": {"type": "integer", "minimum": 1, "maximum": 1000000},
         "sha256": {"$ref": "#/$defs/sha256"},
-        "schemaVersion": {"enum": [2, 3]},
+        "schemaVersion": {"enum": [2, 3, 4]},
         "profile": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
@@ -316,6 +334,7 @@
         "required": ["schemaVersion"]
       },
       "then": {
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "reports": {
             "items": {
@@ -336,6 +355,7 @@
         "required": ["schemaVersion"]
       },
       "then": {
+        "not": {"required": ["authorityTransition"]},
         "properties": {
           "reports": {
             "items": {
@@ -344,6 +364,25 @@
                 "checks": {
                   "items": {"required": ["diagnostics"]}
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"schemaVersion": {"const": 3}},
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["authorityTransition"],
+        "properties": {
+          "reports": {
+            "items": {
+              "properties": {
+                "schemaVersion": {"const": 4},
+                "checks": {"items": {"required": ["diagnostics"]}}
               }
             }
           }
