@@ -850,7 +850,17 @@ def _record_review_loop_result(
 ) -> dict[str, Any] | None:
     review_loop = state.get("reviewLoop")
     if review_loop is None:
-        return None
+        review_loop = {
+            "schemaVersion": 1,
+            "threshold": REVIEW_LOOP_THRESHOLD,
+            "window": {
+                "number": 1,
+                "startedAtCycle": state["cycle"],
+                "reviewCycles": [],
+            },
+            "escalations": [],
+        }
+        state["reviewLoop"] = review_loop
     if _unresolved_review_loop_escalation(state) is not None:
         raise ContractError("review loop is already awaiting an owner decision")
     window = review_loop["window"]

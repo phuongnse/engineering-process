@@ -1491,6 +1491,49 @@ class LifecycleTests(unittest.TestCase):
                 escalation["id"], receipt["artifacts"]["reviewLoop"][0]["id"]
             )
             self.assertEqual(exported, validate_receipt(receipt_path))
+            tampered = json.loads(json.dumps(receipt))
+            fabricated = "fabricated-valid-looking-option"
+            state_document = tampered["state"]["document"]
+            state_document["reviewLoop"]["escalations"][0]["decision"][
+                "selectedOptionId"
+            ] = fabricated
+            completion_entry = tampered["artifacts"]["completion"]
+            completion_document = json.loads(completion_entry["sourceText"])
+            completion_document["reviewLoop"]["escalations"][0]["decision"][
+                "selectedOptionId"
+            ] = fabricated
+            completion_text = (
+                json.dumps(
+                    completion_document,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            completion_entry["sourceText"] = completion_text
+            completion_entry["sourceDigest"] = (
+                "sha256:"
+                + hashlib.sha256(completion_text.encode("utf-8")).hexdigest()
+            )
+            completion_entry["canonicalDigest"] = _canonical_digest(
+                completion_document
+            )
+            state_document["completion"]["digest"] = completion_entry[
+                "sourceDigest"
+            ]
+            tampered["state"]["canonicalDigest"] = _canonical_digest(
+                state_document
+            )
+            tampered_path = inputs / "tampered-review-loop-receipt.json"
+            tampered_path.write_text(
+                json.dumps(tampered, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ContractError, "archived owner selection"
+            ):
+                validate_receipt(tampered_path)
 
     def test_finite_contract_gap_escalates_on_first_review_and_cannot_clear(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1738,6 +1781,71 @@ class LifecycleTests(unittest.TestCase):
                     context_id="worker-context",
                     kind="agent",
                 )
+
+    def test_first_post_adoption_review_initializes_legacy_window_prospectively(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            inputs = Path(directory) / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            self.prepare_verified_authored_plan_decision(root, inputs)
+            state_path = root / ".process" / "runs" / "change-1" / "state.json"
+            historical = json.loads(state_path.read_text(encoding="utf-8"))
+            historical.pop("reviewLoop")
+            state_path.write_text(
+                json.dumps(historical, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            _state, assignment = start_review(
+                root,
+                "change-1",
+                actor_id="legacy-final-reviewer",
+                context_id="fresh-legacy-final-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created the first post-adoption review context.",
+            )
+            report_path = inputs / "legacy-first-review.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "changeId": "change-1",
+                        "cycle": 1,
+                        "checkpoint": assignment["checkpoint"],
+                        "workspaceFingerprint": assignment[
+                            "workspaceFingerprint"
+                        ],
+                        "comparisonBase": assignment["comparisonBase"],
+                        "reviewer": assignment["reviewer"],
+                        "independence": assignment["independence"],
+                        "quality": self.review_quality(
+                            failed=("correctness",)
+                        ),
+                        "verdict": "changes-requested",
+                        "findings": [
+                            {
+                                "id": "first-prospective-finding",
+                                "severity": "high",
+                                "path": "tracked.txt",
+                                "line": 1,
+                                "summary": "The first adopted review requests work",
+                                "evidence": "This review starts the new window.",
+                                "status": "open",
+                                "resolutionEvidence": None,
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = submit_review(root, "change-1", report_path)
+            self.assertEqual(1, state["reviewLoop"]["window"]["startedAtCycle"])
+            self.assertEqual([1], state["reviewLoop"]["window"]["reviewCycles"])
+            self.assertEqual([], state["reviewLoop"]["escalations"])
 
     def test_opted_in_project_rejects_legacy_plan_without_provenance(self):
         with tempfile.TemporaryDirectory() as directory:

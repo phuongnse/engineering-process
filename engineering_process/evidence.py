@@ -710,6 +710,34 @@ def _validate_review_loop_receipt(
             plan=plan,
             process=process,
         )
+        recommendation = _validate_entry(
+            raw_entry["recommendation"], f"{entry_path}.recommendation"
+        )
+        resolution = _validate_entry(
+            raw_entry["resolution"], f"{entry_path}.resolution"
+        )
+        classifications = validate_recommendation(
+            recommendation, f"{entry_path}.recommendation"
+        )
+        selected_option_id = resolution["selectedOptionId"]
+        selected_option = next(
+            (
+                item
+                for item in recommendation["options"]
+                if item["id"] == selected_option_id
+            ),
+            None,
+        )
+        if (
+            decision["selectedOptionId"] != selected_option_id
+            or classifications.get(selected_option_id) != "valid"
+            or not isinstance(selected_option, dict)
+            or selected_option.get("lifecycleEffect")
+            != decision["lifecycleEffect"]
+        ):
+            raise ContractError(
+                f"{entry_path}: archived owner selection or lifecycle effect is inconsistent"
+            )
     if observed_ids != sorted(expected):
         raise ContractError(f"{path}: ids must match state in sorted order")
 
