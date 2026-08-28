@@ -323,6 +323,33 @@ class TestSuiteRunnerTests(unittest.TestCase):
 
         close_descriptor.assert_called_once()
 
+    def test_configuration_interrupt_closes_acquired_duplicate(self):
+        duplicated_descriptors = []
+        real_duplicate = os.dup
+
+        def capture_duplicate(descriptor):
+            duplicate = real_duplicate(descriptor)
+            duplicated_descriptors.append(duplicate)
+            return duplicate
+
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            with (
+                mock.patch(
+                    "verification.run_test_suite.os.dup",
+                    side_effect=capture_duplicate,
+                ),
+                mock.patch(
+                    "verification.run_test_suite.os.set_inheritable",
+                    side_effect=KeyboardInterrupt(),
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    duplicate_timing_descriptor(output.fileno())
+
+        self.assertEqual(1, len(duplicated_descriptors))
+        with self.assertRaises(OSError):
+            os.fstat(duplicated_descriptors[0])
+
     def test_keyboard_interrupt_remains_primary_when_duplicate_close_fails(self):
         class InterruptingStream:
             def write(self, _content):
@@ -362,6 +389,57 @@ class TestSuiteRunnerTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "cannot close"):
                 write_timing_descriptor(99, {"status": "passed"})
+
+    def test_close_interrupt_supersedes_ordinary_write_failure(self):
+        class WriteFailureCloseInterruptStream:
+            def write(self, _content):
+                raise OSError("ordinary write failure")
+
+            def flush(self):
+                raise AssertionError("flush must not be reached")
+
+            def close(self):
+                raise KeyboardInterrupt()
+
+        with mock.patch(
+            "verification.run_test_suite.os.fdopen",
+            return_value=WriteFailureCloseInterruptStream(),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as observed:
+                write_timing_descriptor(99, {"status": "passed"})
+
+        self.assertTrue(
+            any("ordinary write failure" in note for note in observed.exception.__notes__)
+        )
+
+    def test_main_cleanup_interrupt_supersedes_ordinary_suite_failure(self):
+        with (
+            mock.patch(
+                "verification.run_test_suite.configure_test_git_environment"
+            ),
+            mock.patch(
+                "verification.run_test_suite.unittest.defaultTestLoader.discover",
+                return_value=object(),
+            ),
+            mock.patch(
+                "verification.run_test_suite.duplicate_timing_descriptor",
+                return_value=99,
+            ),
+            mock.patch(
+                "verification.run_test_suite.unittest.TextTestRunner.run",
+                side_effect=RuntimeError("ordinary suite failure"),
+            ),
+            mock.patch(
+                "verification.run_test_suite.os.close",
+                side_effect=KeyboardInterrupt(),
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as observed:
+                main(["--timing-output-fd", "3"])
+
+        self.assertTrue(
+            any("ordinary suite failure" in note for note in observed.exception.__notes__)
+        )
 
     def test_default_main_path_keeps_standard_runner_and_exit_semantics(self):
         suite = object()

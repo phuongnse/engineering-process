@@ -283,14 +283,21 @@ def duplicate_timing_descriptor(descriptor: int) -> int:
     try:
         duplicate = os.dup(descriptor)
         os.set_inheritable(duplicate, False)
-    except OSError as error:
+    except BaseException as error:
+        primary_error = error
         if duplicate >= 0:
             try:
                 os.close(duplicate)
-            except OSError as close_error:
-                error.add_note(
-                    f"timing output duplicate cleanup also failed: {close_error}"
+            except BaseException as close_error:
+                primary_error = _error_with_cleanup(
+                    primary_error,
+                    close_error,
+                    label="timing output duplicate cleanup also failed",
                 )
+        if primary_error is not error:
+            raise primary_error from error
+        if not isinstance(error, (OSError, ValueError)):
+            raise
         raise RuntimeError(
             f"cannot duplicate timing output descriptor: {_error_message(error)}"
         ) from error
@@ -333,8 +340,10 @@ def write_timing_descriptor(descriptor: int, report: dict[str, Any]) -> None:
             os.close(descriptor)
     except BaseException as close_error:
         if primary_error is not None:
-            primary_error.add_note(
-                f"timing output duplicate close also failed: {close_error}"
+            primary_error = _error_with_cleanup(
+                primary_error,
+                close_error,
+                label="timing output duplicate close also failed",
             )
         else:
             primary_error = close_error
@@ -352,9 +361,30 @@ def _close_duplicate_after_error(
     try:
         os.close(descriptor)
     except BaseException as close_error:
-        primary_error.add_note(
-            f"timing output duplicate close also failed: {close_error}"
+        selected = _error_with_cleanup(
+            primary_error,
+            close_error,
+            label="timing output duplicate close also failed",
         )
+        if selected is not primary_error:
+            raise selected from primary_error
+
+
+def _error_with_cleanup(
+    primary_error: BaseException,
+    cleanup_error: BaseException,
+    *,
+    label: str,
+) -> BaseException:
+    primary_controls_flow = not isinstance(primary_error, Exception)
+    cleanup_controls_flow = not isinstance(cleanup_error, Exception)
+    if cleanup_controls_flow and not primary_controls_flow:
+        cleanup_error.add_note(
+            f"earlier timing output operation also failed: {_error_message(primary_error)}"
+        )
+        return cleanup_error
+    primary_error.add_note(f"{label}: {_error_message(cleanup_error)}")
+    return primary_error
 
 
 def _error_message(error: BaseException) -> str:
