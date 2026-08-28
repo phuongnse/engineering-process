@@ -108,11 +108,13 @@ class CliTests(unittest.TestCase):
             [str(root / "bin/python"), str(root / "bin/processctl"), "digest", "--json"],
             bounded.call_args_list[1].args[0],
         )
+        windows_python = Path("C:/authority/Scripts/python.exe")
+        windows_processctl = Path("C:/authority/Scripts/processctl.exe")
         self.assertEqual(
-            ["C:/authority/Scripts/processctl.exe", "digest", "--json"],
+            [str(windows_processctl), "digest", "--json"],
             _transition_processctl_command(
-                Path("C:/authority/Scripts/python.exe"),
-                Path("C:/authority/Scripts/processctl.exe"),
+                windows_python,
+                windows_processctl,
                 "digest",
                 "--json",
             ),
