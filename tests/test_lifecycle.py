@@ -135,6 +135,52 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNotNone(escalation)
         self.assertEqual([1, 2, 3], escalation["reviewCycles"])
 
+    def test_cycle_limit_terminal_supersession_closes_current_window(self):
+        artifact = {
+            "path": ".process/runs/change-1/decision.json",
+            "digest": f"sha256:{'1' * 64}",
+        }
+        state = {
+            "reviewLoop": {
+                "schemaVersion": 1,
+                "threshold": 3,
+                "window": {
+                    "number": 1,
+                    "startedAtCycle": 1,
+                    "reviewCycles": [1, 2, 3],
+                },
+                "escalations": [
+                    {
+                        "id": "review-loop-0001",
+                        "kind": "cycle-limit",
+                        "status": "superseded",
+                        "triggerCycle": 3,
+                        "reviewCycles": [1, 2, 3],
+                        "findingIds": ["finding-3"],
+                        "decision": {
+                            "planDecisionAssignment": artifact,
+                            "planDecisionReview": artifact,
+                            "recommendation": artifact,
+                            "recommendationAssignment": artifact,
+                            "recommendationReview": artifact,
+                            "resolution": artifact,
+                            "selectedOptionId": "stop-change",
+                            "lifecycleEffect": "supersede-change",
+                        },
+                    }
+                ],
+            }
+        }
+        lifecycle_module._close_review_loop_window(
+            state,
+            lifecycle_effect="supersede-change",
+            assessment_cycle=4,
+        )
+        lifecycle_module.validate_review_loop(state["reviewLoop"])
+        self.assertEqual(1, state["reviewLoop"]["window"]["number"])
+        self.assertEqual(4, state["reviewLoop"]["window"]["startedAtCycle"])
+        self.assertEqual([], state["reviewLoop"]["window"]["reviewCycles"])
+
     def project(self) -> Project:
         passing = lambda identifier: Check(
             identifier=identifier,
@@ -1655,6 +1701,39 @@ class LifecycleTests(unittest.TestCase):
                     root,
                     self.project(),
                     contract_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_finite_contract_rejects_plan_without_authored_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            inputs = Path(directory) / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project = self.plan_decision_project()
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_finite_contract(contract_path)
+            state = start_change(
+                root,
+                project,
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_plan(plan_path, state["contract"]["digest"])
+            with self.assertRaisesRegex(
+                ContractError, "schema-4 changes require a bounded schema-3 plan"
+            ):
+                register_plan(
+                    root,
+                    project,
+                    "change-1",
+                    plan_path,
                     actor_id="worker",
                     context_id="worker-context",
                     kind="agent",

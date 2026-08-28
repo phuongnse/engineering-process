@@ -300,6 +300,7 @@
           },
           "then": {
             "properties": {
+              "status": {"const": "open"},
               "trustBoundaryId": {"type": "null"},
               "faultRowId": {"type": "null"},
               "criterionIds": {"maxItems": 0}

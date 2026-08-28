@@ -6127,14 +6127,19 @@ def _validate_review(
                     raise ContractError(
                         f"{finding_path}: covered finding has invalid boundary bindings"
                     )
-            elif (
-                finding["trustBoundaryId"] is not None
-                or finding["faultRowId"] is not None
-                or criterion_bindings
-            ):
-                raise ContractError(
-                    f"{finding_path}: contract-gap finding must not claim covered bindings"
-                )
+            else:
+                if finding["status"] != "open":
+                    raise ContractError(
+                        f"{finding_path}: contract-gap finding must remain open"
+                    )
+                if (
+                    finding["trustBoundaryId"] is not None
+                    or finding["faultRowId"] is not None
+                    or criterion_bindings
+                ):
+                    raise ContractError(
+                        f"{finding_path}: contract-gap finding must not claim covered bindings"
+                    )
     if (
         verdict == "approved"
         and unresolved_findings

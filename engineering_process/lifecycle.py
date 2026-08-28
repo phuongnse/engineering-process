@@ -776,9 +776,9 @@ def _validate_review_finding_boundaries(
                 f"review finding {finding['id']} requires complete finite-boundary bindings"
             )
         if finding["boundaryStatus"] == "contract-gap":
-            if finding["status"] not in UNRESOLVED_FINDING_STATUSES:
+            if finding["status"] != "open":
                 raise ContractError(
-                    f"contract-gap finding {finding['id']} must remain open or deferred"
+                    f"contract-gap finding {finding['id']} must remain open"
                 )
             contract_gaps.append(finding["id"])
             continue
@@ -824,6 +824,21 @@ def _review_loop_escalation_assignment(
         "reviewCycles": list(escalation["reviewCycles"]),
         "findingIds": list(escalation["findingIds"]),
         "windowNumber": window_number,
+    }
+
+
+def _close_review_loop_window(
+    state: dict[str, Any], *, lifecycle_effect: str, assessment_cycle: int
+) -> None:
+    window = state["reviewLoop"]["window"]
+    state["reviewLoop"]["window"] = {
+        "number": (
+            window["number"] + 1
+            if lifecycle_effect == "resume-correction-window"
+            else window["number"]
+        ),
+        "startedAtCycle": assessment_cycle,
+        "reviewCycles": [],
     }
 
 
@@ -2173,9 +2188,9 @@ def _register_plan_unlocked(
     document = read_json(plan_path)
     validate_plan(document, str(plan_path))
     required_plan_schema = 3 if project.plan_decision_mode is not None else 2
-    if contract["schemaVersion"] == 3 and document["schemaVersion"] != required_plan_schema:
+    if contract["schemaVersion"] >= 3 and document["schemaVersion"] != required_plan_schema:
         raise ContractError(
-            "new schema-3 changes require a bounded schema-"
+            f"new schema-{contract['schemaVersion']} changes require a bounded schema-"
             f"{required_plan_schema} plan under the active project policy"
         )
     if document["changeId"] != change_id:
@@ -2579,13 +2594,11 @@ def _resolve_plan_decision_unlocked(
             "selectedOptionId": result["selectedOptionId"],
             "lifecycleEffect": lifecycle_effect,
         }
-        if lifecycle_effect == "resume-correction-window":
-            window = state["reviewLoop"]["window"]
-            state["reviewLoop"]["window"] = {
-                "number": window["number"] + 1,
-                "startedAtCycle": assessment["cycle"],
-                "reviewCycles": [],
-            }
+        _close_review_loop_window(
+            state,
+            lifecycle_effect=lifecycle_effect,
+            assessment_cycle=assessment["cycle"],
+        )
     actor = _actor(actor_id, context_id, kind)
     _event(
         state,

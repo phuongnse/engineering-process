@@ -1454,6 +1454,15 @@ class ArtifactContractTests(unittest.TestCase):
             criterionIds=[],
         )
         validate_review(gap)
+        deferred = copy.deepcopy(gap)
+        deferred["findings"][0]["status"] = "deferred"
+        deferred["findings"][0]["resolutionEvidence"] = (
+            "The gap was deferred without superseding its contract."
+        )
+        with self.assertRaises(ValidationError):
+            validator.validate(deferred)
+        with self.assertRaisesRegex(ContractError, "must remain open"):
+            validate_review(deferred)
         finding["faultRowId"] = "runtime-failure"
         with self.assertRaisesRegex(ContractError, "must not claim"):
             validate_review(gap)
