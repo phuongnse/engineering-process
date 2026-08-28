@@ -77,20 +77,46 @@ def build(
     assets_value = release.get("assets")
     if not isinstance(assets_value, list) or len(assets_value) > 16:
         raise ContractError("GitHub release asset set is invalid or oversized")
-    assets = sorted(
-        (
-            {
-                "artifactId": str(item["id"]),
-                "name": item["name"],
-                "url": item["url"],
-                "sizeBytes": item["size"],
-                "sha256": item["digest"],
-            }
-            for item in assets_value
-            if isinstance(item, dict)
-        ),
-        key=lambda item: item["name"],
-    )
+    release_assets: list[dict[str, Any]] = []
+    for index, item in enumerate(assets_value):
+        if not isinstance(item, dict):
+            raise ContractError(
+                f"GitHub release asset {index} has an invalid contract"
+            )
+        try:
+            if not isinstance(item["name"], str):
+                raise ContractError(
+                    f"GitHub release asset {index} name is invalid"
+                )
+            release_assets.append(
+                {
+                    "artifactId": str(item["id"]),
+                    "name": item["name"],
+                    "url": item["url"],
+                    "sizeBytes": item["size"],
+                    "sha256": item["digest"],
+                }
+            )
+        except KeyError as error:
+            raise ContractError(
+                f"GitHub release asset {index} is missing field: {error.args[0]}"
+            ) from error
+    release_assets.sort(key=lambda item: item["name"])
+    assets_by_name = {item["name"]: item for item in release_assets}
+    if len(assets_by_name) != len(release_assets):
+        raise ContractError("GitHub release asset names must be unique")
+    target_artifacts = target.get("artifacts")
+    if not isinstance(target_artifacts, list) or not all(
+        isinstance(item, dict) and isinstance(item.get("name"), str)
+        for item in target_artifacts
+    ):
+        raise ContractError("transition target artifact contract is invalid")
+    try:
+        assets = [assets_by_name[item["name"]] for item in target_artifacts]
+    except KeyError as error:
+        raise ContractError(
+            f"GitHub release is missing registered target artifact: {error.args[0]}"
+        ) from error
     proof = {
         "schemaVersion": 1,
         "kind": "engineering-process-target-repository-proof",

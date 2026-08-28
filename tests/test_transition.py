@@ -235,6 +235,24 @@ class AuthorityTransitionTests(unittest.TestCase):
                 for index, item in enumerate(target["artifacts"])
             ],
         }
+        release["assets"].extend(
+            [
+                {
+                    "id": 900,
+                    "name": "engineering-process-v0.9.0-artifacts.json",
+                    "url": f"{repository['url']}/releases/assets/900",
+                    "size": 1_633,
+                    "digest": f"sha256:{'a' * 64}",
+                },
+                {
+                    "id": 901,
+                    "name": "engineering-process-v0.9.0-evidence.json",
+                    "url": f"{repository['url']}/releases/assets/901",
+                    "size": 44_349,
+                    "digest": f"sha256:{'b' * 64}",
+                },
+            ]
+        )
         tag_ref = {
             "ref": f"refs/tags/{target['tag']}",
             "object": {"type": "commit", "sha": target["commit"]},
@@ -246,6 +264,14 @@ class AuthorityTransitionTests(unittest.TestCase):
 
         self.assertEqual(target["repository"], proof["repository"])
         self.assertEqual(target["commit"], proof["commit"])
+        self.assertEqual(
+            [item["name"] for item in target["artifacts"]],
+            [item["name"] for item in proof["assets"]],
+        )
+        self.assertNotIn(
+            "engineering-process-v0.9.0-evidence.json",
+            [item["name"] for item in proof["assets"]],
+        )
         with self.assertRaisesRegex(ContractError, "repository"):
             build_repository_proof(
                 identity,
@@ -272,6 +298,41 @@ class AuthorityTransitionTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "registered target"):
             build_repository_proof(
                 identity, repository, wrong_assets, tag_ref, None
+            )
+        wrong_size = json.loads(json.dumps(release))
+        wrong_size["assets"][0]["size"] += 1
+        with self.assertRaisesRegex(ContractError, "registered target"):
+            build_repository_proof(
+                identity, repository, wrong_size, tag_ref, None
+            )
+        wrong_url = json.loads(json.dumps(release))
+        wrong_url["assets"][0]["url"] = (
+            f"{repository['url']}/releases/assets/999"
+        )
+        with self.assertRaisesRegex(ContractError, "does not bind"):
+            build_repository_proof(
+                identity, repository, wrong_url, tag_ref, None
+            )
+        missing_target = json.loads(json.dumps(release))
+        missing_target["assets"] = missing_target["assets"][1:]
+        with self.assertRaisesRegex(ContractError, "missing registered target"):
+            build_repository_proof(
+                identity, repository, missing_target, tag_ref, None
+            )
+        duplicate_target = json.loads(json.dumps(release))
+        duplicate = json.loads(json.dumps(duplicate_target["assets"][0]))
+        duplicate["id"] = 999
+        duplicate["url"] = f"{repository['url']}/releases/assets/999"
+        duplicate_target["assets"].append(duplicate)
+        with self.assertRaisesRegex(ContractError, "names must be unique"):
+            build_repository_proof(
+                identity, repository, duplicate_target, tag_ref, None
+            )
+        malformed = json.loads(json.dumps(release))
+        malformed["assets"].append({"name": "malformed"})
+        with self.assertRaisesRegex(ContractError, "missing field"):
+            build_repository_proof(
+                identity, repository, malformed, tag_ref, None
             )
 
         service_documents = {
