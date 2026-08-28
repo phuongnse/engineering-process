@@ -20,6 +20,10 @@ the canonical verification and review lifecycle.
    post-verification source drift invalidates the prior assessment, so refresh it in
    a new context before registering the next cycle. Then register the implementation
    actor and isolated context with processctl change implement.
+   If status reports a review-loop escalation, stop. A fourth cycle is authorized
+   only by its escalation-bound decision-required assessment, independently reviewed
+   recommendation, and explicit owner resolution. A superseded contract-gap
+   lifecycle never resumes.
 2. Read the contract, plan, nearest AGENTS.md, and affected project owners. Resolve a
    conflict through the owning contract instead of silently changing scope.
 3. Implement work items in dependency order. Add or update proving tests at the lowest

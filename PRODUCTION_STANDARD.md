@@ -143,6 +143,22 @@ evidence. Reviewer-of-reviewer, meta-assessment, assessment-of-assessment,
 policy-for-policy, dynamically generated approval chains, and generic workflow
 engines are outside the portable contract.
 
+Correction autonomy is finite. Under the adopted bounded-loop authority, three
+distinct final-review cycles with changes-requested in one decision window trigger a
+durable owner-decision escalation and block a fourth implementation cycle. Counting
+is independent of finding names, invariant labels, paths, severities and splits. The
+stop preserves every finding and failed quality assessment; it never creates
+approval. Recovery reuses the existing decision-required plan assessment,
+independently challenged recommendation and explicit owner resolution. A resolved
+covered-boundary decision opens one fresh window; a contract-gap decision supersedes
+the lifecycle and requires a new immutable contract.
+
+New finite-boundary contracts enumerate closed fault rows with trigger or injection
+boundary, expected outcome, criteria, proof and stop condition. Every finding is
+exactly covered by one row or is a contract gap. Review does not expand the model by
+inventing adjacent instruction-level injection points, and it never hides an observed
+gap as out of scope. Historical artifacts are not retroactively counted.
+
 A material owner decision derives recommendation eligibility before optimization.
 Every option assesses every governing hard invariant and references only proven or
 explicitly unproven assumptions. Any violated invariant makes the option invalid; any

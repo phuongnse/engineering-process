@@ -252,6 +252,25 @@ matrix is not a compatibility substitute. Provider transport remains project-own
 while request expansion, ingestion, invalidation, and terminal ordering are portable
 process semantics.
 
+## Bounded review-correction authority
+
+Change schema 4 adds the finite review-boundary contract. Review, plan-decision
+assignment, lifecycle, completion, recommendation, and evidence-receipt schemas gain
+additive fields or references while preserving every released document's meaning.
+The adopted authority nevertheless changes workflow semantics: after three
+changes-requested final-review cycles, another implementation cycle is blocked until
+the existing reviewed owner-decision chain resolves it. Before 1.0 this is a breaking
+package change and therefore requires the next minor version, migration guidance,
+immutable publication, and separate self-adoption.
+
+Decision windows start prospectively. Historical states without `reviewLoop` remain
+unchanged and are never backfilled from old review events. New finite-boundary
+findings are either covered by one closed fault row or are contract gaps. Contract
+gaps keep their finding open and require a superseding change; no in-place extension
+or old evidence conversion is supported. Resolved loop decisions are retained in
+completion and receipt artifacts even after the mutable current plan assessment is
+refreshed.
+
 ## Release and adoption boundary
 
 Release, self-adoption, and consumer adoption are separate changes. The numbered

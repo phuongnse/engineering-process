@@ -238,6 +238,33 @@ An open required finding produces changes-requested. Preserve its checkpoint and
 evidence, classify the finding against the owning contract, implement the smallest
 correct resolution in a new cycle, and repeat invalidated verification and review.
 
+### Finite correction windows
+
+Under the adopted bounded-loop authority, every newly registered lifecycle starts a
+prospective decision window with a hard limit of three distinct final-review cycles
+whose verdict is changes-requested. Core counts cycles, not finding ids, invariant
+labels, locations, severities, splits, or carried-resolution state. The third review
+keeps every finding and improvement case blocking, records a digest-bound escalation,
+and refuses a fourth implementation cycle.
+
+Recovery reuses the existing plan-decision and recommendation authority. The fresh
+plan assignment binds the escalation; a clear assessment is invalid. A
+decision-required assessment, independent recommendation challenge, and explicit
+owner resolution may authorize one fresh three-cycle correction window for findings
+inside the accepted boundary, or may supersede the change. The complete resolved
+chain remains separate from the mutable current plan-decision slot and is retained in
+completion and receipt evidence. No reviewer-of-reviewer or loop-arbitration phase is
+created.
+
+A schema-4 finite review boundary is a closed set of trust boundaries and fault rows.
+Each row declares its trigger or injection boundary, expected outcome, mapped
+acceptance criteria, proving profiles/evidence, and stop condition. Every new finding
+is exactly `covered` or `contract-gap`. Covered findings bind one row and its derived
+trust/criterion identity. A contract gap binds no row, stays unresolved, escalates on
+the first review, and permanently stops the current lifecycle after owner decision;
+recovery requires a separately specified superseding change. Historical lifecycle
+artifacts retain their released meaning and receive no retroactive decision window.
+
 ## Completion audit
 
 Map every acceptance criterion to current source and required verification. Require

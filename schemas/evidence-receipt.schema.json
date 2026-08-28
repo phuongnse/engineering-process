@@ -53,6 +53,12 @@
         },
         "planDecision": {"$ref": "#/$defs/planDecision"},
         "remoteVerification": {"$ref": "#/$defs/remoteVerification"}
+        ,"reviewLoop": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/reviewLoopDecision"}
+        }
         ,"authorityTransition": {
           "type": "object",
           "additionalProperties": false,
@@ -150,6 +156,22 @@
           "maxItems": 256,
           "items": {"$ref": "#/$defs/remoteArtifact"}
         }
+      }
+    },
+    "reviewLoopDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "planDecisionAssignment", "planDecisionReview", "recommendation", "recommendationAssignment", "recommendationReview", "resolution", "contextReservation", "recommendationContextReservation"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "planDecisionAssignment": {"$ref": "#/$defs/artifact"},
+        "planDecisionReview": {"$ref": "#/$defs/artifact"},
+        "recommendation": {"$ref": "#/$defs/artifact"},
+        "recommendationAssignment": {"$ref": "#/$defs/artifact"},
+        "recommendationReview": {"$ref": "#/$defs/artifact"},
+        "resolution": {"$ref": "#/$defs/artifact"},
+        "contextReservation": {"$ref": "#/$defs/artifact"},
+        "recommendationContextReservation": {"$ref": "#/$defs/artifact"}
       }
     },
     "remoteArtifact": {

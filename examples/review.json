@@ -39,6 +39,10 @@
       "line": 42,
       "summary": "Authorization is missing",
       "evidence": "The unsafe operation has no policy check",
+      "boundaryStatus": "covered",
+      "trustBoundaryId": "product-operation",
+      "faultRowId": "authorized-operation",
+      "criterionIds": ["ac-correctness"],
       "status": "open",
       "resolutionEvidence": null
     }

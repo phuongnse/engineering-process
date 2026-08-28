@@ -428,8 +428,13 @@ processctl change review submit --change-id issue-123 --report review.json
 ~~~
 
 `changes-requested` returns to `change implement`, which starts a new cycle and
-invalidates prior verification and approval. `approved` can advance only while the
-source still matches:
+invalidates prior verification and approval. Under the bounded-loop authority this
+is finite: the third changes-requested final-review cycle in one decision window
+records an owner-decision escalation and blocks a fourth autonomous implementation
+cycle. Finding renames, splits, paths, severities and invariant labels do not reset
+the count. The existing decision-required assessment, challenged recommendation and
+owner resolution may open one fresh three-cycle window; they never approve or remove
+findings. `approved` can advance only while the source still matches:
 
 ~~~text
 processctl change finish --change-id issue-123 \
@@ -581,7 +586,22 @@ drift repeats the assessment with a newly reserved reviewer context bound to the
 source checkpoint. Earlier assignment, assessment, and owner-decision artifacts stay
 historical and cannot authorize the new cycle.
 
-When a schema-3 change selects a project-owned `requiredEvidence` id, local profiles
+New finite-boundary changes use change schema 4. Their `reviewBoundary` is a closed
+set of trust boundaries and fault rows; every row names its trigger or injection
+boundary, expected outcome, criteria, proving profiles/evidence, and stop condition.
+Every review finding is exactly `covered` or `contract-gap`. Covered findings bind
+one declared row and carry that identity unchanged. Contract gaps bind no row, remain
+open, and trigger owner decision on the first review. The registered contract is
+never extended in place: after owner decision the current lifecycle stays
+superseded, and a new contract must explicitly own the expanded boundary.
+
+Review-loop decision windows start prospectively under the adopted authority; older
+lifecycle artifacts are not replayed into a new counter. Resolved escalation chains
+are retained separately from the mutable current plan-decision slot and are included
+in completion and exported receipt evidence. This reuses existing reviewers and
+recommendation authority; it adds no loop arbiter or reviewer-of-reviewer.
+
+When a schema-3 or schema-4 change selects a project-owned `requiredEvidence` id, local profiles
 alone do not advance it to review. Create the exact no-authority request, run the
 project adapter, and ingest the complete supplemental set first:
 

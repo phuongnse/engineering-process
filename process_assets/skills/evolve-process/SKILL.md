@@ -29,6 +29,13 @@ incident history into permanent ceremony.
    dependencies and existing supported tools. Reuse a suitable dependency through the
    managed lock flow; require evidence before owning a custom parser or equivalent
    implementation.
+   Treat three changes-requested final-review cycles in one decision window as
+   validated repeated friction regardless of renamed or split findings. Do not mint a
+   sequence of narrower invariant ids to keep local mutation moving. Let lifecycle
+   stop, preserve the complete finding chain, and use the existing owner-decision
+   protocol before another correction window. A finding outside a schema-4 finite
+   fault row is a contract gap and requires a superseding contract, never an in-place
+   local-fix classification.
 4. Add regression cases at the lowest reliable owner boundary for both valid behavior
    and the fail-closed class. A shared fix also requires producer profiles and a real
    affected-consumer reproduction before release authorization. For skill behavior,

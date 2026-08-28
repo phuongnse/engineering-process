@@ -91,6 +91,50 @@ class LifecycleTests(unittest.TestCase):
         )
         subprocess.run(["git", "commit", "-qm", "fixture"], cwd=root, check=True)
 
+    def test_review_loop_counter_counts_distinct_cycles_not_finding_labels(self):
+        state = {
+            "cycle": 1,
+            "reviewLoop": {
+                "schemaVersion": 1,
+                "threshold": 3,
+                "window": {
+                    "number": 1,
+                    "startedAtCycle": 1,
+                    "reviewCycles": [],
+                },
+                "escalations": [],
+            },
+        }
+        self.assertIsNone(
+            lifecycle_module._record_review_loop_result(
+                state,
+                finding_ids=["finding-a", "finding-b"],
+                contract_gap_ids=[],
+            )
+        )
+        self.assertIsNone(
+            lifecycle_module._record_review_loop_result(
+                state,
+                finding_ids=["renamed-a", "split-a", "split-b"],
+                contract_gap_ids=[],
+            )
+        )
+        self.assertEqual([1], state["reviewLoop"]["window"]["reviewCycles"])
+        state["cycle"] = 2
+        lifecycle_module._record_review_loop_result(
+            state,
+            finding_ids=["renamed-c"],
+            contract_gap_ids=[],
+        )
+        state["cycle"] = 3
+        escalation = lifecycle_module._record_review_loop_result(
+            state,
+            finding_ids=["entirely-new-label"],
+            contract_gap_ids=[],
+        )
+        self.assertIsNotNone(escalation)
+        self.assertEqual([1, 2, 3], escalation["reviewCycles"])
+
     def project(self) -> Project:
         passing = lambda identifier: Check(
             identifier=identifier,
@@ -158,6 +202,42 @@ class LifecycleTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def write_finite_contract(
+        self, path: Path, *, change_id: str = "change-1"
+    ) -> None:
+        self.write_contract(path, change_id=change_id)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["schemaVersion"] = 4
+        document["reviewBoundary"] = {
+            "mode": "finite-fault-model",
+            "trustBoundaries": [
+                {
+                    "id": "tracked-boundary",
+                    "owner": "sample-project",
+                    "statement": "The project owns tracked behavior.",
+                    "criterionIds": ["ac-1"],
+                }
+            ],
+            "faultRows": [
+                {
+                    "id": "tracked-failure",
+                    "trustBoundaryId": "tracked-boundary",
+                    "criterionIds": ["ac-1"],
+                    "trigger": "The tracked behavior fails.",
+                    "injectionBoundary": "The tracked behavior call boundary.",
+                    "expectedOutcome": "The failure is bounded and visible.",
+                    "proof": {
+                        "profiles": ["development", "review"],
+                        "evidenceRequirementIds": [],
+                        "assertion": "Focused valid and failure regressions pass.",
+                    },
+                    "stopCondition": "The exact valid and failure rows pass.",
+                }
+            ],
+            "outOfBoundary": "owner-decision-and-supersede",
+        }
+        path.write_text(json.dumps(document) + "\n", encoding="utf-8")
 
     def write_plan(
         self, path: Path, digest: str, *, change_id: str = "change-1"
@@ -248,6 +328,118 @@ class LifecycleTests(unittest.TestCase):
             )
             + "\n",
             encoding="utf-8",
+        )
+
+    def resolve_current_plan_decision_with_effect(
+        self,
+        root: Path,
+        inputs: Path,
+        project: Project,
+        assessment: dict[str, object],
+        *,
+        lifecycle_effect: str,
+        prefix: str,
+    ) -> dict[str, object]:
+        recommendation = json.loads(
+            (
+                Path(__file__).resolve().parent.parent
+                / "examples"
+                / "recommendation.json"
+            ).read_text(encoding="utf-8")
+        )
+        assessment_digest = canonical_json_digest(assessment)
+        recommendation["decisionId"] = "change-1"
+        recommendation["coordinator"] = {
+            "actorId": "worker",
+            "contextId": "worker-context",
+            "kind": "agent",
+        }
+        recommendation["invariants"].insert(
+            1,
+            {
+                "id": "plan-decision-assessment",
+                "statement": "Bind the exact review-loop plan assessment.",
+                "source": f"plan-decision-review:{assessment_digest}",
+                "evidenceSha256": assessment_digest,
+            },
+        )
+        for option in recommendation["options"]:
+            option["invariantAssessments"].insert(
+                1,
+                {
+                    "invariantId": "plan-decision-assessment",
+                    "status": "satisfied",
+                    "evidenceSha256": assessment_digest,
+                },
+            )
+            if option["id"] == "verify-before-completion":
+                option["lifecycleEffect"] = lifecycle_effect
+        recommendation_path = inputs / f"{prefix}-recommendation.json"
+        recommendation_path.write_text(
+            json.dumps(recommendation) + "\n", encoding="utf-8"
+        )
+        assignment_result = start_recommendation_review(
+            root,
+            recommendation_path,
+            actor_id=f"{prefix}-recommendation-reviewer",
+            context_id=f"fresh-{prefix}-recommendation-context",
+            kind="agent",
+            method="isolated-context",
+            attested_by="test-host",
+            evidence="The host created a fresh recommendation review context.",
+        )
+        assignment_path = root / assignment_result["assignment"]
+        assignment = json.loads(assignment_path.read_text(encoding="utf-8"))
+        recommendation_review = json.loads(
+            (
+                Path(__file__).resolve().parent.parent
+                / "examples"
+                / "recommendation-review.json"
+            ).read_text(encoding="utf-8")
+        )
+        recommendation_review["decisionId"] = "change-1"
+        recommendation_review["recommendationSha256"] = canonical_json_digest(
+            recommendation
+        )
+        recommendation_review["assignmentSha256"] = canonical_json_digest(
+            assignment
+        )
+        recommendation_review["reviewer"] = assignment["reviewer"]
+        recommendation_review["invariantAssessments"].insert(
+            1,
+            {
+                "invariantId": "plan-decision-assessment",
+                "status": "verified",
+                "evidence": "The exact plan assessment is bound.",
+            },
+        )
+        review_path = inputs / f"{prefix}-recommendation-review.json"
+        review_path.write_text(
+            json.dumps(recommendation_review) + "\n", encoding="utf-8"
+        )
+        resolution_path = inputs / f"{prefix}-resolution.json"
+        create_recommendation_resolution(
+            root,
+            recommendation_path,
+            assignment_path,
+            review_path,
+            selected_option_id="verify-before-completion",
+            owner_id="project-owner",
+            owner_evidence_sha256=f"sha256:{'9' * 64}",
+            selection_rationale_sha256=f"sha256:{'a' * 64}",
+            output=resolution_path,
+        )
+        return resolve_plan_decision(
+            root,
+            project,
+            "change-1",
+            recommendation_path=recommendation_path,
+            assignment_path=assignment_path,
+            review_path=review_path,
+            resolution_path=resolution_path,
+            actor_id="worker",
+            context_id="worker-context",
+            kind="agent",
         )
 
     def prepare_authored_plan_decision(
@@ -1002,6 +1194,472 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("implementing", state["phase"])
             self.assertTrue(state["planDecision"]["authorized"])
 
+    def test_third_changes_requested_cycle_requires_owner_resolution_before_fourth(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project = self.prepare_verified_authored_plan_decision(root, inputs)
+            pending: list[dict[str, object]] = []
+
+            for expected_cycle in range(1, 4):
+                _state, assignment = start_review(
+                    root,
+                    "change-1",
+                    actor_id=f"final-reviewer-{expected_cycle}",
+                    context_id=f"fresh-final-review-context-{expected_cycle}",
+                    kind="agent",
+                    method="isolated-context",
+                    attested_by="test-host",
+                    evidence="The host created a fresh final review context.",
+                )
+                carried = []
+                for finding in pending:
+                    resolved = dict(finding)
+                    resolved["status"] = "resolved"
+                    resolved["resolutionEvidence"] = (
+                        f"Cycle {expected_cycle} regression resolves the prior finding."
+                    )
+                    carried.append(resolved)
+                current = {
+                    "id": f"renamed-boundary-finding-{expected_cycle}",
+                    "severity": "high",
+                    "path": "tracked.txt",
+                    "line": 1,
+                    "summary": "The same correction boundary still needs work",
+                    "evidence": f"Cycle {expected_cycle} exposes the next failure.",
+                    "status": "open",
+                    "resolutionEvidence": None,
+                }
+                findings = [*carried, current]
+                report_path = inputs / f"review-{expected_cycle}.json"
+                report_path.write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": 3,
+                            "changeId": "change-1",
+                            "cycle": expected_cycle,
+                            "checkpoint": assignment["checkpoint"],
+                            "workspaceFingerprint": assignment[
+                                "workspaceFingerprint"
+                            ],
+                            "comparisonBase": assignment["comparisonBase"],
+                            "reviewer": assignment["reviewer"],
+                            "independence": assignment["independence"],
+                            "quality": self.review_quality(
+                                failed=("correctness",)
+                            ),
+                            "verdict": "changes-requested",
+                            "findings": findings,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                state = submit_review(root, "change-1", report_path)
+                self.assertEqual(
+                    list(range(1, expected_cycle + 1)),
+                    state["reviewLoop"]["window"]["reviewCycles"],
+                )
+                for case in state["improvements"]:
+                    if case["phase"] != "classification-required":
+                        continue
+                    classify_improvement_case(
+                        root,
+                        "change-1",
+                        case["id"],
+                        owner_boundary="project-local",
+                        reusable_class="local-behavior",
+                        invariant_id=f"renamed-invariant-{expected_cycle}",
+                        disposition="local-fix",
+                        rationale_sha256=f"sha256:{str(expected_cycle) * 64}",
+                        target_project=None,
+                        target_repository=None,
+                        actor_id="worker",
+                        context_id="worker-context",
+                        kind="agent",
+                    )
+                pending = [current]
+                if expected_cycle == 3:
+                    break
+                _state, decision_assignment = start_plan_decision_review(
+                    root,
+                    project,
+                    "change-1",
+                    actor_id=f"decision-reviewer-{expected_cycle + 1}",
+                    context_id=f"fresh-decision-context-{expected_cycle + 1}",
+                    kind="agent",
+                    method="isolated-context",
+                    attested_by="test-host",
+                    evidence="The host created a fresh plan decision context.",
+                )
+                decision_review_path = inputs / f"decision-{expected_cycle + 1}.json"
+                self.write_plan_decision_review(
+                    decision_review_path, decision_assignment
+                )
+                submit_plan_decision_review(
+                    root, project, "change-1", decision_review_path
+                )
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+                for profile in ("development", "review"):
+                    verify_change(
+                        root,
+                        project,
+                        "change-1",
+                        profile,
+                        actor_id="worker",
+                        context_id="worker-context",
+                        kind="agent",
+                    )
+
+            state = load_state(root, "change-1")
+            escalation = state["reviewLoop"]["escalations"][0]
+            self.assertEqual("cycle-limit", escalation["kind"])
+            self.assertEqual([1, 2, 3], escalation["reviewCycles"])
+            self.assertEqual("decision-required", escalation["status"])
+
+            _state, decision_assignment = start_plan_decision_review(
+                root,
+                project,
+                "change-1",
+                actor_id="decision-reviewer-four",
+                context_id="fresh-decision-context-four",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created the owner-escalation plan context.",
+            )
+            self.assertEqual(
+                escalation["id"],
+                decision_assignment["reviewLoopEscalation"]["id"],
+            )
+            clear_path = inputs / "clear-loop-decision.json"
+            self.write_plan_decision_review(clear_path, decision_assignment)
+            with self.assertRaisesRegex(ContractError, "decision-required"):
+                submit_plan_decision_review(
+                    root, project, "change-1", clear_path
+                )
+            assessment_path = inputs / "loop-decision.json"
+            self.write_plan_decision_review(
+                assessment_path,
+                decision_assignment,
+                decision_category="architecture",
+            )
+            _state, assessment = submit_plan_decision_review(
+                root, project, "change-1", assessment_path
+            )
+            state = self.resolve_current_plan_decision_with_effect(
+                root,
+                inputs,
+                project,
+                assessment,
+                lifecycle_effect="resume-correction-window",
+                prefix="loop",
+            )
+            escalation = state["reviewLoop"]["escalations"][0]
+            self.assertEqual("resolved", escalation["status"])
+            self.assertEqual(2, state["reviewLoop"]["window"]["number"])
+            self.assertEqual(4, state["reviewLoop"]["window"]["startedAtCycle"])
+            self.assertEqual([], state["reviewLoop"]["window"]["reviewCycles"])
+
+            state = begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.assertEqual(4, state["cycle"])
+            self.assertEqual("implementing", state["phase"])
+            for profile in ("development", "review"):
+                verify_change(
+                    root,
+                    project,
+                    "change-1",
+                    profile,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            _state, final_assignment = start_review(
+                root,
+                "change-1",
+                actor_id="final-reviewer-four",
+                context_id="fresh-final-review-context-four",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created the terminal final review context.",
+            )
+            resolved_finding = dict(pending[0])
+            resolved_finding["status"] = "resolved"
+            resolved_finding["resolutionEvidence"] = (
+                "Cycle four regression resolves the carried finding."
+            )
+            final_review_path = inputs / "final-review-four.json"
+            final_review_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "changeId": "change-1",
+                        "cycle": 4,
+                        "checkpoint": final_assignment["checkpoint"],
+                        "workspaceFingerprint": final_assignment[
+                            "workspaceFingerprint"
+                        ],
+                        "comparisonBase": final_assignment["comparisonBase"],
+                        "reviewer": final_assignment["reviewer"],
+                        "independence": final_assignment["independence"],
+                        "quality": self.review_quality(),
+                        "verdict": "approved",
+                        "findings": [resolved_finding],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            submit_review(root, "change-1", final_review_path)
+            state, completion = finish_change(
+                root,
+                "change-1",
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.assertEqual(state["reviewLoop"], completion["reviewLoop"])
+            receipt_path = inputs / "review-loop-receipt.json"
+            exported = export_receipt(root, "change-1", receipt_path)
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                escalation["id"], receipt["artifacts"]["reviewLoop"][0]["id"]
+            )
+            self.assertEqual(exported, validate_receipt(receipt_path))
+
+    def test_finite_contract_gap_escalates_on_first_review_and_cannot_clear(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "project"
+            inputs = base / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            project = self.plan_decision_project()
+            contract_path = inputs / "contract.json"
+            plan_path = inputs / "plan.json"
+            self.write_finite_contract(contract_path)
+            state = start_change(
+                root,
+                project,
+                contract_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            self.write_authored_plan(plan_path, state["contract"]["digest"])
+            register_plan(
+                root,
+                project,
+                "change-1",
+                plan_path,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            _state, plan_assignment = start_plan_decision_review(
+                root,
+                project,
+                "change-1",
+                actor_id="plan-reviewer",
+                context_id="fresh-plan-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a fresh plan context.",
+            )
+            plan_review_path = inputs / "plan-review.json"
+            self.write_plan_decision_review(plan_review_path, plan_assignment)
+            submit_plan_decision_review(
+                root, project, "change-1", plan_review_path
+            )
+            begin_implementation(
+                root,
+                "change-1",
+                project=project,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            for profile in ("development", "review"):
+                verify_change(
+                    root,
+                    project,
+                    "change-1",
+                    profile,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            _state, review_assignment = start_review(
+                root,
+                "change-1",
+                actor_id="final-reviewer",
+                context_id="fresh-final-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a fresh final context.",
+            )
+            report_path = inputs / "gap-review.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 3,
+                        "changeId": "change-1",
+                        "cycle": 1,
+                        "checkpoint": review_assignment["checkpoint"],
+                        "workspaceFingerprint": review_assignment[
+                            "workspaceFingerprint"
+                        ],
+                        "comparisonBase": review_assignment["comparisonBase"],
+                        "reviewer": review_assignment["reviewer"],
+                        "independence": review_assignment["independence"],
+                        "quality": self.review_quality(
+                            failed=("correctness",)
+                        ),
+                        "verdict": "changes-requested",
+                        "findings": [
+                            {
+                                "id": "outside-finite-model",
+                                "severity": "high",
+                                "path": "tracked.txt",
+                                "line": 1,
+                                "summary": "The observed failure is outside the model",
+                                "evidence": "No registered fault row covers it.",
+                                "boundaryStatus": "contract-gap",
+                                "trustBoundaryId": None,
+                                "faultRowId": None,
+                                "criterionIds": [],
+                                "status": "open",
+                                "resolutionEvidence": None,
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = submit_review(root, "change-1", report_path)
+            escalation = state["reviewLoop"]["escalations"][0]
+            self.assertEqual("contract-gap", escalation["kind"])
+            self.assertEqual([1], escalation["reviewCycles"])
+            case = state["improvements"][0]
+            classify_improvement_case(
+                root,
+                "change-1",
+                case["id"],
+                owner_boundary="project-local",
+                reusable_class="local-behavior",
+                invariant_id="outside-finite-model",
+                disposition="local-fix",
+                rationale_sha256=f"sha256:{'1' * 64}",
+                target_project=None,
+                target_repository=None,
+                actor_id="worker",
+                context_id="worker-context",
+                kind="agent",
+            )
+            with self.assertRaisesRegex(ContractError, "owner decision"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+            _state, escalation_assignment = start_plan_decision_review(
+                root,
+                project,
+                "change-1",
+                actor_id="gap-plan-reviewer",
+                context_id="fresh-gap-plan-context",
+                kind="agent",
+                method="isolated-context",
+                attested_by="test-host",
+                evidence="The host created a fresh contract-gap context.",
+            )
+            self.assertEqual(
+                "contract-gap",
+                escalation_assignment["reviewLoopEscalation"]["kind"],
+            )
+            clear_path = inputs / "gap-clear-review.json"
+            self.write_plan_decision_review(clear_path, escalation_assignment)
+            with self.assertRaisesRegex(ContractError, "decision-required"):
+                submit_plan_decision_review(
+                    root, project, "change-1", clear_path
+                )
+
+            assessment_path = inputs / "gap-decision-review.json"
+            self.write_plan_decision_review(
+                assessment_path,
+                escalation_assignment,
+                decision_category="scope",
+            )
+            _state, assessment = submit_plan_decision_review(
+                root, project, "change-1", assessment_path
+            )
+            state = self.resolve_current_plan_decision_with_effect(
+                root,
+                inputs,
+                project,
+                assessment,
+                lifecycle_effect="supersede-change",
+                prefix="gap",
+            )
+            self.assertEqual(
+                "superseded",
+                state["reviewLoop"]["escalations"][0]["status"],
+            )
+            with self.assertRaisesRegex(ContractError, "permanently stopped"):
+                begin_implementation(
+                    root,
+                    "change-1",
+                    project=project,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
+    def test_finite_contract_requires_owner_decision_policy_before_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"
+            inputs = Path(directory) / "inputs"
+            root.mkdir()
+            inputs.mkdir()
+            self.initialize_repository(root)
+            contract_path = inputs / "contract.json"
+            self.write_finite_contract(contract_path)
+            with self.assertRaisesRegex(ContractError, "plan decision policy"):
+                start_change(
+                    root,
+                    self.project(),
+                    contract_path,
+                    actor_id="worker",
+                    context_id="worker-context",
+                    kind="agent",
+                )
+
     def test_opted_in_project_rejects_legacy_plan_without_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -1086,6 +1744,7 @@ class LifecycleTests(unittest.TestCase):
             )
             state_path = run_root / "state.json"
             historical_state = json.loads(state_path.read_text(encoding="utf-8"))
+            historical_state.pop("reviewLoop", None)
             historical_state["contract"]["digest"] = (
                 "sha256:"
                 + hashlib.sha256(registered_contract_path.read_bytes()).hexdigest()
@@ -1109,6 +1768,7 @@ class LifecycleTests(unittest.TestCase):
             )
 
             self.assertEqual("implementing", state["phase"])
+            self.assertNotIn("reviewLoop", state)
 
     def test_verification_uses_registered_contract_comparison_base(self):
         with tempfile.TemporaryDirectory() as directory:
