@@ -856,7 +856,11 @@ authored schema-3 plan readable by immutable public 0.7. The initial workflow ru
 fresh read-only plan reviewer returns the exact assigned report to
 `release-plan-approval.yml`; that protected-main callback authenticates the producing
 workflow path, protected-base SHA, run id and attempt before restoring the same source
-and lifecycle. It submits the report, implements, verifies, and emits the ordinary
+and lifecycle. The provider handoff carries the id and attempt together as the
+required `plannedRun` object so every identity remains explicit without exceeding
+GitHub's ten-property `client_payload` limit. A protected-base adapter renders and
+validates that bounded event before the provider call. It submits the report,
+implements, verifies, and emits the ordinary
 source-review handoff. A separate bounded `needs: continue`, `always()` cleanup job
 runs on another runner after primary-job success, failure, timeout, or interruption;
 after artifact resolution it preserves bounded diagnostics, consumes and reconciles
