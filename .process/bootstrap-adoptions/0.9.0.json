@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "kind": "engineering-process-bootstrap-adoption-intent",
+  "project": "engineering-process",
+  "repository": "phuongnse/engineering-process",
+  "changeId": "bootstrap-adopt-process-0-9-0",
+  "sourceAuthority": {
+    "version": "0.7.0",
+    "digest": "sha256:24f2502506d1445d7c71096f39bdf72dee8c36d49cc606df059fb44ef6885ae4"
+  },
+  "targetRelease": {
+    "version": "0.9.0",
+    "tag": "v0.9.0",
+    "commit": "b32cb88f7d25a70ee2aff64ec1605022dfd0b462",
+    "processDigest": "sha256:07ebb8c411aa97af6ee3e0761e143d91d368f183ea24f0f83e56f1930d724bcf",
+    "releaseContractSha256": "sha256:351a554e94a5bf7531dffd6154c78f9ac496421b5623f53e5effeacd7b8472d9",
+    "distributionAttestationSha256": "sha256:1321a6bd2a68e90958f9976a6ce7eb42836fbccaeb47be3563538ebc906a4190",
+    "repositoryProofSha256": "sha256:bd1f0042da8a07d2a7598345866fd7bbd9324c43aa0e252807a167b6cfd1b53c",
+    "artifacts": [
+      {"name":"engineering_process-0.9.0-py3-none-any.whl","sha256":"sha256:6c63573a3295e5d772dc0c651f7eb3f5346cea28d2da33b95b8c2f574653c658","sizeBytes":442428},
+      {"name":"engineering_process-0.9.0.tar.gz","sha256":"sha256:0d7ef445750b78f0a7f0252c385cdb249d1225668bd84408de76b7f53bf37eec","sizeBytes":543133}
+    ]
+  },
+  "candidate": {
+    "requirementsInputSha256": "sha256:228ade40767b32411858925b144b8d28c3db4bcd655992036de656881c2a4f52",
+    "requirementsLockSha256": "sha256:4fac6eaec94035e4c6489663588e70114cde668c62a6bfaf1b7414184d9108e2",
+    "projectManifestSha256": "sha256:ad48fb8c12359f0262393ebf6bf84bfe665ba478da52120eed9968f78fe13bbb",
+    "projectMigrationSha256": null,
+    "actionPinsSha256": "sha256:f0607bfec0fb6159aa5d362e6b46f3075f5c89b4646567af827f138aa5a4f141",
+    "actionPins": [],
+    "selectedSkills": [
+      "assess-design", "build-frontend", "build-frontend-foundation", "change-api", "cross-repo-change", "define-change-contract", "design-module", "evolve-process", "finish-change", "govern-ui", "implement-change", "implement-module", "implement-use-case", "integrate-mcp", "maintain-docs", "plan-change", "publish-change", "review-change", "run-change", "run-project-command", "specify-use-case", "verify-change"
+    ],
+    "expectedChangedPaths": [
+      ".agents/skills/assess-design/.engineering-process.json",
+      ".agents/skills/build-frontend-foundation/.engineering-process.json",
+      ".agents/skills/build-frontend/.engineering-process.json",
+      ".agents/skills/change-api/.engineering-process.json",
+      ".agents/skills/cross-repo-change/.engineering-process.json",
+      ".agents/skills/define-change-contract/.engineering-process.json",
+      ".agents/skills/define-change-contract/SKILL.md",
+      ".agents/skills/design-module/.engineering-process.json",
+      ".agents/skills/evolve-process/.engineering-process.json",
+      ".agents/skills/evolve-process/SKILL.md",
+      ".agents/skills/finish-change/.engineering-process.json",
+      ".agents/skills/finish-change/SKILL.md",
+      ".agents/skills/govern-ui/.engineering-process.json",
+      ".agents/skills/implement-change/.engineering-process.json",
+      ".agents/skills/implement-change/SKILL.md",
+      ".agents/skills/implement-module/.engineering-process.json",
+      ".agents/skills/implement-use-case/.engineering-process.json",
+      ".agents/skills/integrate-mcp/.engineering-process.json",
+      ".agents/skills/maintain-docs/.engineering-process.json",
+      ".agents/skills/plan-change/.engineering-process.json",
+      ".agents/skills/publish-change/.engineering-process.json",
+      ".agents/skills/publish-change/SKILL.md",
+      ".agents/skills/review-change/.engineering-process.json",
+      ".agents/skills/review-change/SKILL.md",
+      ".agents/skills/run-change/.engineering-process.json",
+      ".agents/skills/run-change/SKILL.md",
+      ".agents/skills/run-change/references/execution.md",
+      ".agents/skills/run-project-command/.engineering-process.json",
+      ".agents/skills/specify-use-case/.engineering-process.json",
+      ".agents/skills/verify-change/.engineering-process.json",
+      ".agents/skills/verify-change/SKILL.md",
+      ".process/process.lock",
+      "requirements/process.in",
+      "requirements/process.txt"
+    ]
+  },
+  "policySha256": "sha256:eeccd5856b2ffc1c61016f98956ddd20ff5f9a76227657493fe5a17d20961320",
+  "ownerResolutionSha256": "sha256:c5e163c74820f556783ff30c13e4db5e32dbbb9bcce5718c7fd8575e26b277bb",
+  "expiresAt": "2026-09-30T00:00:00Z"
+}
