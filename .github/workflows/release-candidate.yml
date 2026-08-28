@@ -46,6 +46,11 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.comparison_base }}
 
+      - name: Preserve the base-controlled plan handoff adapter
+        run: >-
+          cp verification/render_release_plan_review_dispatch.py
+          "$RUNNER_TEMP/render-release-plan-review-dispatch.py"
+
       - name: Restore the unpublished source bundle
         env:
           GH_TOKEN: ${{ github.token }}
@@ -214,21 +219,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REVIEWER_CONTEXT: ${{ steps.identity.outputs.reviewer_context }}
         run: |
-          jq -n \
-            --arg artifact "planned-release-candidate-${{ inputs.release_head_sha }}" \
-            --arg base "${{ inputs.comparison_base }}" \
-            --arg changeId "$CHANGE_ID" \
-            --arg commit "${{ inputs.release_head_sha }}" \
-            --arg continuationWorkflow "release-plan-approval.yml" \
-            --arg maxPlanDecisionReviewBytes "60000" \
-            --arg planDecisionReviewEncoding "gzip+base64" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg reviewerActor "independent-plan-reviewer" \
-            --arg reviewerContext "$REVIEWER_CONTEXT" \
-            --arg plannedRunAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg runId "$GITHUB_RUN_ID" \
-            '{event_type: "engineering-process-plan-review-required", client_payload: {artifact: $artifact, comparisonBase: $base, changeId: $changeId, commit: $commit, continuationWorkflow: $continuationWorkflow, maxPlanDecisionReviewBytes: ($maxPlanDecisionReviewBytes | tonumber), planDecisionReviewEncoding: $planDecisionReviewEncoding, repository: $repository, reviewer: {actorId: $reviewerActor, contextId: $reviewerContext, kind: "agent"}, plannedRunId: $runId, plannedRunAttempt: ($plannedRunAttempt | tonumber)}}' \
-            > "$RUNNER_TEMP/plan-review-required-event.json"
+          python "$RUNNER_TEMP/render-release-plan-review-dispatch.py" \
+            --artifact "planned-release-candidate-${{ inputs.release_head_sha }}" \
+            --comparison-base "${{ inputs.comparison_base }}" \
+            --change-id "$CHANGE_ID" \
+            --commit "${{ inputs.release_head_sha }}" \
+            --continuation-workflow release-plan-approval.yml \
+            --max-plan-decision-review-bytes 60000 \
+            --plan-decision-review-encoding gzip+base64 \
+            --repository "$GITHUB_REPOSITORY" \
+            --reviewer-actor independent-plan-reviewer \
+            --reviewer-context "$REVIEWER_CONTEXT" \
+            --planned-run-id "$GITHUB_RUN_ID" \
+            --planned-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/plan-review-required-event.json"
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/dispatches" \
             --input "$RUNNER_TEMP/plan-review-required-event.json"

@@ -146,6 +146,11 @@ class SelfHostingTests(unittest.TestCase):
         generator = (
             PROCESS_ROOT / ".github" / "workflows" / "release-pr.yml"
         ).read_text(encoding="utf-8")
+        plan_dispatch = (
+            PROCESS_ROOT
+            / "verification"
+            / "render_release_plan_review_dispatch.py"
+        ).read_text(encoding="utf-8")
         ci = (
             PROCESS_ROOT / ".github" / "workflows" / "ci.yml"
         ).read_text(encoding="utf-8")
@@ -159,9 +164,18 @@ class SelfHostingTests(unittest.TestCase):
         self.assertNotIn("git push", candidate)
         self.assertNotIn("gh pr create", candidate)
         self.assertIn("engineering-process-review-required", candidate)
-        self.assertIn("engineering-process-plan-review-required", candidate)
-        self.assertIn("plannedRunAttempt", candidate)
+        self.assertIn("engineering-process-plan-review-required", plan_dispatch)
+        self.assertIn("--planned-run-id", candidate)
+        self.assertIn("--planned-run-attempt", candidate)
         self.assertIn("planned-release-candidate", candidate)
+        self.assertIn("render_release_plan_review_dispatch.py", candidate)
+        self.assertIn(
+            '"$RUNNER_TEMP/render-release-plan-review-dispatch.py"', candidate
+        )
+        self.assertLess(
+            candidate.index("Preserve the base-controlled plan handoff adapter"),
+            candidate.index("Restore the unpublished source bundle"),
+        )
         self.assertIn("transfer_review_context_reservation.py export", candidate)
         self.assertIn("processctl change decision start", candidate)
         self.assertIn("steps.identity.outputs.plan_kind == 'authored'", candidate)
