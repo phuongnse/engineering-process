@@ -181,6 +181,41 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(4, state["reviewLoop"]["window"]["startedAtCycle"])
         self.assertEqual([], state["reviewLoop"]["window"]["reviewCycles"])
 
+    def test_canonical_escalation_projection_rejects_every_field_mutation(self):
+        escalation = {
+            "id": "review-loop-0001",
+            "kind": "cycle-limit",
+            "status": "resolved",
+            "triggerCycle": 3,
+            "reviewCycles": [1, 2, 3],
+            "findingIds": ["finding-3"],
+            "decision": None,
+        }
+        projection = lifecycle_module._review_loop_escalation_assignment(
+            escalation, 1
+        )
+        assignment = {"reviewLoopEscalation": projection}
+        lifecycle_module._require_review_loop_escalation_assignment(
+            escalation, 1, assignment
+        )
+        mutations = {
+            "id": "review-loop-9999",
+            "kind": "contract-gap",
+            "triggerCycle": 4,
+            "reviewCycles": [2, 3, 4],
+            "findingIds": ["fabricated-finding"],
+            "windowNumber": 2,
+        }
+        for field, value in mutations.items():
+            tampered_assignment = json.loads(json.dumps(assignment))
+            tampered_assignment["reviewLoopEscalation"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                ContractError, "escalation identity"
+            ):
+                lifecycle_module._require_review_loop_escalation_assignment(
+                    escalation, 1, tampered_assignment
+                )
+
     def project(self) -> Project:
         passing = lambda identifier: Check(
             identifier=identifier,
@@ -1534,6 +1569,49 @@ class LifecycleTests(unittest.TestCase):
                 ContractError, "archived owner selection"
             ):
                 validate_receipt(tampered_path)
+
+            identity_tampered = json.loads(json.dumps(receipt))
+            state_document = identity_tampered["state"]["document"]
+            state_document["reviewLoop"]["escalations"][0]["findingIds"] = [
+                "fabricated-escalation-finding"
+            ]
+            completion_entry = identity_tampered["artifacts"]["completion"]
+            completion_document = json.loads(completion_entry["sourceText"])
+            completion_document["reviewLoop"]["escalations"][0][
+                "findingIds"
+            ] = ["fabricated-escalation-finding"]
+            completion_text = (
+                json.dumps(
+                    completion_document,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            completion_entry["sourceText"] = completion_text
+            completion_entry["sourceDigest"] = (
+                "sha256:"
+                + hashlib.sha256(completion_text.encode("utf-8")).hexdigest()
+            )
+            completion_entry["canonicalDigest"] = _canonical_digest(
+                completion_document
+            )
+            state_document["completion"]["digest"] = completion_entry[
+                "sourceDigest"
+            ]
+            identity_tampered["state"]["canonicalDigest"] = _canonical_digest(
+                state_document
+            )
+            identity_tampered_path = inputs / "tampered-escalation-receipt.json"
+            identity_tampered_path.write_text(
+                json.dumps(identity_tampered, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ContractError, "escalation identity"
+            ):
+                validate_receipt(identity_tampered_path)
 
     def test_finite_contract_gap_escalates_on_first_review_and_cannot_clear(self):
         with tempfile.TemporaryDirectory() as directory:

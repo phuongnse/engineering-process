@@ -35,6 +35,7 @@ from .contracts import (
 )
 from .lifecycle import (
     _change_lock,
+    _require_review_loop_escalation_assignment,
     _validate_plan_decision_recommendation_binding,
     _validate_review_finding_boundaries,
     _validate_state,
@@ -651,6 +652,10 @@ def _validate_review_loop_receipt(
         for item in review_loop["escalations"]
         if item["decision"] is not None
     }
+    window_numbers = {
+        item["id"]: index
+        for index, item in enumerate(review_loop["escalations"], start=1)
+    }
     observed_ids: list[str] = []
     source_fields = {
         "assignment": "planDecisionAssignment",
@@ -681,6 +686,15 @@ def _validate_review_loop_receipt(
         observed_ids.append(identifier)
         decision = escalation["decision"]
         assert decision is not None
+        plan_assignment = _validate_entry(
+            raw_entry["planDecisionAssignment"],
+            f"{entry_path}.planDecisionAssignment",
+        )
+        _require_review_loop_escalation_assignment(
+            escalation,
+            window_numbers[identifier],
+            plan_assignment,
+        )
         decision_state = {
             "kind": "authored",
             "authorized": True,

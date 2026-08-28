@@ -827,6 +827,18 @@ def _review_loop_escalation_assignment(
     }
 
 
+def _require_review_loop_escalation_assignment(
+    escalation: dict[str, Any],
+    window_number: int,
+    assignment: dict[str, Any],
+) -> None:
+    expected = _review_loop_escalation_assignment(escalation, window_number)
+    if assignment.get("reviewLoopEscalation") != expected:
+        raise ContractError(
+            "archived review-loop escalation identity does not match its assignment"
+        )
+
+
 def _close_review_loop_window(
     state: dict[str, Any], *, lifecycle_effect: str, assessment_cycle: int
 ) -> None:
