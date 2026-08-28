@@ -11,6 +11,7 @@ from unittest import mock
 
 from engineering_process.cli import (
     _require_installed_transition_authority,
+    _transition_processctl_command,
     _transition_source_authority,
     main,
 )
@@ -106,6 +107,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             [str(root / "bin/python"), str(root / "bin/processctl"), "digest", "--json"],
             bounded.call_args_list[1].args[0],
+        )
+        self.assertEqual(
+            ["C:/authority/Scripts/processctl.exe", "digest", "--json"],
+            _transition_processctl_command(
+                Path("C:/authority/Scripts/python.exe"),
+                Path("C:/authority/Scripts/processctl.exe"),
+                "digest",
+                "--json",
+            ),
         )
 
     def test_transition_authority_rejects_identity_and_probe_failures(self):
@@ -230,6 +240,106 @@ class CliTests(unittest.TestCase):
                 project_root=root,
             )
             self.assertIsNone(_transition_source_authority(ordinary))
+
+    def test_cli_registers_transition_with_installed_style_n1_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            authority = root / "authority"
+            target = root / "target"
+            artifacts = root / "artifacts"
+            for path in (project / ".process", authority / "bin", target, artifacts):
+                path.mkdir(parents=True)
+            (authority / "engineering_process").mkdir()
+            (authority / "engineering_process" / "__init__.py").write_text(
+                'VERSION = "0.7.0"\n', encoding="utf-8"
+            )
+            processctl = authority / "bin" / "processctl"
+            digest = f"sha256:{'7' * 64}"
+            processctl.write_text(
+                "import json, sys\n"
+                "if sys.argv[1] == 'digest':\n"
+                f" print(json.dumps({{'status':'passed','digest':'{digest}','skills':['run-change']}}))\n"
+                "elif sys.argv[1] == 'doctor':\n"
+                " print(json.dumps({'status':'passed','processVersion':'0.7.0','project':'engineering-process','issues':[]}))\n"
+                "else: raise SystemExit(2)\n",
+                encoding="utf-8",
+            )
+            (project / ".process" / "project.json").write_bytes(
+                (PROCESS_ROOT / ".process" / "project.json").read_bytes()
+            )
+            (project / ".process" / "process.lock").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "process": {"version": "0.7.0", "digest": digest},
+                        "skills": ["run-change"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            request = json.loads(
+                (PROCESS_ROOT / "examples" / "authority-transition-request.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            request["project"] = "engineering-process"
+            request["changeId"] = "adopt-process-0-9-0"
+            request["source"]["authority"] = {
+                "version": "0.7.0",
+                "digest": digest,
+            }
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
+            state = {
+                "changeId": request["changeId"],
+                "phase": "implementing",
+                "cycle": 1,
+                "revision": 3,
+                "authorityTransition": {
+                    "request": {"path": "request.json"}
+                },
+            }
+            stdout = io.StringIO()
+            with (
+                mock.patch(
+                    "engineering_process.cli._transition_authority_commands",
+                    return_value=(Path(sys.executable), processctl),
+                ),
+                mock.patch(
+                    "engineering_process.cli.lifecycle_environment_issues",
+                    return_value=[],
+                ),
+                mock.patch(
+                    "engineering_process.cli.register_authority_transition",
+                    return_value=(state, request),
+                ) as register,
+                contextlib.redirect_stdout(stdout),
+            ):
+                result = main(
+                    [
+                        "change", "transition", "register",
+                        "--project-root", str(project),
+                        "--process-root", str(authority),
+                        "--actor", "coordinator",
+                        "--context", "control-context",
+                        "--actor-kind", "agent",
+                        "--change-id", request["changeId"],
+                        "--request", str(request_path),
+                        "--target-checkout", str(target),
+                        "--artifact-root", str(artifacts),
+                        "--release-receipt", str(root / "receipt.json"),
+                        "--artifact-attestation", str(root / "attestation.json"),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(0, result, stdout.getvalue())
+            self.assertEqual(1, register.call_count)
+            self.assertEqual(
+                "change transition register",
+                json.loads(stdout.getvalue())["command"],
+            )
     def test_routes_portable_publication_validation(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(

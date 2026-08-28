@@ -766,6 +766,17 @@ def _transition_authority_commands(process_root: Path) -> tuple[Path, Path]:
     return python, processctl
 
 
+def _transition_processctl_command(
+    python: Path, processctl: Path, *arguments: str
+) -> list[str]:
+    prefix = (
+        [str(processctl)]
+        if processctl.suffix.lower() == ".exe"
+        else [str(python), str(processctl)]
+    )
+    return [*prefix, *arguments]
+
+
 def _run_transition_authority_probe(
     command: list[str], *, project_root: Path, process_root: Path
 ) -> dict[str, Any] | str:
@@ -854,19 +865,19 @@ def _require_installed_transition_authority(
         process_root=process_root,
     )
     digest = _run_transition_authority_probe(
-        [str(python), str(processctl), "digest", "--json"],
+        _transition_processctl_command(python, processctl, "digest", "--json"),
         project_root=project_root,
         process_root=process_root,
     )
     doctor = _run_transition_authority_probe(
-        [
-            str(python),
-            str(processctl),
+        _transition_processctl_command(
+            python,
+            processctl,
             "doctor",
             "--project-root",
             str(project_root),
             "--json",
-        ],
+        ),
         project_root=project_root,
         process_root=process_root,
     )
