@@ -10,6 +10,7 @@ from typing import Any, Callable
 from . import VERSION
 from .adoption import apply_adoption, check_adoption
 from .artifact_attestation import validate_distribution_attestation
+from .bounded_process import run_bounded_process
 from .bundles import load_bundles, select_bundles
 from .bootstrap import initialize_project
 from .contracts import (
@@ -685,14 +686,211 @@ def command_improvement_ingest(args: argparse.Namespace) -> int:
 
 def _lifecycle_project(args: argparse.Namespace):
     lock = load_lock(args.project_root)
-    issues = synchronized_state(args.project_root, args.process_root, lock)
-    if issues:
-        raise ContractError("\n".join(issues))
+    path = args.project_root / ".process" / "project.json"
+    project = validate_project(read_json(path), str(path))
+    source_authority = _transition_source_authority(args)
+    if source_authority is None:
+        issues = synchronized_state(args.project_root, args.process_root, lock)
+        if issues:
+            raise ContractError("\n".join(issues))
+    else:
+        _require_installed_transition_authority(
+            args.project_root,
+            args.process_root,
+            lock,
+            source_authority,
+            project.identifier,
+        )
     environment_issues = lifecycle_environment_issues(args.project_root)
     if environment_issues:
         raise ContractError("\n".join(environment_issues))
-    path = args.project_root / ".process" / "project.json"
-    return validate_project(read_json(path), str(path))
+    return project
+
+
+def _transition_source_authority(
+    args: argparse.Namespace,
+) -> dict[str, str] | None:
+    request_path: Path | None = None
+    if getattr(args, "change_transition_command", None) == "register":
+        request_path = args.request
+    else:
+        change_id = getattr(args, "change_id", None)
+        if not isinstance(change_id, str) or not change_id:
+            return None
+        state_path = (
+            args.project_root / ".process" / "runs" / change_id / "state.json"
+        )
+        if not state_path.is_file() or state_path.is_symlink():
+            return None
+        state = read_json(state_path)
+        transition = state.get("authorityTransition") if isinstance(state, dict) else None
+        request = transition.get("request") if isinstance(transition, dict) else None
+        relative = request.get("path") if isinstance(request, dict) else None
+        if not isinstance(relative, str):
+            return None
+        candidate_request_path = args.project_root / relative
+        if candidate_request_path.is_symlink():
+            raise ContractError(
+                "registered authority-transition request must be a regular file"
+            )
+        try:
+            request_path = candidate_request_path.resolve(strict=True)
+            request_path.relative_to(args.project_root.resolve(strict=True))
+        except (OSError, ValueError) as error:
+            raise ContractError(
+                "registered authority-transition request escapes the control root"
+            ) from error
+        if request_path.is_symlink() or not request_path.is_file():
+            raise ContractError(
+                "registered authority-transition request must be a regular file"
+            )
+    request_document = validate_authority_transition_request(
+        read_json(request_path), str(request_path)
+    )
+    return request_document["source"]["authority"]
+
+
+def _transition_authority_commands(process_root: Path) -> tuple[Path, Path]:
+    root = process_root.resolve(strict=True)
+    if os.name == "nt":
+        python = root / "Scripts" / "python.exe"
+        processctl = root / "Scripts" / "processctl.exe"
+    else:
+        python = root / "bin" / "python"
+        processctl = root / "bin" / "processctl"
+    for path, label in ((python, "Python"), (processctl, "processctl")):
+        if not path.exists() or not path.is_file():
+            raise ContractError(
+                f"installed transition source authority {label} is unavailable"
+            )
+    return python, processctl
+
+
+def _run_transition_authority_probe(
+    command: list[str], *, project_root: Path, process_root: Path
+) -> dict[str, Any] | str:
+    python, _processctl = _transition_authority_commands(process_root)
+    executable_root = python.parent
+    path = os.environ.get("PATH", "")
+    environment = {
+        "PATH": str(executable_root) + (os.pathsep + path if path else ""),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+    }
+    for name in ("COMSPEC", "PATHEXT", "SystemRoot", "WINDIR"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    try:
+        result = run_bounded_process(
+            command,
+            working_directory=(
+                process_root
+                if command[1:2] == ["-c"]
+                else project_root
+            ),
+            environment=environment,
+            timeout_seconds=15,
+            max_stream_bytes=65_536,
+            max_total_bytes=65_536,
+        )
+    except (OSError, ValueError) as error:
+        raise ContractError(
+            f"cannot execute installed transition source authority: {error}"
+        ) from error
+    if (
+        result.returncode != 0
+        or result.stderr
+        or result.timed_out
+        or result.output_exceeded
+        or result.descendants_found
+        or result.cleanup_error is not None
+        or result.input_error
+    ):
+        raise ContractError(
+            result.cleanup_error
+            or "installed transition source authority failed its bounded execution"
+        )
+    try:
+        text = result.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ContractError(
+            "installed transition source authority output is not UTF-8"
+        ) from error
+    if command[1:2] == ["-c"]:
+        return text.strip()
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ContractError(
+            "installed transition source authority output is not JSON"
+        ) from error
+    if not isinstance(document, dict):
+        raise ContractError(
+            "installed transition source authority output must be an object"
+        )
+    return document
+
+
+def _require_installed_transition_authority(
+    project_root: Path,
+    process_root: Path,
+    lock,
+    source_authority: dict[str, str],
+    project_identifier: str,
+) -> None:
+    if source_authority != {"version": lock.version, "digest": lock.digest}:
+        raise ContractError(
+            "authority-transition source authority does not match process.lock"
+        )
+    python, processctl = _transition_authority_commands(process_root)
+    version = _run_transition_authority_probe(
+        [
+            str(python),
+            "-c",
+            "import engineering_process; print(engineering_process.VERSION)",
+        ],
+        project_root=project_root,
+        process_root=process_root,
+    )
+    digest = _run_transition_authority_probe(
+        [str(python), str(processctl), "digest", "--json"],
+        project_root=project_root,
+        process_root=process_root,
+    )
+    doctor = _run_transition_authority_probe(
+        [
+            str(python),
+            str(processctl),
+            "doctor",
+            "--project-root",
+            str(project_root),
+            "--json",
+        ],
+        project_root=project_root,
+        process_root=process_root,
+    )
+    if version != lock.version:
+        raise ContractError(
+            "installed transition source authority version does not match process.lock"
+        )
+    if not isinstance(digest, dict) or (
+        digest.get("status") != "passed"
+        or digest.get("digest") != lock.digest
+        or digest.get("skills") != list(lock.skills)
+    ):
+        raise ContractError(
+            "installed transition source authority digest does not match process.lock"
+        )
+    if not isinstance(doctor, dict) or (
+        doctor.get("status") != "passed"
+        or doctor.get("processVersion") != lock.version
+        or doctor.get("project") != project_identifier
+        or doctor.get("issues") != []
+    ):
+        raise ContractError(
+            "installed transition source authority doctor did not validate control"
+        )
 
 
 def _change_result(command: str, state: dict[str, Any], **details: Any) -> dict[str, Any]:

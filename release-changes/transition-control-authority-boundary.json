@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "transition-control-authority-boundary",
+  "type": "fix",
+  "surfaces": [
+    "cli",
+    "lifecycle",
+    "publication"
+  ],
+  "rationale": "Allow the protected source controller to attest and use an exact hash-locked installed N-1 authority for transition-only lifecycle routing without applying current-source graph semantics to the released N-1 distribution.",
+  "schemaImpact": "unchanged",
+  "migration": null
+}

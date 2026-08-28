@@ -9,8 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from engineering_process.cli import main
-from engineering_process.contracts import read_json, validate_process_lock
+from engineering_process.cli import (
+    _require_installed_transition_authority,
+    _transition_source_authority,
+    main,
+)
+from engineering_process.contracts import ContractError, read_json, validate_process_lock
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +34,202 @@ class CliTests(unittest.TestCase):
             check=True,
         )
 
+    @staticmethod
+    def bounded_result(stdout: bytes, *, returncode: int = 0):
+        return SimpleNamespace(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=b"",
+            timed_out=False,
+            output_exceeded=False,
+            descendants_found=False,
+            cleanup_error=None,
+            input_error=False,
+        )
+
+    def test_transition_authority_uses_exact_bounded_n1_probes(self):
+        root = Path("/authority")
+        project = Path("/project")
+        lock = SimpleNamespace(
+            version="0.7.0",
+            digest=f"sha256:{'7' * 64}",
+            skills=("run-change",),
+        )
+        results = [
+            self.bounded_result(b"0.7.0\n"),
+            self.bounded_result(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "digest": lock.digest,
+                        "skills": ["run-change"],
+                    }
+                ).encode("utf-8")
+            ),
+            self.bounded_result(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "processVersion": "0.7.0",
+                        "project": "sample-project",
+                        "issues": [],
+                    }
+                ).encode("utf-8")
+            ),
+        ]
+        with (
+            mock.patch(
+                "engineering_process.cli._transition_authority_commands",
+                return_value=(root / "bin/python", root / "bin/processctl"),
+            ),
+            mock.patch(
+                "engineering_process.cli.run_bounded_process",
+                side_effect=results,
+            ) as bounded,
+        ):
+            _require_installed_transition_authority(
+                project,
+                root,
+                lock,
+                {"version": "0.7.0", "digest": lock.digest},
+                "sample-project",
+            )
+
+        self.assertEqual(3, bounded.call_count)
+        for call in bounded.call_args_list:
+            self.assertEqual(15, call.kwargs["timeout_seconds"])
+            self.assertEqual(65_536, call.kwargs["max_stream_bytes"])
+            self.assertEqual(65_536, call.kwargs["max_total_bytes"])
+        self.assertEqual(root, bounded.call_args_list[0].kwargs["working_directory"])
+        self.assertEqual(project, bounded.call_args_list[1].kwargs["working_directory"])
+        self.assertEqual(project, bounded.call_args_list[2].kwargs["working_directory"])
+        self.assertEqual(
+            [str(root / "bin/python"), str(root / "bin/processctl"), "digest", "--json"],
+            bounded.call_args_list[1].args[0],
+        )
+
+    def test_transition_authority_rejects_identity_and_probe_failures(self):
+        lock = SimpleNamespace(
+            version="0.7.0",
+            digest=f"sha256:{'7' * 64}",
+            skills=("run-change",),
+        )
+        with self.assertRaisesRegex(ContractError, "does not match process.lock"):
+            _require_installed_transition_authority(
+                Path("/project"),
+                Path("/authority"),
+                lock,
+                {"version": "0.8.0", "digest": lock.digest},
+                "sample-project",
+            )
+
+    def test_transition_authority_executes_installed_style_n1_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "authority"
+            package = root / "engineering_process"
+            scripts = root / "bin"
+            package.mkdir(parents=True)
+            scripts.mkdir()
+            (package / "__init__.py").write_text(
+                'VERSION = "0.7.0"\n', encoding="utf-8"
+            )
+            processctl = scripts / "processctl"
+            digest = f"sha256:{'7' * 64}"
+            processctl.write_text(
+                "import json, sys\n"
+                "if sys.argv[1] == 'digest':\n"
+                f"    print(json.dumps({{'status':'passed','digest':'{digest}','skills':['run-change']}}))\n"
+                "elif sys.argv[1] == 'doctor':\n"
+                "    print(json.dumps({'status':'passed','processVersion':'0.7.0','project':'sample-project','issues':[]}))\n"
+                "else:\n"
+                "    raise SystemExit(2)\n",
+                encoding="utf-8",
+            )
+            lock = SimpleNamespace(
+                version="0.7.0", digest=digest, skills=("run-change",)
+            )
+            with mock.patch(
+                "engineering_process.cli._transition_authority_commands",
+                return_value=(Path(sys.executable), processctl),
+            ):
+                _require_installed_transition_authority(
+                    Path(directory),
+                    root,
+                    lock,
+                    {"version": "0.7.0", "digest": digest},
+                    "sample-project",
+                )
+
+        failed = self.bounded_result(b"", returncode=1)
+        with (
+            mock.patch(
+                "engineering_process.cli._transition_authority_commands",
+                return_value=(Path("/authority/bin/python"), Path("/authority/bin/processctl")),
+            ),
+            mock.patch(
+                "engineering_process.cli.run_bounded_process", return_value=failed
+            ),
+            self.assertRaisesRegex(ContractError, "bounded execution"),
+        ):
+            _require_installed_transition_authority(
+                Path("/project"),
+                Path("/authority"),
+                lock,
+                {"version": "0.7.0", "digest": lock.digest},
+                "sample-project",
+            )
+
+    def test_transition_source_authority_routes_only_registered_transition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            request = json.loads(
+                (PROCESS_ROOT / "examples" / "authority-transition-request.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            request_path = root / "request.json"
+            request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
+            args = SimpleNamespace(
+                change_transition_command="register",
+                request=request_path,
+                project_root=root,
+            )
+            self.assertEqual(
+                request["source"]["authority"], _transition_source_authority(args)
+            )
+
+            run = root / ".process" / "runs" / request["changeId"]
+            run.mkdir(parents=True)
+            copied = run / "authority-transition-request-1.json"
+            copied.write_text(json.dumps(request) + "\n", encoding="utf-8")
+            (run / "state.json").write_text(
+                json.dumps(
+                    {
+                        "authorityTransition": {
+                            "request": {
+                                "path": copied.relative_to(root).as_posix()
+                            }
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            later = SimpleNamespace(
+                change_transition_command=None,
+                change_id=request["changeId"],
+                project_root=root,
+            )
+            self.assertEqual(
+                request["source"]["authority"],
+                _transition_source_authority(later),
+            )
+            ordinary = SimpleNamespace(
+                change_transition_command=None,
+                change_id="ordinary-change",
+                project_root=root,
+            )
+            self.assertIsNone(_transition_source_authority(ordinary))
     def test_routes_portable_publication_validation(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
