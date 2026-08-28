@@ -1,5 +1,8 @@
+import contextlib
 import hashlib
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -8,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from engineering_process.contracts import CORE_QUALITY_DIMENSIONS, Check, ContractError, Project
+from engineering_process.cli import main as cli_main
 from engineering_process.contracts import canonical_json_digest
 from engineering_process import VERSION
 from engineering_process.adoption import apply_adoption
@@ -1004,6 +1008,182 @@ class AuthorityTransitionTests(unittest.TestCase):
             self.assertEqual(3, load_state(root, "adopt-process-0-9-0")["schemaVersion"])
             with self.assertRaisesRegex(ContractError, "already registered"):
                 register_authority_transition(root, "adopt-process-0-9-0", request_path, root, root, request_path, request_path, actor_id="worker", context_id="ctx", kind="agent")
+
+    def test_cli_registers_transition_with_real_lifecycle_and_n1_probes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            control = root / "control"
+            authority = root / "authority"
+            (authority / "engineering_process").mkdir(parents=True)
+            (authority / "bin").mkdir()
+            if os.name != "nt":
+                (authority / "bin" / "python").symlink_to(Path(sys.executable))
+            (authority / "engineering_process" / "__init__.py").write_text(
+                'VERSION = "0.7.0"\n', encoding="utf-8"
+            )
+            digest = f"sha256:{'0' * 64}"
+            processctl = authority / "bin" / "processctl"
+            processctl.write_text(
+                "import json, sys\n"
+                "if sys.argv[1] == 'digest':\n"
+                f" print(json.dumps({{'status':'passed','digest':'{digest}','skills':['run-change']}}))\n"
+                "elif sys.argv[1] == 'doctor':\n"
+                " print(json.dumps({'status':'passed','processVersion':'0.7.0','project':'sample-project','issues':[]}))\n"
+                "else: raise SystemExit(2)\n",
+                encoding="utf-8",
+            )
+            control.mkdir()
+            self.initialize(control)
+            self.write_contract_and_plan(control)
+            source = source_state(control)
+            file_digest = lambda path: (
+                "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            )
+            request = json.loads(
+                (Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            request["project"] = "sample-project"
+            request["changeId"] = "adopt-process-0-9-0"
+            request["source"] = {
+                "authority": {"version": "0.7.0", "digest": digest},
+                "checkpoint": source["checkpoint"],
+                "workspaceFingerprint": source["fingerprint"],
+                "processLockSha256": file_digest(control / ".process" / "process.lock"),
+                "requirementsLockSha256": file_digest(control / "requirements" / "process.txt"),
+            }
+            request["candidate"]["baseCheckpoint"] = source["checkpoint"]
+            request_path = control / ".process" / "runs" / "_inputs" / "request.json"
+            request_path.write_text(json.dumps(request) + "\n", encoding="utf-8")
+            stdout = io.StringIO()
+            command = [
+                "change", "transition", "register",
+                "--project-root", str(control),
+                "--process-root", str(authority),
+                "--actor", "worker", "--context", "ctx",
+                "--actor-kind", "agent",
+                "--change-id", request["changeId"],
+                "--request", str(request_path),
+                "--target-checkout", str(control),
+                "--artifact-root", str(control),
+                "--release-receipt", str(request_path),
+                "--artifact-attestation", str(request_path),
+                "--json",
+            ]
+
+            def installed_authority_commands():
+                if os.name == "nt":
+                    return mock.patch(
+                        "engineering_process.cli._transition_authority_commands",
+                        return_value=(Path(sys.executable), processctl),
+                    )
+                return contextlib.nullcontext()
+
+            wrong_root = root / "wrong-authority"
+            wrong_root.mkdir()
+            wrong_root_command = command.copy()
+            process_root_index = wrong_root_command.index("--process-root") + 1
+            wrong_root_command[process_root_index] = str(wrong_root)
+            wrong_root_stdout = io.StringIO()
+            with contextlib.redirect_stdout(wrong_root_stdout):
+                self.assertEqual(2, cli_main(wrong_root_command))
+            self.assertIn(
+                "installed transition source authority Python is unavailable",
+                wrong_root_stdout.getvalue(),
+            )
+
+            (authority / "engineering_process" / "__init__.py").write_text(
+                'VERSION = "0.8.0-invalid"\n', encoding="utf-8"
+            )
+            wrong_version_stdout = io.StringIO()
+            with (
+                installed_authority_commands(),
+                contextlib.redirect_stdout(wrong_version_stdout),
+            ):
+                self.assertEqual(2, cli_main(command))
+            self.assertIn(
+                "version does not match process.lock",
+                wrong_version_stdout.getvalue(),
+            )
+            (authority / "engineering_process" / "__init__.py").write_text(
+                'VERSION = "0.7.0"\n', encoding="utf-8"
+            )
+
+            processctl.write_text(
+                "import json, sys\n"
+                "if sys.argv[1] == 'digest':\n"
+                f" print(json.dumps({{'status':'passed','digest':'sha256:{'9' * 64}','skills':['run-change']}}))\n"
+                "elif sys.argv[1] == 'doctor':\n"
+                " print(json.dumps({'status':'passed','processVersion':'0.7.0','project':'sample-project','issues':[]}))\n",
+                encoding="utf-8",
+            )
+            wrong_digest_stdout = io.StringIO()
+            with (
+                installed_authority_commands(),
+                contextlib.redirect_stdout(wrong_digest_stdout),
+            ):
+                self.assertEqual(2, cli_main(command))
+            self.assertIn(
+                "digest does not match process.lock",
+                wrong_digest_stdout.getvalue(),
+            )
+            processctl.write_text(
+                "import json, sys\n"
+                "if sys.argv[1] == 'digest':\n"
+                f" print(json.dumps({{'status':'passed','digest':'{digest}','skills':['run-change']}}))\n"
+                "elif sys.argv[1] == 'doctor':\n"
+                " print(json.dumps({'status':'passed','processVersion':'0.7.0','project':'sample-project','issues':[]}))\n"
+                "else: raise SystemExit(2)\n",
+                encoding="utf-8",
+            )
+            with (
+                installed_authority_commands(),
+                mock.patch(
+                    "engineering_process.cli.lifecycle_environment_issues",
+                    return_value=[],
+                ),
+                mock.patch(
+                    "engineering_process.lifecycle._resolve_target_repository_proof",
+                    return_value={},
+                ),
+                mock.patch(
+                    "engineering_process.lifecycle.validate_transition_target_provenance",
+                    return_value={},
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                result = cli_main(command)
+            self.assertEqual(0, result, stdout.getvalue())
+            self.assertEqual(
+                3, load_state(control, request["changeId"])["schemaVersion"]
+            )
+            self.assertEqual(
+                "change transition register",
+                json.loads(stdout.getvalue())["command"],
+            )
+
+            missing_request = command.copy()
+            request_index = missing_request.index("--request")
+            del missing_request[request_index : request_index + 2]
+            with self.assertRaises(SystemExit):
+                cli_main(missing_request)
+
+            ordinary_stdout = io.StringIO()
+            with contextlib.redirect_stdout(ordinary_stdout):
+                ordinary_result = cli_main(
+                    [
+                        "change", "status",
+                        "--project-root", str(control),
+                        "--process-root", str(authority),
+                        "--change-id", "ordinary-change",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(2, ordinary_result)
+            self.assertNotIn(
+                "installed transition source authority", ordinary_stdout.getvalue()
+            )
 
     def test_candidate_evidence_is_recomputed_not_trusted(self):
         request = json.loads((Path(__file__).resolve().parent.parent / "examples" / "authority-transition-request.json").read_text(encoding="utf-8"))
