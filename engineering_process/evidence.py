@@ -35,7 +35,9 @@ from .contracts import (
 )
 from .lifecycle import (
     _change_lock,
+    _require_review_loop_escalation_assignment,
     _validate_plan_decision_recommendation_binding,
+    _validate_review_finding_boundaries,
     _validate_state,
     load_state,
 )
@@ -220,6 +222,48 @@ def _plan_decision_entries(
     return result
 
 
+def _review_loop_entries(
+    project_root: Path, state: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    review_loop = state.get("reviewLoop")
+    if review_loop is None:
+        return None
+    entries: list[dict[str, Any]] = []
+    for escalation in review_loop["escalations"]:
+        decision = escalation["decision"]
+        if decision is None:
+            continue
+        entries.append(
+            {
+                "id": escalation["id"],
+                **{
+                    field: _entry(project_root, decision[field])
+                    for field in (
+                        "planDecisionAssignment",
+                        "planDecisionReview",
+                        "recommendation",
+                        "recommendationAssignment",
+                        "recommendationReview",
+                        "resolution",
+                    )
+                },
+                "contextReservation": _context_reservation_entry(
+                    project_root,
+                    read_json(
+                        project_root / decision["planDecisionAssignment"]["path"]
+                    )["reviewer"]["contextId"],
+                ),
+                "recommendationContextReservation": _context_reservation_entry(
+                    project_root,
+                    read_json(
+                        project_root / decision["recommendationAssignment"]["path"]
+                    )["reviewer"]["contextId"],
+                ),
+            }
+        )
+    return entries or None
+
+
 def _export_evidence(
     project_root: Path,
     change_id: str,
@@ -252,6 +296,9 @@ def _export_evidence(
     plan_decision_entries = _plan_decision_entries(project_root, state)
     if plan_decision_entries is not None:
         artifacts["planDecision"] = plan_decision_entries
+    review_loop_entries = _review_loop_entries(project_root, state)
+    if review_loop_entries is not None:
+        artifacts["reviewLoop"] = review_loop_entries
     transition = state.get("authorityTransition")
     if transition is not None:
         artifacts["authorityTransition"] = {
@@ -586,6 +633,129 @@ def _validate_plan_decision_receipt(
         raise ContractError(f"{path}: owner-decision chain is stale or invalid")
 
 
+def _validate_review_loop_receipt(
+    value: Any,
+    *,
+    state: dict[str, Any],
+    contract: dict[str, Any],
+    plan: dict[str, Any],
+    process: dict[str, str],
+) -> None:
+    path = "receipt.artifacts.reviewLoop"
+    if not isinstance(value, list) or not value:
+        raise ContractError(f"{path}: must be a non-empty array")
+    review_loop = state.get("reviewLoop")
+    if review_loop is None:
+        raise ContractError(f"{path}: lifecycle state has no review loop")
+    expected = {
+        item["id"]: item
+        for item in review_loop["escalations"]
+        if item["decision"] is not None
+    }
+    window_numbers = {
+        item["id"]: index
+        for index, item in enumerate(review_loop["escalations"], start=1)
+    }
+    observed_ids: list[str] = []
+    source_fields = {
+        "assignment": "planDecisionAssignment",
+        "review": "planDecisionReview",
+        "recommendation": "recommendation",
+        "recommendationAssignment": "recommendationAssignment",
+        "recommendationReview": "recommendationReview",
+        "resolution": "resolution",
+    }
+    for index, raw_entry in enumerate(value):
+        entry_path = f"{path}[{index}]"
+        if not isinstance(raw_entry, dict):
+            raise ContractError(f"{entry_path}: must be an object")
+        _require_exact(
+            raw_entry,
+            {
+                "id",
+                *source_fields.values(),
+                "contextReservation",
+                "recommendationContextReservation",
+            },
+            entry_path,
+        )
+        identifier = raw_entry["id"]
+        escalation = expected.get(identifier)
+        if escalation is None:
+            raise ContractError(f"{entry_path}.id: does not match lifecycle state")
+        observed_ids.append(identifier)
+        decision = escalation["decision"]
+        assert decision is not None
+        plan_assignment = _validate_entry(
+            raw_entry["planDecisionAssignment"],
+            f"{entry_path}.planDecisionAssignment",
+        )
+        _require_review_loop_escalation_assignment(
+            escalation,
+            window_numbers[identifier],
+            plan_assignment,
+        )
+        decision_state = {
+            "kind": "authored",
+            "authorized": True,
+            **{
+                target: decision[source]
+                for target, source in source_fields.items()
+            },
+        }
+        synthetic_state = {**state, "planDecision": decision_state}
+        synthetic_artifact = {
+            "kind": "authored",
+            "authorized": True,
+            "generatedInputs": [],
+            **{
+                target: raw_entry[source]
+                for target, source in source_fields.items()
+            },
+            "contextReservation": raw_entry["contextReservation"],
+            "recommendationContextReservation": raw_entry[
+                "recommendationContextReservation"
+            ],
+        }
+        _validate_plan_decision_receipt(
+            synthetic_artifact,
+            state=synthetic_state,
+            contract=contract,
+            plan=plan,
+            process=process,
+        )
+        recommendation = _validate_entry(
+            raw_entry["recommendation"], f"{entry_path}.recommendation"
+        )
+        resolution = _validate_entry(
+            raw_entry["resolution"], f"{entry_path}.resolution"
+        )
+        classifications = validate_recommendation(
+            recommendation, f"{entry_path}.recommendation"
+        )
+        selected_option_id = resolution["selectedOptionId"]
+        selected_option = next(
+            (
+                item
+                for item in recommendation["options"]
+                if item["id"] == selected_option_id
+            ),
+            None,
+        )
+        if (
+            decision["selectedOptionId"] != selected_option_id
+            or classifications.get(selected_option_id) != "valid"
+            or not isinstance(selected_option, dict)
+            or selected_option.get("lifecycleEffect")
+            != decision["lifecycleEffect"]
+        ):
+            raise ContractError(
+                f"{entry_path}: archived owner selection or lifecycle effect is inconsistent"
+            )
+    if observed_ids != sorted(expected):
+        raise ContractError(f"{path}: ids must match state in sorted order")
+
+
 def _validate_remote_receipt(
     remote: Any,
     *,
@@ -857,6 +1027,7 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
         "authorityTransition",
         "planDecision",
         "remoteVerification",
+        "reviewLoop",
     }
     missing_artifacts = required_artifacts - set(artifacts)
     unknown_artifacts = set(artifacts) - required_artifacts - optional_artifacts
@@ -951,10 +1122,32 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
             plan=plan,
             process=process,
         )
+    state_review_loop = state.get("reviewLoop")
+    decided_escalations = (
+        [
+            item
+            for item in state_review_loop["escalations"]
+            if item["decision"] is not None
+        ]
+        if state_review_loop is not None
+        else []
+    )
+    if bool(decided_escalations) != ("reviewLoop" in artifacts):
+        raise ContractError(
+            "receipt review-loop evidence presence does not match lifecycle state"
+        )
+    if decided_escalations:
+        _validate_review_loop_receipt(
+            artifacts["reviewLoop"],
+            state=state,
+            contract=contract,
+            plan=plan,
+            process=process,
+        )
     required_review_schema = (
         4
         if state_transition is not None
-        else (3 if contract["schemaVersion"] == 3 else 2)
+        else (3 if contract["schemaVersion"] >= 3 else 2)
     )
     if review["schemaVersion"] != required_review_schema:
         raise ContractError("receipt review schema does not match the change contract")
@@ -981,6 +1174,7 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
                 raise ContractError(
                     f"receipt review quality assessment for {dimension} is inconsistent"
                 )
+    _validate_review_finding_boundaries(contract, review["findings"])
     if plan.get("contractDigest") != artifacts["contract"]["sourceDigest"]:
         raise ContractError("receipt plan does not bind the contract digest")
     if (
@@ -1047,6 +1241,10 @@ def _validate_evidence(path: Path, *, expected_kind: str) -> dict[str, Any]:
     if completion.get("planDecision") != state.get("planDecision"):
         raise ContractError(
             "receipt completion plan decision reference is inconsistent"
+        )
+    if completion.get("reviewLoop") != state.get("reviewLoop"):
+        raise ContractError(
+            "receipt completion review-loop evidence is inconsistent"
         )
     if completion.get("authorityTransition") != state_transition:
         raise ContractError(

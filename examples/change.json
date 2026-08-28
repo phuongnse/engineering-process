@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "id": "issue-123",
   "summary": "Add a bounded product capability",
   "source": "issue-123",
@@ -39,6 +39,34 @@
   },
   "requiredProfiles": ["development", "review"],
   "requiredEvidence": ["supported-python-platforms"],
+  "reviewBoundary": {
+    "mode": "finite-fault-model",
+    "trustBoundaries": [
+      {
+        "id": "product-operation",
+        "owner": "sample-project",
+        "statement": "The project owns authorization and observable behavior for the bounded product operation.",
+        "criterionIds": ["ac-correctness", "ac-security"]
+      }
+    ],
+    "faultRows": [
+      {
+        "id": "authorized-operation",
+        "trustBoundaryId": "product-operation",
+        "criterionIds": ["ac-correctness"],
+        "trigger": "An authorized or unauthorized caller invokes the product operation with valid or invalid input.",
+        "injectionBoundary": "The public operation entry point before any state mutation.",
+        "expectedOutcome": "Authorized valid input completes once; unauthorized or invalid input fails without mutation.",
+        "proof": {
+          "profiles": ["development", "review"],
+          "evidenceRequirementIds": ["supported-python-platforms"],
+          "assertion": "Focused contract tests and supported-platform evidence prove both accepted and rejected calls."
+        },
+        "stopCondition": "The row is complete when both valid completion and fail-closed rejection pass on the exact reviewed checkpoint."
+      }
+    ],
+    "outOfBoundary": "owner-decision-and-supersede"
+  },
   "signOff": {
     "required": false,
     "status": "not-required",

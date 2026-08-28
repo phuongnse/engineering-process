@@ -1371,6 +1371,102 @@ class ArtifactContractTests(unittest.TestCase):
             },
         }
 
+    def finite_change(self):
+        document = self.valid_change()
+        document["schemaVersion"] = 4
+        document["reviewBoundary"] = {
+            "mode": "finite-fault-model",
+            "trustBoundaries": [
+                {
+                    "id": "runtime-boundary",
+                    "owner": "sample-project",
+                    "statement": "The project owns the bounded runtime behavior.",
+                    "criterionIds": ["ac-1"],
+                }
+            ],
+            "faultRows": [
+                {
+                    "id": "runtime-failure",
+                    "trustBoundaryId": "runtime-boundary",
+                    "criterionIds": ["ac-1"],
+                    "trigger": "The runtime operation fails at its declared call boundary.",
+                    "injectionBoundary": "The owned runtime call before state mutation.",
+                    "expectedOutcome": "The operation fails closed with bounded evidence.",
+                    "proof": {
+                        "profiles": ["review"],
+                        "evidenceRequirementIds": [],
+                        "assertion": "Focused failure and valid-path regressions pass.",
+                    },
+                    "stopCondition": "Both the accepted path and declared failure pass.",
+                }
+            ],
+            "outOfBoundary": "owner-decision-and-supersede",
+        }
+        return document
+
+    def test_finite_change_contract_uses_closed_fault_rows(self):
+        document = self.finite_change()
+        validate_change(document)
+
+        invalid = copy.deepcopy(document)
+        invalid["reviewBoundary"]["faultRows"][0].pop("stopCondition")
+        with self.assertRaisesRegex(ContractError, "missing properties"):
+            validate_change(invalid)
+
+        invalid = copy.deepcopy(document)
+        invalid["reviewBoundary"]["faultRows"][0]["criterionIds"] = [
+            "unknown-criterion"
+        ]
+        with self.assertRaisesRegex(ContractError, "outside trust-boundary"):
+            validate_change(invalid)
+
+        invalid = copy.deepcopy(document)
+        invalid["schemaVersion"] = 3
+        with self.assertRaisesRegex(ContractError, "unknown properties"):
+            validate_change(invalid)
+
+    def test_review_boundary_finding_shape_is_total(self):
+        review = json.loads(
+            (PROCESS_ROOT / "examples" / "review.json").read_text(encoding="utf-8")
+        )
+        schema = json.loads(
+            (PROCESS_ROOT / "schemas" / "review.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validator = Draft202012Validator(schema)
+        validator.validate(review)
+        validate_review(review)
+
+        invalid = copy.deepcopy(review)
+        invalid["findings"][0].pop("faultRowId")
+        with self.assertRaises(ValidationError):
+            validator.validate(invalid)
+        with self.assertRaisesRegex(ContractError, "fields must be complete"):
+            validate_review(invalid)
+
+        gap = copy.deepcopy(review)
+        finding = gap["findings"][0]
+        finding.update(
+            boundaryStatus="contract-gap",
+            trustBoundaryId=None,
+            faultRowId=None,
+            criterionIds=[],
+        )
+        validate_review(gap)
+        deferred = copy.deepcopy(gap)
+        deferred["findings"][0]["status"] = "deferred"
+        deferred["findings"][0]["resolutionEvidence"] = (
+            "The gap was deferred without superseding its contract."
+        )
+        with self.assertRaises(ValidationError):
+            validator.validate(deferred)
+        with self.assertRaisesRegex(ContractError, "must remain open"):
+            validate_review(deferred)
+        finding["faultRowId"] = "runtime-failure"
+        with self.assertRaisesRegex(ContractError, "must not claim"):
+            validate_review(gap)
+
     def test_new_changes_require_every_production_dimension(self):
         document = self.valid_change()
         validate_change(document)

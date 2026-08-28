@@ -19,7 +19,7 @@
   ],
   "properties": {
     "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [2, 3]},
+    "schemaVersion": {"enum": [2, 3, 4]},
     "id": {
       "type": "string",
       "maxLength": 64,
@@ -110,6 +110,83 @@
         }
       }
     },
+    "reviewBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "trustBoundaries", "faultRows", "outOfBoundary"],
+      "properties": {
+        "mode": {"const": "finite-fault-model"},
+        "outOfBoundary": {"const": "owner-decision-and-supersede"},
+        "trustBoundaries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "owner", "statement", "criterionIds"],
+            "properties": {
+              "id": {"$ref": "#/$defs/id"},
+              "owner": {"type": "string", "minLength": 1, "maxLength": 256},
+              "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "criterionIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/id"}
+              }
+            }
+          }
+        },
+        "faultRows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "trustBoundaryId", "criterionIds", "trigger", "injectionBoundary", "expectedOutcome", "proof", "stopCondition"],
+            "properties": {
+              "id": {"$ref": "#/$defs/id"},
+              "trustBoundaryId": {"$ref": "#/$defs/id"},
+              "criterionIds": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/id"}
+              },
+              "trigger": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "injectionBoundary": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "expectedOutcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "stopCondition": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "proof": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["profiles", "evidenceRequirementIds", "assertion"],
+                "properties": {
+                  "profiles": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "items": {"$ref": "#/$defs/id"}
+                  },
+                  "evidenceRequirementIds": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "items": {"$ref": "#/$defs/id"}
+                  },
+                  "assertion": {"type": "string", "minLength": 1, "maxLength": 2000}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "signOff": {
       "type": "object",
       "additionalProperties": false,
@@ -122,6 +199,11 @@
     }
   },
   "$defs": {
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+    },
     "qualityAssessment": {
       "type": "object",
       "additionalProperties": false,
@@ -166,7 +248,8 @@
         "not": {
           "anyOf": [
             {"required": ["quality"]},
-            {"required": ["requiredEvidence"]}
+            {"required": ["requiredEvidence"]},
+            {"required": ["reviewBoundary"]}
           ]
         }
       }
@@ -175,6 +258,18 @@
       "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
       "then": {
         "required": ["quality"],
+        "not": {"required": ["reviewBoundary"]},
+        "properties": {
+          "affectedProjects": {"maxItems": 64},
+          "acceptanceCriteria": {"maxItems": 256},
+          "requiredProfiles": {"maxItems": 64}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 4}}, "required": ["schemaVersion"]},
+      "then": {
+        "required": ["quality", "reviewBoundary"],
         "properties": {
           "affectedProjects": {"maxItems": 64},
           "acceptanceCriteria": {"maxItems": 256},

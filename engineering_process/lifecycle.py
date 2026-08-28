@@ -23,6 +23,7 @@ from .contracts import (
     PLAN_DECISION_MODE,
     PROFILE_PATTERN,
     Project,
+    REVIEW_LOOP_THRESHOLD,
     REPOSITORY_PATTERN,
     _validate_legacy_review,
     read_json,
@@ -37,6 +38,7 @@ from .contracts import (
     validate_project,
     validate_remote_verification_request,
     validate_review,
+    validate_review_loop,
     validate_verification,
 )
 from .bounded_process import run_bounded_process
@@ -68,6 +70,10 @@ FINDING_IDENTITY_FIELDS = (
     "line",
     "summary",
     "evidence",
+    "boundaryStatus",
+    "trustBoundaryId",
+    "faultRowId",
+    "criterionIds",
 )
 UNRESOLVED_FINDING_STATUSES = {"open", "deferred"}
 IMPROVEMENT_CASE_PHASES = {
@@ -459,6 +465,7 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
             "authorityTransition",
             "improvements",
             "planDecision",
+            "reviewLoop",
             "remoteVerification",
         }
     )
@@ -564,6 +571,9 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
             raise ContractError(
                 f"{path}.planDecision: generated plans cannot carry semantic review artifacts"
             )
+    review_loop = state.get("reviewLoop")
+    if review_loop is not None:
+        validate_review_loop(review_loop, f"{path}.reviewLoop")
     remote = state.get("remoteVerification")
     if remote is not None:
         if not isinstance(remote, dict) or set(remote) != {
@@ -737,6 +747,162 @@ def _validate_state(state: Any, path: Path) -> dict[str, Any]:
 
 def _same_finding_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return all(left.get(field) == right.get(field) for field in FINDING_IDENTITY_FIELDS)
+
+
+def _validate_review_finding_boundaries(
+    contract: dict[str, Any], findings: list[dict[str, Any]]
+) -> list[str]:
+    boundary = contract.get("reviewBoundary")
+    boundary_fields = {
+        "boundaryStatus",
+        "trustBoundaryId",
+        "faultRowId",
+        "criterionIds",
+    }
+    if boundary is None:
+        if any(boundary_fields & set(finding) for finding in findings):
+            raise ContractError(
+                "legacy change contract cannot accept finite-boundary finding bindings"
+            )
+        return []
+    trust_boundaries = {
+        item["id"]: item for item in boundary["trustBoundaries"]
+    }
+    rows = {item["id"]: item for item in boundary["faultRows"]}
+    contract_gaps: list[str] = []
+    for finding in findings:
+        if not boundary_fields <= set(finding):
+            raise ContractError(
+                f"review finding {finding['id']} requires complete finite-boundary bindings"
+            )
+        if finding["boundaryStatus"] == "contract-gap":
+            if finding["status"] != "open":
+                raise ContractError(
+                    f"contract-gap finding {finding['id']} must remain open"
+                )
+            contract_gaps.append(finding["id"])
+            continue
+        row = rows.get(finding["faultRowId"])
+        if row is None:
+            raise ContractError(
+                f"review finding {finding['id']} references an unknown fault row"
+            )
+        trust = trust_boundaries[row["trustBoundaryId"]]
+        if (
+            finding["trustBoundaryId"] != trust["id"]
+            or finding["criterionIds"] != row["criterionIds"]
+        ):
+            raise ContractError(
+                f"review finding {finding['id']} contradicts its declared fault row"
+            )
+    return sorted(contract_gaps)
+
+
+def _unresolved_review_loop_escalation(
+    state: dict[str, Any]
+) -> dict[str, Any] | None:
+    review_loop = state.get("reviewLoop")
+    if review_loop is None:
+        return None
+    unresolved = [
+        item
+        for item in review_loop["escalations"]
+        if item["status"] == "decision-required"
+    ]
+    if len(unresolved) > 1:
+        raise ContractError("review loop contains multiple unresolved escalations")
+    return unresolved[0] if unresolved else None
+
+
+def _review_loop_escalation_assignment(
+    escalation: dict[str, Any], window_number: int
+) -> dict[str, Any]:
+    return {
+        "id": escalation["id"],
+        "kind": escalation["kind"],
+        "triggerCycle": escalation["triggerCycle"],
+        "reviewCycles": list(escalation["reviewCycles"]),
+        "findingIds": list(escalation["findingIds"]),
+        "windowNumber": window_number,
+    }
+
+
+def _require_review_loop_escalation_assignment(
+    escalation: dict[str, Any],
+    window_number: int,
+    assignment: dict[str, Any],
+) -> None:
+    expected = _review_loop_escalation_assignment(escalation, window_number)
+    if assignment.get("reviewLoopEscalation") != expected:
+        raise ContractError(
+            "archived review-loop escalation identity does not match its assignment"
+        )
+
+
+def _close_review_loop_window(
+    state: dict[str, Any], *, lifecycle_effect: str, assessment_cycle: int
+) -> None:
+    window = state["reviewLoop"]["window"]
+    state["reviewLoop"]["window"] = {
+        "number": (
+            window["number"] + 1
+            if lifecycle_effect == "resume-correction-window"
+            else window["number"]
+        ),
+        "startedAtCycle": assessment_cycle,
+        "reviewCycles": [],
+    }
+
+
+def _record_review_loop_result(
+    state: dict[str, Any],
+    *,
+    finding_ids: list[str],
+    contract_gap_ids: list[str],
+) -> dict[str, Any] | None:
+    review_loop = state.get("reviewLoop")
+    if review_loop is None:
+        review_loop = {
+            "schemaVersion": 1,
+            "threshold": REVIEW_LOOP_THRESHOLD,
+            "window": {
+                "number": 1,
+                "startedAtCycle": state["cycle"],
+                "reviewCycles": [],
+            },
+            "escalations": [],
+        }
+        state["reviewLoop"] = review_loop
+    if _unresolved_review_loop_escalation(state) is not None:
+        raise ContractError("review loop is already awaiting an owner decision")
+    window = review_loop["window"]
+    if state["cycle"] not in window["reviewCycles"]:
+        window["reviewCycles"].append(state["cycle"])
+        window["reviewCycles"].sort()
+    kind: str | None = None
+    cycles: list[int] = []
+    escalation_findings: list[str] = []
+    if contract_gap_ids:
+        kind = "contract-gap"
+        cycles = [state["cycle"]]
+        escalation_findings = contract_gap_ids
+    elif len(window["reviewCycles"]) >= REVIEW_LOOP_THRESHOLD:
+        kind = "cycle-limit"
+        cycles = list(window["reviewCycles"][-REVIEW_LOOP_THRESHOLD:])
+        escalation_findings = sorted(set(finding_ids))
+    if kind is None:
+        return None
+    escalation = {
+        "id": f"review-loop-{len(review_loop['escalations']) + 1:04d}",
+        "kind": kind,
+        "status": "decision-required",
+        "triggerCycle": state["cycle"],
+        "reviewCycles": cycles,
+        "findingIds": escalation_findings,
+        "decision": None,
+    }
+    review_loop["escalations"].append(escalation)
+    return escalation
 
 
 def _replay_pending_findings(
@@ -1331,6 +1497,27 @@ def _authorize_plan_decision_for_implementation(
         "planAuthor": provenance["author"],
         "materialCategories": list(MATERIAL_DECISION_CATEGORIES),
     }
+    assigned_escalation = assignment.get("reviewLoopEscalation")
+    unresolved_escalation = _unresolved_review_loop_escalation(state)
+    if assigned_escalation is not None:
+        matching = next(
+            (
+                item
+                for item in state["reviewLoop"]["escalations"]
+                if item["id"] == assigned_escalation["id"]
+            ),
+            None,
+        )
+        if matching is None:
+            raise ContractError("plan decision assignment review-loop escalation is stale")
+        expected_assignment["reviewLoopEscalation"] = (
+            _review_loop_escalation_assignment(
+                matching,
+                assigned_escalation["windowNumber"],
+            )
+        )
+    elif unresolved_escalation is not None:
+        raise ContractError("plan decision assignment omits the review-loop escalation")
     for field, expected in expected_assignment.items():
         if assignment[field] != expected:
             raise ContractError(f"plan decision assignment {field} is stale")
@@ -1886,10 +2073,15 @@ def _start_change_unlocked(
 ) -> dict[str, Any]:
     document = read_json(contract_path)
     validate_change(document, str(contract_path))
-    if document["schemaVersion"] != 3:
+    if document["schemaVersion"] not in {3, 4}:
         raise ContractError(
-            f"{contract_path}: new lifecycle runs require change schemaVersion 3; "
+            f"{contract_path}: new lifecycle runs require change schemaVersion 3 or 4; "
             "schemaVersion 2 remains readable only for historical runs"
+        )
+    if document["schemaVersion"] == 4 and _plan_decision_policy(project) is None:
+        raise ContractError(
+            "finite review-boundary changes require the adopted authored plan "
+            "decision policy"
         )
     change_id = document["id"]
     if project.identifier not in document["affectedProjects"]:
@@ -1959,6 +2151,16 @@ def _start_change_unlocked(
         "contract": contract,
         "plan": None,
         "planDecision": None,
+        "reviewLoop": {
+            "schemaVersion": 1,
+            "threshold": REVIEW_LOOP_THRESHOLD,
+            "window": {
+                "number": 1,
+                "startedAtCycle": 1,
+                "reviewCycles": [],
+            },
+            "escalations": [],
+        },
         "implementationActors": [],
         "verification": [],
         "remoteVerification": (
@@ -2008,9 +2210,9 @@ def _register_plan_unlocked(
     document = read_json(plan_path)
     validate_plan(document, str(plan_path))
     required_plan_schema = 3 if project.plan_decision_mode is not None else 2
-    if contract["schemaVersion"] == 3 and document["schemaVersion"] != required_plan_schema:
+    if contract["schemaVersion"] >= 3 and document["schemaVersion"] != required_plan_schema:
         raise ContractError(
-            "new schema-3 changes require a bounded schema-"
+            f"new schema-{contract['schemaVersion']} changes require a bounded schema-"
             f"{required_plan_schema} plan under the active project policy"
         )
     if document["changeId"] != change_id:
@@ -2181,6 +2383,7 @@ def _start_plan_decision_review_unlocked(
     reservation = reserve_review_context(
         project_root, state, reviewer, cycle=target_cycle
     )
+    review_loop_escalation = _unresolved_review_loop_escalation(state)
     assignment = {
         "schemaVersion": 1,
         "kind": "engineering-process-plan-decision-review-assignment",
@@ -2204,6 +2407,16 @@ def _start_plan_decision_review_unlocked(
         },
         "materialCategories": list(MATERIAL_DECISION_CATEGORIES),
         "contextReservationSha256": canonical_json_digest(reservation),
+        **(
+            {
+                "reviewLoopEscalation": _review_loop_escalation_assignment(
+                    review_loop_escalation,
+                    state["reviewLoop"]["window"]["number"],
+                )
+            }
+            if review_loop_escalation is not None
+            else {}
+        ),
     }
     validate_plan_decision_review_assignment(
         assignment, "generated plan decision review assignment"
@@ -2262,6 +2475,14 @@ def _submit_plan_decision_review_unlocked(
             raise ContractError(
                 f"plan decision review {field} does not match its assignment"
             )
+    if (
+        assignment.get("reviewLoopEscalation") is not None
+        and review["verdict"] != "decision-required"
+    ):
+        raise ContractError(
+            "unresolved review-loop escalation requires a decision-required "
+            "plan assessment"
+        )
     source = source_state(project_root)
     if (
         source["dirty"] is not False
@@ -2335,6 +2556,38 @@ def _resolve_plan_decision_unlocked(
         "recommendationReview": result["reviewSha256"],
         "resolution": result["resolutionSha256"],
     }
+    escalation = _unresolved_review_loop_escalation(state)
+    lifecycle_effect = None
+    if escalation is not None:
+        if assessment.get("cycle") != _plan_decision_target_cycle(state):
+            raise ContractError("review-loop owner decision targets a stale cycle")
+        selected_option = next(
+            (
+                item
+                for item in recommendation["options"]
+                if item["id"] == result["selectedOptionId"]
+            ),
+            None,
+        )
+        lifecycle_effect = (
+            selected_option.get("lifecycleEffect")
+            if isinstance(selected_option, dict)
+            else None
+        )
+        if lifecycle_effect not in {
+            "resume-correction-window",
+            "supersede-change",
+        }:
+            raise ContractError(
+                "review-loop owner decision option requires a lifecycleEffect"
+            )
+        if (
+            escalation["kind"] == "contract-gap"
+            and lifecycle_effect != "supersede-change"
+        ):
+            raise ContractError(
+                "contract-gap escalation can only supersede the current change"
+            )
     destination_root = (
         _run_root(project_root, change_id)
         / f"plan-decision-resolution-{assessment['cycle']}"
@@ -2347,6 +2600,27 @@ def _resolve_plan_decision_unlocked(
             )
         destination = destination_root / f"{field}.json"
         decision[field] = _copy_document(project_root, source_path, destination)
+    if escalation is not None:
+        escalation["status"] = (
+            "resolved"
+            if lifecycle_effect == "resume-correction-window"
+            else "superseded"
+        )
+        escalation["decision"] = {
+            "planDecisionAssignment": decision["assignment"],
+            "planDecisionReview": decision["review"],
+            "recommendation": decision["recommendation"],
+            "recommendationAssignment": decision["recommendationAssignment"],
+            "recommendationReview": decision["recommendationReview"],
+            "resolution": decision["resolution"],
+            "selectedOptionId": result["selectedOptionId"],
+            "lifecycleEffect": lifecycle_effect,
+        }
+        _close_review_loop_window(
+            state,
+            lifecycle_effect=lifecycle_effect,
+            assessment_cycle=assessment["cycle"],
+        )
     actor = _actor(actor_id, context_id, kind)
     _event(
         state,
@@ -2355,6 +2629,14 @@ def _resolve_plan_decision_unlocked(
         cycle=assessment["cycle"],
         selectedOptionId=result["selectedOptionId"],
         resolution=decision["resolution"],
+        **(
+            {
+                "reviewLoopEscalation": escalation["id"],
+                "lifecycleEffect": lifecycle_effect,
+            }
+            if escalation is not None
+            else {}
+        ),
     )
     _save_state(project_root, state)
     return state
@@ -2385,6 +2667,24 @@ def _begin_implementation_unlocked(
         raise ContractError(
             "implementation under plan decision policy requires the current project contract"
         )
+    review_loop = state.get("reviewLoop")
+    if review_loop is not None:
+        unresolved = _unresolved_review_loop_escalation(state)
+        if unresolved is not None:
+            raise ContractError(
+                "implementation is blocked by review-loop owner decision: "
+                + unresolved["id"]
+            )
+        superseded = [
+            item["id"]
+            for item in review_loop["escalations"]
+            if item["status"] == "superseded"
+        ]
+        if superseded:
+            raise ContractError(
+                "implementation is permanently stopped by superseded review-loop "
+                "escalation: " + ", ".join(superseded)
+            )
     actor = _actor(actor_id, context_id, kind)
     if project is not None:
         _authorize_plan_decision_for_implementation(
@@ -3113,7 +3413,7 @@ def _submit_review_unlocked(
     required_review_schema = (
         4
         if state.get("authorityTransition") is not None
-        else (3 if contract["schemaVersion"] == 3 else 2)
+        else (3 if contract["schemaVersion"] >= 3 else 2)
     )
     if document["schemaVersion"] != required_review_schema:
         raise ContractError(
@@ -3146,6 +3446,9 @@ def _submit_review_unlocked(
                 raise ContractError(
                     f"review quality assessment for {dimension} does not match the contract"
                 )
+    contract_gap_ids = _validate_review_finding_boundaries(
+        contract, document["findings"]
+    )
     for field in (
         "changeId",
         "cycle",
@@ -3173,7 +3476,7 @@ def _submit_review_unlocked(
         changed = [
             field
             for field in FINDING_IDENTITY_FIELDS
-            if current[field] != pending[field]
+            if current.get(field) != pending.get(field)
         ]
         if changed:
             raise ContractError(
@@ -3207,6 +3510,13 @@ def _submit_review_unlocked(
             identity=f"{artifact['digest']}:{finding['id']}",
             finding_id=finding["id"],
         )
+    escalation = None
+    if document["verdict"] == "changes-requested":
+        escalation = _record_review_loop_result(
+            state,
+            finding_ids=[item["id"] for item in state["pendingFindings"]],
+            contract_gap_ids=contract_gap_ids,
+        )
     if document["verdict"] == "approved":
         _resolve_reviewed_improvements(state)
     _transition_phase(state, document["verdict"])
@@ -3217,6 +3527,18 @@ def _submit_review_unlocked(
         cycle=state["cycle"],
         verdict=document["verdict"],
         report=artifact,
+        **(
+            {
+                "reviewLoopEscalation": {
+                    "id": escalation["id"],
+                    "kind": escalation["kind"],
+                    "reviewCycles": escalation["reviewCycles"],
+                    "findingIds": escalation["findingIds"],
+                }
+            }
+            if escalation is not None
+            else {}
+        ),
     )
     _save_state(project_root, state)
     return state
@@ -3300,6 +3622,7 @@ def _finish_change_unlocked(
         "contract": state["contract"],
         "plan": state["plan"],
         "planDecision": state.get("planDecision"),
+        "reviewLoop": state.get("reviewLoop"),
         "verification": state["verification"],
         "remoteVerification": (
             state["remoteVerification"]["evidence"]

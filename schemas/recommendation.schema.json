@@ -122,6 +122,7 @@
             }
           },
           "classification": {"enum": ["valid", "invalid", "unproven"]}
+          ,"lifecycleEffect": {"enum": ["resume-correction-window", "supersede-change"]}
         }
       }
     },

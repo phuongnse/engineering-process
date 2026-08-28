@@ -181,6 +181,7 @@ IMPROVEMENT_TRIGGER_STATUSES = {
     "failed",
     "timed-out",
 }
+REVIEW_LOOP_THRESHOLD = 3
 
 
 class ContractError(ValueError):
@@ -2401,12 +2402,20 @@ def validate_recommendation(
                 "invariantAssessments",
                 "classification",
             },
+            optional={"lifecycleEffect"},
             path=option_path,
         )
         identifier = _string(option["id"], f"{option_path}.id", max_length=64)
         if PROFILE_PATTERN.fullmatch(identifier) is None:
             raise ContractError(f"{option_path}.id: invalid option id")
         option_ids.append(identifier)
+        if "lifecycleEffect" in option and option["lifecycleEffect"] not in {
+            "resume-correction-window",
+            "supersede-change",
+        }:
+            raise ContractError(
+                f"{option_path}.lifecycleEffect: invalid lifecycle effect"
+            )
         _string(option["summary"], f"{option_path}.summary", max_length=2000)
         _string_list(
             option["tradeoffs"],
@@ -4911,11 +4920,184 @@ def validate_improvement_catalog(
         raise ContractError(f"{path}.entries: must be sorted by id and unique")
 
 
+def _validate_review_boundary(
+    value: Any,
+    path: str,
+    *,
+    criterion_ids: set[str],
+    required_profiles: set[str],
+    required_evidence: set[str],
+) -> None:
+    boundary = _object(value, path)
+    _exact_keys(
+        boundary,
+        required={
+            "mode",
+            "trustBoundaries",
+            "faultRows",
+            "outOfBoundary",
+        },
+        path=path,
+    )
+    if boundary["mode"] != "finite-fault-model":
+        raise ContractError(f"{path}.mode: must be finite-fault-model")
+    if boundary["outOfBoundary"] != "owner-decision-and-supersede":
+        raise ContractError(
+            f"{path}.outOfBoundary: must be owner-decision-and-supersede"
+        )
+    trust_boundaries = boundary["trustBoundaries"]
+    if not isinstance(trust_boundaries, list) or not trust_boundaries:
+        raise ContractError(f"{path}.trustBoundaries: must not be empty")
+    if len(trust_boundaries) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.trustBoundaries: exceeds {MAX_CONTRACT_ITEMS} items"
+        )
+    trust_ids: list[str] = []
+    trust_criteria: dict[str, set[str]] = {}
+    for index, raw_trust in enumerate(trust_boundaries):
+        trust_path = f"{path}.trustBoundaries[{index}]"
+        trust = _object(raw_trust, trust_path)
+        _exact_keys(
+            trust,
+            required={"id", "owner", "statement", "criterionIds"},
+            path=trust_path,
+        )
+        identifier = _string(trust["id"], f"{trust_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{trust_path}.id: invalid trust boundary id")
+        trust_ids.append(identifier)
+        _string(trust["owner"], f"{trust_path}.owner", max_length=256)
+        _string(trust["statement"], f"{trust_path}.statement", max_length=2000)
+        mapped = _string_list(
+            trust["criterionIds"],
+            f"{trust_path}.criterionIds",
+            minimum=1,
+            maximum=MAX_CONTRACT_ITEMS,
+            pattern=PROFILE_PATTERN,
+        )
+        if mapped != sorted(set(mapped)):
+            raise ContractError(
+                f"{trust_path}.criterionIds: must be sorted and unique"
+            )
+        unknown = sorted(set(mapped) - criterion_ids)
+        if unknown:
+            raise ContractError(
+                f"{trust_path}.criterionIds: unknown acceptance criteria: "
+                + ", ".join(unknown)
+            )
+        trust_criteria[identifier] = set(mapped)
+    if trust_ids != sorted(set(trust_ids)):
+        raise ContractError(f"{path}.trustBoundaries: must be sorted by id and unique")
+
+    rows = boundary["faultRows"]
+    if not isinstance(rows, list) or not rows:
+        raise ContractError(f"{path}.faultRows: must not be empty")
+    if len(rows) > MAX_CONTRACT_ITEMS:
+        raise ContractError(f"{path}.faultRows: exceeds {MAX_CONTRACT_ITEMS} items")
+    row_ids: list[str] = []
+    for index, raw_row in enumerate(rows):
+        row_path = f"{path}.faultRows[{index}]"
+        row = _object(raw_row, row_path)
+        _exact_keys(
+            row,
+            required={
+                "id",
+                "trustBoundaryId",
+                "criterionIds",
+                "trigger",
+                "injectionBoundary",
+                "expectedOutcome",
+                "proof",
+                "stopCondition",
+            },
+            path=row_path,
+        )
+        identifier = _string(row["id"], f"{row_path}.id", max_length=64)
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{row_path}.id: invalid fault row id")
+        row_ids.append(identifier)
+        trust_id = _string(
+            row["trustBoundaryId"],
+            f"{row_path}.trustBoundaryId",
+            max_length=64,
+        )
+        if trust_id not in trust_criteria:
+            raise ContractError(
+                f"{row_path}.trustBoundaryId: unknown trust boundary {trust_id}"
+            )
+        mapped = _string_list(
+            row["criterionIds"],
+            f"{row_path}.criterionIds",
+            minimum=1,
+            maximum=MAX_CONTRACT_ITEMS,
+            pattern=PROFILE_PATTERN,
+        )
+        if mapped != sorted(set(mapped)):
+            raise ContractError(
+                f"{row_path}.criterionIds: must be sorted and unique"
+            )
+        unknown = sorted(set(mapped) - trust_criteria[trust_id])
+        if unknown:
+            raise ContractError(
+                f"{row_path}.criterionIds: outside trust-boundary criteria: "
+                + ", ".join(unknown)
+            )
+        for name in (
+            "trigger",
+            "injectionBoundary",
+            "expectedOutcome",
+            "stopCondition",
+        ):
+            _string(row[name], f"{row_path}.{name}", max_length=2000)
+        proof_path = f"{row_path}.proof"
+        proof = _object(row["proof"], proof_path)
+        _exact_keys(
+            proof,
+            required={"profiles", "evidenceRequirementIds", "assertion"},
+            path=proof_path,
+        )
+        profiles = _string_list(
+            proof["profiles"],
+            f"{proof_path}.profiles",
+            minimum=1,
+            maximum=64,
+            pattern=PROFILE_PATTERN,
+        )
+        if profiles != sorted(set(profiles)):
+            raise ContractError(f"{proof_path}.profiles: must be sorted and unique")
+        profile_gap = sorted(set(profiles) - required_profiles)
+        if profile_gap:
+            raise ContractError(
+                f"{proof_path}.profiles: profiles are not required by the change: "
+                + ", ".join(profile_gap)
+            )
+        evidence_ids = _string_list(
+            proof["evidenceRequirementIds"],
+            f"{proof_path}.evidenceRequirementIds",
+            minimum=0,
+            maximum=64,
+            pattern=PROFILE_PATTERN,
+        )
+        if evidence_ids != sorted(set(evidence_ids)):
+            raise ContractError(
+                f"{proof_path}.evidenceRequirementIds: must be sorted and unique"
+            )
+        evidence_gap = sorted(set(evidence_ids) - required_evidence)
+        if evidence_gap:
+            raise ContractError(
+                f"{proof_path}.evidenceRequirementIds: evidence is not required by "
+                "the change: " + ", ".join(evidence_gap)
+            )
+        _string(proof["assertion"], f"{proof_path}.assertion", max_length=2000)
+    if row_ids != sorted(set(row_ids)):
+        raise ContractError(f"{path}.faultRows: must be sorted by id and unique")
+
+
 def validate_change(document: Any, path: str = "change") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
-    if schema_version not in {2, 3}:
-        raise ContractError(f"{path}.schemaVersion: must be 2 or 3")
+    if schema_version not in {2, 3, 4}:
+        raise ContractError(f"{path}.schemaVersion: must be 2, 3, or 4")
     required_keys = {
         "schemaVersion",
         "id",
@@ -4929,13 +5111,15 @@ def validate_change(document: Any, path: str = "change") -> None:
         "requiredProfiles",
         "signOff",
     }
-    if schema_version == 3:
+    if schema_version >= 3:
         required_keys.add("quality")
+    if schema_version == 4:
+        required_keys.add("reviewBoundary")
     _exact_keys(
         value,
         required=required_keys,
         optional={"$schema"}
-        | ({"requiredEvidence"} if schema_version == 3 else set()),
+        | ({"requiredEvidence"} if schema_version >= 3 else set()),
         path=path,
     )
     identifier = _string(value["id"], f"{path}.id", max_length=64)
@@ -4970,14 +5154,15 @@ def validate_change(document: Any, path: str = "change") -> None:
         value["affectedProjects"],
         f"{path}.affectedProjects",
         pattern=NAME_PATTERN,
-        maximum=64 if schema_version == 3 else None,
+        maximum=64 if schema_version >= 3 else None,
     )
     required_profiles = _string_list(
         value["requiredProfiles"],
         f"{path}.requiredProfiles",
         pattern=PROFILE_PATTERN,
-        maximum=MAX_PROJECT_PROFILES if schema_version == 3 else None,
+        maximum=MAX_PROJECT_PROFILES if schema_version >= 3 else None,
     )
+    required_evidence: list[str] = []
     if "requiredEvidence" in value:
         required_evidence = _string_list(
             value["requiredEvidence"],
@@ -4995,7 +5180,7 @@ def validate_change(document: Any, path: str = "change") -> None:
     criteria = value["acceptanceCriteria"]
     if not isinstance(criteria, list) or not criteria:
         raise ContractError(f"{path}.acceptanceCriteria: must not be empty")
-    if schema_version == 3 and len(criteria) > MAX_CONTRACT_ITEMS:
+    if schema_version >= 3 and len(criteria) > MAX_CONTRACT_ITEMS:
         raise ContractError(
             f"{path}.acceptanceCriteria: exceeds {MAX_CONTRACT_ITEMS} items"
         )
@@ -5020,7 +5205,7 @@ def validate_change(document: Any, path: str = "change") -> None:
         criterion_ids.add(identifier)
         _string(criterion["outcome"], f"{criterion_path}.outcome", max_length=1000)
 
-    if schema_version == 3:
+    if schema_version >= 3:
         quality = _object(value["quality"], f"{path}.quality")
         _exact_keys(
             quality,
@@ -5116,6 +5301,15 @@ def validate_change(document: Any, path: str = "change") -> None:
             raise ContractError(
                 f"{path}.quality: correctness must be applicable"
             )
+
+    if schema_version == 4:
+        _validate_review_boundary(
+            value["reviewBoundary"],
+            f"{path}.reviewBoundary",
+            criterion_ids=criterion_ids,
+            required_profiles=set(required_profiles),
+            required_evidence=set(required_evidence),
+        )
 
     sign_off = _object(value["signOff"], f"{path}.signOff")
     _exact_keys(
@@ -5419,7 +5613,7 @@ def validate_plan_decision_review_assignment(
             "materialCategories",
             "contextReservationSha256",
         },
-        optional={"$schema"},
+        optional={"$schema", "reviewLoopEscalation"},
         path=path,
     )
     _schema_version(value, path)
@@ -5491,6 +5685,59 @@ def validate_plan_decision_review_assignment(
         raise ContractError(
             f"{path}.materialCategories: must contain the complete canonical set"
         )
+    if "reviewLoopEscalation" in value:
+        escalation_path = f"{path}.reviewLoopEscalation"
+        escalation = _object(value["reviewLoopEscalation"], escalation_path)
+        _exact_keys(
+            escalation,
+            required={
+                "id",
+                "kind",
+                "triggerCycle",
+                "reviewCycles",
+                "findingIds",
+                "windowNumber",
+            },
+            path=escalation_path,
+        )
+        identifier = _string(
+            escalation["id"], f"{escalation_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{escalation_path}.id: invalid escalation id")
+        if escalation["kind"] not in {"cycle-limit", "contract-gap"}:
+            raise ContractError(f"{escalation_path}.kind: invalid escalation kind")
+        for name in ("triggerCycle", "windowNumber"):
+            item = escalation[name]
+            if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+                raise ContractError(
+                    f"{escalation_path}.{name}: must be a positive integer"
+                )
+        cycles = escalation["reviewCycles"]
+        if (
+            not isinstance(cycles, list)
+            or not cycles
+            or cycles != sorted(set(cycles))
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 1
+                for item in cycles
+            )
+            or cycles[-1] != escalation["triggerCycle"]
+        ):
+            raise ContractError(
+                f"{escalation_path}.reviewCycles: invalid review cycles"
+            )
+        finding_ids = _string_list(
+            escalation["findingIds"],
+            f"{escalation_path}.findingIds",
+            minimum=1,
+            maximum=MAX_CONTRACT_ITEMS,
+            pattern=PROFILE_PATTERN,
+        )
+        if finding_ids != sorted(set(finding_ids)):
+            raise ContractError(
+                f"{escalation_path}.findingIds: must be sorted and unique"
+            )
 
 
 def validate_plan_decision_review(
@@ -5787,6 +6034,12 @@ def _validate_review(
                 "status",
                 "resolutionEvidence",
             },
+            optional={
+                "boundaryStatus",
+                "trustBoundaryId",
+                "faultRowId",
+                "criterionIds",
+            },
             path=finding_path,
         )
         identifier = _string(finding["id"], f"{finding_path}.id", max_length=64)
@@ -5827,6 +6080,66 @@ def _validate_review(
                 f"{finding_path}.resolutionEvidence",
                 max_length=4000,
             )
+        boundary_fields = {
+            "boundaryStatus",
+            "trustBoundaryId",
+            "faultRowId",
+            "criterionIds",
+        }
+        present_boundary_fields = boundary_fields & set(finding)
+        if present_boundary_fields and present_boundary_fields != boundary_fields:
+            raise ContractError(
+                f"{finding_path}: finite-boundary finding fields must be complete"
+            )
+        if present_boundary_fields:
+            boundary_status = finding["boundaryStatus"]
+            if boundary_status not in {"covered", "contract-gap"}:
+                raise ContractError(
+                    f"{finding_path}.boundaryStatus: must be covered or contract-gap"
+                )
+            criterion_bindings = _string_list(
+                finding["criterionIds"],
+                f"{finding_path}.criterionIds",
+                minimum=0,
+                maximum=MAX_CONTRACT_ITEMS,
+                pattern=PROFILE_PATTERN,
+            )
+            if criterion_bindings != sorted(set(criterion_bindings)):
+                raise ContractError(
+                    f"{finding_path}.criterionIds: must be sorted and unique"
+                )
+            if boundary_status == "covered":
+                trust_boundary_id = _string(
+                    finding["trustBoundaryId"],
+                    f"{finding_path}.trustBoundaryId",
+                    max_length=64,
+                )
+                fault_row_id = _string(
+                    finding["faultRowId"],
+                    f"{finding_path}.faultRowId",
+                    max_length=64,
+                )
+                if (
+                    PROFILE_PATTERN.fullmatch(trust_boundary_id) is None
+                    or PROFILE_PATTERN.fullmatch(fault_row_id) is None
+                    or not criterion_bindings
+                ):
+                    raise ContractError(
+                        f"{finding_path}: covered finding has invalid boundary bindings"
+                    )
+            else:
+                if finding["status"] != "open":
+                    raise ContractError(
+                        f"{finding_path}: contract-gap finding must remain open"
+                    )
+                if (
+                    finding["trustBoundaryId"] is not None
+                    or finding["faultRowId"] is not None
+                    or criterion_bindings
+                ):
+                    raise ContractError(
+                        f"{finding_path}: contract-gap finding must not claim covered bindings"
+                    )
     if (
         verdict == "approved"
         and unresolved_findings
@@ -6349,6 +6662,185 @@ def validate_verification(document: Any, path: str = "verification") -> None:
         )
 
 
+def validate_review_loop(document: Any, path: str = "reviewLoop") -> None:
+    value = _object(document, path)
+    _exact_keys(
+        value,
+        required={"schemaVersion", "threshold", "window", "escalations"},
+        path=path,
+    )
+    if value["schemaVersion"] != 1:
+        raise ContractError(f"{path}.schemaVersion: must be 1")
+    if value["threshold"] != REVIEW_LOOP_THRESHOLD:
+        raise ContractError(f"{path}.threshold: must be {REVIEW_LOOP_THRESHOLD}")
+    window_path = f"{path}.window"
+    window = _object(value["window"], window_path)
+    _exact_keys(
+        window,
+        required={"number", "startedAtCycle", "reviewCycles"},
+        path=window_path,
+    )
+    for name in ("number", "startedAtCycle"):
+        item = window[name]
+        if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+            raise ContractError(f"{window_path}.{name}: must be a positive integer")
+    review_cycles = window["reviewCycles"]
+    if (
+        not isinstance(review_cycles, list)
+        or len(review_cycles) > REVIEW_LOOP_THRESHOLD
+        or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 1
+            for item in review_cycles
+        )
+        or review_cycles != sorted(set(review_cycles))
+    ):
+        raise ContractError(
+            f"{window_path}.reviewCycles: must be sorted unique positive cycles"
+        )
+    if any(item < window["startedAtCycle"] for item in review_cycles):
+        raise ContractError(
+            f"{window_path}.reviewCycles: cannot precede the decision window"
+        )
+    escalations = value["escalations"]
+    if not isinstance(escalations, list) or len(escalations) > MAX_CONTRACT_ITEMS:
+        raise ContractError(
+            f"{path}.escalations: must contain at most {MAX_CONTRACT_ITEMS} items"
+        )
+    escalation_ids: list[str] = []
+    for index, raw_escalation in enumerate(escalations):
+        escalation_path = f"{path}.escalations[{index}]"
+        escalation = _object(raw_escalation, escalation_path)
+        _exact_keys(
+            escalation,
+            required={
+                "id",
+                "kind",
+                "status",
+                "triggerCycle",
+                "reviewCycles",
+                "findingIds",
+                "decision",
+            },
+            path=escalation_path,
+        )
+        identifier = _string(
+            escalation["id"], f"{escalation_path}.id", max_length=64
+        )
+        if PROFILE_PATTERN.fullmatch(identifier) is None:
+            raise ContractError(f"{escalation_path}.id: invalid escalation id")
+        escalation_ids.append(identifier)
+        kind = escalation["kind"]
+        if kind not in {"cycle-limit", "contract-gap"}:
+            raise ContractError(f"{escalation_path}.kind: invalid escalation kind")
+        status = escalation["status"]
+        if status not in {"decision-required", "resolved", "superseded"}:
+            raise ContractError(f"{escalation_path}.status: invalid status")
+        trigger_cycle = escalation["triggerCycle"]
+        if (
+            isinstance(trigger_cycle, bool)
+            or not isinstance(trigger_cycle, int)
+            or trigger_cycle < 1
+        ):
+            raise ContractError(
+                f"{escalation_path}.triggerCycle: must be a positive integer"
+            )
+        cycles = escalation["reviewCycles"]
+        expected_count = REVIEW_LOOP_THRESHOLD if kind == "cycle-limit" else 1
+        if (
+            not isinstance(cycles, list)
+            or len(cycles) != expected_count
+            or cycles != sorted(set(cycles))
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 1
+                for item in cycles
+            )
+            or cycles[-1] != trigger_cycle
+        ):
+            raise ContractError(
+                f"{escalation_path}.reviewCycles: invalid cycles for {kind}"
+            )
+        finding_ids = _string_list(
+            escalation["findingIds"],
+            f"{escalation_path}.findingIds",
+            minimum=1,
+            maximum=MAX_CONTRACT_ITEMS,
+            pattern=PROFILE_PATTERN,
+        )
+        if finding_ids != sorted(set(finding_ids)):
+            raise ContractError(
+                f"{escalation_path}.findingIds: must be sorted and unique"
+            )
+        decision = escalation["decision"]
+        if status == "decision-required":
+            if decision is not None:
+                raise ContractError(
+                    f"{escalation_path}.decision: must be null while unresolved"
+                )
+            continue
+        decision_path = f"{escalation_path}.decision"
+        decision = _object(decision, decision_path)
+        _exact_keys(
+            decision,
+            required={
+                "planDecisionAssignment",
+                "planDecisionReview",
+                "recommendation",
+                "recommendationAssignment",
+                "recommendationReview",
+                "resolution",
+                "selectedOptionId",
+                "lifecycleEffect",
+            },
+            path=decision_path,
+        )
+        for name in (
+            "planDecisionAssignment",
+            "planDecisionReview",
+            "recommendation",
+            "recommendationAssignment",
+            "recommendationReview",
+            "resolution",
+        ):
+            _artifact_reference(decision[name], f"{decision_path}.{name}")
+        selected_option = _string(
+            decision["selectedOptionId"],
+            f"{decision_path}.selectedOptionId",
+            max_length=64,
+        )
+        if PROFILE_PATTERN.fullmatch(selected_option) is None:
+            raise ContractError(f"{decision_path}.selectedOptionId: invalid option id")
+        effect = decision["lifecycleEffect"]
+        expected_effect = (
+            "resume-correction-window" if status == "resolved" else "supersede-change"
+        )
+        if effect != expected_effect:
+            raise ContractError(
+                f"{decision_path}.lifecycleEffect: must be {expected_effect}"
+            )
+        if kind == "contract-gap" and status != "superseded":
+            raise ContractError(
+                f"{escalation_path}: contract gaps cannot resume the same lifecycle"
+            )
+    if escalation_ids != sorted(set(escalation_ids)):
+        raise ContractError(f"{path}.escalations: must be sorted by id and unique")
+    unresolved = [
+        item for item in escalations if item["status"] == "decision-required"
+    ]
+    if len(unresolved) > 1:
+        raise ContractError(f"{path}.escalations: only one owner decision may be open")
+    if len(review_cycles) == REVIEW_LOOP_THRESHOLD and not (
+        unresolved
+        and unresolved[0]["triggerCycle"] == review_cycles[-1]
+        and (
+            unresolved[0]["kind"] == "contract-gap"
+            or unresolved[0]["reviewCycles"] == review_cycles
+        )
+    ):
+        raise ContractError(
+            f"{window_path}.reviewCycles: threshold requires an unresolved escalation"
+        )
+
+
 def validate_completion(document: Any, path: str = "completion") -> None:
     value = _object(document, path)
     schema_version = value.get("schemaVersion")
@@ -6371,7 +6863,7 @@ def validate_completion(document: Any, path: str = "completion") -> None:
             "review",
         }
         | ({"authorityTransition"} if schema_version == 2 else set()),
-        optional={"improvements", "planDecision", "remoteVerification"},
+        optional={"improvements", "planDecision", "remoteVerification", "reviewLoop"},
         path=path,
     )
     change_id = _string(value["changeId"], f"{path}.changeId", max_length=64)
@@ -6454,6 +6946,19 @@ def validate_completion(document: Any, path: str = "completion") -> None:
             reference = decision[field]
             if reference is not None:
                 _artifact_reference(reference, f"{path}.planDecision.{field}")
+    review_loop = value.get("reviewLoop")
+    if review_loop is not None:
+        validate_review_loop(review_loop, f"{path}.reviewLoop")
+        unresolved = [
+            item["id"]
+            for item in review_loop["escalations"]
+            if item["status"] != "resolved"
+        ]
+        if unresolved:
+            raise ContractError(
+                f"{path}.reviewLoop: completion contains unresolved escalations: "
+                + ", ".join(unresolved)
+            )
     improvements = value.get("improvements", [])
     if not isinstance(improvements, list) or len(improvements) > MAX_CONTRACT_ITEMS:
         raise ContractError(

@@ -97,6 +97,14 @@ with the same reusable class and `activeChangeId` as the selected lifecycle. Rel
 PR materialization resolves only entries whose active change is in the exact release
 change set.
 
+Repeated friction is also counted at the lifecycle boundary. Three
+changes-requested final-review cycles in one prospective decision window are one
+owner-escalation class even when findings are renamed, split, moved, or assigned new
+local invariant ids. Core blocks the next implementation cycle and preserves the
+complete chain. For a finite-boundary contract, an observed failure outside every
+declared row is a contract gap on its first review and requires a superseding change;
+it cannot be closed through another local-fix label.
+
 ## Release and adoption
 
 Producer completion, producer release, consumer adoption, and consumer reproduction

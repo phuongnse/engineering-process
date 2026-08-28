@@ -1,6 +1,20 @@
 {
   "entries": [
     {
+      "activeChangeId": "bound-review-correction-loops",
+      "id": "bounded-review-correction-loop",
+      "lastResolution": null,
+      "publicSurfaces": [
+        "change-contract",
+        "evidence",
+        "lifecycle",
+        "review",
+        "skills"
+      ],
+      "reusableClass": "deterministic-enforcement",
+      "status": "active"
+    },
+    {
       "activeChangeId": null,
       "id": "deterministic-cross-platform-test-environment",
       "lastResolution": {
