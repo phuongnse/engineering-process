@@ -1,53 +1,87 @@
 {
-  "schemaVersion": 3,
-  "previousVersion": "0.7.0",
-  "version": "0.8.0",
+  "schemaVersion": 4,
+  "previousVersion": "0.8.0",
+  "version": "0.9.0",
   "classification": "minor",
   "compatibility": "incompatible",
-  "schemaImpact": "additive",
-  "migration": "govern-process-adoption-proposals: Release and self-adopt this capability before a separately reviewed consumer opt-in or Renovate operations activation. Install the managed PyYAML 6.0.3 runtime dependency rather than a custom YAML scanner. Consumers choosing schema 3 must pin an immutable protected-base verifier and producer repository; independently supply a clean tagged producer checkout, release artifacts, receipt, and attestation; require exact target synchronization; keep automerge false and consumerOwnerMergeRequired true; manually merge the reviewed PR as the terminal cutover; and run no post-merge synchronization. Existing schema-1/schema-2 dependency proposal and agent-host completed-publication routes retain their released behavior.",
+  "schemaImpact": "breaking",
+  "migration": "authority-transition-protocol: Existing lifecycle and evidence documents keep their released meaning. New authority transitions use the transition-only schema majors and the project-owned protected-transition policy; ordinary changes and historical readers remain unchanged.; bounded-review-correction-loops: Historical change, review, lifecycle, completion and receipt documents retain their released meaning. After adoption, decision windows start prospectively; a third changes-requested review requires owner resolution before another implementation cycle. New finite-boundary changes use change schema 4 and bind every finding as covered or contract-gap. Contract gaps remain open and require a superseding change rather than in-place contract mutation.",
   "identity": {
     "package": "engineering-process",
     "distribution": "engineering_process",
-    "tag": "v0.8.0",
-    "releaseName": "v0.8.0",
+    "tag": "v0.9.0",
+    "releaseName": "v0.9.0",
     "runtimeVersion": {
       "path": "engineering_process/__init__.py",
       "variable": "VERSION"
     },
     "artifacts": [
-      "engineering_process-0.8.0-py3-none-any.whl",
-      "engineering_process-0.8.0.tar.gz"
+      "engineering_process-0.9.0-py3-none-any.whl",
+      "engineering_process-0.9.0.tar.gz"
     ],
-    "receiptAsset": "engineering-process-v0.8.0-evidence.json",
+    "receiptAsset": "engineering-process-v0.9.0-evidence.json",
     "authorizationAsset": null
   },
   "provenance": {
-    "mode": "governed",
-    "statement": "The public N-1 lifecycle receipt and reviewed Release PR authorize this release.",
+    "mode": "authority-transition-bootstrap",
+    "statement": "Public 0.7.0 and the reviewed source-owned transition verifier authorize this one-time transition release.",
     "lifecycleReceipt": {
-      "asset": "engineering-process-v0.8.0-evidence.json",
+      "asset": "engineering-process-v0.9.0-evidence.json",
       "project": "engineering-process",
-      "changeId": "release-0-8-0",
+      "changeId": "release-0-9-0",
       "cycle": 1
+    },
+    "authorityTransition": {
+      "sourceAuthority": {
+        "version": "0.7.0",
+        "digest": "sha256:24f2502506d1445d7c71096f39bdf72dee8c36d49cc606df059fb44ef6885ae4"
+      },
+      "skippedRelease": {
+        "version": "0.8.0",
+        "tag": "v0.8.0"
+      },
+      "bootstrapChangeId": "authority-transition-protocol"
     }
   },
   "changes": [
     {
-      "id": "govern-process-adoption-proposals",
+      "id": "authority-transition-protocol",
       "type": "breaking",
       "surfaces": [
-        "automation-proposal",
+        "adoption",
         "cli",
-        "process-adoption",
+        "evidence",
+        "lifecycle",
         "publication",
-        "runtime-dependencies",
+        "remote-verification",
         "schemas",
-        "skills",
-        "syncing",
-        "versioning"
+        "skills"
       ],
-      "rationale": "Add a first-class Renovate process-adoption proposal whose complete candidate is protected-base verified and permanently consumer-owner-merge-only, while preserving standing auto-merge for agent-host PRs created after lifecycle completion and retaining automation-proposal schemas 1 and 2 unchanged."
+      "rationale": "Separate governing lifecycle authority from candidate materialization, add a source-owned protected transition verifier, and make trust-root cutovers explicit and fail closed."
+    },
+    {
+      "id": "bounded-review-correction-loops",
+      "type": "breaking",
+      "surfaces": [
+        "change-contract",
+        "completion",
+        "evidence",
+        "lifecycle",
+        "recommendation",
+        "review",
+        "schemas",
+        "skills"
+      ],
+      "rationale": "Stop autonomous review correction after three changes-requested cycles, require the existing reviewed owner-decision chain before resuming, and give new high-risk changes a finite fault-row review boundary."
+    },
+    {
+      "id": "release-plan-dispatch-payload",
+      "type": "fix",
+      "surfaces": [
+        "publication",
+        "workflow"
+      ],
+      "rationale": "Keep the authored Release-plan handoff within GitHub's repository-dispatch property limit while preserving exact planned run and attempt identity in a protected-base-controlled adapter."
     }
   ]
 }
