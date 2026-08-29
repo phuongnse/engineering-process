@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 from pathlib import Path
+import secrets
 import signal
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from .supervision import CleanupOutcome, NATURAL_DRAIN_GRACE_MILLISECONDS
 
 
 PR_SET_CHILD_SUBREAPER = 36
+RUN_ID_ENVIRONMENT_VARIABLE = "ENGINEERING_PROCESS_RUN_ID"
 _SUBREAPER_ENABLED = False
 
 
@@ -74,6 +76,16 @@ def _descendants(root: int, table: Mapping[int, int]) -> set[int]:
         found.update(children)
         frontier = children
     return found
+
+
+def _has_run_id(pid: int, run_id: str) -> bool:
+    if not sys.platform.startswith("linux"):
+        return False
+    marker = f"{RUN_ID_ENVIRONMENT_VARIABLE}={run_id}".encode("utf-8")
+    try:
+        return marker in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return False
 
 
 def _pid_alive(pid: int) -> bool:
@@ -143,6 +155,7 @@ def _terminate_group(process_group: int, grace_seconds: float) -> CleanupOutcome
 class PosixProcessSupervisor:
     def __init__(self) -> None:
         self._known_descendants: dict[int, set[int]] = {}
+        self._run_ids: dict[int, str] = {}
 
     def resolve_application(
         self,
@@ -190,6 +203,9 @@ class PosixProcessSupervisor:
             working_directory=working_directory,
             environment=environment,
         )
+        run_id = secrets.token_hex(32)
+        child_environment = dict(environment)
+        child_environment[RUN_ID_ENVIRONMENT_VARIABLE] = run_id
         process = subprocess.Popen(
             command,
             executable=application,
@@ -198,10 +214,11 @@ class PosixProcessSupervisor:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=False,
-            env=dict(environment),
+            env=child_environment,
             start_new_session=True,
         )
         self._known_descendants[process.pid] = set()
+        self._run_ids[process.pid] = run_id
         self.observe(process)
         return process
 
@@ -209,11 +226,16 @@ class PosixProcessSupervisor:
         table = _process_table()
         known = self._known_descendants.setdefault(process.pid, set())
         known.update(_descendants(process.pid, table))
-        if sys.platform.startswith("linux"):
+        run_id = self._run_ids.get(process.pid)
+        if sys.platform.startswith("linux") and run_id is not None:
             adopted = {
                 pid
                 for pid, parent in table.items()
-                if parent == os.getpid() and pid != process.pid
+                if (
+                    parent == os.getpid()
+                    and pid != process.pid
+                    and _has_run_id(pid, run_id)
+                )
             }
             known.update(adopted)
 
@@ -224,6 +246,7 @@ class PosixProcessSupervisor:
     ) -> CleanupOutcome:
         self.observe(process)
         candidates = self._known_descendants.pop(process.pid, set())
+        self._run_ids.pop(process.pid, None)
         live = {pid for pid in candidates if _pid_alive(pid)}
         if not live:
             return CleanupOutcome(bounded=True)

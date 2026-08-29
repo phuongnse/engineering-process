@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import tempfile
@@ -35,6 +35,27 @@ LEGACY_SKILL_FILES = (
     Path(".engineering-process.json"),
     Path("references/execution.md"),
 )
+
+
+def _managed_inventory_path(raw: str, skills: set[str]) -> Path:
+    relative = PurePosixPath(raw)
+    if relative.as_posix() != raw:
+        raise ProcessError(f"process lock contains a non-canonical managed path: {raw}")
+    if raw in {
+        ".process/adopt-process.py",
+        ".process/adopt-process-windows-job.py",
+    }:
+        return Path(*relative.parts)
+    parts = relative.parts
+    if (
+        len(parts) < 4
+        or parts[:2] != (".agents", "skills")
+        or parts[2] not in skills
+    ):
+        raise ProcessError(
+            f"process lock managed path is outside its owned namespaces: {raw}"
+        )
+    return Path(*parts)
 
 
 def _requirements(
@@ -148,7 +169,10 @@ def _expected_files(
         ).encode("utf-8")
 
     if old_lock and old_lock["schemaVersion"] == 2:
-        old_managed = {Path(path) for path in old_lock["managedFiles"]}
+        old_managed = {
+            _managed_inventory_path(path, old_skills)
+            for path in old_lock["managedFiles"]
+        }
     else:
         old_managed = {
             Path(".agents/skills") / name / relative

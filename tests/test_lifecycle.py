@@ -317,6 +317,50 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("implementing", state["phase"])
         self.assertEqual({}, state["verification"])
 
+    def test_correction_review_requires_the_original_reviewer_identity(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, self.review_document("changes-requested"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        begin_implementation(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="implementer",
+            context_id="implementation-context-2",
+            kind="agent",
+        )
+        self.verify_all()
+
+        with self.assertRaisesRegex(ProcessError, "original independent reviewer"):
+            start_review(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="replacement-reviewer",
+                context_id="replacement-context",
+                kind="agent",
+            )
+
+        state = start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        self.assertEqual("review-pending", state["phase"])
+
     def test_third_changes_requested_review_blocks_without_bypassing_review(self) -> None:
         self.begin()
         review_path = self.root / ".process" / "runs" / "review-input.json"

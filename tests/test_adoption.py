@@ -4,7 +4,9 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 import sys
@@ -205,6 +207,31 @@ class AdoptionTests(unittest.TestCase):
             apply_adoption(self.root, PROCESS_ROOT, self.requirements)
         self.assertEqual("consumer skill\n", collision.read_text(encoding="utf-8"))
 
+    def test_v2_lock_cannot_claim_a_consumer_owned_path(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text("consumer documentation\n", encoding="utf-8")
+        write_json(
+            self.root / ".process" / "process.lock",
+            {
+                "schemaVersion": 2,
+                "process": {
+                    "package": "engineering-process",
+                    "version": "0.4.0",
+                    "digest": "sha256:" + "0" * 64,
+                },
+                "requirementsDigest": "sha256:" + "1" * 64,
+                "skills": ["old-skill", "run-change"],
+                "managedFiles": ["README.md"],
+            },
+        )
+
+        with self.assertRaisesRegex(ProcessError, "managedFiles"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+
+        self.assertEqual(
+            "consumer documentation\n", readme.read_text(encoding="utf-8")
+        )
+
     def test_private_snapshot_must_match_checkout_lock(self) -> None:
         snapshot = self.root / "requirements" / "snapshot.txt"
         snapshot.write_text(self.requirements.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
@@ -283,6 +310,44 @@ class AdoptionTests(unittest.TestCase):
                 [sys.executable, "-c", "print('x' * 2000000)"],
                 cwd=self.root,
             )
+
+    def test_managed_runner_stops_immediately_when_output_limit_is_exceeded(self) -> None:
+        module = load_managed_adopter("managed_adopter_early_output")
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "output exceeded"):
+            module._run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, time; "
+                    "sys.stdout.write('x' * 2000000); sys.stdout.flush(); "
+                    "time.sleep(5)",
+                ],
+                cwd=self.root,
+            )
+        self.assertLess(time.monotonic() - started, 2)
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"), "Linux subreaper ownership assertion"
+    )
+    def test_managed_runner_does_not_terminate_an_unrelated_child(self) -> None:
+        module = load_managed_adopter("managed_adopter_owned_children")
+        unrelated = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            module._run(
+                [sys.executable, "-c", "raise SystemExit(0)"], cwd=self.root
+            )
+            self.assertIsNone(unrelated.poll())
+        finally:
+            if unrelated.poll() is None:
+                unrelated.terminate()
+            unrelated.wait(timeout=3)
 
     def test_managed_runner_does_not_surface_raw_stderr(self) -> None:
         module = load_managed_adopter("managed_adopter_secret")

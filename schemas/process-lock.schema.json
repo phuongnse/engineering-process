@@ -28,7 +28,24 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 512,
-        "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\/$).+$"
+        "allOf": [
+          {
+            "pattern": "^(?!/)(?!.*\\\\)(?!.*[\\u0000-\\u001f\\u007f])(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\/$).+$"
+          },
+          {
+            "oneOf": [
+              {
+                "enum": [
+                  ".process/adopt-process.py",
+                  ".process/adopt-process-windows-job.py"
+                ]
+              },
+              {
+                "pattern": "^\\.agents/skills/[a-z0-9]+(?:-[a-z0-9]+)*/.+$"
+              }
+            ]
+          }
+        ]
       }
     },
     "skills": {

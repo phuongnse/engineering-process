@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import signal
 import stat
 import subprocess
@@ -30,6 +31,7 @@ MAX_REQUIREMENTS_BYTES = 1_000_000
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 PathIdentity = tuple[int, int, int, int]
 PR_SET_CHILD_SUBREAPER = 36
+RUN_ID_ENVIRONMENT_VARIABLE = "ENGINEERING_PROCESS_ADOPTION_RUN_ID"
 
 
 def _enable_subreaper() -> None:
@@ -43,7 +45,16 @@ def _enable_subreaper() -> None:
         )
 
 
-def _adopted_children() -> set[int]:
+def _process_has_run_id(pid: int, run_id: str) -> bool:
+    try:
+        environment = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return False
+    marker = f"{RUN_ID_ENVIRONMENT_VARIABLE}={run_id}".encode("utf-8")
+    return marker in environment.split(b"\0")
+
+
+def _adopted_children(run_id: str, *, exclude_pid: int) -> set[int]:
     if not sys.platform.startswith("linux"):
         return set()
     children: set[int] = set()
@@ -55,16 +66,21 @@ def _adopted_children() -> set[int]:
                 encoding="utf-8", errors="replace"
             ).splitlines():
                 if line.startswith("PPid:"):
-                    if int(line.split()[1]) == os.getpid():
-                        children.add(int(entry.name))
+                    pid = int(entry.name)
+                    if (
+                        int(line.split()[1]) == os.getpid()
+                        and pid != exclude_pid
+                        and _process_has_run_id(pid, run_id)
+                    ):
+                        children.add(pid)
                     break
         except (OSError, ValueError, IndexError):
             continue
     return children
 
 
-def _terminate_adopted_children() -> bool:
-    children = _adopted_children()
+def _terminate_adopted_children(run_id: str, *, exclude_pid: int) -> bool:
+    children = _adopted_children(run_id, exclude_pid=exclude_pid)
     if not children:
         return False
     for child in children:
@@ -73,14 +89,19 @@ def _terminate_adopted_children() -> bool:
         except ProcessLookupError:
             pass
     deadline = time.monotonic() + TERMINATION_TIMEOUT_SECONDS
-    while time.monotonic() < deadline and _adopted_children():
-        for child in list(children):
+    remaining = set(children)
+    while time.monotonic() < deadline and remaining:
+        for child in list(remaining):
             try:
-                os.waitpid(child, os.WNOHANG)
-            except (ChildProcessError, OSError):
-                pass
+                reaped, _ = os.waitpid(child, os.WNOHANG)
+            except ChildProcessError:
+                reaped = child if not Path(f"/proc/{child}").exists() else 0
+            except OSError:
+                reaped = 0
+            if reaped == child or not Path(f"/proc/{child}").exists():
+                remaining.discard(child)
         time.sleep(0.02)
-    if _adopted_children():
+    if remaining:
         raise RuntimeError("detached descendants survived bounded cleanup")
     return True
 
@@ -184,6 +205,23 @@ class Capture:
         return value
 
 
+class OutputBudget:
+    def __init__(self) -> None:
+        self.total = 0
+        self.exceeded = threading.Event()
+        self.lock = threading.Lock()
+
+    def add(self, capture: Capture, chunk: bytes) -> None:
+        with self.lock:
+            capture.add(chunk)
+            self.total += len(chunk)
+            if (
+                capture.count > COMMAND_OUTPUT_STREAM_LIMIT
+                or self.total > COMMAND_OUTPUT_TOTAL_LIMIT
+            ):
+                self.exceeded.set()
+
+
 @dataclass(frozen=True)
 class WindowsCleanup:
     descendants_found: bool = False
@@ -231,10 +269,10 @@ def _decode_windows_status(content: bytes) -> WindowsCleanup:
     return WindowsCleanup(descendants_found=document["descendantsFound"])
 
 
-def _drain(stream: object, capture: Capture) -> None:
+def _drain(stream: object, capture: Capture, budget: OutputBudget) -> None:
     try:
         while chunk := stream.read(READ_CHUNK_BYTES):
-            capture.add(chunk)
+            budget.add(capture, chunk)
     finally:
         stream.close()
 
@@ -635,9 +673,12 @@ def _require_unchanged(
 
 def _run(argv: list[str], *, cwd: Path) -> str:
     _enable_subreaper()
+    run_id = secrets.token_hex(32)
+    environment = _child_environment()
+    environment[RUN_ID_ENVIRONMENT_VARIABLE] = run_id
     options: dict[str, object] = {
         "cwd": cwd,
-        "env": _child_environment(),
+        "env": environment,
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
@@ -645,22 +686,33 @@ def _run(argv: list[str], *, cwd: Path) -> str:
     process, status_reader = _spawn_command(argv, cwd=cwd, options=options)
     stdout = Capture()
     stderr = Capture()
+    output_budget = OutputBudget()
     stdout_thread = threading.Thread(
-        target=_drain, args=(process.stdout, stdout), daemon=True
+        target=_drain, args=(process.stdout, stdout, output_budget), daemon=True
     )
     stderr_thread = threading.Thread(
-        target=_drain, args=(process.stderr, stderr), daemon=True
+        target=_drain, args=(process.stderr, stderr, output_budget), daemon=True
     )
     stdout_thread.start()
     stderr_thread.start()
     forced = False
     try:
-        return_code = process.wait(timeout=COMMAND_TIMEOUT_SECONDS)
+        deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, COMMAND_TIMEOUT_SECONDS)
+            if output_budget.exceeded.wait(timeout=min(0.01, remaining)):
+                raise RuntimeError(
+                    "command output exceeded the fail-closed byte budget"
+                )
+        return_code = process.returncode
+        assert return_code is not None
     except subprocess.TimeoutExpired as error:
         forced = True
         try:
             _terminate_tree(process)
-            _terminate_adopted_children()
+            _terminate_adopted_children(run_id, exclude_pid=process.pid)
         finally:
             stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
             stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
@@ -674,7 +726,7 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         forced = True
         try:
             _terminate_tree(process)
-            _terminate_adopted_children()
+            _terminate_adopted_children(run_id, exclude_pid=process.pid)
         finally:
             stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
             stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
@@ -684,7 +736,10 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         raise
     try:
         descendants_found = _terminate_tree(process)
-        descendants_found = _terminate_adopted_children() or descendants_found
+        descendants_found = (
+            _terminate_adopted_children(run_id, exclude_pid=process.pid)
+            or descendants_found
+        )
         if status_reader is not None:
             cleanup = _read_windows_status(status_reader, forced=forced)
             status_reader = None

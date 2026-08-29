@@ -308,6 +308,12 @@ def start_review(
     state = _load_state(project_root, process_root, change_id)
     _require_phase(state, "verified")
     reviewer = _actor(actor_id, context_id, kind)
+    if state["reviewHistory"]:
+        original_reviewer = state["reviewHistory"][0]["document"]["reviewer"]
+        if reviewer != original_reviewer:
+            raise ProcessError(
+                "correction review must use the original independent reviewer identity"
+            )
     implementers = [
         item["actor"]
         for item in state["implementations"]

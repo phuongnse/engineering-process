@@ -15,7 +15,7 @@ The distribution has four live parts:
 
 1. Eight skills under process_assets/skills, all reachable from run-change.
 2. One processctl state machine under engineering_process/lifecycle.py.
-3. Ten JSON Schemas that are loaded directly by the runtime.
+3. Eleven JSON Schemas that are loaded directly by the runtime.
 4. One adoption transaction that synchronizes managed skills and configuration from
    an exact hash-locked package.
 

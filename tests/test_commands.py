@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -62,6 +63,34 @@ class CommandTests(unittest.TestCase):
             )
         self.assertEqual("failed", report["status"])
         self.assertTrue(report["timedOut"])
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"), "Linux subreaper ownership assertion"
+    )
+    def test_unrelated_child_is_not_claimed_by_supervision(self) -> None:
+        unrelated = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                report = run_check(
+                    Path(directory),
+                    {
+                        "id": "owned-command",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    },
+                )
+            self.assertEqual("passed", report["status"])
+            self.assertIsNone(unrelated.poll())
+        finally:
+            if unrelated.poll() is None:
+                unrelated.terminate()
+            unrelated.wait(timeout=3)
 
     @unittest.skipIf(os.name == "nt", "POSIX process-group assertion")
     def test_surviving_descendant_is_terminated_and_fails(self) -> None:
