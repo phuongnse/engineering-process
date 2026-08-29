@@ -26,6 +26,11 @@ change while avoiding unrelated broad verification.
    advance the lifecycle.
    Do not substitute a different command, runtime, trust boundary, or environment
    when a required check is blocked.
+   A registered authority transition supplies the same explicit `--candidate-root`
+   to local verification, remote request and remote ingest. The CLI and lifecycle
+   state stay in the synchronized N-1 control workspace; transition request and
+   candidate evidence must already be ingested. Never run the target CLI as the
+   lifecycle authority merely because the candidate lock names it.
 4. Treat a process-owned command as successful only when its execution boundary
    passes and its complete admitted stdout and stderr contain no classified warning
    or error diagnostic. Exit zero does not override diagnostic failure. Correct the
