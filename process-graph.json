@@ -1,151 +1,84 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "entrySkill": "run-change",
+  "specializations": {
+    "processChange": "improve-process"
+  },
   "states": [
     {
       "id": "unregistered",
-      "ownerSkill": "define-change-contract",
-      "actor": "automation",
-      "commands": ["change start", "contract validate"],
+      "ownerSkill": "start-change",
+      "commands": ["change start"],
       "transitions": [
-        {"result": "success", "nextState": "specified", "nextSkill": "plan-change"},
-        {"result": "failure", "nextState": "unregistered", "nextSkill": "define-change-contract"}
+        {"result": "success", "nextState": "specified", "nextSkill": "plan-change"}
       ]
     },
     {
       "id": "specified",
       "ownerSkill": "plan-change",
-      "actor": "automation",
-      "commands": ["change plan", "contract validate"],
+      "commands": ["change plan"],
       "transitions": [
-        {"result": "success", "nextState": "planned", "nextSkill": "implement-change"},
-        {"result": "failure", "nextState": "specified", "nextSkill": "plan-change"}
+        {"result": "success", "nextState": "planned", "nextSkill": "implement-change"}
       ]
     },
     {
       "id": "planned",
       "ownerSkill": "implement-change",
-      "actor": "automation",
-      "commands": [
-        "change decision resolve",
-        "change decision start",
-        "change decision submit",
-        "change implement"
-      ],
+      "commands": ["change implement"],
       "transitions": [
-        {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"},
-        {"result": "failure", "nextState": "planned", "nextSkill": "implement-change"}
+        {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"}
       ]
     },
     {
       "id": "implementing",
       "ownerSkill": "verify-change",
-      "actor": "automation",
-      "commands": ["authority-transition candidate-evidence", "change implement", "change remote ingest", "change remote request", "change transition ingest", "change transition register", "change verify"],
+      "commands": ["change implement", "change verify"],
       "transitions": [
         {"result": "profile-passed", "nextState": "implementing", "nextSkill": "verify-change"},
-        {"result": "all-required-passed", "nextState": "verified", "nextSkill": "review-change"},
-        {"result": "failure", "nextState": "improvement-required", "nextSkill": "evolve-process"},
-        {"result": "implementation-continued", "nextState": "implementing", "nextSkill": "verify-change"}
-      ]
-    },
-    {
-      "id": "improvement-required",
-      "ownerSkill": "evolve-process",
-      "actor": "automation",
-      "commands": ["improvement classify", "improvement status"],
-      "transitions": [
-        {"result": "local-classified", "nextState": "implementing", "nextSkill": "implement-change"},
-        {"result": "review-classified", "nextState": "changes-requested", "nextSkill": "implement-change"},
-        {"result": "shared-classified", "nextState": "improvement-pending", "nextSkill": "cross-repo-change"},
-        {"result": "blocked-classified", "nextState": "improvement-required", "nextSkill": "evolve-process"},
-        {"result": "failure", "nextState": "improvement-required", "nextSkill": "evolve-process"}
-      ]
-    },
-    {
-      "id": "improvement-pending",
-      "ownerSkill": "cross-repo-change",
-      "actor": "automation",
-      "commands": ["improvement attach", "improvement export-signal", "improvement status"],
-      "transitions": [
-        {"result": "chain-closed", "nextState": "implementing", "nextSkill": "verify-change"},
-        {"result": "review-chain-closed", "nextState": "changes-requested", "nextSkill": "implement-change"},
-        {"result": "producer-rejected", "nextState": "improvement-required", "nextSkill": "evolve-process"},
-        {"result": "failure", "nextState": "improvement-pending", "nextSkill": "cross-repo-change"}
+        {"result": "all-passed", "nextState": "verified", "nextSkill": "review-change"}
       ]
     },
     {
       "id": "verified",
       "ownerSkill": "review-change",
-      "actor": "automation",
-      "commands": [
-        "change decision resolve",
-        "change decision start",
-        "change decision submit",
-        "change review start"
-      ],
+      "commands": ["change implement", "change review start"],
       "transitions": [
-        {"result": "reviewer-assigned", "nextState": "review-pending", "nextSkill": "review-change"},
-        {"result": "failure", "nextState": "verified", "nextSkill": "review-change"},
+        {"result": "assigned", "nextState": "review-pending", "nextSkill": "review-change"},
         {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
       ]
     },
     {
       "id": "review-pending",
       "ownerSkill": "review-change",
-      "actor": "automation",
-      "commands": ["change review submit", "contract validate"],
+      "commands": ["change implement", "change review submit"],
       "transitions": [
         {"result": "approved", "nextState": "approved", "nextSkill": "finish-change"},
-        {"result": "changes-requested", "nextState": "improvement-required", "nextSkill": "evolve-process"},
-        {"result": "failure", "nextState": "review-pending", "nextSkill": "review-change"}
+        {"result": "changes-requested", "nextState": "changes-requested", "nextSkill": "implement-change"},
+        {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
       ]
     },
     {
       "id": "changes-requested",
       "ownerSkill": "implement-change",
-      "actor": "automation",
-      "commands": [
-        "change decision resolve",
-        "change decision start",
-        "change decision submit",
-        "change implement"
-      ],
+      "commands": ["change implement"],
       "transitions": [
-        {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"},
-        {"result": "failure", "nextState": "changes-requested", "nextSkill": "implement-change"}
+        {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"}
       ]
     },
     {
       "id": "approved",
       "ownerSkill": "finish-change",
-      "actor": "automation",
-      "commands": ["change finish"],
+      "commands": ["change finish", "change implement"],
       "transitions": [
-        {"result": "success", "nextState": "completed", "nextSkill": "publish-change"},
-        {"result": "failure", "nextState": "approved", "nextSkill": "finish-change"}
+        {"result": "success", "nextState": null, "nextSkill": null},
+        {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
       ]
     },
     {
-      "id": "completed",
-      "ownerSkill": "publish-change",
-      "actor": "automation",
-      "commands": ["authority-transition bootstrap consume", "authority-transition bootstrap validate", "evidence encode-completion", "improvement attach", "improvement status", "publication validate-evidence-source", "publication validate-proposal-completion", "publication validate-range", "publication validate-source"],
-      "transitions": [
-        {"result": "published", "nextState": "awaiting-merge", "nextSkill": "publish-change"},
-        {"result": "failure", "nextState": "completed", "nextSkill": "evolve-process"}
-      ]
-    },
-    {
-      "id": "awaiting-merge",
-      "ownerSkill": "publish-change",
-      "actor": "automation",
+      "id": "blocked",
+      "ownerSkill": "run-change",
       "commands": [],
-      "transitions": [
-        {"result": "merge-blocked", "nextState": "awaiting-merge", "nextSkill": "publish-change"},
-        {"result": "escalation-required", "nextState": "awaiting-merge", "nextSkill": "publish-change"},
-        {"result": "merged", "nextState": null, "nextSkill": null}
-      ]
+      "transitions": []
     }
   ]
 }

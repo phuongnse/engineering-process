@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/run.schema.json",
+  "title": "Lifecycle run state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "changeId", "phase", "cycle", "contract", "plan", "implementations", "currentImplementation", "verification", "reviewAssignment", "review", "reviewHistory", "receipt", "history"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "changeId": {"$ref": "#/$defs/id"},
+    "phase": {"enum": ["specified", "planned", "implementing", "verified", "review-pending", "approved", "changes-requested", "completed", "blocked"]},
+    "cycle": {"type": "integer", "minimum": 0},
+    "contract": {"$ref": "#/$defs/boundDocument"},
+    "plan": {"oneOf": [{"$ref": "#/$defs/boundDocument"}, {"type": "null"}]},
+    "implementations": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/implementation"}
+    },
+    "currentImplementation": {"oneOf": [{"$ref": "#/$defs/implementation"}, {"type": "null"}]},
+    "verification": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"$ref": "#/$defs/verificationReport"}
+    },
+    "reviewAssignment": {"oneOf": [{"$ref": "#/$defs/reviewAssignment"}, {"type": "null"}]},
+    "review": {"oneOf": [{"$ref": "#/$defs/boundDocument"}, {"type": "null"}]},
+    "reviewHistory": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cycle", "digest", "document"],
+        "properties": {
+          "cycle": {"type": "integer", "minimum": 1},
+          "digest": {"$ref": "#/$defs/digest"},
+          "document": {"type": "object"}
+        }
+      }
+    },
+    "receipt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "digest"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1, "maxLength": 512},
+            "digest": {"$ref": "#/$defs/digest"}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
+    "history": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event", "at", "actor", "details"],
+        "properties": {
+          "event": {"$ref": "#/$defs/id"},
+          "at": {"type": "string", "format": "date-time"},
+          "actor": {"$ref": "#/$defs/actor"},
+          "details": {"type": "object"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+    },
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorId", "contextId", "kind"],
+      "properties": {
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "kind": {"enum": ["agent", "human"]}
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "fingerprint", "fileCount", "byteCount"],
+      "properties": {
+        "head": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+        "fingerprint": {"$ref": "#/$defs/digest"},
+        "fileCount": {"type": "integer", "minimum": 0},
+        "byteCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "boundDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "document"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/digest"},
+        "document": {"type": "object"}
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cycle", "actor", "startedAt"],
+      "properties": {
+        "cycle": {"type": "integer", "minimum": 1},
+        "actor": {"$ref": "#/$defs/actor"},
+        "startedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes", "sha256", "truncated"],
+      "properties": {
+        "bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "truncated": {"type": "boolean"}
+      }
+    },
+    "checkReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "exitCode", "timedOut", "outputExceeded", "descendantsTerminated", "streamFailed", "durationMs", "stdout", "stderr"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["passed", "failed"]},
+        "exitCode": {"type": "integer"},
+        "timedOut": {"type": "boolean"},
+        "outputExceeded": {"type": "boolean"},
+        "descendantsTerminated": {"type": "boolean"},
+        "streamFailed": {"type": "boolean"},
+        "durationMs": {"type": "integer", "minimum": 0},
+        "stdout": {"$ref": "#/$defs/stream"},
+        "stderr": {"$ref": "#/$defs/stream"}
+      }
+    },
+    "verificationReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "status", "checks", "checkpoint", "recordedAt"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["passed", "failed"]},
+        "checks": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/checkReport"}
+        },
+        "checkpoint": {"$ref": "#/$defs/checkpoint"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    },
+    "reviewAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer", "checkpoint", "startedAt"],
+      "properties": {
+        "reviewer": {"$ref": "#/$defs/actor"},
+        "checkpoint": {"$ref": "#/$defs/checkpoint"},
+        "startedAt": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

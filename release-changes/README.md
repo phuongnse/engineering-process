@@ -1,12 +1,14 @@
-# Release change fragments
+# Release changes
 
-Every feature or fix with distributable public impact adds one `<id>.json` fragment
-validated by `schemas/release-change.schema.json`. The Release PR automation consumes
-all fragments from `main`, derives the next SemVer from their highest-impact type,
-copies the ordered records into `release.json`, and deletes the consumed fragments in
-the generated Release PR.
+Add one JSON file per public change:
 
-Use `fix` for backward-compatible corrections, `capability` for backward-compatible
-public additions, and `breaking` for incompatible behavior. Breaking changes require
-migration guidance. Keep `surfaces` sorted and never use a fragment as a progress
-counter or release-date marker.
+    {
+      "schemaVersion": 1,
+      "id": "short-change-id",
+      "type": "fix",
+      "summary": "Observable release note.",
+      "source": "issue-or-change-reference"
+    }
+
+Allowed types are fix, capability, and breaking. The Prepare release PR workflow
+validates and consumes all fragments.

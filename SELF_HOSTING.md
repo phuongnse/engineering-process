@@ -1,151 +1,30 @@
-# Self-hosting engineering-process
+# Self-hosting
 
-This repository is both the producer of the engineering-process distribution and a
-consumer of its lifecycle. It uses a staged trust chain so code under development
-cannot approve itself.
+This repository is both producer and consumer, using the same files as any other
+consumer:
 
-## Trust chain
+- requirements/process.in and requirements/process.txt pin the latest adopted public
+  package;
+- .process/process.lock binds that distribution;
+- .agents/skills contains its managed skills;
+- .github/renovate.json opts into package updates.
 
-Release N governs the specification, plan, implementation registration, verification,
-independent review, finding loop, and completion of release N+1. The lifecycle CLI is
-installed from the exact public wheel pinned by `requirements/process.txt` and
-`.process/process.lock`. Producer tests import the checkout under test, but lifecycle
-state transitions are executed by the installed N distribution.
+Source under process_assets/skills and engineering_process is the next candidate. It
+is tested directly but does not overwrite the managed consumer copy during ordinary
+development.
 
-The two skill trees have distinct ownership:
+When N+1 is published, the release workflow triggers renovate-ops. Renovate updates
+the exact package pin and hash lock, then the existing .process/adopt-process.py
+installs N+1 in an isolated environment. N+1 synchronizes its skills, adopter, lock,
+AGENTS block, and project-schema migration into the branch. Repeating the transaction
+must produce no diff.
 
-- `.agents/skills` is the managed N copy used by agents working in this repository.
-- `process_assets/skills` is the editable N+1 source packaged for future consumers.
+That branch is an ordinary dependency pull request. It runs normal CI and requires a
+reviewer independent of implementation before merge. Merge activates N+1 for later
+work. There is no authority-transition protocol, special bootstrap receipt, skipped
+release, or target-authored lifecycle proof.
 
-Changing the source tree cannot change the instructions or enforcement governing the
-current lifecycle cycle. After N+1 is published and its public hashes are verified, a
-separate change advances this repository's lock and managed tree to N+1.
-If N+1 activates project-owned capability configuration, that same self-adoption
-change carries the target-version migration and updates `.process/project.json`
-inside the adoption transaction. N+1 governs only changes opened after the complete
-adoption checkpoint is reviewed and merged.
-
-## Authority transitions
-
-An adoption that changes this producer's own process lock uses separate control and
-candidate workspaces. The control workspace retains the public N-1 lock, managed
-skills, project instructions, lifecycle state, and source authority for the entire
-change. N-1 registers the transition before candidate mutation. The candidate
-workspace begins at that exact control checkpoint; installed N+1 may synchronize it
-and emit bounded candidate evidence but cannot verify, review, finish, publish, or
-merge the lifecycle.
-
-N-1 lifecycle commands accept an external candidate only when the current state is
-lifecycle schema 3, the request and candidate evidence are digest-bound, and the
-candidate root remains the same clean commit, tree and workspace fingerprint. Missing
-candidate roots, ordinary commands with target locks, arbitrary process roots, stale
-evidence, changed path sets, partial assets, inferred migrations and target-authored
-lifecycle evidence all fail closed. Completion exports receipt schema 2 with both
-authority identities and both transition artifacts. Protected merge alone activates
-N+1; no post-merge synchronization follows.
-The target repository is not inferred from mutable local Git configuration. The
-project adapter resolves repository, immutable release, tag and asset identities from
-the existing provider API, emits deterministic bounded repository proof, and the
-request pre-binds its canonical digest. N-1 independently relates that proof to the
-registered tag, commit and artifact bytes; provider transport gains no decision
-authority.
-Permanent registration does not accept a proof path from its caller. N-1 generates a
-fresh nonce, verifies the adapter bytes against the registered clean checkpoint, then
-executes that fixed adapter with a canonical request snapshot and bounded environment.
-Only the matching nonce envelope returned from canonical HTTPS provider endpoints is
-eligible for proof validation; redirects, changed adapter bytes and prebuilt local
-proofs fail closed.
-
-The packaged transition JSON Schemas and `contract validate` own the same exact
-serialized shape, nesting, bounds and field syntax. Cross-field relations that JSON
-Schema cannot express—canonical ordering, source/target inequality, tag/version
-derivation and changed pin commits—are a separate mandatory operational layer run by
-registration and the protected verifier before any lifecycle mutation. A shape-valid
-document is never transition authorization by itself.
-
-Candidate materialization is observed rather than asserted. The source verifier
-creates disposable worktrees at the registered base, supplies only the pre-registered
-requirements, migration and action-pin inputs, runs target adoption apply/check twice,
-compares both Git trees with the exact candidate, and forces the real transaction to
-fail after its first authority write. The rollback worktree must return to its exact
-input tree, including on Windows, before candidate evidence can be ingested.
-
-Immutable 0.7.0 cannot execute that route. Its single bootstrap uses the normal
-0.7.0 lifecycle and bootstrap export to authenticate a fixed intent/policy checkpoint.
-Interpretation is performed by verifier source fixed to the already merged feature
-commit that 0.7.0 reviewed, never by the target release or candidate checkout. The
-project-owned protected workflow may create `authority-transition-completion` and
-merge only the exact current-base candidate authorized by that policy. The merge tree
-must equal the validated candidate tree and the successful base advance consumes the
-authorization exactly once.
-The validation artifact binds its repository, workflow path and SHA, run id/attempt,
-base, check context and GitHub App id. The closed-PR consumer resolves that service
-chain independently, verifies the exact App-authenticated completion check and squash
-merge parent/tree, then records the canonical consumption JSON in an exclusive
-App-authenticated check on the merge commit. The expiring Actions artifact is only a
-transport copy, not the durable terminal record.
-The current base is authenticated by tree equivalence with the checkpoint carried in
-the 0.7.0 bundle; the policy never attempts to contain the hash of the commit that
-contains the policy itself.
-
-## Initial bootstrap root
-
-The clean prospective self-hosting lineage begins from immutable public release
-`v0.1.1` at commit `df6e682d1bba1dc1aa82a2f4bbc21afc460c4bd5`.
-The trusted wheel SHA-256 is
-`3211775274a05569e006daae7e026f34295df9da2b2244f464f08aee00352f4f`, and the
-selected full-distribution digest is
-`sha256:73a6d3714ced574a4e85b3317bd713ee3fe0c08055ee154514706ae7eeb71603`.
-The installed authority resolved outside the checkout and `processctl doctor` passed
-for the producer's development profile before change
-`bootstrap-authority-foundation` was specified, planned, and registered for
-implementation.
-
-An earlier development candidate started from commit
-`5055d37dc4d421ac97e9bf2329b56c6a2a69d5eb` and used lifecycle
-`self-hosted-impact-engine`. That candidate and `v0.1.1` have related commit history
-and an equal source tree at their branch point, but commit and lifecycle identities
-are provenance data, not interchangeable aliases. This clean lineage does not reuse
-the earlier candidate's lifecycle evidence as its trust root.
-
-This one-time bootstrap establishes the root of trust; it is not a recurring bypass.
-All later source changes require the normal `.process` lifecycle and a clean immutable
-checkpoint. Verification artifacts under `.process/runs` bind the local checkpoint
-and workspace fingerprint. GitHub checks, immutable release attestations, and PyPI
-artifact hashes provide durable publication evidence.
-
-The lifecycle state is the executable change specification and evidence ledger: it
-binds the accepted contract and plan digests, implementation identities, required
-profile reports, immutable checkpoint and workspace fingerprint, independent review
-assignment and report, carried finding resolutions, and completion artifact. A dirty
-or different checkpoint invalidates verification and approval instead of inheriting
-stale evidence.
-
-`.process/runs/` is durable local evidence, not a temporary directory. Active and
-failed runs are retained for recovery. A completed run may be pruned only through
-`processctl evidence prune --apply` after a bounded portable receipt has been
-exported and independently validated; release receipts remain attached to the
-immutable public release. Pruning first quarantines the exact run directory and
-deletes it. If deletion fails, the possibly partial quarantine remains explicitly
-named for inspection and the validated external receipt remains the recovery
-authority; the implementation never renames a partial tree back as a complete run.
-
-The isolated public N environment and build/impact temporary directories have a
-single coordinator owner. Build and impact directories are removed on success,
-failure, timeout, and interruption. The N environment is removed only after the final
-N-governed completion/release transition; its version, wheel hash, process digest,
-and exported receipt remain as durable provenance.
-
-## Release boundary
-
-Lifecycle completion proves engineering readiness only. It does not authorize a
-version bump, tag, publication, consumer lock update, or deployment. Public-impact
-changes contribute release fragments, and automation materializes them on a separate
-Release PR. Merge of that independently reviewed exact Release PR is the sole
-publication authorization; all tag, draft, build, verification, GitHub Release, and
-PyPI operations after merge are deterministic automation defined by `RELEASING.md`.
-At that boundary, `release.json` adds a machine-validated SemVer and compatibility
-specification; the publication gate binds it to the exact latest public predecessor,
-canonical GitHub title/tag/package/runtime/artifact identity, reviewed-head and
-merge-tree equivalence, exported N-1 receipt or one-time bootstrap authorization,
-source checkpoint, and `main` ancestry.
+The pre-1.0 managed runner can invoke the 1.0 adoption command directly, so this
+repository can move from public 0.9.0 in one PR. The old managed skill tree remains in
+the source branch until that public adoption PR; this is intentional distribution
+state, not a second editable source tree.

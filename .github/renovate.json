@@ -1,8 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
+  "extends": ["config:recommended"],
   "enabled": true,
   "automerge": false,
   "branchPrefix": "automation/renovate/",
@@ -13,31 +11,46 @@
     "python": "==3.14"
   },
   "pip-compile": {
-    "managerFilePatterns": [
-      "/^requirements\\/process\\.txt$/"
-    ]
+    "managerFilePatterns": ["/^requirements\\/process\\.txt$/"]
   },
   "pip_requirements": {
     "enabled": false
   },
-  "semanticCommits": "enabled",
-  "semanticCommitType": "chore",
   "packageRules": [
     {
-      "description": "Reserve engineering-process adoption for the pre-publication lifecycle host",
+      "description": "Adopt each published engineering-process release as a complete managed pull request",
+      "matchManagers": ["pip-compile"],
       "matchFileNames": [
         "requirements/process.in",
         "requirements/process.txt"
       ],
-      "matchPackageNames": [
-        "engineering-process"
-      ],
-      "enabled": false,
+      "matchPackageNames": ["engineering-process"],
+      "enabled": true,
       "automerge": false,
-      "groupName": "engineering-process authority",
+      "groupName": "engineering-process",
       "schedule": ["at any time"],
       "prPriority": 100,
-      "commitMessageTopic": "engineering-process authority"
+      "commitMessageTopic": "engineering-process",
+      "postUpgradeTasks": {
+        "commands": [
+          "python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt"
+        ],
+        "fileFilters": [
+          ".agents/skills/**",
+          ".github/PULL_REQUEST_TEMPLATE.md",
+          ".process/adopt-process.py",
+          ".process/automation.json",
+          ".process/adopt-process-windows-job.py",
+          ".process/adoption-migrations/**",
+          ".process/process.lock",
+          ".process/project.json",
+          "AGENTS.md"
+        ],
+        "executionMode": "update",
+        "installTools": {
+          "python": {}
+        }
+      }
     }
   ]
 }

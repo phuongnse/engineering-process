@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -28,6 +29,60 @@ MAX_STATUS_ERROR_CHARACTERS = 1024
 MAX_REQUIREMENTS_BYTES = 1_000_000
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 PathIdentity = tuple[int, int, int, int]
+PR_SET_CHILD_SUBREAPER = 36
+
+
+def _enable_subreaper() -> None:
+    if not sys.platform.startswith("linux"):
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        error = ctypes.get_errno()
+        raise RuntimeError(
+            f"cannot enable Linux child containment: errno={error}"
+        )
+
+
+def _adopted_children() -> set[int]:
+    if not sys.platform.startswith("linux"):
+        return set()
+    children: set[int] = set()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            for line in (entry / "status").read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
+                if line.startswith("PPid:"):
+                    if int(line.split()[1]) == os.getpid():
+                        children.add(int(entry.name))
+                    break
+        except (OSError, ValueError, IndexError):
+            continue
+    return children
+
+
+def _terminate_adopted_children() -> bool:
+    children = _adopted_children()
+    if not children:
+        return False
+    for child in children:
+        try:
+            os.kill(child, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + TERMINATION_TIMEOUT_SECONDS
+    while time.monotonic() < deadline and _adopted_children():
+        for child in list(children):
+            try:
+                os.waitpid(child, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+        time.sleep(0.02)
+    if _adopted_children():
+        raise RuntimeError("detached descendants survived bounded cleanup")
+    return True
 
 # Bootstrap snapshot of the non-configurable policy in
 # engineering_process/diagnostics.py. This runner executes before the target
@@ -579,6 +634,7 @@ def _require_unchanged(
 
 
 def _run(argv: list[str], *, cwd: Path) -> str:
+    _enable_subreaper()
     options: dict[str, object] = {
         "cwd": cwd,
         "env": _child_environment(),
@@ -604,6 +660,7 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         forced = True
         try:
             _terminate_tree(process)
+            _terminate_adopted_children()
         finally:
             stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
             stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
@@ -617,6 +674,7 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         forced = True
         try:
             _terminate_tree(process)
+            _terminate_adopted_children()
         finally:
             stdout_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
             stderr_thread.join(timeout=TERMINATION_TIMEOUT_SECONDS)
@@ -626,6 +684,7 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         raise
     try:
         descendants_found = _terminate_tree(process)
+        descendants_found = _terminate_adopted_children() or descendants_found
         if status_reader is not None:
             cleanup = _read_windows_status(status_reader, forced=forced)
             status_reader = None
@@ -650,8 +709,9 @@ def _run(argv: list[str], *, cwd: Path) -> str:
         raise RuntimeError("command output exceeded the fail-closed byte budget")
     if return_code != 0:
         raise RuntimeError(
-            f"command failed with exit status {return_code}\n"
-            f"stdout:\n{stdout.text()}\nstderr:\n{stderr.text()}"
+            f"command failed with exit status {return_code}; "
+            f"stdoutBytes={stdout.count}; stdoutSha256=sha256:{stdout.digest.hexdigest()}; "
+            f"stderrBytes={stderr.count}; stderrSha256=sha256:{stderr.digest.hexdigest()}"
         )
     diagnostic_error = _diagnostic_failure(
         bytes(stdout.diagnostic_content),
@@ -660,24 +720,6 @@ def _run(argv: list[str], *, cwd: Path) -> str:
     if diagnostic_error is not None:
         raise RuntimeError(diagnostic_error)
     return stdout.text()
-
-
-def _current_process_version(project_root: Path) -> str:
-    lock_path = project_root / ".process" / "process.lock"
-    content = _read_stable_requirements(
-        lock_path, containment_root=project_root
-    )
-    try:
-        document = json.loads(content.decode("utf-8"))
-        version = document["process"]["version"]
-    except (UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
-        raise RuntimeError("current process lock has no valid version") from error
-    if not isinstance(version, str) or re.fullmatch(
-        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
-        version,
-    ) is None:
-        raise RuntimeError("current process lock version must be final SemVer")
-    return version
 
 
 def _installed_process_version(python: Path, *, cwd: Path) -> str:
@@ -724,8 +766,6 @@ def main(argv: list[str] | None = None) -> int:
     requirements_digest = (
         "sha256:" + hashlib.sha256(requirements_content).hexdigest()
     )
-    current_version = _current_process_version(project_root)
-
     with tempfile.TemporaryDirectory(
         prefix="engineering-process-adoption-"
     ) as directory:
@@ -796,15 +836,6 @@ def main(argv: list[str] | None = None) -> int:
                     "--json",
                 ],
                 cwd=environment_root,
-            )
-        elif target_version == current_version:
-            output = json.dumps(
-                {
-                    "requirementsDigest": requirements_digest,
-                    "status": "unchanged",
-                    "version": target_version,
-                },
-                sort_keys=True,
             )
         else:
             output = _run(

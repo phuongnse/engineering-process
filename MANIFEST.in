@@ -1,2 +1,4 @@
-# Package inputs are explicitly declared in pyproject.toml. Archive verification
-# rejects managed, generated, and bytecode paths from both wheel and sdist outputs.
+include process-graph.json
+recursive-include process_assets/skills SKILL.md
+recursive-include schemas *.json
+recursive-include templates *.md *.py

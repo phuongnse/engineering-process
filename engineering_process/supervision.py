@@ -54,6 +54,8 @@ class ProcessSupervisor(Protocol):
         grace_seconds: float,
     ) -> CleanupOutcome: ...
 
+    def observe(self, process: subprocess.Popen[bytes]) -> None: ...
+
     def finalize(
         self,
         process: subprocess.Popen[bytes],

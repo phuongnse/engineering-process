@@ -1,54 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/release-change.schema.json",
-  "title": "Engineering process release change fragment",
+  "title": "Release change fragment",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schemaVersion",
-    "id",
-    "type",
-    "surfaces",
-    "rationale",
-    "schemaImpact",
-    "migration"
-  ],
+  "required": ["schemaVersion", "id", "type", "summary", "source"],
   "properties": {
-    "$schema": {"type": "string"},
     "schemaVersion": {"const": 1},
     "id": {
       "type": "string",
-      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-      "maxLength": 64
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
     },
     "type": {"enum": ["fix", "capability", "breaking"]},
-    "surfaces": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 256,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-      }
-    },
-    "rationale": {"type": "string", "minLength": 1, "maxLength": 1000},
-    "schemaImpact": {"enum": ["unchanged", "additive", "breaking"]},
-    "migration": {"type": ["string", "null"], "minLength": 1, "maxLength": 1000}
-  },
-  "allOf": [
-    {
-      "if": {"properties": {"type": {"const": "breaking"}}, "required": ["type"]},
-      "then": {"properties": {"migration": {"type": "string", "minLength": 1}}},
-      "else": {"properties": {"migration": {"type": "null"}}}
-    },
-    {
-      "if": {"properties": {"schemaImpact": {"const": "breaking"}}, "required": ["schemaImpact"]},
-      "then": {"properties": {"type": {"const": "breaking"}}}
-    },
-    {
-      "if": {"properties": {"schemaImpact": {"const": "additive"}}, "required": ["schemaImpact"]},
-      "then": {"properties": {"type": {"enum": ["capability", "breaking"]}}}
-    }
-  ]
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "source": {"type": "string", "minLength": 1, "maxLength": 1000}
+  }
 }

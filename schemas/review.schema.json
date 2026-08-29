@@ -1,309 +1,63 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/review.schema.json",
-  "title": "Independent engineering review report",
+  "title": "Independent review report",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schemaVersion",
-    "changeId",
-    "cycle",
-    "checkpoint",
-    "workspaceFingerprint",
-    "comparisonBase",
-    "reviewer",
-    "independence",
-    "verdict",
-    "findings"
-  ],
+  "required": ["schemaVersion", "changeId", "reviewer", "checkpoint", "verdict", "summary", "findings"],
   "properties": {
-    "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [2, 3, 4]},
-    "changeId": {
-      "type": "string",
-      "maxLength": 64,
-      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-    },
-    "cycle": {"type": "integer", "minimum": 1},
-    "checkpoint": {"type": "string", "minLength": 1, "maxLength": 256},
-    "workspaceFingerprint": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
-    },
-    "comparisonBase": {"type": "string", "minLength": 1, "maxLength": 256},
+    "schemaVersion": {"const": 5},
+    "changeId": {"$ref": "#/$defs/id"},
     "reviewer": {"$ref": "#/$defs/actor"},
-    "independence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["method", "attestedBy", "evidence"],
-      "properties": {
-        "method": {"enum": ["isolated-context", "separate-person"]},
-        "attestedBy": {"type": "string", "minLength": 1, "maxLength": 256},
-        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
-      }
-    },
+    "checkpoint": {"$ref": "#/$defs/checkpoint"},
     "verdict": {"enum": ["approved", "changes-requested"]},
-    "quality": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["standard", "assessments"],
-      "properties": {
-        "standard": {"const": "production-v1"},
-        "assessments": {
-          "type": "array",
-          "minItems": 10,
-          "maxItems": 256,
-          "items": {"$ref": "#/$defs/qualityAssessment"},
-          "allOf": [
-            {"contains": {"properties": {"dimension": {"const": "compatibility"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "correctness"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "maintainability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "observability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "operability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "performance"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "privacy"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "reliability"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "security"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1},
-            {"contains": {"properties": {"dimension": {"const": "supply-chain"}}, "required": ["dimension"]}, "minContains": 1, "maxContains": 1}
-          ]
-        }
-      }
-    },
-    "authorityTransition": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["request", "candidateEvidence"],
-      "properties": {
-        "request": {"$ref": "#/$defs/artifact"},
-        "candidateEvidence": {"$ref": "#/$defs/artifact"}
-      }
-    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
     "findings": {
       "type": "array",
+      "maxItems": 128,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "severity",
-          "path",
-          "line",
-          "summary",
-          "evidence",
-          "status",
-          "resolutionEvidence"
-        ],
+        "required": ["id", "severity", "priority", "criterionId", "origin", "summary"],
         "properties": {
-          "id": {
-            "type": "string",
-            "maxLength": 64,
-            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-          },
-          "severity": {"enum": ["critical", "high", "medium", "low"]},
-          "path": {"type": "string", "minLength": 1, "maxLength": 1000},
-          "line": {"type": ["integer", "null"], "minimum": 1},
-          "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
-          "evidence": {"type": "string", "minLength": 1, "maxLength": 4000},
-          "status": {"enum": ["open", "resolved", "deferred", "false-positive"]},
-          "resolutionEvidence": {"type": ["string", "null"], "maxLength": 4000}
-          ,"boundaryStatus": {"enum": ["covered", "contract-gap"]}
-          ,"trustBoundaryId": {
-            "type": ["string", "null"],
-            "maxLength": 64,
-            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-          }
-          ,"faultRowId": {
-            "type": ["string", "null"],
-            "maxLength": 64,
-            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-          }
-          ,"criterionIds": {
-            "type": "array",
-            "maxItems": 256,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "maxLength": 64,
-              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
-            }
-          }
-        },
-        "dependentRequired": {
-          "boundaryStatus": ["trustBoundaryId", "faultRowId", "criterionIds"],
-          "trustBoundaryId": ["boundaryStatus", "faultRowId", "criterionIds"],
-          "faultRowId": ["boundaryStatus", "trustBoundaryId", "criterionIds"],
-          "criterionIds": ["boundaryStatus", "trustBoundaryId", "faultRowId"]
-        },
-        "allOf": [
-          {
-            "if": {"properties": {"status": {"const": "open"}}},
-            "then": {"properties": {"resolutionEvidence": {"type": "null"}}}
-          },
-          {
-            "if": {
-              "properties": {
-                "status": {"enum": ["resolved", "deferred", "false-positive"]}
-              }
-            },
-            "then": {
-              "properties": {
-                "resolutionEvidence": {"type": "string", "minLength": 1}
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {"boundaryStatus": {"const": "covered"}},
-              "required": ["boundaryStatus"]
-            },
-            "then": {
-              "properties": {
-                "trustBoundaryId": {"type": "string"},
-                "faultRowId": {"type": "string"},
-                "criterionIds": {"minItems": 1}
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {"boundaryStatus": {"const": "contract-gap"}},
-              "required": ["boundaryStatus"]
-            },
-            "then": {
-              "properties": {
-                "status": {"const": "open"},
-                "trustBoundaryId": {"type": "null"},
-                "faultRowId": {"type": "null"},
-                "criterionIds": {"maxItems": 0}
-              }
-            }
-          }
-        ]
+          "id": {"$ref": "#/$defs/id"},
+          "severity": {"enum": ["blocking", "non-blocking"]},
+          "priority": {"enum": ["P0", "P1", "P2", "P3"]},
+          "criterionId": {"$ref": "#/$defs/id"},
+          "origin": {"enum": ["contract", "remediation-regression", "critical-late"]},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "location": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "lateRationale": {"type": "string", "minLength": 1, "maxLength": 2000}
+        }
       }
     }
   },
-  "allOf": [
-    {
-      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
-      "then": {"not": {"anyOf": [{"required": ["quality"]}, {"required": ["authorityTransition"]}]}}
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
-      "then": {
-        "required": ["quality"],
-        "not": {"required": ["authorityTransition"]},
-        "properties": {
-          "findings": {"maxItems": 256}
-        }
-      }
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"const": 4}}, "required": ["schemaVersion"]},
-      "then": {
-        "required": ["quality", "authorityTransition"],
-        "properties": {"findings": {"maxItems": 256}}
-      }
-    },
-    {
-      "if": {"properties": {"verdict": {"const": "approved"}}},
-      "then": {
-        "properties": {
-          "quality": {
-            "properties": {
-              "assessments": {
-                "items": {
-                  "properties": {
-                    "status": {"enum": ["verified", "not-applicable-confirmed"]}
-                  }
-                }
-              }
-            }
-          },
-          "findings": {
-            "items": {
-              "properties": {
-                "status": {"enum": ["resolved", "false-positive"]}
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {"properties": {"verdict": {"const": "changes-requested"}}},
-      "then": {
-        "properties": {
-          "quality": {
-            "properties": {
-              "assessments": {
-                "contains": {
-                  "properties": {"status": {"const": "failed"}},
-                  "required": ["status"]
-                },
-                "minContains": 1
-              }
-            }
-          },
-          "findings": {
-            "contains": {
-              "properties": {
-                "status": {"enum": ["open", "deferred"]}
-              },
-              "required": ["status"]
-            },
-            "minContains": 1
-          }
-        }
-      }
-    }
-  ],
   "$defs": {
-    "artifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "digest"],
-      "properties": {
-        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
-      }
-    },
-    "qualityAssessment": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["dimension", "status", "criteria", "evidence"],
-      "properties": {
-        "dimension": {
-          "type": "string",
-          "maxLength": 64,
-          "pattern": "^(?:compatibility|correctness|maintainability|observability|operability|performance|privacy|reliability|security|supply-chain|project-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)$"
-        },
-        "status": {"enum": ["verified", "failed", "not-applicable-confirmed"]},
-        "criteria": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"}
-        },
-        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000}
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"status": {"enum": ["verified", "failed"]}}, "required": ["status"]},
-          "then": {"properties": {"criteria": {"minItems": 1}}}
-        },
-        {
-          "if": {"properties": {"status": {"const": "not-applicable-confirmed"}}, "required": ["status"]},
-          "then": {"properties": {"criteria": {"maxItems": 0}}}
-        }
-      ]
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
     },
     "actor": {
       "type": "object",
       "additionalProperties": false,
       "required": ["actorId", "contextId", "kind"],
       "properties": {
-        "actorId": {"type": "string", "minLength": 1, "maxLength": 256},
-        "contextId": {"type": "string", "minLength": 1, "maxLength": 256},
+        "actorId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "contextId": {"type": "string", "minLength": 1, "maxLength": 200},
         "kind": {"enum": ["agent", "human"]}
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "fingerprint", "fileCount", "byteCount"],
+      "properties": {
+        "head": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+        "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "fileCount": {"type": "integer", "minimum": 0},
+        "byteCount": {"type": "integer", "minimum": 0}
       }
     }
   }

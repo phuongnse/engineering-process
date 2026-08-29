@@ -7,7 +7,6 @@ import sys
 
 
 _HELPER_MODULES = {
-    "engineering_process._download_worker",
     "engineering_process._windows_job",
 }
 _BOOTSTRAP = (
