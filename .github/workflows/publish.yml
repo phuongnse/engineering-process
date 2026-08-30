@@ -142,6 +142,7 @@ jobs:
               path.name: hashlib.sha256(path.read_bytes()).hexdigest()
               for path in Path("dist").iterdir()
               if path.is_file()
+              and (path.suffix == ".whl" or path.name.endswith(".tar.gz"))
           }
           url = f"https://pypi.org/pypi/engineering-process/{os.environ['RELEASE_VERSION']}/json"
           for attempt in range(12):
@@ -183,13 +184,17 @@ jobs:
           import os
           from pathlib import Path
 
-          expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path("dist").iterdir()}
+          expected = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in Path("dist").iterdir()
+              if path.suffix == ".whl" or path.name.endswith(".tar.gz")
+          }
           existing = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path(os.environ["EXISTING_RELEASE_ROOT"]).iterdir()}
           conflicts = {name for name in existing if expected.get(name) != existing[name]}
           if conflicts:
               raise RuntimeError(f"GitHub release has conflicting assets: {sorted(conflicts)}")
           PY
-          for file in dist/*; do
+          for file in dist/*.whl dist/*.tar.gz; do
             name="$(basename "$file")"
             if [ ! -f "$RUNNER_TEMP/existing-release/$name" ]; then
               if [ "$release_is_draft" != "true" ]; then
@@ -207,7 +212,11 @@ jobs:
           import os
           from pathlib import Path
 
-          expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path("dist").iterdir()}
+          expected = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in Path("dist").iterdir()
+              if path.suffix == ".whl" or path.name.endswith(".tar.gz")
+          }
           actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path(os.environ["EXISTING_RELEASE_ROOT"]).iterdir()}
           if actual != expected:
               raise RuntimeError(f"GitHub release assets differ: expected {expected}, got {actual}")
