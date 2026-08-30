@@ -112,6 +112,34 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(report["descendantsTerminated"])
 
     @unittest.skipUnless(
+        sys.platform.startswith("linux"), "Linux subreaper reaping assertion"
+    )
+    def test_exited_descendant_is_reaped_and_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pid_path = root / "child.pid"
+            child = "import time; time.sleep(0.01)"
+            script = (
+                "import pathlib, subprocess, sys, time; "
+                f"p=subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                "pathlib.Path(sys.argv[1]).write_text(str(p.pid), encoding='utf-8'); "
+                "time.sleep(0.05)"
+            )
+            report = run_check(
+                root,
+                {
+                    "id": "naturally-drained-descendant",
+                    "run": [sys.executable, "-c", script, str(pid_path)],
+                    "timeoutSeconds": 10,
+                },
+            )
+            pid = int(pid_path.read_text(encoding="utf-8"))
+        self.assertEqual("passed", report["status"])
+        self.assertFalse(report["descendantsTerminated"])
+        self.assertFalse(report["streamFailed"])
+        self.assertFalse(Path(f"/proc/{pid}").exists())
+
+    @unittest.skipUnless(
         sys.platform.startswith("linux"), "Linux subreaper containment assertion"
     )
     def test_detached_descendant_is_terminated_and_fails(self) -> None:
