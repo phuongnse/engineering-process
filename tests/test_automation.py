@@ -110,7 +110,7 @@ class AutomationTests(unittest.TestCase):
             "      pull-requests: read\n"
             "    uses: phuongnse/renovate-ops/.github/workflows/"
             "policy-verification.yml@"
-            "1e3d0d333b62ec92c94ea5c355bbb0cd73024b78\n",
+            "5fb53c2295c0f62c29d34c8141121b71198769f4\n",
             policy_job,
         )
         self.assertIn("name: verify (${{ matrix.os }}, ${{ matrix.python }})", workflow)
