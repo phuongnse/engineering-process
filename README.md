@@ -70,40 +70,49 @@ stdout or stderr that could contain secrets.
 
 ### Production readiness
 
-A consumer declares `.process/readiness.json` with a production target and maps each
-required capability to one or more project-required profiles. A known pack fails
-closed when a capability is absent, duplicated, references an unknown profile, or
-relies only on an optional profile:
+A consumer declares `.process/readiness.json` with production as its direction, its
+current stage, immutable pack versions, and the state of every required capability.
+An enforced capability maps to project-required profiles; a planned capability names
+the concrete gap without pretending to have evidence:
 
     {
       "target": "production",
-      "packs": ["library-cli"],
+      "stage": "production",
+      "packs": [{"id": "library-cli", "version": 1}],
       "capabilities": [
-        {"id": "correctness", "evidenceProfiles": ["development"]},
-        {"id": "runtime-safety", "evidenceProfiles": ["development"]},
-        {"id": "compatibility", "evidenceProfiles": ["development"]},
-        {"id": "portability", "evidenceProfiles": ["development", "review"]},
-        {"id": "installability", "evidenceProfiles": ["review"]},
-        {"id": "distribution-integrity", "evidenceProfiles": ["review"]},
-        {"id": "adoption-integrity", "evidenceProfiles": ["development", "review"]}
+        {"id": "correctness", "state": "enforced", "evidenceProfiles": ["development"]},
+        {"id": "runtime-safety", "state": "enforced", "evidenceProfiles": ["development"]},
+        {"id": "compatibility", "state": "enforced", "evidenceProfiles": ["development"]},
+        {"id": "portability", "state": "enforced", "evidenceProfiles": ["development", "review"]},
+        {"id": "installability", "state": "enforced", "evidenceProfiles": ["review"]},
+        {"id": "distribution-integrity", "state": "enforced", "evidenceProfiles": ["review"]},
+        {"id": "adoption-integrity", "state": "enforced", "evidenceProfiles": ["development", "review"]}
       ]
     }
 
 `project validate` and `doctor` resolve that declaration to the exact checks owned by
 the consumer. The declaration does not make a weak command sufficient: normal CI and
-independent review still judge whether those commands prove the named capability.
+independent review still judge whether those commands prove the named capability. A
+building consumer may keep planned gaps while ordinary development continues. A
+production-stage declaration fails closed if any capability remains planned.
 
 The sidecar is a deliberate self-hosting boundary. Public authority N continues to
 validate the unchanged strict `.process/project.json` while source N+1 validates and
 self-applies the new readiness contract. Adoption leaves the consumer-owned sidecar
 in place, so every later authority can repeat the same forward-compatible sequence.
+Pack versions are also immutable: a process update must keep `operations@1` working
+even after `operations@2` exists. Process adoption and pack upgrades are separate
+consumer-owned changes, preventing a new standard from deadlocking authority adoption.
 
-`library-cli` was derived from this repository as a real producer and self-consumer.
-`operations` was then derived from renovate-ops and requires auditability, automation
+`library-cli@1` was derived from this repository as a real producer and self-consumer.
+`operations@1` was then derived from renovate-ops and requires auditability, automation
 correctness, bounded execution, least privilege, policy integrity, recovery, and
-target-selection integrity. The later `desktop`/`frontend` pack will be extracted only
-while applying readiness to LyricRail. Consumers without readiness remain compatible
-during that evidence-backed rollout.
+target-selection integrity. `desktop-media@1` is derived from LyricRail and keeps its
+existing correctness, input, source-portability, audit, media, package, and recovery-
+mechanism evidence enforced. Stable dependency/recovery claims, signing, key custody,
+runtime/license delivery, Linux advisory resolution, real-host workspace security,
+updater, incident recovery, and independent security review remain planned.
+Consumers without readiness remain compatible during that evidence-backed rollout.
 
 Pin the process in requirements/process.in:
 

@@ -1,29 +1,37 @@
 {
   "target": "production",
+  "stage": "production",
   "packs": [
-    "library-cli"
+    {
+      "id": "library-cli",
+      "version": 1
+    }
   ],
   "capabilities": [
     {
       "id": "correctness",
+      "state": "enforced",
       "evidenceProfiles": [
         "development"
       ]
     },
     {
       "id": "runtime-safety",
+      "state": "enforced",
       "evidenceProfiles": [
         "development"
       ]
     },
     {
       "id": "compatibility",
+      "state": "enforced",
       "evidenceProfiles": [
         "development"
       ]
     },
     {
       "id": "portability",
+      "state": "enforced",
       "evidenceProfiles": [
         "development",
         "review"
@@ -31,18 +39,21 @@
     },
     {
       "id": "installability",
+      "state": "enforced",
       "evidenceProfiles": [
         "review"
       ]
     },
     {
       "id": "distribution-integrity",
+      "state": "enforced",
       "evidenceProfiles": [
         "review"
       ]
     },
     {
       "id": "adoption-integrity",
+      "state": "enforced",
       "evidenceProfiles": [
         "development",
         "review"

@@ -81,15 +81,24 @@
     "readiness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["target", "packs", "capabilities"],
+      "required": ["target", "stage", "packs", "capabilities"],
       "properties": {
         "target": {"const": "production"},
+        "stage": {"enum": ["building", "production"]},
         "packs": {
           "type": "array",
           "minItems": 1,
           "maxItems": 8,
           "uniqueItems": true,
-          "items": {"enum": ["library-cli", "operations"]}
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "version"],
+            "properties": {
+              "id": {"enum": ["desktop-media", "library-cli", "operations"]},
+              "version": {"type": "integer", "minimum": 1, "maximum": 1000}
+            }
+          }
         },
         "capabilities": {
           "type": "array",
@@ -98,17 +107,29 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "evidenceProfiles"],
+            "required": ["id", "state"],
             "properties": {
               "id": {"$ref": "#/$defs/id"},
+              "state": {"enum": ["enforced", "planned"]},
               "evidenceProfiles": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 16,
                 "uniqueItems": true,
                 "items": {"$ref": "#/$defs/id"}
+              },
+              "gap": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"state": {"const": "enforced"}}},
+                "then": {"required": ["evidenceProfiles"], "not": {"required": ["gap"]}}
+              },
+              {
+                "if": {"properties": {"state": {"const": "planned"}}},
+                "then": {"required": ["gap"], "not": {"required": ["evidenceProfiles"]}}
               }
-            }
+            ]
           }
         }
       }

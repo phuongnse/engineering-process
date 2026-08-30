@@ -392,15 +392,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=VERSION)
     commands = parser.add_subparsers(dest="command", required=True)
-
     project = commands.add_parser("project", help="Validate consumer configuration")
     project_commands = project.add_subparsers(dest="project_command", required=True)
     _leaf(project_commands, "validate", command_project_validate)
-
     lock = commands.add_parser("lock", help="Validate the adopted process lock")
     lock_commands = lock.add_subparsers(dest="lock_command", required=True)
     _leaf(lock_commands, "validate", command_lock_validate)
-
     contract = commands.add_parser("contract", help="Validate a JSON contract")
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)
     contract_validate = _leaf(
@@ -408,25 +405,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract_validate.add_argument("--kind", choices=CONTRACT_KINDS, required=True)
     contract_validate.add_argument("path", type=Path)
-
     skills = commands.add_parser("skills", help="Validate the complete skill graph")
     skills_commands = skills.add_subparsers(dest="skills_command", required=True)
     skills_validate = _leaf(
         skills_commands, "validate", command_skills_validate, project=False
     )
     skills_validate.add_argument("--root", type=Path)
-
     doctor = _leaf(commands, "doctor", command_doctor, help="Validate one consumer integration")
     doctor.add_argument("--profile")
-
     setup = _leaf(commands, "setup", command_setup, help=argparse.SUPPRESS)
     setup.add_argument("--profile", required=True)
     setup.add_argument("--apply", action="store_true")
     setup.add_argument("--allow", action="append", default=[])
-
     verify = _leaf(commands, "verify", command_verify, help="Run a project verification profile")
     verify.add_argument("--profile", required=True)
-
     adoption = commands.add_parser("adoption", help="Apply or check managed adoption")
     adoption_commands = adoption.add_subparsers(dest="adoption_command", required=True)
     for name, handler in (("apply", command_adoption_apply), ("check", command_adoption_check)):
@@ -435,23 +427,18 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "apply":
             adoption_command.add_argument("--requirements-source", type=Path)
             adoption_command.add_argument("--expected-requirements-digest")
-
     change = commands.add_parser("change", help="Run the six-phase change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)
-
     change_start = _leaf(change_commands, "start", command_change_start)
     _add_actor(change_start)
     change_start.add_argument("--contract", type=Path, required=True)
-
     change_plan = _leaf(change_commands, "plan", command_change_plan)
     _add_actor(change_plan)
     change_plan.add_argument("--change-id", required=True)
     change_plan.add_argument("--plan", type=Path, required=True)
-
     change_implement = _leaf(change_commands, "implement", command_change_implement)
     _add_actor(change_implement)
     change_implement.add_argument("--change-id", required=True)
-
     change_verify = _leaf(change_commands, "verify", command_change_verify)
     change_verify.add_argument("--change-id", required=True)
     change_verify.add_argument("--profile", required=True)

@@ -90,7 +90,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(0, code)
         result = json.loads(output.getvalue())
         self.assertEqual("production", result["readiness"]["target"])
-        self.assertEqual(["library-cli"], result["readiness"]["packs"])
+        self.assertEqual("production", result["readiness"]["stage"])
+        self.assertEqual([{"id": "library-cli", "version": 1}], result["readiness"]["packs"])
+        self.assertEqual([], result["readiness"]["plannedCapabilities"])
         self.assertIn("distribution-integrity", result["readiness"]["capabilities"])
 
 
