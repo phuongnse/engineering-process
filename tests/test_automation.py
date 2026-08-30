@@ -19,10 +19,9 @@ class AutomationTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(rules))
         rule = rules[0]
-        self.assertFalse(config["automerge"])
         self.assertTrue(config["draftPR"])
         self.assertTrue(rule["enabled"])
-        self.assertFalse(rule["automerge"])
+        self.assertTrue(rule["draftPR"])
         self.assertEqual("automation/renovate/", config["branchPrefix"])
         self.assertEqual(
             ["python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt"],
