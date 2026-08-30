@@ -1,25 +1,12 @@
 {
-  "schemaVersion": 3,
-  "project": "engineering-process",
   "lifecycle": {
+    "processChanges": {
+      "requireConsumerEvidence": true
+    },
     "requiredProfiles": [
       "development",
       "review"
-    ],
-    "planDecision": {
-      "mode": "provenance-gated-authored-review",
-      "materialCategories": [
-        "architecture",
-        "authority",
-        "compatibility",
-        "external-mutation",
-        "lifecycle-order",
-        "owner",
-        "rollout",
-        "scope",
-        "trust-boundary"
-      ]
-    }
+    ]
   },
   "profiles": {
     "development": [
@@ -55,113 +42,6 @@
       }
     ]
   },
-  "environment": {
-    "defaultProfile": "development",
-    "foregroundOnly": true,
-    "managedTools": [],
-    "profiles": {
-      "development": [
-        "development-runtime",
-        "git-runtime",
-        "python-runtime"
-      ],
-      "review": [
-        "development-runtime",
-        "git-runtime",
-        "python-runtime"
-      ]
-    },
-    "requirements": [
-      {
-        "id": "development-runtime",
-        "description": "Exact Python dependencies required by the producer test and build contracts",
-        "probe": {
-          "run": [
-            "python",
-            "-c",
-            "from importlib.metadata import version; import build, jsonschema, regex; assert version('setuptools') == '84.0.0'; print('producer dependencies ready')"
-          ],
-          "timeoutSeconds": 15,
-          "readOnly": true,
-          "outputStream": "stdout",
-          "outputRegex": "^producer dependencies ready$"
-        },
-        "remediation": "Install engineering_process/requirements-runtime.txt, engineering_process/requirements-dev.txt, and engineering_process/requirements-build.txt into the isolated process environment."
-      },
-      {
-        "id": "git-runtime",
-        "description": "Git command-line client required for immutable lifecycle checkpoints",
-        "probe": {
-          "run": [
-            "git",
-            "--version"
-          ],
-          "timeoutSeconds": 15,
-          "readOnly": true,
-          "outputStream": "stdout",
-          "outputRegex": "^git version 2\\.[0-9]+\\.[0-9]+"
-        },
-        "remediation": "Install a supported Git 2.x command-line client."
-      },
-      {
-        "id": "python-runtime",
-        "description": "Supported CPython runtime for the producer and lifecycle seed",
-        "probe": {
-          "run": [
-            "python",
-            "--version"
-          ],
-          "timeoutSeconds": 15,
-          "readOnly": true,
-          "outputStream": "combined",
-          "outputRegex": "^Python 3\\.(?:11|12|13|14)\\."
-        },
-        "remediation": "Install a supported Python 3.11-3.14 runtime."
-      }
-    ],
-    "setupActions": []
-  },
-  "remoteVerification": {
-    "requirements": [
-      {
-        "id": "supported-python-platforms",
-        "profiles": [
-          "development",
-          "review"
-        ],
-        "execution": {
-          "provider": "github-actions",
-          "repository": "phuongnse/engineering-process",
-          "workflow": "CI",
-          "workflowRef": "phuongnse/engineering-process/.github/workflows/ci.yml@refs/heads/main"
-        },
-        "selectors": [
-          {
-            "id": "macos-python-3-14",
-            "runnerOs": "macOS",
-            "implementation": "CPython",
-            "pythonMinor": "3.14"
-          },
-          {
-            "id": "ubuntu-python-3-11",
-            "runnerOs": "Linux",
-            "implementation": "CPython",
-            "pythonMinor": "3.11"
-          },
-          {
-            "id": "ubuntu-python-3-14",
-            "runnerOs": "Linux",
-            "implementation": "CPython",
-            "pythonMinor": "3.14"
-          },
-          {
-            "id": "windows-python-3-14",
-            "runnerOs": "Windows",
-            "implementation": "CPython",
-            "pythonMinor": "3.14"
-          }
-        ]
-      }
-    ]
-  }
+  "project": "engineering-process",
+  "schemaVersion": 5
 }
