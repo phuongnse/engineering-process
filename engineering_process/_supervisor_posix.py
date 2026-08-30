@@ -98,7 +98,13 @@ def _pid_alive(pid: int) -> bool:
     status = Path(f"/proc/{pid}/stat")
     if status.is_file():
         try:
-            return status.read_text(encoding="utf-8").split()[2] != "Z"
+            state = status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+            if state == "Z":
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except OSError:
+                    pass
+                return False
         except (OSError, IndexError):
             pass
     return True
@@ -106,12 +112,25 @@ def _pid_alive(pid: int) -> bool:
 
 def _process_group_exists(process_group: int) -> bool:
     try:
+        while os.waitpid(-process_group, os.WNOHANG)[0]:
+            pass
+    except OSError:
+        pass
+    try:
         os.killpg(process_group, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
     return True
+
+
+def _signal_processes(processes: set[int], signal_number: int) -> None:
+    for pid in processes:
+        try:
+            os.kill(pid, signal_number)
+        except OSError:
+            pass
 
 
 def _wait_for_process_group(process_group: int, timeout: float) -> bool:
@@ -144,11 +163,7 @@ def _terminate_group(process_group: int, grace_seconds: float) -> CleanupOutcome
     return CleanupOutcome(
         bounded=bounded,
         descendants_found=True,
-        error=(
-            None
-            if bounded
-            else "command process group could not be terminated within the bounded grace period"
-        ),
+        error=None if bounded else "command process group exceeded its termination grace period",
     )
 
 
@@ -250,24 +265,12 @@ class PosixProcessSupervisor:
         live = {pid for pid in candidates if _pid_alive(pid)}
         if not live:
             return CleanupOutcome(bounded=True)
-        for pid in live:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except OSError:
-                pass
+        _signal_processes(live, signal.SIGTERM)
         deadline = time.monotonic() + grace_seconds
         while time.monotonic() < deadline and any(_pid_alive(pid) for pid in live):
             time.sleep(0.02)
         survivors = {pid for pid in live if _pid_alive(pid)}
-        for pid in survivors:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except OSError:
-                pass
+        _signal_processes(survivors, signal.SIGKILL)
         deadline = time.monotonic() + grace_seconds
         while time.monotonic() < deadline and any(
             _pid_alive(pid) for pid in survivors
@@ -282,11 +285,7 @@ class PosixProcessSupervisor:
         return CleanupOutcome(
             bounded=bounded,
             descendants_found=True,
-            error=(
-                None
-                if bounded
-                else "detached descendants survived bounded termination"
-            ),
+            error=None if bounded else "detached descendants survived bounded termination",
         )
 
     def terminate(
