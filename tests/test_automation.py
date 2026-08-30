@@ -59,6 +59,14 @@ class AutomationTests(unittest.TestCase):
         self.assertIn('git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main', workflow)
         self.assertIn("needs.metadata.outputs.source_sha", workflow)
         self.assertNotIn('--target "$GITHUB_SHA"', workflow)
+        self.assertEqual(
+            3,
+            workflow.count(
+                'path.suffix == ".whl" or path.name.endswith(".tar.gz")'
+            ),
+        )
+        self.assertIn("for file in dist/*.whl dist/*.tar.gz; do", workflow)
+        self.assertNotIn("for file in dist/*; do", workflow)
         trusted_checkout = workflow.index("          ref: main")
         preflight = workflow.index("name: Authorize release source from trusted main")
         source_checkout = workflow.index("ref: ${{ steps.release.outputs.source_sha }}")
