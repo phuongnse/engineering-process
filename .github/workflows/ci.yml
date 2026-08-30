@@ -27,6 +27,16 @@ jobs:
           --require-hashes
           --only-binary :all:
           -r requirements/process.txt
+      - name: Install exact producer dependencies for doctor
+        run: >-
+          python -m pip install
+          --isolated
+          --disable-pip-version-check
+          --no-input
+          --only-binary :all:
+          -r engineering_process/requirements-runtime.txt
+          -r engineering_process/requirements-dev.txt
+          -r engineering_process/requirements-build.txt
       - name: Validate complete self-adoption
         run: >-
           processctl adoption check

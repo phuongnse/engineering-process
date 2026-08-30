@@ -61,6 +61,13 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("adopted-process:", workflow)
         self.assertIn("--require-hashes", workflow)
+        self.assertIn("Install exact producer dependencies for doctor", workflow)
+        for requirements in (
+            "engineering_process/requirements-runtime.txt",
+            "engineering_process/requirements-dev.txt",
+            "engineering_process/requirements-build.txt",
+        ):
+            self.assertIn(f"-r {requirements}", workflow)
         self.assertIn("processctl adoption check", workflow)
         self.assertIn("processctl doctor --project-root .", workflow)
 
