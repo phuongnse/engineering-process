@@ -22,7 +22,7 @@ automation/release/vVERSION. It refuses a version not derived from the fragments
 
 ## Publish
 
-After that PR merges to main, release.yml:
+After that PR merges to main, publish.yml:
 
 1. validates one release identity across release.json, package metadata, runtime, and
    expected tag;

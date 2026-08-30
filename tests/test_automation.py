@@ -43,7 +43,7 @@ class AutomationTests(unittest.TestCase):
         )
 
     def test_release_dispatches_the_published_version_to_the_control_plane(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("engineering-process-published", workflow)
@@ -54,6 +54,21 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("SOURCE_DATE_EPOCH", workflow)
         self.assertIn("verification/normalize_sdist.py", workflow)
         self.assertIn("points to a different commit", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("release_sha:", workflow)
+        self.assertIn('git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main', workflow)
+        self.assertIn("needs.metadata.outputs.source_sha", workflow)
+        self.assertNotIn('--target "$GITHUB_SHA"', workflow)
+        trusted_checkout = workflow.index("          ref: main")
+        preflight = workflow.index("name: Authorize release source from trusted main")
+        source_checkout = workflow.index("ref: ${{ steps.release.outputs.source_sha }}")
+        editable_install = workflow.index(
+            "python -m pip install -r engineering_process/requirements-runtime.txt "
+            "--editable ."
+        )
+        self.assertLess(trusted_checkout, preflight)
+        self.assertLess(preflight, source_checkout)
+        self.assertLess(source_checkout, editable_install)
 
     def test_ci_checks_the_adopted_hash_locked_distribution_separately(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
