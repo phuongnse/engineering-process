@@ -114,6 +114,15 @@ runtime/license delivery, Linux advisory resolution, real-host workspace securit
 updater, incident recovery, and independent security review remain planned.
 Consumers without readiness remain compatible during that evidence-backed rollout.
 
+For each ordinary change, `run-change` first surfaces this readiness view. The accepted
+request and consumer rules determine which capabilities are affected. Every change
+retains the project's baseline `requiredProfiles`; start and plan add any conditional
+evidence profiles needed by affected capabilities and include a planned gap only when
+the accepted request explicitly selects it. Implement and review protect the enforced
+floor. A planned-to-enforced promotion is a reviewed consumer source diff with fresh
+evidence. Unrelated planned gaps remain visible but do not block development, and no
+skill chooses product priorities or changes readiness automatically.
+
 Pin the process in requirements/process.in:
 
     --only-binary :all:

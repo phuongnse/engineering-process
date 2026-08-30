@@ -9,6 +9,12 @@ Before opening a process change, identify the consumer repository and the concre
 incident, failed adoption, repeated friction, or missing capability. Put that evidence
 in the normal change contract. A hypothetical self-governance concern is not enough.
 
+A planned readiness gap can supply evidence only when a real consumer attempt exposes
+missing shared guidance or enforcement. Fix consumer-specific behavior in the
+consumer. Promote only the reusable invariant, and publish changed pack requirements
+under a new immutable pack version; never mutate a version already selected by a
+consumer or make process adoption depend on upgrading that pack.
+
 Find the smallest reusable correction. Prefer, in order:
 
 1. delete an obsolete rule or surface;
@@ -19,4 +25,6 @@ Find the smallest reusable correction. Prefer, in order:
 
 Use **run-change** for the actual work and require the same independent final review
 as any consumer change. Track cross-repository discussion in ordinary issues or pull
-requests; do not create a second lifecycle or evidence federation.
+requests; do not create a second lifecycle or evidence federation. The process never
+self-publishes or self-merges: the owner retains release and adoption authority, and
+the next consumer result becomes evidence for another bounded iteration.
