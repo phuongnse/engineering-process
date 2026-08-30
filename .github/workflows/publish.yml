@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -162,10 +162,20 @@ jobs:
                   raise RuntimeError(f"PyPI files differ: expected {expected}, got {actual}")
               time.sleep(10)
           PY
+      - name: Create short-lived release token
+        id: release-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: phuongnse
+          repositories: engineering-process
+          permission-contents: write
+          permission-metadata: read
       - name: Create immutable GitHub release and tag
         env:
           EXISTING_RELEASE_ROOT: ${{ runner.temp }}/existing-release
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
