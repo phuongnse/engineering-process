@@ -112,6 +112,42 @@ class ContractTests(unittest.TestCase):
         project = read_json(ROOT / ".process" / "project.json")
         self.assertIsNone(readiness_summary(normalize_project(project, ROOT)))
 
+    def test_operations_pack_resolves_renovate_ops_profiles_and_fails_closed(self) -> None:
+        evidence = {
+            "auditability": ["development"],
+            "automation-correctness": ["development"],
+            "bounded-execution": ["development"],
+            "least-privilege": ["development", "review"],
+            "policy-integrity": ["development", "review"],
+            "recovery": ["development"],
+            "target-selection-integrity": ["development"],
+        }
+        project = {
+            "schemaVersion": 5,
+            "project": "renovate-ops",
+            "lifecycle": {"requiredProfiles": ["development", "review"]},
+            "profiles": {
+                "development": [{"id": "unit", "run": ["node", "--test"], "timeoutSeconds": 900}],
+                "review": [
+                    {"id": "global-renovate-config", "run": ["renovate-config-validator", "config.cjs", "--strict"], "timeoutSeconds": 300},
+                    {"id": "repository-renovate-config", "run": ["renovate-config-validator", ".github/renovate.json5", "--strict"], "timeoutSeconds": 300},
+                ],
+            },
+            "readiness": {
+                "target": "production",
+                "packs": ["operations"],
+                "capabilities": [
+                    {"id": capability, "evidenceProfiles": profiles}
+                    for capability, profiles in evidence.items()
+                ],
+            },
+        }
+        readiness = readiness_summary(normalize_project(project, ROOT))
+        self.assertEqual(set(evidence), set(readiness["capabilities"]))
+        project["readiness"]["capabilities"].pop()
+        with self.assertRaisesRegex(ProcessError, "missing capabilities"):
+            normalize_project(project, ROOT)
+
 
 if __name__ == "__main__":
     unittest.main()

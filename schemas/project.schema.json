@@ -89,7 +89,7 @@
           "minItems": 1,
           "maxItems": 8,
           "uniqueItems": true,
-          "items": {"enum": ["library-cli"]}
+          "items": {"enum": ["library-cli", "operations"]}
         },
         "capabilities": {
           "type": "array",

@@ -98,11 +98,12 @@ validate the unchanged strict `.process/project.json` while source N+1 validates
 self-applies the new readiness contract. Adoption leaves the consumer-owned sidecar
 in place, so every later authority can repeat the same forward-compatible sequence.
 
-The first pack is intentionally only `library-cli`, derived from this repository as a
-real producer and self-consumer. The approved `operations` and `desktop`/`frontend`
-packs will be extracted while applying readiness to renovate-ops and LyricRail; they
-are not specified in advance. Consumers without readiness remain compatible during
-that evidence-backed rollout.
+`library-cli` was derived from this repository as a real producer and self-consumer.
+`operations` was then derived from renovate-ops and requires auditability, automation
+correctness, bounded execution, least privilege, policy integrity, recovery, and
+target-selection integrity. The later `desktop`/`frontend` pack will be extracted only
+while applying readiness to LyricRail. Consumers without readiness remain compatible
+during that evidence-backed rollout.
 
 Pin the process in requirements/process.in:
 

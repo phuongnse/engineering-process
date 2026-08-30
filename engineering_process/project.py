@@ -10,7 +10,10 @@ from .distribution import schemas_root
 
 
 PROJECT_SCHEMA_VERSION = 5
-PACK_CAPABILITIES = {"library-cli": set("adoption-integrity compatibility correctness distribution-integrity installability portability runtime-safety".split())}
+PACK_CAPABILITIES = {
+    "library-cli": set("adoption-integrity compatibility correctness distribution-integrity installability portability runtime-safety".split()),
+    "operations": set("auditability automation-correctness bounded-execution least-privilege policy-integrity recovery target-selection-integrity".split()),
+}
 
 
 def project_path(project_root: Path) -> Path:
