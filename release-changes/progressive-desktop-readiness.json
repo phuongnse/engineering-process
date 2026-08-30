@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "progressive-desktop-readiness",
-  "type": "capability",
-  "summary": "Versioned readiness packs guide building consumers through enforced evidence and explicit planned gaps without making an immediate production claim.",
-  "source": "phuongnse/lyric-rail early-stage production-readiness application"
-}

@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "production-readiness-foundation",
-  "type": "capability",
-  "summary": "Consumers can declare evidence-backed production capabilities through known readiness packs mapped to required verification profiles.",
-  "source": "user-approved production-grade vertical slice for engineering-process, renovate-ops, and lyric-rail"
-}

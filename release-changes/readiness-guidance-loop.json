@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "readiness-guidance-loop",
-  "type": "capability",
-  "summary": "Managed delivery skills guide each change from consumer-owned readiness while preserving baseline profiles, enforced capabilities, and non-blocking planned gaps.",
-  "source": "phuongnse/lyric-rail progressive readiness development loop"
-}
