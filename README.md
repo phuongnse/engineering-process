@@ -123,6 +123,13 @@ floor. A planned-to-enforced promotion is a reviewed consumer source diff with f
 evidence. Unrelated planned gaps remain visible but do not block development, and no
 skill chooses product priorities or changes readiness automatically.
 
+When a consumer incident exposes a reusable process gap, `improve-process` first keeps
+the consumer safe, then prepares a sanitized GitHub issue draft from that checkout.
+It deduplicates by consumer/process-version/invariant, requires owner authorization
+before `gh issue create`, and uses an accepted issue as the later process change source
+and `consumerEvidence`. No producer clone, consumer-CI write token, automatic process
+mutation, or wait for a process release is required to continue consumer development.
+
 Pin the process in requirements/process.in:
 
     --only-binary :all:

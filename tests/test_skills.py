@@ -66,6 +66,23 @@ class SkillTests(unittest.TestCase):
                 with self.subTest(skill=skill, fragment=fragment):
                     self.assertIn(fragment, text)
 
+    def test_improve_process_supports_owner_authorized_issue_handoff(self) -> None:
+        text = (ROOT / "process_assets" / "skills" / "improve-process" / "SKILL.md").read_text(encoding="utf-8")
+        for fragment in (
+            "fix or safely block the current consumer change",
+            "gh issue list --repo phuongnse/engineering-process",
+            "Search before creating",
+            "only after explicit authorization",
+            "gh issue create --repo phuongnse/engineering-process",
+            "Do not run issue creation from consumer CI",
+            "open-issue search URL containing the complete stable key",
+            "must search and reuse an\nexisting issue before manual submission",
+            "use its URL as the process change `source`",
+            "Close the issue only after",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
+
 
 if __name__ == "__main__":
     unittest.main()

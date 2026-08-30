@@ -153,6 +153,35 @@ class AutomationTests(unittest.TestCase):
                     continue
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$", workflow.name)
 
+    def test_consumer_improvement_issue_form_is_bounded_and_non_automated(self) -> None:
+        form = (ROOT / ".github" / "ISSUE_TEMPLATE" / "consumer-process-improvement.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            {
+                "authority",
+                "blocking",
+                "consumer",
+                "disclosure",
+                "evidence",
+                "expected",
+                "incident_type",
+                "mitigation",
+                "observed",
+                "reusable",
+                "stable_key",
+            },
+            set(re.findall(r"^    id: ([a-z_]+)$", form, re.MULTILINE)),
+        )
+        self.assertGreaterEqual(form.count("required: true"), 13)
+        self.assertIn('title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT] "', form)
+        self.assertIn("searched open engineering-process issues for the complete stable key", form)
+        for forbidden in ("secrets", "credentials", "raw private logs", "media", "private source"):
+            self.assertIn(forbidden, form)
+        workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / ".github" / "workflows").glob("*.yml")
+        )
+        self.assertNotIn("consumer-process-improvement", workflows)
+
 
 if __name__ == "__main__":
     unittest.main()
