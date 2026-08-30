@@ -9,6 +9,14 @@ permissions:
   contents: read
 
 jobs:
+  policy-verification:
+    name: policy-verification
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: phuongnse/renovate-ops/.github/workflows/policy-verification.yml@1e3d0d333b62ec92c94ea5c355bbb0cd73024b78
+
   adopted-process:
     name: Adopted public process
     runs-on: ubuntu-latest
@@ -46,7 +54,7 @@ jobs:
         run: processctl doctor --project-root .
 
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    name: verify (${{ matrix.os }}, ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

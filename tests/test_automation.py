@@ -59,6 +59,22 @@ class AutomationTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
+        policy_job = "  policy-verification:\n" + workflow.split(
+            "  policy-verification:\n", maxsplit=1
+        )[1].split("\n  adopted-process:\n", maxsplit=1)[0]
+        self.assertEqual(
+            "  policy-verification:\n"
+            "    name: policy-verification\n"
+            "    if: github.event_name == 'pull_request'\n"
+            "    permissions:\n"
+            "      contents: read\n"
+            "      pull-requests: read\n"
+            "    uses: phuongnse/renovate-ops/.github/workflows/"
+            "policy-verification.yml@"
+            "1e3d0d333b62ec92c94ea5c355bbb0cd73024b78\n",
+            policy_job,
+        )
+        self.assertIn("name: verify (${{ matrix.os }}, ${{ matrix.python }})", workflow)
         self.assertIn("adopted-process:", workflow)
         adopted_job = workflow.split("  adopted-process:\n", maxsplit=1)[1].split(
             "\n  test:\n", maxsplit=1
