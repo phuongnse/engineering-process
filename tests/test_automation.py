@@ -67,6 +67,16 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("for file in dist/*.whl dist/*.tar.gz; do", workflow)
         self.assertNotIn("for file in dist/*; do", workflow)
+        publish_job = workflow.split("  publish:\n", maxsplit=1)[1].split(
+            "\n  dispatch-adoption:\n", maxsplit=1
+        )[0]
+        self.assertIn("id: release-token", publish_job)
+        self.assertIn("repositories: engineering-process", publish_job)
+        self.assertIn("permission-contents: write", publish_job)
+        self.assertIn(
+            "GH_TOKEN: ${{ steps.release-token.outputs.token }}", publish_job
+        )
+        self.assertNotIn("GH_TOKEN: ${{ github.token }}", publish_job)
         trusted_checkout = workflow.index("          ref: main")
         preflight = workflow.index("name: Authorize release source from trusted main")
         source_checkout = workflow.index("ref: ${{ steps.release.outputs.source_sha }}")
