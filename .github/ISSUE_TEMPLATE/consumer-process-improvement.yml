@@ -1,0 +1,99 @@
+name: Consumer process improvement
+description: Report a concrete consumer incident, adoption failure, repeated friction, or missing shared capability.
+title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form only after mitigating or safely blocking the consumer incident under its current authority. Replace the title placeholders with the same stable key entered below and search open issues for that complete key before submitting. Reuse an existing issue instead of creating a duplicate. Do not include secrets, credentials, private source, raw private logs, media, tokens, or production-only metadata. A public sanitized issue may reference private consumer evidence.
+  - type: input
+    id: consumer
+    attributes:
+      label: Consumer repository
+      description: Public repository identity or a non-sensitive pseudonym for a private consumer.
+      placeholder: phuongnse/lyric-rail
+    validations:
+      required: true
+  - type: input
+    id: authority
+    attributes:
+      label: Process and pack version
+      description: Exact engineering-process version and selected readiness pack version when relevant.
+      placeholder: engineering-process 1.1.0; desktop-media@1
+    validations:
+      required: true
+  - type: input
+    id: stable_key
+    attributes:
+      label: Stable deduplication key
+      description: Use the non-sensitive title key `[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT]` and search open issues for this exact value.
+      placeholder: "[consumer-process][lyric-rail][1.1.0][conditional-security-routing]"
+    validations:
+      required: true
+  - type: dropdown
+    id: incident_type
+    attributes:
+      label: Evidence type
+      options:
+        - Consumer incident
+        - Failed adoption
+        - Repeated friction
+        - Missing shared capability
+        - Incorrect shared guidance or enforcement
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Describe the bounded consumer behavior and exact checkpoint/check/finding using only publishable information.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected shared invariant
+      description: State what the process should guide or enforce without prescribing speculative implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence or reproduction
+      description: Provide a minimal fixture, check ID, digest, public link, or redacted reproduction. Link private evidence only when authorized readers have access.
+    validations:
+      required: true
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Consumer mitigation
+      description: Explain how the current consumer change was fixed or safely blocked without waiting for a process release.
+    validations:
+      required: true
+  - type: textarea
+    id: reusable
+    attributes:
+      label: Why this belongs in engineering-process
+      description: Explain the reusable process gap; consumer-specific product behavior must remain in the consumer.
+    validations:
+      required: true
+  - type: dropdown
+    id: blocking
+    attributes:
+      label: Current consumer status
+      options:
+        - Mitigated; consumer development can continue
+        - Safely blocked by consumer policy
+    validations:
+      required: true
+  - type: checkboxes
+    id: disclosure
+    attributes:
+      label: Disclosure and authority confirmation
+      options:
+        - label: I searched open engineering-process issues for the complete stable key and will reuse an existing issue instead of submitting a duplicate.
+          required: true
+        - label: I removed secrets, credentials, tokens, raw private logs, media, private source, and production-only metadata.
+          required: true
+        - label: I understand this issue is evidence for triage and does not authorize process mutation, release, adoption, or merge.
+          required: true

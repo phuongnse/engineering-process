@@ -68,10 +68,72 @@ Commands are argument arrays, never shell strings. Each command has a finite tim
 Output has a hard aggregate budget; evidence stores byte counts and hashes, never raw
 stdout or stderr that could contain secrets.
 
+### Production readiness
+
+A consumer declares `.process/readiness.json` with production as its direction, its
+current stage, immutable pack versions, and the state of every required capability.
+An enforced capability maps to project-required profiles; a planned capability names
+the concrete gap without pretending to have evidence:
+
+    {
+      "target": "production",
+      "stage": "production",
+      "packs": [{"id": "library-cli", "version": 1}],
+      "capabilities": [
+        {"id": "correctness", "state": "enforced", "evidenceProfiles": ["development"]},
+        {"id": "runtime-safety", "state": "enforced", "evidenceProfiles": ["development"]},
+        {"id": "compatibility", "state": "enforced", "evidenceProfiles": ["development"]},
+        {"id": "portability", "state": "enforced", "evidenceProfiles": ["development", "review"]},
+        {"id": "installability", "state": "enforced", "evidenceProfiles": ["review"]},
+        {"id": "distribution-integrity", "state": "enforced", "evidenceProfiles": ["review"]},
+        {"id": "adoption-integrity", "state": "enforced", "evidenceProfiles": ["development", "review"]}
+      ]
+    }
+
+`project validate` and `doctor` resolve that declaration to the exact checks owned by
+the consumer. The declaration does not make a weak command sufficient: normal CI and
+independent review still judge whether those commands prove the named capability. A
+building consumer may keep planned gaps while ordinary development continues. A
+production-stage declaration fails closed if any capability remains planned.
+
+The sidecar is a deliberate self-hosting boundary. Public authority N continues to
+validate the unchanged strict `.process/project.json` while source N+1 validates and
+self-applies the new readiness contract. Adoption leaves the consumer-owned sidecar
+in place, so every later authority can repeat the same forward-compatible sequence.
+Pack versions are also immutable: a process update must keep `operations@1` working
+even after `operations@2` exists. Process adoption and pack upgrades are separate
+consumer-owned changes, preventing a new standard from deadlocking authority adoption.
+
+`library-cli@1` was derived from this repository as a real producer and self-consumer.
+`operations@1` was then derived from renovate-ops and requires auditability, automation
+correctness, bounded execution, least privilege, policy integrity, recovery, and
+target-selection integrity. `desktop-media@1` is derived from LyricRail and keeps its
+existing correctness, input, source-portability, audit, media, package, and recovery-
+mechanism evidence enforced. Stable dependency/recovery claims, signing, key custody,
+runtime/license delivery, Linux advisory resolution, real-host workspace security,
+updater, incident recovery, and independent security review remain planned.
+Consumers without readiness remain compatible during that evidence-backed rollout.
+
+For each ordinary change, `run-change` first surfaces this readiness view. The accepted
+request and consumer rules determine which capabilities are affected. Every change
+retains the project's baseline `requiredProfiles`; start and plan add any conditional
+evidence profiles needed by affected capabilities and include a planned gap only when
+the accepted request explicitly selects it. Implement and review protect the enforced
+floor. A planned-to-enforced promotion is a reviewed consumer source diff with fresh
+evidence. Unrelated planned gaps remain visible but do not block development, and no
+skill chooses product priorities or changes readiness automatically.
+
+When a consumer incident exposes a reusable process gap, `improve-process` first keeps
+the consumer safe, then prepares a sanitized GitHub issue draft from that checkout.
+It deduplicates by consumer/process-version/invariant, requires owner authorization
+before `gh issue create`, and uses an accepted issue as the later process change source
+and `consumerEvidence`. No producer clone, consumer-CI write token, automatic process
+mutation, or wait for a process release is required to continue consumer development.
+
 Pin the process in requirements/process.in:
 
     --only-binary :all:
-    engineering-process==0.9.0
+    engineering-process==1.0.1
 
 Generate requirements/process.txt with hashes, install that lock, then run:
 

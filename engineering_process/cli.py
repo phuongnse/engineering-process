@@ -34,7 +34,7 @@ from .lifecycle import (
     submit_review,
     verify_change,
 )
-from .project import load_project
+from .project import load_project, readiness_summary
 from .publication_compat import (
     branch_issues,
     commit_issues,
@@ -97,6 +97,7 @@ def command_project_validate(args: argparse.Namespace) -> Result:
         project=project["project"],
         profiles=sorted(project["profiles"]),
         requiredProfiles=project["lifecycle"]["requiredProfiles"],
+        readiness=readiness_summary(project),
     ), 0
 
 
@@ -155,6 +156,7 @@ def command_doctor(args: argparse.Namespace) -> Result:
         project=project["project"],
         processVersion=VERSION,
         profiles=sorted(project["profiles"]),
+        readiness=readiness_summary(project),
         issues=issues,
     ), (0 if not issues else 1)
 
@@ -341,47 +343,27 @@ def command_change_status(args: argparse.Namespace) -> Result:
 
 
 def command_release_validate(args: argparse.Namespace) -> Result:
-    details = validate_release(
-        args.project_root, _process_root(args), tag=args.tag
-    )
+    details = validate_release(args.project_root, _process_root(args), tag=args.tag)
     return _result("release validate", **details), 0
 
 
-def _publication_result(command: str, details: dict[str, Any]) -> Result:
-    issues = details["issues"]
-    status = "passed" if not issues else "failed"
-    return _result(command, status=status, **details), (0 if not issues else 1)
-
-
-def command_publication_branch(args: argparse.Namespace) -> Result:
-    return _publication_result(
-        "publication validate-branch", {"issues": branch_issues(args.branch)}
-    )
-
-
-def command_publication_commit(args: argparse.Namespace) -> Result:
-    return _publication_result(
-        "publication validate-commit", {"issues": commit_issues(args.subject)}
-    )
-
-
-def command_publication_range(args: argparse.Namespace) -> Result:
-    return _publication_result(
-        "publication validate-range",
-        validate_range(args.project_root, args.branch, args.range_spec),
-    )
-
-
-def command_publication_pr(args: argparse.Namespace) -> Result:
-    return _publication_result(
-        "publication validate-pr",
-        validate_pull_request(
+def command_publication(args: argparse.Namespace) -> Result:
+    name = args.publication_command
+    if name == "validate-branch":
+        details = {"issues": branch_issues(args.branch)}
+    elif name == "validate-commit":
+        details = {"issues": commit_issues(args.subject)}
+    elif name == "validate-range":
+        details = validate_range(args.project_root, args.branch, args.range_spec)
+    else:
+        details = validate_pull_request(
             title=args.title,
             branch=args.branch,
             state=args.state,
             body_path=args.body_file,
-        ),
-    )
+        )
+    status = "passed" if not details["issues"] else "failed"
+    return _result(f"publication {name}", status=status, **details), (0 if status == "passed" else 1)
 
 
 def _add_common(parser: argparse.ArgumentParser, *, project: bool = True) -> None:
@@ -397,151 +379,113 @@ def _add_actor(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--actor-kind", choices=("agent", "human"), default="agent")
 
 
+def _leaf(subparsers: Any, name: str, handler: Callable[..., Result], *, project: bool = True, help: str | None = None) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(name, help=help)
+    _add_common(parser, project=project)
+    parser.set_defaults(handler=handler)
+    return parser
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="processctl", description="Small, enforceable engineering process"
     )
     parser.add_argument("--version", action="version", version=VERSION)
     commands = parser.add_subparsers(dest="command", required=True)
-
     project = commands.add_parser("project", help="Validate consumer configuration")
     project_commands = project.add_subparsers(dest="project_command", required=True)
-    project_validate = project_commands.add_parser("validate")
-    _add_common(project_validate)
-    project_validate.set_defaults(handler=command_project_validate)
-
+    _leaf(project_commands, "validate", command_project_validate)
     lock = commands.add_parser("lock", help="Validate the adopted process lock")
     lock_commands = lock.add_subparsers(dest="lock_command", required=True)
-    lock_validate = lock_commands.add_parser("validate")
-    _add_common(lock_validate)
-    lock_validate.set_defaults(handler=command_lock_validate)
-
+    _leaf(lock_commands, "validate", command_lock_validate)
     contract = commands.add_parser("contract", help="Validate a JSON contract")
     contract_commands = contract.add_subparsers(dest="contract_command", required=True)
-    contract_validate = contract_commands.add_parser("validate")
+    contract_validate = _leaf(
+        contract_commands, "validate", command_contract_validate, project=False
+    )
     contract_validate.add_argument("--kind", choices=CONTRACT_KINDS, required=True)
     contract_validate.add_argument("path", type=Path)
-    _add_common(contract_validate, project=False)
-    contract_validate.set_defaults(handler=command_contract_validate)
-
     skills = commands.add_parser("skills", help="Validate the complete skill graph")
     skills_commands = skills.add_subparsers(dest="skills_command", required=True)
-    skills_validate = skills_commands.add_parser("validate")
+    skills_validate = _leaf(
+        skills_commands, "validate", command_skills_validate, project=False
+    )
     skills_validate.add_argument("--root", type=Path)
-    _add_common(skills_validate, project=False)
-    skills_validate.set_defaults(handler=command_skills_validate)
-
-    doctor = commands.add_parser("doctor", help="Validate one consumer integration")
-    _add_common(doctor)
+    doctor = _leaf(commands, "doctor", command_doctor, help="Validate one consumer integration")
     doctor.add_argument("--profile")
-    doctor.set_defaults(handler=command_doctor)
-
-    setup = commands.add_parser("setup", help=argparse.SUPPRESS)
-    _add_common(setup)
+    setup = _leaf(commands, "setup", command_setup, help=argparse.SUPPRESS)
     setup.add_argument("--profile", required=True)
     setup.add_argument("--apply", action="store_true")
     setup.add_argument("--allow", action="append", default=[])
-    setup.set_defaults(handler=command_setup)
-
-    verify = commands.add_parser("verify", help="Run a project verification profile")
-    _add_common(verify)
+    verify = _leaf(commands, "verify", command_verify, help="Run a project verification profile")
     verify.add_argument("--profile", required=True)
-    verify.set_defaults(handler=command_verify)
-
     adoption = commands.add_parser("adoption", help="Apply or check managed adoption")
     adoption_commands = adoption.add_subparsers(dest="adoption_command", required=True)
     for name, handler in (("apply", command_adoption_apply), ("check", command_adoption_check)):
-        adoption_command = adoption_commands.add_parser(name)
-        _add_common(adoption_command)
+        adoption_command = _leaf(adoption_commands, name, handler)
         adoption_command.add_argument("--requirements-lock", type=Path, required=True)
         if name == "apply":
             adoption_command.add_argument("--requirements-source", type=Path)
             adoption_command.add_argument("--expected-requirements-digest")
-        adoption_command.set_defaults(handler=handler)
-
     change = commands.add_parser("change", help="Run the six-phase change lifecycle")
     change_commands = change.add_subparsers(dest="change_command", required=True)
-
-    change_start = change_commands.add_parser("start")
-    _add_common(change_start)
+    change_start = _leaf(change_commands, "start", command_change_start)
     _add_actor(change_start)
     change_start.add_argument("--contract", type=Path, required=True)
-    change_start.set_defaults(handler=command_change_start)
-
-    change_plan = change_commands.add_parser("plan")
-    _add_common(change_plan)
+    change_plan = _leaf(change_commands, "plan", command_change_plan)
     _add_actor(change_plan)
     change_plan.add_argument("--change-id", required=True)
     change_plan.add_argument("--plan", type=Path, required=True)
-    change_plan.set_defaults(handler=command_change_plan)
-
-    change_implement = change_commands.add_parser("implement")
-    _add_common(change_implement)
+    change_implement = _leaf(change_commands, "implement", command_change_implement)
     _add_actor(change_implement)
     change_implement.add_argument("--change-id", required=True)
-    change_implement.set_defaults(handler=command_change_implement)
-
-    change_verify = change_commands.add_parser("verify")
-    _add_common(change_verify)
+    change_verify = _leaf(change_commands, "verify", command_change_verify)
     change_verify.add_argument("--change-id", required=True)
     change_verify.add_argument("--profile", required=True)
-    change_verify.set_defaults(handler=command_change_verify)
 
     review = change_commands.add_parser("review")
     review_commands = review.add_subparsers(dest="review_command", required=True)
-    review_start = review_commands.add_parser("start")
-    _add_common(review_start)
+    review_start = _leaf(review_commands, "start", command_change_review_start)
     _add_actor(review_start)
     review_start.add_argument("--change-id", required=True)
-    review_start.set_defaults(handler=command_change_review_start)
-    review_submit = review_commands.add_parser("submit")
-    _add_common(review_submit)
+    review_submit = _leaf(review_commands, "submit", command_change_review_submit)
     review_submit.add_argument("--change-id", required=True)
     review_submit.add_argument("--review", type=Path, required=True)
-    review_submit.set_defaults(handler=command_change_review_submit)
 
-    change_finish = change_commands.add_parser("finish")
-    _add_common(change_finish)
+    change_finish = _leaf(change_commands, "finish", command_change_finish)
     _add_actor(change_finish)
     change_finish.add_argument("--change-id", required=True)
-    change_finish.set_defaults(handler=command_change_finish)
 
-    change_status = change_commands.add_parser("status")
-    _add_common(change_status)
+    change_status = _leaf(change_commands, "status", command_change_status)
     change_status.add_argument("--change-id", required=True)
-    change_status.set_defaults(handler=command_change_status)
 
     release = commands.add_parser("release", help="Validate release identity")
     release_commands = release.add_subparsers(dest="release_command", required=True)
-    release_validate = release_commands.add_parser("validate")
-    _add_common(release_validate)
+    release_validate = _leaf(release_commands, "validate", command_release_validate)
     release_validate.add_argument("--tag")
-    release_validate.set_defaults(handler=command_release_validate)
 
     publication = commands.add_parser("publication", help=argparse.SUPPRESS)
     publication_commands = publication.add_subparsers(
         dest="publication_command", required=True
     )
-    publication_branch = publication_commands.add_parser("validate-branch")
+    publication_branch = _leaf(
+        publication_commands, "validate-branch", command_publication, project=False
+    )
     publication_branch.add_argument("--branch", required=True)
-    _add_common(publication_branch, project=False)
-    publication_branch.set_defaults(handler=command_publication_branch)
-    publication_commit = publication_commands.add_parser("validate-commit")
+    publication_commit = _leaf(
+        publication_commands, "validate-commit", command_publication, project=False
+    )
     publication_commit.add_argument("--subject", required=True)
-    _add_common(publication_commit, project=False)
-    publication_commit.set_defaults(handler=command_publication_commit)
-    publication_range = publication_commands.add_parser("validate-range")
-    _add_common(publication_range)
+    publication_range = _leaf(publication_commands, "validate-range", command_publication)
     publication_range.add_argument("--branch", required=True)
     publication_range.add_argument("--range", dest="range_spec", required=True)
-    publication_range.set_defaults(handler=command_publication_range)
-    publication_pr = publication_commands.add_parser("validate-pr")
+    publication_pr = _leaf(
+        publication_commands, "validate-pr", command_publication, project=False
+    )
     publication_pr.add_argument("--title", required=True)
     publication_pr.add_argument("--branch", required=True)
     publication_pr.add_argument("--state", required=True)
     publication_pr.add_argument("--body-file", type=Path)
-    _add_common(publication_pr, project=False)
-    publication_pr.set_defaults(handler=command_publication_pr)
     return parser
 
 

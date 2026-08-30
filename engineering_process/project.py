@@ -10,6 +10,11 @@ from .distribution import schemas_root
 
 
 PROJECT_SCHEMA_VERSION = 5
+PACK_CAPABILITIES = {
+    ("desktop-media", 1): set("application-correctness authoritative-input-integrity cross-platform-portability dependency-audit dependency-security incident-recovery independent-security-review key-custody linux-release-security media-pipeline-integrity package-security recovery-integrity recovery-mechanism-integrity release-integrity runtime-delivery-integrity update-integrity workspace-security".split()),
+    ("library-cli", 1): set("adoption-integrity compatibility correctness distribution-integrity installability portability runtime-safety".split()),
+    ("operations", 1): set("auditability automation-correctness bounded-execution least-privilege policy-integrity recovery target-selection-integrity".split()),
+}
 
 
 def project_path(project_root: Path) -> Path:
@@ -17,7 +22,16 @@ def project_path(project_root: Path) -> Path:
 
 
 def load_project(project_root: Path, process_root: Path) -> dict[str, Any]:
-    return normalize_project(read_json(project_path(project_root)), process_root)
+    project = normalize_project(read_json(project_path(project_root)), process_root)
+    path = project_root / ".process" / "readiness.json"
+    if not path.is_file():
+        return project
+    if "readiness" in project:
+        raise ProcessError("readiness must use either project.json or readiness.json, not both")
+    project["readiness"] = read_json(path)
+    validate_document(project, "project", schema_root=schemas_root(process_root), source=str(path))
+    readiness_summary(project)
+    return project
 
 
 def normalize_project(value: Any, process_root: Path) -> dict[str, Any]:
@@ -103,7 +117,50 @@ def normalize_project(value: Any, process_root: Path) -> dict[str, Any]:
         schema_root=schemas_root(process_root),
         source="normalized project configuration",
     )
+    missing = sorted(set(required_profiles(normalized)) - set(normalized["profiles"]))
+    if missing:
+        raise ProcessError("project requires unknown profiles: " + ", ".join(missing))
+    readiness_summary(normalized)
     return normalized
+
+
+def readiness_summary(project: dict[str, Any]) -> dict[str, Any] | None:
+    readiness = project.get("readiness")
+    if readiness is None:
+        return None
+    entries = readiness["capabilities"]
+    capabilities = {item["id"]: item for item in entries}
+    if len(capabilities) != len(entries):
+        raise ProcessError("readiness capability ids must be unique")
+    packs = [(item["id"], item["version"]) for item in readiness["packs"]]
+    unsupported = [f"{name}@{version}" for name, version in packs if (name, version) not in PACK_CAPABILITIES]
+    if unsupported:
+        raise ProcessError("unsupported readiness pack versions: " + ", ".join(unsupported))
+    required = set().union(*(PACK_CAPABILITIES[pack] for pack in packs))
+    missing = sorted(required - capabilities.keys())
+    if missing:
+        raise ProcessError("readiness packs require missing capabilities: " + ", ".join(missing))
+    available = set(project["profiles"])
+    mandatory_profiles = set(required_profiles(project))
+    coverage: dict[str, Any] = {}
+    planned: list[str] = []
+    for capability_id, item in sorted(capabilities.items()):
+        if item["state"] == "planned":
+            coverage[capability_id] = {"state": "planned", "gap": item["gap"]}
+            planned.append(capability_id)
+            continue
+        evidence = set(item["evidenceProfiles"])
+        unknown = sorted(evidence - available)
+        if unknown:
+            raise ProcessError(f"readiness capability {capability_id} references unknown profiles: " + ", ".join(unknown))
+        if evidence.isdisjoint(mandatory_profiles):
+            raise ProcessError(f"readiness capability {capability_id} relies only on optional profiles: " + ", ".join(sorted(evidence)))
+        coverage[capability_id] = {"state": "enforced", "evidence": {
+            name: [check["id"] for check in project["profiles"][name]] for name in item["evidenceProfiles"]
+        }}
+    if readiness["stage"] == "production" and planned:
+        raise ProcessError("production readiness cannot contain planned capabilities: " + ", ".join(planned))
+    return {"target": readiness["target"], "stage": readiness["stage"], "packs": readiness["packs"], "capabilities": coverage, "plannedCapabilities": planned}
 
 
 def required_profiles(project: dict[str, Any]) -> tuple[str, ...]:

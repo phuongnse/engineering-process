@@ -134,12 +134,53 @@ class AutomationTests(unittest.TestCase):
         self.assertLess(producer_install, adoption_check)
         self.assertLess(adoption_check, doctor)
 
+    def test_readiness_sidecar_preserves_the_adopted_authority_bootstrap(self) -> None:
+        project = json.loads((ROOT / ".process" / "project.json").read_text(encoding="utf-8"))
+        readiness = json.loads((ROOT / ".process" / "readiness.json").read_text(encoding="utf-8"))
+        self.assertNotIn("readiness", project)
+        self.assertEqual("production", readiness["target"])
+        self.assertEqual("production", readiness["stage"])
+        self.assertEqual([{"id": "library-cli", "version": 1}], readiness["packs"])
+        self.assertIn("engineering-process==1.0.1", (ROOT / "requirements" / "process.in").read_text(encoding="utf-8"))
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("processctl adoption check", workflow)
+        self.assertIn("processctl doctor --project-root .", workflow)
+
     def test_external_actions_are_immutably_pinned(self) -> None:
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
             for reference in re.findall(r"uses:\s*([^\s#]+)", workflow.read_text(encoding="utf-8")):
                 if reference.startswith("./"):
                     continue
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$", workflow.name)
+
+    def test_consumer_improvement_issue_form_is_bounded_and_non_automated(self) -> None:
+        form = (ROOT / ".github" / "ISSUE_TEMPLATE" / "consumer-process-improvement.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            {
+                "authority",
+                "blocking",
+                "consumer",
+                "disclosure",
+                "evidence",
+                "expected",
+                "incident_type",
+                "mitigation",
+                "observed",
+                "reusable",
+                "stable_key",
+            },
+            set(re.findall(r"^    id: ([a-z_]+)$", form, re.MULTILINE)),
+        )
+        self.assertGreaterEqual(form.count("required: true"), 13)
+        self.assertIn('title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT] "', form)
+        self.assertIn("searched open engineering-process issues for the complete stable key", form)
+        for forbidden in ("secrets", "credentials", "raw private logs", "media", "private source"):
+            self.assertIn(forbidden, form)
+        workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / ".github" / "workflows").glob("*.yml")
+        )
+        self.assertNotIn("consumer-process-improvement", workflows)
 
 
 if __name__ == "__main__":

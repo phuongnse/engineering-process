@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "operations-readiness-pack",
+  "type": "capability",
+  "summary": "The readiness contract includes an operations pack derived from the bounded renovate-ops control plane.",
+  "source": "phuongnse/renovate-ops production-readiness application"
+}

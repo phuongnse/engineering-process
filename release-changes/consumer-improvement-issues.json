@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "consumer-improvement-issues",
+  "type": "capability",
+  "summary": "A consumer-only checkout can prepare, deduplicate, and owner-authorize a sanitized GitHub issue handoff for a confirmed process gap.",
+  "source": "phuongnse/lyric-rail single-checkout process-improvement requirement"
+}

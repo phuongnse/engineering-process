@@ -73,6 +73,28 @@ class CliTests(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertEqual("failed", result["status"])
 
+    def test_project_validate_reports_resolved_production_readiness(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(
+                [
+                    "project",
+                    "validate",
+                    "--project-root",
+                    str(ROOT),
+                    "--process-root",
+                    str(ROOT),
+                    "--json",
+                ]
+            )
+        self.assertEqual(0, code)
+        result = json.loads(output.getvalue())
+        self.assertEqual("production", result["readiness"]["target"])
+        self.assertEqual("production", result["readiness"]["stage"])
+        self.assertEqual([{"id": "library-cli", "version": 1}], result["readiness"]["packs"])
+        self.assertEqual([], result["readiness"]["plannedCapabilities"])
+        self.assertIn("distribution-integrity", result["readiness"]["capabilities"])
+
 
 if __name__ == "__main__":
     unittest.main()
