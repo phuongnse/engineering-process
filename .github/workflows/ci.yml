@@ -2,48 +2,11 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      remote_source_ref:
-        description: Exact verification tag; empty keeps the ordinary main run
-        required: false
-        type: string
-      remote_change_id:
-        description: Exact lifecycle change id
-        required: false
-        type: string
-      remote_checkpoint:
-        description: Exact candidate checkpoint
-        required: false
-        type: string
-      remote_comparison_base:
-        description: Exact protected workflow/base checkpoint
-        required: false
-        type: string
-      remote_request_sha256:
-        description: Canonical remote verification request digest
-        required: false
-        type: string
-      remote_workflow_sha:
-        description: Exact protected workflow checkpoint expected by the request
-        required: false
-        type: string
-      remote_bootstrap_authorization_sha256:
-        description: One-time owner-decision digest for the scoped introduction bootstrap
-        required: false
-        type: string
-      remote_authority_transition:
-        description: Canonical authority-transition binding from the N-1 request
-        required: false
-        type: string
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   policy-verification:
@@ -52,247 +15,78 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: phuongnse/renovate-ops/.github/workflows/policy-verification.yml@2152dab51edd6c84163a71b48f50e6ad042eb331
+    uses: phuongnse/renovate-ops/.github/workflows/policy-verification.yml@1e3d0d333b62ec92c94ea5c355bbb0cd73024b78
 
-  verify:
+  adopted-process:
+    name: Adopted public process
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install exact adopted authority
+        run: >-
+          python -m pip install
+          --isolated
+          --disable-pip-version-check
+          --no-input
+          --require-hashes
+          --only-binary :all:
+          -r requirements/process.txt
+      - name: Install exact producer dependencies for doctor
+        run: >-
+          python -m pip install
+          --isolated
+          --disable-pip-version-check
+          --no-input
+          --only-binary :all:
+          -r engineering_process/requirements-runtime.txt
+          -r engineering_process/requirements-dev.txt
+          -r engineering_process/requirements-build.txt
+      - name: Validate complete self-adoption
+        run: >-
+          processctl adoption check
+          --project-root .
+          --requirements-lock requirements/process.txt
+      - name: Diagnose the adopted authority
+        run: processctl doctor --project-root .
+
+  test:
+    name: verify (${{ matrix.os }}, ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            python-version: "3.11"
+            python: "3.11"
           - os: ubuntu-latest
-            python-version: "3.14"
+            python: "3.14"
           - os: macos-latest
-            python-version: "3.14"
+            python: "3.14"
           - os: windows-latest
-            python-version: "3.14"
+            python: "3.14"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ inputs.remote_source_ref || github.event.pull_request.head.sha || github.sha }}
-
-      - name: Validate exact remote verification dispatch
-        if: ${{ inputs.remote_source_ref != '' }}
-        env:
-          REMOTE_SOURCE_REF: ${{ inputs.remote_source_ref }}
-          REMOTE_CHANGE_ID: ${{ inputs.remote_change_id }}
-          REMOTE_CHECKPOINT: ${{ inputs.remote_checkpoint }}
-          REMOTE_COMPARISON_BASE: ${{ inputs.remote_comparison_base }}
-          REMOTE_REQUEST_SHA256: ${{ inputs.remote_request_sha256 }}
-          REMOTE_WORKFLOW_SHA: ${{ inputs.remote_workflow_sha }}
-          ACTUAL_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          REMOTE_BOOTSTRAP_AUTHORIZATION_SHA256: ${{ inputs.remote_bootstrap_authorization_sha256 }}
-        run: |
-          git show "$REMOTE_WORKFLOW_SHA:verification/validate_remote_verification_dispatch.py" \
-            > "$RUNNER_TEMP/validate-remote-verification-dispatch.py"
-          bootstrap_args=()
-          if test -n "$REMOTE_BOOTSTRAP_AUTHORIZATION_SHA256"; then
-            bootstrap_args=(
-              --bootstrap-authorization-sha256
-              "$REMOTE_BOOTSTRAP_AUTHORIZATION_SHA256"
-            )
-          fi
-          python "$RUNNER_TEMP/validate-remote-verification-dispatch.py" \
-            --project-root . \
-            --source-ref "$REMOTE_SOURCE_REF" \
-            --change-id "$REMOTE_CHANGE_ID" \
-            --checkpoint "$REMOTE_CHECKPOINT" \
-            --comparison-base "$REMOTE_COMPARISON_BASE" \
-            --request-sha256 "$REMOTE_REQUEST_SHA256" \
-            --expected-workflow-sha "$REMOTE_WORKFLOW_SHA" \
-            --actual-workflow-sha "$ACTUAL_WORKFLOW_SHA" \
-            --event-name "$EVENT_NAME" \
-            "${bootstrap_args[@]}"
-
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Create shared install action smoke environment
-        run: python -m venv "$RUNNER_TEMP/process-action-smoke"
-
-      - name: Smoke test shared install action
-        uses: ./
-        with:
-          project-root: .
-          requirements-lock: requirements/process.txt
-          python-executable: ${{ runner.os == 'Windows' && format('{0}/process-action-smoke/Scripts/python.exe', runner.temp) || format('{0}/process-action-smoke/bin/python', runner.temp) }}
-
-      - name: Verify shared install action authority
-        env:
-          PROCESS_ACTION_PYTHON: ${{ runner.os == 'Windows' && format('{0}/process-action-smoke/Scripts/python.exe', runner.temp) || format('{0}/process-action-smoke/bin/python', runner.temp) }}
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install source and test dependencies
         run: >-
-          "$PROCESS_ACTION_PYTHON" -c
-          "import json; from importlib.metadata import version;
-          expected=json.load(open('.process/process.lock', encoding='utf-8'))['process']['version'];
-          assert version('engineering-process') == expected"
-
-      - name: Build distributions
-        run: |
-          python -m pip install -r engineering_process/requirements-runtime.txt -r engineering_process/requirements-dev.txt -r engineering_process/requirements-build.txt
-          python verification/verify_distribution.py --output "$RUNNER_TEMP/dist"
-
-      - name: Prove transition release rendering under the real public authority
-        env:
-          PROCESS_ACTION_PYTHON: ${{ runner.os == 'Windows' && format('{0}/process-action-smoke/Scripts/python.exe', runner.temp) || format('{0}/process-action-smoke/bin/python', runner.temp) }}
-        run: >-
-          python verification/verify_transition_release_rendering.py
-          --public-python "$PROCESS_ACTION_PYTHON"
-          --controller processctl.py
-          --controller-requirement engineering_process/requirements-runtime.txt
-          --controller-requirement engineering_process/requirements-dev.txt
-          --controller-requirement engineering_process/requirements-build.txt
-          --release examples/release-authority-transition.json
-
-      - name: Verify real Windows Job Object boundary
-        if: runner.os == 'Windows'
-        run: python -m unittest tests.test_windows_job
-
-      - name: Install built wheel
-        run: python -m pip install --force-reinstall "$RUNNER_TEMP"/dist/*.whl
-
-      - name: Create exact public N-1 release qualification environment
-        if: >-
-          github.event_name == 'pull_request' &&
-          matrix.os == 'ubuntu-latest' &&
-          matrix.python-version == '3.14' &&
-          github.head_ref != 'automation/release/next'
-        run: python -m venv "$RUNNER_TEMP/release-qualification-authority"
-
-      - name: Install exact public N-1 release qualification authority
-        if: >-
-          github.event_name == 'pull_request' &&
-          matrix.os == 'ubuntu-latest' &&
-          matrix.python-version == '3.14' &&
-          github.head_ref != 'automation/release/next'
-        uses: ./
-        with:
-          project-root: .
-          requirements-lock: requirements/process.txt
-          python-executable: ${{ runner.temp }}/release-qualification-authority/bin/python
-
-      - name: Install release qualification dependencies
-        if: >-
-          github.event_name == 'pull_request' &&
-          matrix.os == 'ubuntu-latest' &&
-          matrix.python-version == '3.14' &&
-          github.head_ref != 'automation/release/next'
-        run: |
-          "$RUNNER_TEMP/release-qualification-authority/bin/python" -m pip install \
-            -r engineering_process/requirements-runtime.txt \
-            -r engineering_process/requirements-dev.txt \
-            -r engineering_process/requirements-build.txt
-
-      - name: Qualify generated release candidate to the reviewer handoff under N-1
-        if: >-
-          github.event_name == 'pull_request' &&
-          matrix.os == 'ubuntu-latest' &&
-          matrix.python-version == '3.14' &&
-          github.head_ref != 'automation/release/next'
-        run: >-
-          "$RUNNER_TEMP/release-qualification-authority/bin/python"
-          verification/qualify_release_lifecycle.py
-          --project-root .
-          --processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"
-
-      - name: Prove reviewed plan continuation under exact public N-1
-        if: >-
-          github.event_name == 'pull_request' &&
-          matrix.os == 'ubuntu-latest' &&
-          matrix.python-version == '3.14' &&
-          github.head_ref != 'automation/release/next'
-        run: >-
-          "$RUNNER_TEMP/release-qualification-authority/bin/python"
-          verification/verify_public_n1_review_context_handoff.py
-          --project-root .
-          --processctl "$RUNNER_TEMP/release-qualification-authority/bin/processctl"
-
-      - name: Validate complete self-adoption candidate
-        if: >-
-          github.event_name == 'pull_request' &&
-          startsWith(github.head_ref, 'automation/process/engineering-process')
-        run: >-
-          python templates/adopt-process.py
-          --project-root .
-          --requirements-lock requirements/process.txt
-          --check
-
-      - name: Validate publication metadata
-        if: github.event_name == 'pull_request'
-        run: |
-          processctl publication validate-pr --title "$PR_TITLE" --branch "$PR_BRANCH" --state "$PR_STATE"
-          processctl publication validate-range --project-root . --branch "$PR_BRANCH" --range "$PR_BASE_SHA..$PR_HEAD_SHA"
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_BRANCH: ${{ github.head_ref }}
-          PR_STATE: ${{ github.event.pull_request.draft && 'draft' || 'ready' }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-
-      - name: Validate portable skills
-        run: |
-          cd "$RUNNER_TEMP"
-          processctl digest
-          processctl skills validate
-
-      - name: Produce bounded supplemental verification evidence
-        run: |
-          transition_args=()
-          if test -n "$REMOTE_AUTHORITY_TRANSITION"; then
-            printf '%s\n' "$REMOTE_AUTHORITY_TRANSITION" > "$RUNNER_TEMP/authority-transition.json"
-            transition_args=(--remote-request "$RUNNER_TEMP/authority-transition-request.json")
-            python - "$RUNNER_TEMP/authority-transition.json" "$RUNNER_TEMP/authority-transition-request.json" <<'PY'
-          import json
-          import sys
-          transition = json.load(open(sys.argv[1], encoding="utf-8"))
-          json.dump({"authorityTransition": transition}, open(sys.argv[2], "x", encoding="utf-8"), sort_keys=True)
-          PY
-          fi
-          python verification/generate_ci_evidence.py \
-          --project-root "$GITHUB_WORKSPACE" \
-          --output-root "$RUNNER_TEMP/engineering-process-ci-evidence" \
-          --expected-checkpoint "$CI_CHECKPOINT" \
-          --comparison-base "$CI_COMPARISON_BASE" \
-          --producer-actor "github-actions" \
-          --producer-context "$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_JOB:$RUNNER_OS:python-${{ matrix.python-version }}" \
-          --provider "github-actions" \
-          --repository "$GITHUB_REPOSITORY" \
-          --event-name "$GITHUB_EVENT_NAME" \
-          --workflow-name "$GITHUB_WORKFLOW" \
-          --workflow-ref "$GITHUB_WORKFLOW_REF" \
-          --workflow-sha "$CI_WORKFLOW_SHA" \
-          --run-id "$GITHUB_RUN_ID" \
-          --run-attempt "$GITHUB_RUN_ATTEMPT" \
-          --job "$GITHUB_JOB" \
-          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
-          --runner-os "$RUNNER_OS" \
-          --runner-arch "$RUNNER_ARCH" \
-          --triggered-by "$GITHUB_ACTOR" \
-          "${transition_args[@]}"
-        env:
-          CI_CHECKPOINT: ${{ inputs.remote_checkpoint || github.event.pull_request.head.sha || github.sha }}
-          CI_COMPARISON_BASE: ${{ inputs.remote_comparison_base || github.event.pull_request.base.sha || github.event.before }}
-          CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          REMOTE_AUTHORITY_TRANSITION: ${{ inputs.remote_authority_transition }}
-
-      - name: Upload supplemental verification evidence
-        id: upload-evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: engineering-process-ci-evidence-${{ matrix.os }}-python-${{ matrix.python-version }}
-          path: ${{ runner.temp }}/engineering-process-ci-evidence
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 9
-          include-hidden-files: false
+          python -m pip install
+          -r engineering_process/requirements-runtime.txt
+          -r engineering_process/requirements-dev.txt
+          -r engineering_process/requirements-build.txt
+          --editable .
+      - name: Test runtime and contracts
+        run: python verification/run_test_suite.py
+      - name: Validate the complete skill graph
+        run: python processctl.py skills validate --root process_assets/skills
+      - name: Validate release identity
+        run: python processctl.py release validate
+      - name: Build and install the distribution
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        run: python verification/verify_distribution.py

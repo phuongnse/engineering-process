@@ -1,175 +1,40 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://engineering-process.invalid/schemas/release.schema.json",
-  "title": "Engineering process release contract",
+  "title": "Published release identity",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "previousVersion", "version", "classification", "compatibility", "schemaImpact", "migration"],
+  "required": ["schemaVersion", "version", "previousVersion", "changes"],
   "properties": {
-    "$schema": {"type": "string"},
-    "schemaVersion": {"enum": [1, 2, 3, 4]},
-    "previousVersion": {"$ref": "#/$defs/version"},
+    "schemaVersion": {"const": 5},
     "version": {"$ref": "#/$defs/version"},
-    "classification": {"enum": ["patch", "minor", "major"]},
-    "compatibility": {"enum": ["backward-compatible", "incompatible"]},
-    "schemaImpact": {"enum": ["unchanged", "additive", "breaking"]},
-    "migration": {"type": ["string", "null"], "minLength": 1, "maxLength": 1000},
-    "identity": {"$ref": "#/$defs/identity"},
-    "provenance": {"$ref": "#/$defs/provenance"},
-    "changes": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "#/$defs/change"}}
+    "previousVersion": {"$ref": "#/$defs/version"},
+    "changes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "summary", "source"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          },
+          "type": {"enum": ["fix", "capability", "breaking"]},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "source": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    }
   },
   "$defs": {
-    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
-    "identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["package", "distribution", "tag", "releaseName", "runtimeVersion", "artifacts", "receiptAsset"],
-      "properties": {
-        "package": {"type": "string", "minLength": 1, "maxLength": 128},
-        "distribution": {"type": "string", "minLength": 1, "maxLength": 128},
-        "tag": {"type": "string", "minLength": 1, "maxLength": 80},
-        "releaseName": {"type": "string", "minLength": 1, "maxLength": 128},
-        "runtimeVersion": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["path", "variable"],
-          "properties": {
-            "path": {"type": "string", "minLength": 1, "maxLength": 512},
-            "variable": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "maxLength": 64}
-          }
-        },
-        "artifacts": {
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
-          "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1, "maxLength": 200}
-        },
-        "receiptAsset": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
-        "authorizationAsset": {"type": ["string", "null"], "minLength": 1, "maxLength": 200}
-      }
-    },
-    "provenance": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode", "statement", "lifecycleReceipt"],
-      "properties": {
-        "mode": {"enum": ["bootstrap-history", "bootstrap-authority", "governed", "authority-transition-bootstrap"]},
-        "statement": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "lifecycleReceipt": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/receipt"}]},
-        "authorityTransition": {"$ref": "#/$defs/authorityTransition"}
-      }
-    },
-    "authorityTransition": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["sourceAuthority", "skippedRelease", "bootstrapChangeId"],
-      "properties": {
-        "sourceAuthority": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["version", "digest"],
-          "properties": {
-            "version": {"$ref": "#/$defs/version"},
-            "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
-          }
-        },
-        "skippedRelease": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["version", "tag"],
-          "properties": {
-            "version": {"$ref": "#/$defs/version"},
-            "tag": {"type": "string", "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"}
-          }
-        },
-        "bootstrapChangeId": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", "maxLength": 64}
-      }
-    },
-    "receipt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["asset", "project", "changeId", "cycle"],
-      "properties": {
-        "asset": {"type": "string", "minLength": 1, "maxLength": 200},
-        "project": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$", "maxLength": 128},
-        "changeId": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", "maxLength": 64},
-        "cycle": {"type": "integer", "minimum": 1}
-      }
-    },
-    "change": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "type", "surfaces", "rationale"],
-      "properties": {
-        "id": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$", "maxLength": 64},
-        "type": {"enum": ["fix", "capability", "breaking"]},
-        "surfaces": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"}
-        },
-        "rationale": {"type": "string", "minLength": 1, "maxLength": 1000}
-      }
+    "version": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
     }
-  },
-  "allOf": [
-    {
-      "if": {"properties": {"schemaVersion": {"const": 1}}, "required": ["schemaVersion"]},
-      "then": {"not": {"anyOf": [{"required": ["identity"]}, {"required": ["provenance"]}, {"required": ["changes"]}]}}
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]},
-      "then": {
-        "required": ["identity", "provenance", "changes"],
-        "properties": {
-          "identity": {"not": {"required": ["authorizationAsset"]}},
-          "provenance": {"properties": {"mode": {"enum": ["bootstrap-history", "governed"]}}}
-        }
-      }
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"const": 3}}, "required": ["schemaVersion"]},
-      "then": {
-        "required": ["identity", "provenance", "changes"],
-        "properties": {
-          "identity": {"required": ["authorizationAsset"]},
-          "provenance": {
-            "not": {"required": ["authorityTransition"]},
-            "properties": {"mode": {"enum": ["bootstrap-history", "bootstrap-authority", "governed"]}}
-          }
-        }
-      }
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"const": 4}}, "required": ["schemaVersion"]},
-      "then": {
-        "required": ["identity", "provenance", "changes"],
-        "properties": {
-          "identity": {"required": ["authorizationAsset"]},
-          "provenance": {
-            "required": ["authorityTransition"],
-            "properties": {"mode": {"const": "authority-transition-bootstrap"}}
-          }
-        }
-      }
-    },
-    {
-      "if": {"properties": {"classification": {"const": "patch"}}, "required": ["classification"]},
-      "then": {"properties": {"compatibility": {"const": "backward-compatible"}}}
-    },
-    {
-      "if": {"properties": {"schemaImpact": {"const": "breaking"}}, "required": ["schemaImpact"]},
-      "then": {"properties": {"compatibility": {"const": "incompatible"}}}
-    },
-    {
-      "if": {"properties": {"compatibility": {"const": "incompatible"}}, "required": ["compatibility"]},
-      "then": {"properties": {"migration": {"type": "string", "minLength": 1}}}
-    },
-    {
-      "if": {"properties": {"compatibility": {"const": "backward-compatible"}}, "required": ["compatibility"]},
-      "then": {"properties": {"migration": {"type": "null"}}}
-    }
-  ]
+  }
 }

@@ -5,18 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "engineering-process"
 version = "0.9.0"
-description = "Agent-neutral end-to-end engineering lifecycle and deterministic process CLI"
+description = "A small agent-neutral engineering lifecycle with managed adoption"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dynamic = ["dependencies", "optional-dependencies"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
-  "Operating System :: MacOS",
-  "Operating System :: Microsoft :: Windows",
-  "Operating System :: POSIX :: Linux",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Topic :: Software Development :: Quality Assurance",
@@ -39,11 +37,8 @@ dependencies = {file = ["engineering_process/requirements-runtime.txt"]}
 [tool.setuptools.dynamic.optional-dependencies]
 dev = {file = ["engineering_process/requirements-dev.txt"]}
 
-[tool.setuptools.package-data]
-engineering_process = ["requirements-*.txt"]
-
 [tool.setuptools.data-files]
-"share/engineering-process" = ["bundles.json", "improvement-catalog.json", "process-graph.json", "release.json", "PRODUCTION_STANDARD.md", "PROCESS_IMPROVEMENT.md", "VERSIONING.md"]
+"share/engineering-process" = ["process-graph.json"]
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
@@ -51,141 +46,23 @@ engineering_process = ["requirements-*.txt"]
   "templates/adopt-process-windows-job.py",
 ]
 "share/engineering-process/schemas" = [
-  "schemas/adoption-migration.schema.json",
-  "schemas/authority-transition-evidence.schema.json",
-  "schemas/authority-transition-request.schema.json",
-  "schemas/automation-policy.schema.json",
-  "schemas/automation-proposal-policy.schema.json",
-  "schemas/automation-proposal.schema.json",
-  "schemas/bootstrap-adoption-consumption.schema.json",
-  "schemas/bootstrap-adoption-intent.schema.json",
   "schemas/change.schema.json",
-  "schemas/evidence-receipt.schema.json",
-  "schemas/improvement-catalog.schema.json",
-  "schemas/improvement-disposition.schema.json",
-  "schemas/improvement-reproduction.schema.json",
-  "schemas/improvement-resolution.schema.json",
-  "schemas/improvement-signal.schema.json",
-  "schemas/lifecycle.schema.json",
   "schemas/plan.schema.json",
-  "schemas/plan-decision-review.schema.json",
-  "schemas/plan-decision-review-assignment.schema.json",
   "schemas/process-graph.schema.json",
   "schemas/process-lock.schema.json",
+  "schemas/project-legacy.schema.json",
   "schemas/project.schema.json",
-  "schemas/protected-transition-policy.schema.json",
-  "schemas/recommendation.schema.json",
-  "schemas/recommendation-resolution.schema.json",
-  "schemas/recommendation-review.schema.json",
-  "schemas/recommendation-review-assignment.schema.json",
-  "schemas/remote-verification-evidence.schema.json",
-  "schemas/remote-verification-request.schema.json",
-  "schemas/release.schema.json",
+  "schemas/receipt.schema.json",
   "schemas/release-change.schema.json",
+  "schemas/release.schema.json",
   "schemas/review.schema.json",
-  "schemas/reviewer-attestation.schema.json",
-  "schemas/supplemental-verification.schema.json",
-  "schemas/verification.schema.json",
+  "schemas/run.schema.json",
 ]
-"share/engineering-process/examples" = [
-  "examples/adoption-migration.json",
-  "examples/authority-transition-evidence.json",
-  "examples/authority-transition-request.json",
-  "examples/automation-policy.json",
-  "examples/automation-proposal-policy.json",
-  "examples/automation-proposal.json",
-  "examples/automation-process-adoption-policy.json",
-  "examples/automation-process-adoption-proposal.json",
-  "examples/bootstrap-adoption-consumption.json",
-  "examples/bootstrap-adoption-intent.json",
-  "examples/change.json",
-  "examples/improvement-catalog.json",
-  "examples/improvement-disposition.json",
-  "examples/improvement-reproduction.json",
-  "examples/improvement-resolution.json",
-  "examples/improvement-signal.json",
-  "examples/plan.json",
-  "examples/plan-decision-review.json",
-  "examples/plan-decision-review-assignment.json",
-  "examples/project.json",
-  "examples/protected-transition-policy.json",
-  "examples/recommendation.json",
-  "examples/recommendation-resolution.json",
-  "examples/recommendation-review.json",
-  "examples/recommendation-review-assignment.json",
-  "examples/remote-verification-evidence.json",
-  "examples/remote-verification-request.json",
-  "examples/release.json",
-  "examples/release-authority-transition.json",
-  "examples/release-change.json",
-  "examples/review.json",
-]
-"share/engineering-process/skills/cross-repo-change" = [
-  "process_assets/skills/cross-repo-change/SKILL.md",
-]
-"share/engineering-process/skills/assess-design" = [
-  "process_assets/skills/assess-design/SKILL.md",
-]
-"share/engineering-process/skills/build-frontend" = [
-  "process_assets/skills/build-frontend/SKILL.md",
-]
-"share/engineering-process/skills/build-frontend-foundation" = [
-  "process_assets/skills/build-frontend-foundation/SKILL.md",
-]
-"share/engineering-process/skills/change-api" = [
-  "process_assets/skills/change-api/SKILL.md",
-]
-"share/engineering-process/skills/define-change-contract" = [
-  "process_assets/skills/define-change-contract/SKILL.md",
-]
-"share/engineering-process/skills/design-module" = [
-  "process_assets/skills/design-module/SKILL.md",
-]
-"share/engineering-process/skills/evolve-process" = [
-  "process_assets/skills/evolve-process/SKILL.md",
-]
-"share/engineering-process/skills/finish-change" = [
-  "process_assets/skills/finish-change/SKILL.md",
-]
-"share/engineering-process/skills/implement-change" = [
-  "process_assets/skills/implement-change/SKILL.md",
-]
-"share/engineering-process/skills/implement-module" = [
-  "process_assets/skills/implement-module/SKILL.md",
-]
-"share/engineering-process/skills/implement-use-case" = [
-  "process_assets/skills/implement-use-case/SKILL.md",
-]
-"share/engineering-process/skills/integrate-mcp" = [
-  "process_assets/skills/integrate-mcp/SKILL.md",
-]
-"share/engineering-process/skills/maintain-docs" = [
-  "process_assets/skills/maintain-docs/SKILL.md",
-]
-"share/engineering-process/skills/plan-change" = [
-  "process_assets/skills/plan-change/SKILL.md",
-]
-"share/engineering-process/skills/publish-change" = [
-  "process_assets/skills/publish-change/SKILL.md",
-]
-"share/engineering-process/skills/review-change" = [
-  "process_assets/skills/review-change/SKILL.md",
-]
-"share/engineering-process/skills/run-change" = [
-  "process_assets/skills/run-change/SKILL.md",
-]
-"share/engineering-process/skills/run-change/references" = [
-  "process_assets/skills/run-change/references/execution.md",
-]
-"share/engineering-process/skills/run-project-command" = [
-  "process_assets/skills/run-project-command/SKILL.md",
-]
-"share/engineering-process/skills/specify-use-case" = [
-  "process_assets/skills/specify-use-case/SKILL.md",
-]
-"share/engineering-process/skills/verify-change" = [
-  "process_assets/skills/verify-change/SKILL.md",
-]
-"share/engineering-process/skills/govern-ui" = [
-  "process_assets/skills/govern-ui/SKILL.md",
-]
+"share/engineering-process/skills/finish-change" = ["process_assets/skills/finish-change/SKILL.md"]
+"share/engineering-process/skills/implement-change" = ["process_assets/skills/implement-change/SKILL.md"]
+"share/engineering-process/skills/improve-process" = ["process_assets/skills/improve-process/SKILL.md"]
+"share/engineering-process/skills/plan-change" = ["process_assets/skills/plan-change/SKILL.md"]
+"share/engineering-process/skills/review-change" = ["process_assets/skills/review-change/SKILL.md"]
+"share/engineering-process/skills/run-change" = ["process_assets/skills/run-change/SKILL.md"]
+"share/engineering-process/skills/start-change" = ["process_assets/skills/start-change/SKILL.md"]
+"share/engineering-process/skills/verify-change" = ["process_assets/skills/verify-change/SKILL.md"]

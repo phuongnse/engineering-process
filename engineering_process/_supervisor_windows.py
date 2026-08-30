@@ -215,6 +215,9 @@ class WindowsProcessSupervisor:
             self._status_readers[process.pid] = read_fd
         return process
 
+    def observe(self, process: subprocess.Popen[bytes]) -> None:
+        del process
+
     def terminate(
         self,
         process: subprocess.Popen[bytes],

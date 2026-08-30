@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "simplify-process-core",
+  "type": "breaking",
+  "summary": "Replace the governance stack with one six-phase lifecycle, eight routed skills, and direct managed adoption.",
+  "source": "engineering-process and renovate-ops adoption failures through 0.9.0"
+}

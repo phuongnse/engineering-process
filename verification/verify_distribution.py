@@ -1,35 +1,90 @@
+#!/usr/bin/env python3
+"""Build, install, and exercise the exact wheel distribution."""
+
 from __future__ import annotations
 
-import argparse
-import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
+
+from normalize_sdist import normalize
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-from engineering_process.distribution_verify import verify_distribution
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: int = 300,
+    environment: dict[str, str] | None = None,
+) -> None:
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout,
+        env=environment,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"command failed with exit {result.returncode}: {command}")
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="engineering-process-dist-") as directory:
+        root = Path(directory)
+        artifacts = root / "dist"
+        epoch = int(
+            subprocess.check_output(
+                ["git", "show", "-s", "--format=%ct", "HEAD"],
+                cwd=PROJECT_ROOT,
+                text=True,
+            ).strip()
+        )
+        build_environment = {**os.environ, "SOURCE_DATE_EPOCH": str(epoch)}
+        run(
+            [sys.executable, "-m", "build", "--no-isolation", "--outdir", str(artifacts)],
+            cwd=PROJECT_ROOT,
+            environment=build_environment,
+        )
+        wheels = list(artifacts.glob("*.whl"))
+        sdists = list(artifacts.glob("*.tar.gz"))
+        if len(wheels) != 1 or len(sdists) != 1:
+            raise RuntimeError("build must produce exactly one wheel and one sdist")
+        normalize(sdists[0], epoch)
+
+        environment = root / "venv"
+        run([sys.executable, "-m", "venv", str(environment)], cwd=root)
+        python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        processctl = environment / ("Scripts/processctl.exe" if os.name == "nt" else "bin/processctl")
+        run(
+            [str(python), "-m", "pip", "install", "--disable-pip-version-check", str(wheels[0])],
+            cwd=root,
+        )
+        run([str(processctl), "--version"], cwd=root, timeout=30)
+        run([str(processctl), "skills", "validate", "--json"], cwd=root, timeout=30)
+        run(
+            [
+                str(processctl),
+                "publication",
+                "validate-branch",
+                "--branch",
+                "fix/distribution-check",
+                "--json",
+            ],
+            cwd=root,
+            timeout=30,
+        )
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
-    parser.add_argument("--output", type=Path)
-    parser.add_argument("--receipt", type=Path)
-    parser.add_argument("--authorization", type=Path)
-    parser.add_argument("--attestation", type=Path)
-    arguments = parser.parse_args()
-    print(
-        json.dumps(
-            verify_distribution(
-                arguments.project_root,
-                output_root=arguments.output,
-                receipt_path=arguments.receipt,
-                authorization_path=arguments.authorization,
-                attestation_path=arguments.attestation,
-            ),
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    try:
+        raise SystemExit(main())
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        print(f"distribution verification failed: {error}", file=sys.stderr)
+        raise SystemExit(1) from error

@@ -1,334 +1,260 @@
-name: Release
+name: Publish release
 
 on:
-  pull_request_target:
-    branches: [main]
-    types: [closed]
   push:
     branches: [main]
     paths:
-      - ".github/workflows/release.yml"
-      - ".github/workflows/prepare-release.yml"
-      - ".github/workflows/publish.yml"
-      - "verification/check_pypi_publication.py"
-      - "verification/restore_release_evidence.py"
-      - "verification/select_release_evidence.py"
-      - "verification/validate_publish_event.py"
-      - "verification/verify_distribution.py"
-      - "verification/verify_installed_distribution.py"
+      - engineering_process/__init__.py
+      - pyproject.toml
+      - release.json
 
 permissions:
-  actions: read
-  contents: write
-  pull-requests: read
-
-concurrency:
-  group: engineering-process-governed-release
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  authorize:
-    name: Authorize exact merged Release PR
-    if: >-
-      github.event_name == 'push' ||
-      (github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'automation/release/next' &&
-      github.event.pull_request.head.repo.full_name == github.repository)
+  metadata:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     outputs:
-      publish_required: ${{ steps.draft.outputs.publish_required }}
-      release_sha: ${{ steps.release-pr.outputs.release_sha }}
-      tag: ${{ steps.identity.outputs.tag }}
+      dispatch: ${{ steps.release.outputs.dispatch }}
+      publish: ${{ steps.release.outputs.publish }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Resolve the exact merged Release PR
-        id: release-pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          pr_number="$EVENT_PR_NUMBER"
-          if test -z "$pr_number"; then
-            owner="${GITHUB_REPOSITORY%%/*}"
-            gh api \
-              "repos/$GITHUB_REPOSITORY/pulls?state=closed&head=$owner:automation/release/next&base=main&sort=updated&direction=desc&per_page=20" \
-              > "$RUNNER_TEMP/release-pulls.json"
-            pr_number="$(jq -r 'map(select(.merged_at != null)) | sort_by(.merged_at) | last | .number // empty' "$RUNNER_TEMP/release-pulls.json")"
-          fi
-          printf '%s' "$pr_number" | grep -Eq '^[1-9][0-9]*$'
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number" \
-            > "$RUNNER_TEMP/release-pr.json"
-          test "$(jq -r .merged "$RUNNER_TEMP/release-pr.json")" = true
-          test "$(jq -r .base.ref "$RUNNER_TEMP/release-pr.json")" = main
-          test "$(jq -r .head.ref "$RUNNER_TEMP/release-pr.json")" = automation/release/next
-          test "$(jq -r .head.repo.full_name "$RUNNER_TEMP/release-pr.json")" = "$GITHUB_REPOSITORY"
-          reviewed_sha="$(jq -r .head.sha "$RUNNER_TEMP/release-pr.json")"
-          release_sha="$(jq -r .merge_commit_sha "$RUNNER_TEMP/release-pr.json")"
-          printf '%s' "$reviewed_sha" | grep -Eq '^[0-9a-f]{40}$'
-          printf '%s' "$release_sha" | grep -Eq '^[0-9a-f]{40}$'
-          {
-            printf 'pr_number=%s\n' "$pr_number"
-            printf 'reviewed_sha=%s\n' "$reviewed_sha"
-            printf 'release_sha=%s\n' "$release_sha"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create short-lived release publication token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
-          owner: phuongnse
-          repositories: engineering-process
-          permission-contents: write
-          permission-metadata: read
-          permission-workflows: write
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          persist-credentials: true
-          ref: ${{ steps.release-pr.outputs.release_sha }}
-          token: ${{ steps.app-token.outputs.token }}
-
-      - name: Check out the base-controlled release validator
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-          ref: ${{ github.workflow_sha }}
-          path: .release-controller
-
-      - name: Keep controller code outside the release source fingerprint
-        run: printf '/.release-controller/\n' >> .git/info/exclude
-
-      - name: Fetch and bind the immutable reviewed head
-        env:
-          PR_NUMBER: ${{ steps.release-pr.outputs.pr_number }}
-          REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
-        run: |
-          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
-          test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
-          git cat-file -e "$REVIEWED_SHA^{commit}"
-
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-
-      - name: Install exact release validation dependencies
-        run: >-
-          python -m pip install
-          -r .release-controller/engineering_process/requirements-runtime.txt
-          -r .release-controller/engineering_process/requirements-dev.txt
-          -r .release-controller/engineering_process/requirements-build.txt
-
-      - name: Resolve immutable release identities
-        id: identity
+      - run: python -m pip install -r engineering_process/requirements-runtime.txt --editable .
+      - id: release
         run: |
-          mode="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["provenance"]["mode"])')"
-          tag="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["identity"]["tag"])')"
-          evidence_asset="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print(release["identity"]["receiptAsset"] or release["identity"]["authorizationAsset"])')"
-          {
-            printf 'mode=%s\n' "$mode"
-            printf 'tag=%s\n' "$tag"
-            printf 'evidence_asset=%s\n' "$evidence_asset"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Restore exact-head pre-publication completion evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
-          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-          TAG: ${{ steps.identity.outputs.tag }}
-        run: >-
-          python
-          "$GITHUB_WORKSPACE/.release-controller/verification/restore_release_evidence.py"
-          --repository "$GITHUB_REPOSITORY"
-          --reviewed-sha "$REVIEWED_SHA"
-          --tag "$TAG"
-          --evidence-asset "$EVIDENCE_ASSET"
-          --output "$RUNNER_TEMP/release-completion"
-
-      - name: Prove reviewed tree, merge commit, release contract, and prior tag
-        env:
-          MODE: ${{ steps.identity.outputs.mode }}
-          TAG: ${{ steps.identity.outputs.tag }}
-          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-          REVIEWED_SHA: ${{ steps.release-pr.outputs.reviewed_sha }}
-          RELEASE_SHA: ${{ steps.release-pr.outputs.release_sha }}
-        run: |
-          controller=(python "$GITHUB_WORKSPACE/.release-controller/processctl.py")
-          evidence_args=(--reviewed-commit "$REVIEWED_SHA")
-          if test "$MODE" = governed -o "$MODE" = authority-transition-bootstrap; then
-            "${controller[@]}" evidence validate \
-              "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
-            evidence_args+=(--receipt "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET")
-          else
-            "${controller[@]}" evidence validate-bootstrap \
-              "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
-            evidence_args+=(--authorization "$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET")
-          fi
-          "${controller[@]}" publication authorize-release \
-            --project-root "$GITHUB_WORKSPACE" \
-            --tag "$TAG" --release-name "$TAG" --commit "$RELEASE_SHA" \
-            --main-ref origin/main "${evidence_args[@]}"
-
-      - name: Create or verify the immutable tag
-        env:
-          TAG: ${{ steps.identity.outputs.tag }}
-          RELEASE_SHA: ${{ steps.release-pr.outputs.release_sha }}
-        run: |
-          existing="$(git rev-list -n 1 "$TAG" -- 2>/dev/null || true)"
-          if test -n "$existing"; then
-            test "$existing" = "$RELEASE_SHA"
-          else
-            git tag "$TAG" "$RELEASE_SHA"
-            git push origin "refs/tags/$TAG"
-          fi
-
-      - name: Create or verify the exact draft release
-        id: draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.identity.outputs.tag }}
-          EVIDENCE_ASSET: ${{ steps.identity.outputs.evidence_asset }}
-        run: |
-          evidence_path="$RUNNER_TEMP/release-completion/$EVIDENCE_ASSET"
-          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
-          {
-            printf '%s\n' "$EVIDENCE_ASSET"
-            python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"])); print("\n".join(release["identity"]["artifacts"]))'
-          } | LC_ALL=C sort > "$expected_assets"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            test "$(gh release view "$TAG" --json name --jq .name)" = "$TAG"
-            if test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false; then
-              gh release verify "$TAG"
-              gh release view "$TAG" --json assets --jq '.assets[].name' \
-                | LC_ALL=C sort > "$RUNNER_TEMP/published-release-assets.txt"
-              cmp "$expected_assets" "$RUNNER_TEMP/published-release-assets.txt"
-              mkdir -p "$RUNNER_TEMP/published-evidence"
-              gh release download "$TAG" --pattern "$EVIDENCE_ASSET" \
-                --dir "$RUNNER_TEMP/published-evidence"
-              cmp "$evidence_path" "$RUNNER_TEMP/published-evidence/$EVIDENCE_ASSET"
-              printf 'publish_required=false\n' >> "$GITHUB_OUTPUT"
-              exit 0
+          version="$(python -c 'from engineering_process import VERSION; print(VERSION)')"
+          tag="v$version"
+          python processctl.py release validate --tag "$tag"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git rev-parse --verify --quiet "refs/tags/$tag"; then
+            if [ "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA" ]; then
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              echo "dispatch=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag $tag points to a different commit" >&2
+              exit 1
             fi
           else
-            gh release create "$TAG" --draft --verify-tag --title "$TAG"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "dispatch=true" >> "$GITHUB_OUTPUT"
           fi
-          gh release view "$TAG" --json assets --jq '.assets[].name' \
-            | LC_ALL=C sort > "$RUNNER_TEMP/current-release-assets.txt"
-          while IFS= read -r asset; do
-            grep -Fx "$asset" "$expected_assets" >/dev/null
-          done < "$RUNNER_TEMP/current-release-assets.txt"
-          if grep -Fx "$EVIDENCE_ASSET" "$RUNNER_TEMP/current-release-assets.txt" >/dev/null; then
-            mkdir -p "$RUNNER_TEMP/existing-evidence"
-            gh release download "$TAG" --pattern "$EVIDENCE_ASSET" \
-              --dir "$RUNNER_TEMP/existing-evidence"
-            cmp "$evidence_path" "$RUNNER_TEMP/existing-evidence/$EVIDENCE_ASSET"
-          else
-            gh release upload "$TAG" "$evidence_path"
-          fi
-          printf 'publish_required=true\n' >> "$GITHUB_OUTPUT"
-
-  prepare:
-    name: Prepare exact immutable assets
-    needs: authorize
-    if: needs.authorize.outputs.publish_required == 'true'
-    uses: ./.github/workflows/prepare-release.yml
-    with:
-      tag: ${{ needs.authorize.outputs.tag }}
-    permissions:
-      contents: write
 
   publish:
-    name: Publish immutable GitHub Release
-    needs: [authorize, prepare]
-    if: needs.authorize.outputs.publish_required == 'true'
+    needs: metadata
+    if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    environment: pypi
     permissions:
       contents: write
-    steps:
-      - name: Publish the fully prepared draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.authorize.outputs.tag }}
-        run: |
-          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
-          test "$(gh release view "$TAG" --json name --jq .name)" = "$TAG"
-          gh release edit "$TAG" --draft=false
-
-  dispatch-pypi:
-    name: Dispatch exact PyPI publication
-    needs: [authorize, prepare, publish]
-    if: >-
-      always() &&
-      needs.authorize.result == 'success' &&
-      ((needs.authorize.outputs.publish_required == 'true' &&
-      needs.prepare.result == 'success' &&
-      needs.publish.result == 'success') ||
-      (needs.authorize.outputs.publish_required == 'false' &&
-      needs.prepare.result == 'skipped' &&
-      needs.publish.result == 'skipped'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          persist-credentials: false
-          ref: ${{ needs.authorize.outputs.tag }}
-
-      - name: Resolve exact publication event identity
-        id: identity
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Install exact build and test dependencies
+        run: >-
+          python -m pip install
+          -r engineering_process/requirements-runtime.txt
+          -r engineering_process/requirements-dev.txt
+          -r engineering_process/requirements-build.txt
+          --editable .
+      - run: python verification/run_test_suite.py
+      - run: python processctl.py skills validate --root process_assets/skills
+      - run: python processctl.py release validate --tag "${{ needs.metadata.outputs.tag }}"
+      - name: Derive reproducible build timestamp
+        id: source
+        run: echo "epoch=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+      - name: Build reproducible release files
         env:
-          EXPECTED_CHECKPOINT: ${{ needs.authorize.outputs.release_sha }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+          PYTHONHASHSEED: "0"
+          SOURCE_DATE_EPOCH: ${{ steps.source.outputs.epoch }}
+          TZ: UTC
         run: |
-          test "$(git rev-parse --verify 'HEAD^{commit}')" = "$EXPECTED_CHECKPOINT"
-          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
-          gh release verify "$RELEASE_TAG"
-          version="$(python -c 'import json; print(json.load(open("release.json", encoding="utf-8"))["version"])')"
-          test "$RELEASE_TAG" = "v$version"
-          attestation="$(python -c 'import json; release=json.load(open("release.json", encoding="utf-8")); print("{}-{}-artifacts.json".format(release["identity"]["package"], release["identity"]["tag"]))')"
-          digest="$(gh release view "$RELEASE_TAG" --json assets --jq ".assets[] | select(.name == \"$attestation\") | .digest")"
-          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
-          {
-            printf 'attestation_digest=%s\n' "$digest"
-            printf 'version=%s\n' "$version"
-          } >> "$GITHUB_OUTPUT"
+          python -m build --no-isolation
+          python verification/normalize_sdist.py \
+            dist/*.tar.gz \
+            "$SOURCE_DATE_EPOCH"
+      - name: Publish immutable files to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          skip-existing: true
+      - name: Verify PyPI exposes the exact built hashes
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import time
+          from urllib.request import urlopen
 
-      - name: Create short-lived publication event token
-        id: app-token
+          expected = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in Path("dist").iterdir()
+              if path.is_file()
+          }
+          url = f"https://pypi.org/pypi/engineering-process/{os.environ['RELEASE_VERSION']}/json"
+          for attempt in range(12):
+              try:
+                  with urlopen(url, timeout=20) as response:
+                      payload = json.load(response)
+                  actual = {
+                      item["filename"]: item["digests"]["sha256"]
+                      for item in payload["urls"]
+                  }
+                  if actual == expected:
+                      break
+              except Exception:
+                  if attempt == 11:
+                      raise
+              if attempt == 11:
+                  raise RuntimeError(f"PyPI files differ: expected {expected}, got {actual}")
+              time.sleep(10)
+          PY
+      - name: Create immutable GitHub release and tag
+        env:
+          EXISTING_RELEASE_ROOT: ${{ runner.temp }}/existing-release
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --draft \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" \
+              --generate-notes
+          fi
+          release_is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+          mkdir "$RUNNER_TEMP/existing-release"
+          gh release download "$RELEASE_TAG" \
+            --dir "$RUNNER_TEMP/existing-release" || true
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path("dist").iterdir()}
+          existing = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path(os.environ["EXISTING_RELEASE_ROOT"]).iterdir()}
+          conflicts = {name for name in existing if expected.get(name) != existing[name]}
+          if conflicts:
+              raise RuntimeError(f"GitHub release has conflicting assets: {sorted(conflicts)}")
+          PY
+          for file in dist/*; do
+            name="$(basename "$file")"
+            if [ ! -f "$RUNNER_TEMP/existing-release/$name" ]; then
+              if [ "$release_is_draft" != "true" ]; then
+                echo "published GitHub release is missing $name" >&2
+                exit 1
+              fi
+              gh release upload "$RELEASE_TAG" "$file"
+            fi
+          done
+          rm -rf "$RUNNER_TEMP/existing-release"
+          mkdir "$RUNNER_TEMP/existing-release"
+          gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/existing-release"
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path("dist").iterdir()}
+          actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in Path(os.environ["EXISTING_RELEASE_ROOT"]).iterdir()}
+          if actual != expected:
+              raise RuntimeError(f"GitHub release assets differ: expected {expected}, got {actual}")
+          PY
+          gh release edit "$RELEASE_TAG" --draft=false
+
+  dispatch-adoption:
+    needs: [metadata, publish]
+    if: >-
+      always() &&
+      needs.metadata.result == 'success' &&
+      needs.metadata.outputs.dispatch == 'true' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Download the immutable release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          mkdir "$RUNNER_TEMP/distribution"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/distribution"
+      - name: Bind the published distribution
+        id: distribution
+        env:
+          DISTRIBUTION_ROOT: ${{ runner.temp }}/distribution
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          files = [path for path in Path(os.environ["DISTRIBUTION_ROOT"]).iterdir() if path.is_file()]
+          actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+          url = f"https://pypi.org/pypi/engineering-process/{os.environ['RELEASE_VERSION']}/json"
+          with urlopen(url, timeout=20) as response:
+              payload = json.load(response)
+          expected = {item["filename"]: item["digests"]["sha256"] for item in payload["urls"]}
+          if actual != expected:
+              raise RuntimeError(f"GitHub and PyPI release files differ: {actual} != {expected}")
+          digest = hashlib.sha256()
+          for path in sorted(files):
+              name = path.name.encode()
+              content = path.read_bytes()
+              digest.update(len(name).to_bytes(4, "big"))
+              digest.update(name)
+              digest.update(hashlib.sha256(content).digest())
+          print(f"digest=sha256:{digest.hexdigest()}")
+          PY
+      - name: Create short-lived Renovate event token
+        id: renovate-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: phuongnse
-          repositories: engineering-process
+          repositories: renovate-ops
           permission-contents: write
           permission-metadata: read
-
-      - name: Dispatch authenticated publication event
+      - name: Trigger consumer adoption scans
         env:
-          ATTESTATION_DIGEST: ${{ steps.identity.outputs.attestation_digest }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RELEASE_SHA: ${{ needs.authorize.outputs.release_sha }}
-          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
-          VERSION: ${{ steps.identity.outputs.version }}
+          DISTRIBUTION_DIGEST: ${{ steps.distribution.outputs.digest }}
+          GH_TOKEN: ${{ steps.renovate-token.outputs.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           jq -n \
-            --arg attestationDigest "$ATTESTATION_DIGEST" \
-            --arg commit "$RELEASE_SHA" \
+            --arg distributionDigest "$DISTRIBUTION_DIGEST" \
+            --arg package "engineering-process" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg tag "$RELEASE_TAG" \
-            --arg version "$VERSION" \
-            '{event_type: "engineering-process-release-ready", client_payload: {attestationDigest: $attestationDigest, commit: $commit, repository: $repository, tag: $tag, version: $version}}' \
-            > "$RUNNER_TEMP/publication-event.json"
+            --arg version "$RELEASE_VERSION" \
+            '{event_type: "engineering-process-published", client_payload: {distributionDigest: $distributionDigest, package: $package, repository: $repository, tag: $tag, version: $version}}' \
+            > "$RUNNER_TEMP/adoption-event.json"
           gh api --method POST \
-            "repos/$GITHUB_REPOSITORY/dispatches" \
-            --input "$RUNNER_TEMP/publication-event.json"
+            repos/phuongnse/renovate-ops/dispatches \
+            --input "$RUNNER_TEMP/adoption-event.json"

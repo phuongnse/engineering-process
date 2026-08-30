@@ -1,124 +1,64 @@
-name: Prepare unpublished Release candidate
+name: Prepare release PR
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "release-changes/*.json"
-      - ".github/workflows/release-pr.yml"
-      - ".github/workflows/release-candidate.yml"
-      - ".github/workflows/release-plan-approval.yml"
-      - ".github/workflows/release-approval.yml"
-      - ".process/process.lock"
-      - "requirements/process.in"
-      - "requirements/process.txt"
-      - "verification/classify_release_preparation.py"
-      - "verification/validate_release_candidate_commit.py"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Final SemVer derived from release change fragments
+        required: true
+        type: string
 
 permissions:
-  actions: write
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
-  group: engineering-process-release-candidate-source
+  group: engineering-process-release-pr
   cancel-in-progress: false
 
 jobs:
   prepare:
-    name: Materialize an unpublished candidate artifact
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: main
           fetch-depth: 0
-          persist-credentials: false
-
-      - name: Detect pending release changes
-        id: applicability
-        run: |
-          pending="$(find release-changes -maxdepth 1 -type f -name '*.json' -print -quit)"
-          if test -n "$pending"; then
-            echo 'pending=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'pending=false' >> "$GITHUB_OUTPUT"
-            echo 'No pending release changes; candidate preparation is not applicable.'
-          fi
-
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: steps.applicability.outputs.pending == 'true'
         with:
           python-version: "3.14"
-
-      - name: Install exact candidate dependencies
-        if: steps.applicability.outputs.pending == 'true'
-        run: >-
-          python -m pip install
-          -r engineering_process/requirements-runtime.txt
-          -r engineering_process/requirements-dev.txt
-          -r engineering_process/requirements-build.txt
-
-      - name: Derive and materialize the candidate without publishing source
-        if: steps.applicability.outputs.pending == 'true'
-        id: release
-        run: |
-          python processctl.py publication prepare-release --json \
-            > "$RUNNER_TEMP/release-candidate.json"
-          version="$(jq -r .version release.json)"
-          test "$(jq -r .identity.tag release.json)" = "v$version"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-
-      - name: Commit the unpublished candidate locally
-        if: steps.applicability.outputs.pending == 'true'
-        id: candidate
+      - name: Install release preparation dependency
+        run: python -m pip install -r engineering_process/requirements-runtime.txt
+      - name: Validate requested version
         env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add --all
-          git diff --cached --quiet && {
-            echo 'release candidate did not change the repository' >&2
-            exit 1
-          }
-          git commit -m "chore(release): prepare v$RELEASE_VERSION"
-          python verification/validate_release_candidate_commit.py \
-            --project-root . --expected-base "$GITHUB_SHA" \
-            > "$RUNNER_TEMP/release-candidate-commit.json"
-          head_sha="$(jq -er .headSha "$RUNNER_TEMP/release-candidate-commit.json")"
-          base_sha="$(jq -er .baseSha "$RUNNER_TEMP/release-candidate-commit.json")"
-          mkdir -p "$RUNNER_TEMP/unpublished-candidate"
-          git bundle create "$RUNNER_TEMP/unpublished-candidate/source.bundle" HEAD "^$base_sha"
-          jq -n \
-            --arg baseSha "$base_sha" \
-            --arg headSha "$head_sha" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg version "$RELEASE_VERSION" \
-            '{schemaVersion: 1, repository: $repository, baseSha: $baseSha, headSha: $headSha, version: $version}' \
-            > "$RUNNER_TEMP/unpublished-candidate/candidate.json"
-          printf 'base_sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
-          printf 'head_sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Preserve the unpublished source artifact
-        if: steps.applicability.outputs.pending == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: unpublished-release-candidate-${{ steps.candidate.outputs.head_sha }}
-          path: ${{ runner.temp }}/unpublished-candidate
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 9
-          include-hidden-files: false
-
-      - name: Dispatch exact checkpoint verification
-        if: steps.applicability.outputs.pending == 'true'
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: >-
+          python -c "import os,re;
+          value=os.environ['RELEASE_VERSION'];
+          assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', value),
+          'version must be final SemVer'"
+      - name: Materialize release files
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python verification/prepare_release.py "$RELEASE_VERSION"
+      - name: Create or refresh pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ steps.candidate.outputs.base_sha }}
-          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
-        run: >-
-          gh workflow run release-candidate.yml
-          --repo "$GITHUB_REPOSITORY" --ref main
-          -f source_run_id="$GITHUB_RUN_ID"
-          -f comparison_base="$BASE_SHA"
-          -f release_head_sha="$HEAD_SHA"
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          branch="automation/release/v$RELEASE_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add engineering_process/__init__.py pyproject.toml release.json release-changes
+          git commit -m "chore(release): prepare v$RELEASE_VERSION"
+          git push --force-with-lease origin "$branch"
+          if gh pr view "$branch" >/dev/null 2>&1; then
+            gh pr edit "$branch" --title "chore(release): v$RELEASE_VERSION"
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore(release): v$RELEASE_VERSION" \
+              --body "Generated from reviewed release-change fragments. Merge is the publication authorization."
+          fi

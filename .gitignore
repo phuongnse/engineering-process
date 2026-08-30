@@ -6,3 +6,5 @@ build/
 dist/
 *.egg-info/
 /.process/runs/
+/.process/receipts/
+/.process/*.adoption.tmp

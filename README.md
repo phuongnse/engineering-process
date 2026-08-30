@@ -1,988 +1,255 @@
 # Engineering Process
 
-An agent-neutral, end-to-end engineering lifecycle. A consumer supplies project
-policy and commands; this repository supplies the same specification, planning,
-implementation, verification, independent-review, finding-loop, and completion
-gates to every project.
+Engineering Process is a small, agent-neutral way to drive repository changes through
+one auditable path:
 
-The enforcement boundary has three parts:
+    start → plan → implement → verify → independent review → finish
 
-1. Portable Agent Skills tell any compatible agent how to perform each phase.
-2. `processctl` owns lifecycle state, transitions, immutable evidence, and exit codes.
-3. The consumer's `AGENTS.md` and `.process/project.json` own domain policy and exact
-   argument-array verification commands.
+Portable skills explain what to do. processctl owns state transitions and current
+evidence. Each consumer owns its product rules, exact commands, merge policy, and
+release decisions.
 
-Publication conventions are distribution-owned as well: manual and automation branch
-names, Conventional Commit subjects, PR titles, the managed PR-description structure,
-structured requirement statuses, and draft-versus-ready semantics are validated by
-`processctl publication ...`. Projects populate those sections with their own contract,
-impact, risk, evidence, and review details and may append stronger domain checks.
+## Architecture
 
-Core semantics never name a model, agent product, orchestration API, or code-indexing
-provider. An agent host or human workflow supplies an independent reviewer identity;
-`processctl` rejects any reviewer actor or context used by the current implementation
-cycle. If the host cannot attest separation, review remains blocked.
+The distribution has four live parts:
 
-The core ships only the agent-neutral reviewer-attestation contract. Host-specific
-launchers and model configuration are separate integrations and are never part of a
-required process bundle.
+1. Eight skills under process_assets/skills, all reachable from run-change.
+2. One processctl state machine under engineering_process/lifecycle.py.
+3. Eleven JSON Schemas that are loaded directly by the runtime.
+4. One adoption transaction that synchronizes managed skills and configuration from
+   an exact hash-locked package.
 
-This repository follows the same lifecycle it distributes. The exact public N-1
-release pinned in `.process/process.lock` governs development of N+1; the checkout
-under test never supplies its own lifecycle authority. Managed N-1 skills live in
-`.agents/skills`, while editable N+1 distribution sources live in
-`process_assets/skills`. The bootstrap trust chain and evidence boundary are defined
-in [`SELF_HOSTING.md`](./SELF_HOSTING.md); package, schema, release, and adoption
-versions are governed by [`VERSIONING.md`](./VERSIONING.md).
+Lifecycle state is local under .process/runs and completion creates one bounded receipt
+under .process/receipts. Both paths are ignored by Git. Verification evidence is bound
+to HEAD plus a fingerprint of tracked and non-ignored untracked files. Any relevant
+mutation invalidates it.
 
-Python 3.11 or newer and Git are required. Windows command containment requires
-Windows 10 or Windows Server 2016 and newer so Job Object membership can be attached
-atomically during process creation. Lifecycle state is stored under ignored
-`.process/runs/`; completion, review, and verification are bound to a clean Git
-checkpoint and workspace fingerprint.
+Independent review is one direct rule: neither the reviewer actor nor reviewer context
+may have implemented the current cycle. There is no attestation hierarchy,
+recommendation chain, authority-transition protocol, remote-evidence federation, or
+second handwritten validator.
 
-## Execution architecture
+## Consumer configuration
 
-Validated failures participate in a federated improvement loop. Consumers export
-bounded, redacted signals to the owning producer without granting authority;
-producer triage, lifecycle completion, immutable release, consumer adoption, and
-consumer reproduction remain separate gates. `processctl improvement status` exposes
-the portable chain and next owner. See
-[PROCESS_IMPROVEMENT.md](PROCESS_IMPROVEMENT.md).
+Python 3.11 or newer and Git are required. A consumer owns .process/project.json:
 
-Consumers use one foreground-task contract on every supported platform. The contract
-owns argument-array commands, non-interactive standard input, bounded output, timeout,
-exit status, and descendant cleanup. Platform selection occurs once inside the
-distribution: the POSIX backend owns a new process session/group and the Windows
-backend owns a kill-on-close Job Object. Consumer manifests, evidence, and exit codes
-do not branch by operating system. If an outer Windows Job applies incompatible
-nesting or UI limits, target creation fails closed instead of running uncontained.
-After a command root exits, the POSIX backend allows at most 250 milliseconds and the
-Windows Job Object backend allows at most 5 seconds for child accounting to drain
-naturally. A process still present after its platform bound is terminated and makes
-the command fail; commands with no remaining child return immediately.
-
-This task boundary intentionally separates finite commands from services and
-interactive protocols. `processctl exec`, requirement probes, setup command actions,
-and verification checks are finite foreground tasks. Detached Docker Compose stacks,
-log followers, interactive shells, watchers, and stdio servers remain project-owned
-commands outside this executor until a separate service or interactive lifecycle is
-specified. They must not be placed in verification profiles or wrapped by
-`processctl exec`.
-
-A finite command succeeds only when its process boundary passes and its complete
-admitted stdout and stderr are free of classified warning and error diagnostics. The
-shared classifier is bounded and non-configurable. Exit-zero diagnostics therefore
-fail `doctor`, `setup`, `exec`, verification, and internal distribution commands at
-the shared owner. Reports retain redacted diagnostic metadata and line digests, not
-raw matched text. Fix the warning or error at its owner; do not silence it, replace
-the canonical command, or set a tool-specific suppression variable to obtain a pass.
-
-## Consumer bootstrap
-
-Add only project-owned configuration:
-
-~~~text
-project/
-├── AGENTS.md
-├── .github/
-│   └── PULL_REQUEST_TEMPLATE.md
-├── .gitignore             # includes .process/runs/
-└── .process/
-    ├── adopt-process.py             # hash-locked adoption runner
-    ├── adopt-process-windows-job.py # Windows process containment
-    └── project.json                 # profiles and lifecycle baseline
-~~~
-
-Install `processctl` from a tagged release and create a candidate manifest from
-`examples/project.json` with the repository's real commands. Bootstrap the complete
-standard in one command:
-
-~~~text
-python -m pip install "engineering-process==0.1.1"
-processctl project init --project-root . --manifest project.json \
-  --bundle core --bundle delivery --bundle product
-processctl doctor --project-root .
-~~~
-
-`project init` validates the manifest, preflights ownership conflicts, writes the
-lock, installs the managed `AGENTS.md` and pull-request contracts, adds the ignored
-lifecycle-state path and canonical managed-skill Git attributes, and synchronizes
-the selected skills and adoption runner. It refuses to replace differing project
-configuration or unmanaged skills unless the conflict is resolved explicitly. `sync --check` and
-`doctor` detect drift in skills, the managed agent contract, the pull-request block,
-and the bounded process-owned `.agents/.gitattributes` file. That file is closer to
-the managed tree than project-root attributes, canonicalizes LF only for text assets
-under `.agents/skills`, and disables inherited working-tree encoding, filter, and
-ident transforms for those assets. A self-rule applies the same byte-stable policy
-to `.agents/.gitattributes`; binary detection remains automatic. Deeper repository
-attribute files are rejected by existing managed-tree ownership and content checks.
-External Git overrides that alter a checkout still fail byte-exact distribution
-attestation. A consumer never authors or maintains process skills locally.
-
-CI installs the pinned authority through the repository-root
-`phuongnse/engineering-process` action from the same governed release. Consumers pin
-the action with the release commit's full object id and retain the human-readable
-`v<SemVer>` annotation; floating tags and copied installer implementations are not
-supported. The action reads the consumer-owned `requirements/process.txt` and changes
-no version or source decision: it preserves the complete hash lock, public PyPI,
-binary-only policy, sanitized pip environment, exact-version-only propagation retry,
-bounded output and time, and cross-platform descendant cleanup. The action source is
-resolved only from `github.action_path`, so an untrusted consumer checkout cannot
-replace the installer.
-
-Project-owned CI workflows remain local because they select the project's commands
-and evidence. Reusable installation and publication grammar belong to this
-distribution; product, architecture, dependency, documentation, and acceptance
-checks remain with the consumer. The managed `.process/adopt-process.py` and Windows
-Job Object sidecar are intentional bootstrap snapshots, not consumer implementations:
-Renovate must install and verify a target authority before that target exists in the
-checkout, and `processctl sync --check` compares those bytes with the pinned
-distribution.
-
-For an existing opted-in consumer, Renovate may prepare and publish one complete
-process-adoption proposal before consumer-owner review. The managed runner installs
-the target authority from the complete hash lock outside the checkout and atomically
-updates the process lock and managed assets before PR creation. If the consumer
-chooses or requires new project configuration, it adds
-`.process/adoption-migrations/<target-version>.json`; the installed target authority
-binds the source and target manifest digests, validates the complete target manifest,
-and updates `.process/project.json` in the same rollback transaction. Optional
-capabilities are never inferred. Consumer CI and its chosen review approve the fully
-materialized checkpoint. Renovate cannot auto-merge it; consumer-owner merge completes
-adoption and no post-merge sync runs. Separately, an agent-host candidate created only
-after lifecycle completion retains normal standing-policy auto-merge.
-
-The engineering-process producer repository separately owns its root
-`.gitattributes` policy so tracked text sources and distribution inputs are LF and
-byte-stable on every supported checkout. That producer policy is not synchronized
-into a consumer root; consumers receive only the bounded `.agents/.gitattributes`
-asset described above.
-
-The single project-manifest contract includes environment profiles, project-attested
-read-only requirement probes, remediation, declarative managed-tool artifacts, and
-optional setup actions. Use the same interface in every consumer:
-
-~~~text
-processctl doctor --project-root . --profile development
-processctl setup --project-root . --profile development
-processctl setup --project-root . --profile development --apply \
-  --allow network --allow user-files --allow project-files
-processctl exec --project-root . --profile development -- \
-  python scripts/project.py local-dev
-~~~
-
-A portable tool is data, not a consumer-owned installer. Each project pins the
-version and one immutable artifact contract per supported platform, then references
-the tool from a `managed-tool` setup action:
-
-~~~json
-{
-  "managedTools": [{
-    "id": "sample-tool",
-    "version": "1.2.3",
-    "artifacts": [{
-      "platform": "linux-glibc-x64",
-      "url": "https://publisher.example/sample-tool-1.2.3.tar.gz",
-      "checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      "archiveFormat": "tar.gz",
-      "stripComponents": 1,
-      "maxDownloadBytes": 50000000,
-      "maxExtractedBytes": 200000000,
-      "maxFiles": 10000,
-      "commands": {"sample-tool": "bin/sample-tool"}
-    }]
-  }],
-  "setupActions": [{
-    "id": "install-sample-tool",
-    "kind": "managed-tool",
-    "tool": "sample-tool",
-    "timeoutSeconds": 600
-  }]
-}
-~~~
-
-The zero checksum above is a shape example only; a real manifest must contain the
-publisher artifact's verified digest and declare every supported platform explicitly.
-
-Schema-3 Windows command entries must resolve to native `.exe` applications. Batch
-files are rejected because running `.cmd` or `.bat` requires a command shell. When a
-publisher exposes a script launcher, bind the stable logical command to a verified
-native runtime and a verified contained script instead. For example, a Windows Node
-artifact can preserve the portable `npm` command without `cmd.exe`:
-
-~~~json
-{
-  "commands": {
-    "npm": {
-      "executable": "node.exe",
-      "script": "node_modules/npm/bin/npm-cli.js"
-    }
-  }
-}
-~~~
-
-Managed artifact paths always use contained, relative, forward-slash syntax on every
-host. Schema-1 and schema-2 project manifests remain readable for lifecycle history,
-but a schema-2 Windows `.cmd` or `.bat` launcher is intentionally not executable by
-the shell-free supervisor. Migrate that entry manually to schema 3 and bind it to the
-publisher's trusted native runtime and contained script as above; a generic migrator
-cannot safely infer either file or attest that the task is foreground-only.
-
-The report still records the logical command such as `["npm", "ci"]`; the executor
-uses the absolute managed application and script paths internally. Unqualified Windows
-commands are resolved only from absolute PATH entries, so a same-named executable in
-the project working directory cannot shadow a verified managed tool.
-
-`doctor` executes only probes explicitly attested `readOnly: true` and never invokes
-setup actions. A schema-3 environment contract must also attest `foregroundOnly: true`
-for every process-managed task. The project owner remains responsible for those
-attestations.
-`setup` is plan-only unless `--apply` is present, computes
-the full dependency-ordered action plan before execution, and refuses to run any
-action until every declared mutation scope has been approved. Supported scopes are
-`network`, `project-files`, `user-files`, and `host-configuration`. Commands are
-argument arrays executed without a shell, with bounded output, timeout, exit status,
-owned process-group/job cleanup, and command digest evidence. `exec` runs an
-ad-hoc project command only after the selected environment passes and injects paths
-for verified managed tools. After applying a plan, processctl reruns the original
-probes; an installer exit code alone never proves readiness.
-
-The distribution owns detection, planning, bounded execution, HTTPS acquisition,
-size limits, checksum verification, safe archive extraction, atomic user-local tool
-installation, and exact managed command binding/PATH injection. A consumer owns only
-declarative environment
-data: exact probes, tool versions and per-platform artifacts, immutable checksums,
-project-native dependency commands, dependency edges, and remediation. Project source
-does not carry a generic downloader, archive installer, doctor, or setup lifecycle.
-Host prerequisites with no safe automated setup action stay blocking.
-
-The exact logical executable `python` is reserved by the distribution and resolves to
-the absolute interpreter running the selected immutable process authority. This rule
-applies consistently to requirement probes, verification profiles, setup command
-actions, and `processctl exec`; callers do not activate a virtual environment or
-modify `PATH` first. Manifests and reports retain the portable logical token, managed
-tools cannot shadow it, and absolute executables plus non-Python commands keep their
-existing resolution behavior.
-
-Probe `readOnly`, foreground-only execution, and command-action mutation scopes are
-project-owner attestations, not an operating-system sandbox: `processctl` cannot infer
-arbitrary subprocess side effects. Commands must not daemonize, start a detached
-session, or leave background work behind. The runner owns a POSIX process group and a
-Windows Job Object, but no portable POSIX primitive can contain a deliberately detached
-process. Managed-tool actions are stronger—the distribution constrains them to
-HTTPS, declared size/checksum/archive/path boundaries and derives their approvals as
-`network` plus `user-files`. Use a command action only for project-native package
-managers or domain preparation that cannot be represented by the managed-tool
-primitive, and declare every possible scope truthfully. New consumers use
-project-manifest schema 4. Schema 1 (without an environment contract), schema 2
-(the original environment contract), and schema 3 remain readable for backward
-compatibility; they are not relabeled as newer shapes. Schema 3 introduced
-foreground-only task execution and managed script bindings. Portable impact
-declarations and quality extensions are additive optional schema-3 capabilities;
-schema 4 adds resource bounds to previously published fields without tightening those
-historical readers. New integrations
-receive the complete environment contract instead of creating a project-local doctor
-or setup lifecycle.
-
-To migrate a live project manifest from schema 3 to 4, keep the same field meanings
-and first reduce it to at most 64 profiles, 256 checks per profile, 1,024 checks in
-total, and 256 arguments per check, probe, or command setup action; then change
-`schemaVersion` and run `processctl contract validate --kind project`. Historical
-schema-3 artifacts do not need rewriting. Plan schema 1 follows the same policy:
-new plans use schema 2, with at most 256 work/mapping/risk/decision entries and 64
-verification profiles per mapping.
-
-## Affected-check selection
-
-Schema 3 and schema 4 optionally declare the same portable impact graph. Components
-own canonical forward-slash glob patterns and list downstream components in
-`affects`; profile checks list the components that can invalidate them. The
-distribution discovers the
-committed diff from an exact Git merge base and combines staged, unstaged, and
-untracked paths, then computes the transitive component closure and runs only the
-selected checks.
-
-~~~json
-{
-  "impact": {
-    "baseRefs": ["origin/main", "main"],
-    "unmatchedPaths": "all-scoped-checks",
-    "components": [
-      {
-        "id": "api-contract",
-        "paths": ["openapi.json"],
-        "affects": ["frontend"]
+    {
+      "schemaVersion": 5,
+      "project": "my-project",
+      "lifecycle": {
+        "requiredProfiles": ["development", "review"]
       },
-      {
-        "id": "frontend",
-        "paths": ["frontend/**"],
-        "affects": []
+      "setup": [
+        {
+          "id": "prepare-project-tool",
+          "run": ["npm", "rebuild", "native-tool"],
+          "timeoutSeconds": 300
+        }
+      ],
+      "profiles": {
+        "development": [
+          {
+            "id": "tests",
+            "run": ["python", "-m", "unittest"],
+            "timeoutSeconds": 600
+          }
+        ],
+        "review": [
+          {
+            "id": "package",
+            "run": ["python", "-m", "build"],
+            "timeoutSeconds": 600
+          }
+        ]
       }
-    ]
-  },
-  "profiles": {
-    "development": [
-      {
-        "id": "frontend-unit",
-        "run": ["node", "node_modules/vitest/vitest.mjs", "run"],
-        "timeoutSeconds": 900,
-        "components": ["frontend"]
-      }
-    ]
-  }
-}
-~~~
-
-A check without `components` is deliberately always-run. A manifest without an
-`impact` object deliberately runs its complete profile through the same runner; this
-is suitable for small repositories and is not a legacy execution engine. Any changed
-path that matches no component selects every component-scoped check, so an incomplete
-graph fails toward broader verification instead of silently omitting evidence.
-
-Standalone verification tries `impact.baseRefs` in order or accepts an explicit
-`--base-ref`. Lifecycle verification ignores those defaults and binds selection to
-the registered change contract's immutable `comparisonBase`. Inspect a plan without
-probing tools or executing checks:
-
-~~~text
-processctl verify --project-root . --profile development --plan-only
-processctl verify --project-root . --profile development --plan-only \
-  --base-ref origin/main --json
-~~~
-
-Evidence records the resolved base and merge-base commits, changed and unmatched
-paths, direct and transitive components, and a reason for every selected or skipped
-check. A selected project command can read that exact immutable scope from the JSON
-file named by `ENGINEERING_PROCESS_IMPACT_FILE`. This is intended only for bounded
-domain analyzers, such as selecting affected MSBuild projects; changed-path discovery,
-component closure, check routing, and evidence remain distribution-owned.
-
-Select capability bundles from `bundles.json`: every consumer starts with `core`,
-then adds only capabilities it actually owns. For example, a web product commonly
-adds `delivery`, `product`, `api`, `frontend`, and `docs`. Publication from a
-completed checkpoint is part of the mandatory core chain. Add
-`cross-repo` only when independently versioned repositories participate in one
-public-contract change. Re-run `project init ... --replace` with the intended bundle
-set when deliberately changing the pin; version remains unchanged during an
-unpublished development iteration.
-
-During process development, pass
-`--process-root /path/to/engineering-process`; consumer manifests never store that
-local path.
-
-`project.json.lifecycle.requiredProfiles` is the minimum evidence for every change.
-Individual change contracts may add profiles but cannot remove the baseline.
-Every new contract also applies [`production-v1`](PRODUCTION_STANDARD.md) to the ten
-portable quality dimensions. Projects may add declared `project-*` dimensions but
-cannot remove or weaken the shared minimum. The same contract governs this repository
-through its public N-1 self-hosting boundary.
-Agents enter non-trivial delivery through the synchronized `run-change` skill; phase
-skills are internal owners, not a workflow each project must reconnect.
-
-`process-graph.json` is the machine-readable owner for that chain. It binds every
-phase to one owner skill, permitted `processctl` commands, success/failure outcomes,
-next phase/skill, and the standing-policy merge boundary. Distribution validation rejects
-missing skills, non-core chain owners, nonexistent commands, unknown phases, and
-broken handoffs; prose skills explain the graph but do not replace it.
-
-## Canonical lifecycle
-
-Create a change contract from `examples/change.json` and a plan from
-`examples/plan.json`. The plan's `contractDigest` is returned by `change start`.
-
-~~~text
-processctl change start --contract change.json \
-  --actor worker --context worker-session --actor-kind agent
-
-processctl change plan --change-id issue-123 --plan plan.json \
-  --actor worker --context worker-session --actor-kind agent
-
-processctl change implement --change-id issue-123 \
-  --actor worker --context worker-session --actor-kind agent
-
-processctl change verify --change-id issue-123 --profile development \
-  --actor worker --context worker-session --actor-kind agent
-
-processctl change verify --change-id issue-123 --profile review \
-  --actor worker --context worker-session --actor-kind agent
-~~~
-
-If later remote evidence or a source correction invalidates that verified checkpoint
-before review, commit the correction and run `change implement` again. The CLI
-preserves the earlier evidence, records `verification-invalidated`, increments the
-cycle, and requires every profile again. It accepts this transition only when the
-recorded verification is actually stale; a current verified checkpoint cannot use it
-to bypass independent review.
-
-After the phase becomes `verified`, a separate reviewer context registers its
-assignment:
-
-~~~text
-processctl change review start --change-id issue-123 \
-  --actor reviewer --context isolated-review-session --actor-kind agent \
-  --method isolated-context --attested-by agent-host \
-  --attestation-evidence "Host-created isolated read-only context"
-
-processctl change review submit --change-id issue-123 --report review.json
-~~~
-
-`changes-requested` returns to `change implement`, which starts a new cycle and
-invalidates prior verification and approval. Under the bounded-loop authority this
-is finite: the third changes-requested final-review cycle in one decision window
-records an owner-decision escalation and blocks a fourth autonomous implementation
-cycle. Finding renames, splits, paths, severities and invariant labels do not reset
-the count. The existing decision-required assessment, challenged recommendation and
-owner resolution may open one fresh three-cycle window; they never approve or remove
-findings. `approved` can advance only while the source still matches:
-
-~~~text
-processctl change finish --change-id issue-123 \
-  --actor worker --context worker-session --actor-kind agent
-processctl change status --change-id issue-123
-~~~
-
-### Process authority transition
-
-A trust-root adoption uses a clean N-1 control checkout and a separate N+1 candidate
-checkout. Register the exact transition before the target changes any candidate file,
-then let the installed target emit only non-authoritative evidence:
-
-~~~text
-processctl change transition register --project-root control \
-  --change-id adopt-process-0-9-0 --request transition-request.json \
-  --target-checkout target-tag-checkout --artifact-root target-artifacts \
-  --release-receipt target-evidence.json --artifact-attestation target-artifacts.json \
-  --actor worker --context worker-session --actor-kind agent
-
-processctl authority-transition candidate-evidence \
-  --candidate-root candidate --target-process-root /installed/target \
-  --request transition-request.json --output candidate-evidence.json \
-  --actor candidate-materializer --context candidate-session --actor-kind agent
-
-processctl change transition ingest --project-root control \
-  --change-id adopt-process-0-9-0 --candidate-root candidate \
-  --target-process-root /installed/target --evidence candidate-evidence.json \
-  --actor worker --context worker-session --actor-kind agent
-~~~
-
-Every later `change verify`, `change remote`, `change review`, `change finish`, and
-`change status` command supplies the same `--candidate-root`; lifecycle state and the
-CLI authority remain in `control`. The target lock never becomes an ordinary bypass.
-Transition verification, review, completion, remote evidence and receipt use their
-transition-only schema majors.
-
-The initial producer bootstrap is separate. Public 0.7.0 completes an exact intent
-and protected-transition policy. A verifier checked out from the policy's fixed
-protected-base feature commit validates the 0.7.0 bundle, immutable target release,
-complete candidate and current base. Only its fixed
-`authority-transition-completion` check may feed the policy-bound exact-head merge;
-the successful merge consumes the authorization and activates the target.
-
-One worker owning specification, planning, implementation, and verification is the
-default topology. Bounded helpers are optional optimizations, not required roles;
-only review requires a separate actor and context.
-
-Open and deferred findings remain completion-blocking until a later review records
-them as resolved or false-positive with evidence. Schema-1 lifecycle state is loaded
-through a fail-closed migration that replays immutable review artifacts to reconstruct
-pending findings before any transition is allowed.
-
-Completion does not imply commit creation, push, merge, release, or deployment.
-Those remain separately gated project workflows. A valid `.process/automation.json`
-provides standing authorization, so the host continues each operation automatically
-after its owning gate instead of asking for repeated confirmation. An owner directive
-may authorize installing that policy but never substitutes for a missing policy.
-
-When new evidence exposes multiple materially valid directions or would change
-accepted scope, owner, trust boundary, authority, compatibility, rollout, or
-lifecycle order, the coordinator stops dependent mutation and asks the project owner.
-Before presenting a material recommendation, it records every hard invariant,
-assumption, and option in a bounded recommendation artifact. `processctl` derives the
-valid, invalid, and unproven sets; cost or minimal-change optimization applies only to
-the complete valid set. A distinct actor and fresh context independently challenge
-assumption evidence, invariant tracing, option classification, and terminal ordering.
-If the exact digest-bound chain is not approved or contains no valid option, the
-result is blocked rather than a recommendation. Bounded implementation details
-already decided by the contract continue autonomously.
-
-Validate the recommendation, challenge, and optional owner resolution as one chain:
-
-~~~text
-processctl contract validate --kind recommendation recommendation.json
-processctl recommendation review start --project-root . \
-  --recommendation recommendation.json \
-  --actor <reviewer> --context <fresh-context> --actor-kind agent \
-  --method isolated-context --attested-by <host> \
-  --attestation-evidence <bounded-attestation>
-processctl contract validate --kind recommendation-review-assignment \
-  .process/runs/recommendations/<decision-id>/review-request-<ids>.json
-processctl contract validate --kind recommendation-review recommendation-review.json
-processctl recommendation validate-chain --project-root . \
-  --recommendation recommendation.json \
-  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
-  --review recommendation-review.json
-processctl recommendation resolution --project-root . \
-  --recommendation recommendation.json \
-  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
-  --review recommendation-review.json \
-  --selected-option <valid-option-id> --owner-id <owner-id> \
-  --owner-evidence-sha256 sha256:<digest> \
-  --selection-rationale-sha256 sha256:<digest> \
-  --output recommendation-resolution.json
-processctl recommendation validate-chain --project-root . \
-  --recommendation recommendation.json \
-  --assignment .process/runs/recommendations/<decision-id>/review-request-<ids>.json \
-  --review recommendation-review.json \
-  --resolution recommendation-resolution.json
-~~~
-
-The review-start command reserves the context across lifecycle and recommendation
-reviews before emitting its exact assignment. Resolution creation refuses symlinked,
-existing, or concurrently created output instead of redirecting or replacing it. The
-resolution records a selected valid option but grants no lifecycle completion, merge,
-release, deployment, or adoption authority. Those owning gates remain separate. The
-accepted decision is recorded before dependent work resumes.
-
-Projects may separately adopt the `provenance-gated-authored-review` lifecycle policy.
-Under that policy, every new nontrivial authored plan uses schema 3 and is assessed
-before implementation by a genuinely fresh read-only reviewer. The assessment covers
-architecture, authority, compatibility, external mutation, lifecycle order, owner,
-rollout, scope, and trust boundary for the exact contract, plan, clean source,
-authority, policy, author, and reviewer context. A clear assessment permits
-implementation. A decision-required assessment must complete the existing reviewed
-recommendation and owner-resolution chain, with a dedicated invariant binding the
-exact assessment digest:
-
-~~~text
-processctl change decision start --project-root . --change-id issue-123 \
-  --actor <reviewer> --context <fresh-context> --actor-kind agent \
-  --method isolated-context --attested-by <host> \
-  --attestation-evidence <bounded-attestation>
-processctl contract validate --kind plan-decision-review \
-  plan-decision-review.json
-processctl change decision submit --project-root . --change-id issue-123 \
-  --review plan-decision-review.json
-processctl change decision resolve --project-root . --change-id issue-123 \
-  --actor <coordinator> --context <coordinator-context> --actor-kind agent \
-  --recommendation recommendation.json \
-  --assignment recommendation-review-assignment.json \
-  --recommendation-review recommendation-review.json \
-  --resolution recommendation-resolution.json
-processctl change implement --project-root . --change-id issue-123 \
-  --actor <worker> --context <worker-context> --actor-kind agent
-~~~
-
-The resolve command is used only for `decision-required`; a clear assessment goes
-directly to `change implement`. Unreviewed prose, risk tiers, heuristics, author
-self-classification, and generator labels are candidate-only and grant no authority.
-A generated bypass is valid only for a core-registered generator whose complete plan
-is exactly recomputed from bounded source-owned inputs and the immutable installed
-authority. Exact generated plans are not universally sent to semantic review. Core
-requires no daemon, scheduler, service, webhook receiver, hosted reviewer platform,
-vendor, model, or proprietary agent API.
-Every later implementation cycle after a finding or clean post-verification source
-drift repeats the assessment with a newly reserved reviewer context bound to the new
-source checkpoint. Earlier assignment, assessment, and owner-decision artifacts stay
-historical and cannot authorize the new cycle.
-
-New finite-boundary changes use change schema 4. Their `reviewBoundary` is a closed
-set of trust boundaries and fault rows; every row names its trigger or injection
-boundary, expected outcome, criteria, proving profiles/evidence, and stop condition.
-Every review finding is exactly `covered` or `contract-gap`. Covered findings bind
-one declared row and carry that identity unchanged. Contract gaps bind no row, remain
-open, and trigger owner decision on the first review. The registered contract is
-never extended in place: after owner decision the current lifecycle stays
-superseded, and a new contract must explicitly own the expanded boundary.
-
-Review-loop decision windows start prospectively under the adopted authority; older
-lifecycle artifacts are not replayed into a new counter. Resolved escalation chains
-are retained separately from the mutable current plan-decision slot and are included
-in completion and exported receipt evidence. This reuses existing reviewers and
-recommendation authority; it adds no loop arbiter or reviewer-of-reviewer.
-
-When a schema-3 or schema-4 change selects a project-owned `requiredEvidence` id, local profiles
-alone do not advance it to review. Create the exact no-authority request, run the
-project adapter, and ingest the complete supplemental set first:
-
-~~~text
-processctl change remote request --project-root . --change-id issue-123 \
-  --actor worker --context worker-session --actor-kind agent
-python verification/run_remote_verification.py --project-root . \
-  --change-id issue-123 --actor worker --context worker-session \
-  --actor-kind agent --repository owner/repository \
-  --failure-output /durable/receipts/issue-123-remote-failure.json
-processctl change status --project-root . --change-id issue-123
-~~~
-
-The adapter publishes a uniquely named exact-checkpoint verification tag, never a
-branch or PR, dispatches the protected-base workflow, validates service and bundle
-digests, calls `change remote ingest`, and deletes the tag in every terminal path.
-Downloaded temporary archives are deleted after ingestion; failed evidence is moved
-to the explicit durable failure location before cleanup. Remote artifacts and their
-service ids remain lifecycle evidence, not merge, release, deployment, or adoption
-authority.
-
-The default agent-host publication order is stricter than a PR-first workflow: implementation
-and every required local and remote profile pass on a clean checkpoint; a consumer-selected independent
-agent or human semantically reviews that checkpoint; findings repeat implementation,
-complete verification, and fresh review until approved; `change finish` records
-completion; only then may automation push and create the PR. Static policy/secret/pin
-checks supplement this review and cannot generate a semantic verdict. With a valid
-standing policy, automation then waits for exact-head/current-base required checks and
-performs the configured merge without a separate human step.
-An opted-in schema-3 Renovate process-adoption proposal is the explicit pre-review
-publication exception; its complete candidate passes protected-base proposal
-validation first, then consumer-owner review and manual terminal merge.
-
-Completed local evidence can be moved across machines or attached to a release as a
-bounded receipt. Export and validate it before any explicit prune:
-
-~~~text
-processctl evidence export --project-root . --change-id issue-123 \
-  --output issue-123-evidence.json
-processctl evidence validate issue-123-evidence.json
-processctl evidence prune --project-root . --change-id issue-123 \
-  --receipt issue-123-evidence.json
-processctl evidence prune --project-root . --change-id issue-123 \
-  --receipt issue-123-evidence.json --apply
-~~~
-
-The first prune command is a preview. `--apply` is accepted only for a completed run
-whose current state matches the validated external receipt. Active, failed,
-unexported, mismatched, or tampered evidence remains fail-closed. A partial deletion
-failure remains under an explicit `.pruning-*` quarantine and must be recovered from
-the retained validated receipt; it is never presented again as a complete local run.
-
-## Publication contract
-
-Validate common metadata before creating or updating a review object:
-
-~~~text
-processctl publication validate-branch --branch feat/short-description
-processctl publication validate-commit --subject "feat(scope): describe the change"
-processctl publication validate-range --project-root . \
-  --branch feat/short-description --range origin/main..HEAD
-processctl publication validate-pr --title "feat(scope): describe the change" \
-  --branch feat/short-description --state draft --body-file pr.md
-processctl publication validate-source --project-root . \
-  --change-id issue-123 --commit <completed-checkpoint> \
-  --title "feat(scope): describe the change" \
-  --branch feat/short-description --body-file pr.md
-processctl contract validate --kind release release.json
-processctl publication validate-release --project-root . \
-  --tag v0.2.0 --release-name v0.2.0 \
-  --commit <checkpoint> --main-ref origin/main
-~~~
-
-Manual branches use `{type}/{kebab-description}`. Automation uses the provider-neutral
-`automation/{owner}/{description}` namespace. Commit subjects and PR titles use
-Conventional Commit syntax and are limited to 72 characters. Draft PRs may retain
-explicitly pending checklist items; every ready PR, including automation, must satisfy
-them. The managed template owns the ordered shared sections and immutable standard
-checklist meaning. An optional extension after its closing marker uses only
-`## Project-specific requirements` plus one-line
-`**Project-specific: Label**` checklist items; arbitrary headings, prose, HTML, and
-code fences are rejected, and reserved core-policy phrases are rejected anywhere in
-an extension item. These checks prevent structural shadowing; independent review
-remains responsible for the semantic truth of project-specific evidence.
-Raw HTML is outside the supported grammar for both managed `AGENTS.md` contracts and
-pull-request descriptions; use visible CommonMark instead.
-
-`validate-pr` remains a metadata-compatibility command. `validate-source` is the
-canonical publication gate and requires current completion evidence for the exact
-commit, regardless of provider draft/ready presentation.
-
-### Standing gated automation
-
-Projects opt into unattended routine operation with `.process/automation.json`, using
-the packaged `automation-policy` schema. The exact policy authorizes commit, push,
-review-object publication, merge, release, publication, deployment, adoption, and
-ephemeral cleanup only after their existing gates. Merge always requires completed
-lifecycle evidence, fresh independent review, exact head, current protected base,
-required checks, branch protection, and the configured merge method. Missing or
-invalid policy grants no authority.
-
-The confirmation mode is `exceptions-only`. Automation involves the owner only when a
-required capability or authority is unavailable, bounded idempotent recovery is
-exhausted, or a material product/security decision is missing. Pending checks,
-ordinary retries, routine merges, and already authorized external actions continue
-without per-action confirmation.
-
-### Controlled automation proposals
-
-Completion-before-publication remains the default. A consumer may enable an untrusted
-automation proposal before completion only through a policy file already present on
-the protected base at `.process/automation-proposals.json`. Schema 1 and schema 2 use
-the shape in `examples/automation-proposal-policy.json`, allow only
-`dependency-update`, require the canonical `lifecycle-completion` check, and retain
-their released human-only and completion-gated meanings. Schema 3 uses
-`examples/automation-process-adoption-policy.json` for the distinct
-`process-adoption` route. Absence, disablement, a branch-only policy, or a policy
-digest mismatch blocks every route.
-
-The immutable provider verifier emits one bounded
-`engineering-process-controlled-automation-proposal` report for the exact repository,
-base/head, changed paths, title/body digest, owner, controls, and verifier revision.
-The adapter resolves `--base-commit` independently from the provider's current target
-event; it must not copy that value from the report being checked. Before creating or
-updating a proposal, validate the report against the clean source:
-
-~~~text
-processctl contract validate --kind automation-proposal-policy \
-  .process/automation-proposals.json
-processctl contract validate --kind automation-proposal proposal-policy.json
-processctl publication validate-proposal --project-root . \
-  --policy-evidence proposal-policy.json \
-  --repository <owner/repository> --commit <head-sha> \
-  --title "chore(deps): update dependencies" \
-  --branch automation/renovate/dependencies --target-branch main \
-  --base-commit <protected-base-sha> \
-  --state draft --body-file pr.md \
-  --verifier-repository <owner/verifier> --verifier-commit <verifier-sha>
-~~~
-
-This pass proves only that the proposal is safe to expose as untrusted input. It is
-not verification, semantic review, completion, or merge authority. Proposal checks
-remain read-only and receive no secrets. Dependency proposals exclude automerge,
-scripts, plugins, shell execution, privileged CI, process-authority, workflow,
-release, deployment, security-policy, and trust-root changes.
-
-The required completion check is absent on every new proposal head. After the exact
-head completes the lifecycle, export its receipt, finalize the managed PR requirements,
-and have the same immutable verifier produce fresh policy evidence bound to the final
-ready body and unchanged base/head. Then run the combined gate:
-
-~~~text
-processctl publication validate-proposal-completion --project-root . \
-  --policy-evidence proposal-policy.json \
-  --evidence completion.json --evidence-kind receipt \
-  --repository <owner/repository> --commit <head-sha> \
-  --title "chore(deps): update dependencies" \
-  --branch automation/renovate/dependencies --target-branch main \
-  --base-commit <protected-base-sha> \
-  --body-file ready-pr.md \
-  --verifier-repository <owner/verifier> --verifier-commit <verifier-sha>
-~~~
-
-Only a successful combined gate permits the provider adapter to create
-`lifecycle-completion` for that exact SHA. A force update has no inherited check;
-branch protection must require the proposal to be current with the exact validated
-base; duplicate mismatch fails closed. Historical schema-1 policy remains human-only.
-Schema 2 keeps provider automerge disabled before completion and permits merge only
-after the protected base's standing automation policy and exact completion gate pass.
-Provider tokens, check APIs, branch protection, retries, and repository selection
-remain consumer-owned adapter behavior.
-
-Schema-3 process adoption has a different merge boundary. Renovate may create the PR
-only after its allowlisted managed runner has materialized the complete target: direct
-pin, cross-platform hash lock, process lock, managed files, any declared project
-migration, and every immutable action pin. A protected-base immutable verifier is
-fixed by repository and commit in the opt-in policy. Its evidence binds the producer
-release/tag/commit/attestation, source and target authority versions and digests,
-requirements bytes, exact base/head/path set, migration result, complete managed-file
-set, and exact verifier identity. Workflow changes must be only the declared full-SHA
-action-pin replacements with their release annotations.
-
-The protected-base policy also fixes the producer repository. The report binds bounded
-raw release-contract and distribution-attestation bytes, their digests, lifecycle
-receipt identity, complete artifact hashes, and the verifier's exact target
-materialization result. The adapter independently supplies a clean producer checkout
-with the exact tag and origin plus downloaded release artifacts, lifecycle receipt,
-and attestation; report bytes alone never pass. Existing release and
-artifact-attestation validators resolve those objects before the target distribution
-is compared with the complete consumer materialization. Validation also requires the
-target wheel hash in the committed requirements lock and every use of that producer action
-across the complete regular-workflow tree; the protected base must be an ancestor and
-workflow mode may not change. Workflow semantics are read with the pinned maintained
-PyYAML safe loader; the process does not maintain a substitute YAML scanner.
-
-For schema 3, add these independently resolved inputs to `validate-proposal`:
-
-~~~text
-  --producer-root <clean-release-checkout> \
-  --producer-artifact-root <downloaded-release-artifacts> \
-  --producer-receipt <release-lifecycle-receipt> \
-  --producer-attestation <distribution-attestation>
-~~~
-
-The schema fixes `automerge` to false, `consumerOwnerMergeRequired` to true, and
-`postMergeMutation` to false. `publication validate-proposal-completion` always rejects
-this kind: lifecycle completion, standing automation, provider state, and a successful
-proposal check cannot convert it to automatic merge. The consumer chooses project
-configuration, commands, verification, review method, and whether to merge. Its owner
-manually merges the reviewed PR; that merge is the terminal adoption cutover and no
-post-merge synchronization runs.
-
-This does not alter the ordinary agent-host route. When an agent host completes the
-full lifecycle before it creates a source or adoption PR, the completed exact head may
-still auto-merge under the protected base's standing policy. Origin and publication
-state select the route: an agent-host completed PR is not reclassified as a Renovate
-proposal, and a Renovate process-adoption proposal never inherits completed-source
-auto-merge authority.
-
-## Trust boundary
-
-The CLI proves structural separation: reviewer actor id and context id must both be
-unused by implementation, every review assignment in the project must use a fresh
-context id, and the review must match the verified checkpoint. The agent host or
-human organization owns the truth of the identity attestation. A host adapter should
-create a read-only isolated context with no inherited implementation or prior-review
-conversation, pass stable identities to `change review start`, and preserve its
-evidence. A stable reviewer actor or role may be reused with a fresh context; merely
-renaming retained context does not satisfy the process.
-
-Self-hosted verifier, signing, release-controller, and process-authority changes use
-the portable authority-rotation rule: the old trust root governs introduction, the
-new root is published under an immutable identity before consumers pin it, cutover is
-proved without a control gap, and retirement happens only after the new boundary is
-active. Provider-specific mechanics may require multiple independently completed
-changes; normal product changes do not inherit that staging automatically.
-
-`change review submit` may be invoked by a coordinator transporting the assigned
-reviewer's exact report. The CLI validates that artifact against the assignment and
-carried findings; the attesting host or human boundary, not local process state,
-authenticates who produced it.
-
-The producer release workflows implement the same host-neutral chain with explicit
-artifacts and callbacks: `release-pr.yml` creates only an unpublished Git bundle.
-For an ordinary governed Release, `release-candidate.yml` restores it and runs
-`change start`, `change plan`, `change implement`, and every required `change verify`;
-the resulting `engineering-process-review-required` event names the exact artifact
-and checkpoint. The one `authority-transition-bootstrap` Release instead contains an
-authored schema-3 plan readable by immutable public 0.7. The initial workflow runs
-`change start`, `change plan`, and `change decision start`, then emits
-`engineering-process-plan-review-required` without implementing the candidate. A
-fresh read-only plan reviewer returns the exact assigned report to
-`release-plan-approval.yml`; that protected-main callback authenticates the producing
-workflow path, protected-base SHA, run id and attempt before restoring the same source
-and lifecycle. The provider handoff carries the id and attempt together as the
-required `plannedRun` object so every identity remains explicit without exceeding
-GitHub's ten-property `client_payload` limit. A protected-base adapter renders and
-validates that bounded event before the provider call. It submits the report,
-implements, verifies, and emits the ordinary
-source-review handoff. A separate bounded `needs: continue`, `always()` cleanup job
-runs on another runner after primary-job success, failure, timeout, or interruption;
-after artifact resolution it preserves bounded diagnostics, consumes and reconciles
-the single-use planned artifact, and makes a retry require a fresh planned run and
-assignment. It cannot finish, publish, or merge the Release.
-The consumer-selected host restores that lifecycle, chooses an agent or human,
-registers the assignment, submits the exact report, resolves any finding loop, runs
-`change finish`, and exports completion evidence. It sends only that bounded
-gzip/base64 evidence to `release-approval.yml`; semantic reports and reviewer selection
-never become workflow inputs. The publication workflow validates the receipt against
-the exact clean source with `publication validate-evidence-source`, and only then
-pushes the branch, creates or reconciles the ready PR, validates the standing policy,
-and enables exact-head protected auto-merge. No workflow bypasses branch protection.
-
-The host callback is deterministic after semantic completion:
-
-~~~text
-processctl evidence export --change-id <change-id> --output completion.json
-processctl evidence encode-completion --evidence completion.json \
-  --evidence-kind receipt --output completion.txt
-gh workflow run release-approval.yml --ref main \
-  -f verified_run_id=<verified-run-id> \
-  -f comparison_base=<base-sha> \
-  -f release_head_sha=<completed-checkpoint> \
-  -f completion_evidence_gzip_base64="$(<completion.txt)"
-~~~
-
-The callback `comparison_base` is the candidate source base: the immediate protected
-`main` parent used for source restoration, current-base checks, and the publication
-range. The receipt's lifecycle comparison base is independently owned by
-`.release/change.json` and normally identifies the previous immutable release tag;
-the publication boundary validates both identities against their respective owners.
-An older callback whose candidate source base is no longer current fails before any
-candidate-owned publication adapter is invoked.
-
-A bootstrap-authority release uses `evidence export-bootstrap` and
-`--evidence-kind bootstrap-authorization`. The adapter rejects oversized or malformed
-transport, a different process identity, base, project, checkpoint, workspace
-fingerprint, source tree, or publication range.
-
-## Distribution contracts
-
-- `project.json` declares baseline profiles and exact argument-array checks.
-- `process.lock` pins the process version, selected skills, and a digest covering the
-  runtime, canonical exact runtime/build/development dependency locks, schemas,
-  templates, bundle catalog, and
-  complete selected skill resources. Startup fails when installed runtime dependency
-  versions differ from that lock.
-- `requirements/process.in` owns the direct authority pin. Renovate uses the
-  pip-compile manager to update its complete binary-only hash lock, then the managed
-  `.process/adopt-process.py` runner rejects symlink, junction, or reparse input in
-  every supplied path component, snapshots one bounded stable copy outside the
-  checkout, binds every path component against concurrent retargeting, and uses that
-  exact digest for installation and `processctl adoption apply`. POSIX process groups
-  and a managed Windows kill-on-close Job Object contain every child. The resulting
-  draft contains the new lock, managed contracts, skill snapshots, and any
-  target-version consumer-owned project migration; after CI and fresh-context
-  independent review, merge is the end of adoption.
-- The repository-root GitHub Action is the shared CI bootstrap surface. Consumers pin
-  its full governed release commit, while the exact Python authority remains selected
-  exclusively by their hash-locked `requirements/process.txt`. The action invokes the
-  producer-owned installer from its immutable action checkout and never downloads or
-  executes helper source from the consumer branch.
-- Versioned JSON schemas define change, plan provenance, plan-decision assignment and
-  review, verification, review, recommendation, independent recommendation assignment
-  and challenge, owner resolution, lifecycle, completion-related artifacts,
-  release-change fragments, and the release
-  classification contract. The generated Release PR gate binds that contract to the
-  exact SemVer increment, package version, latest reachable prior tag, reviewed head,
-  identical merge tree, immutable checkpoint, and main ancestry.
-- Remote matrix jobs publish one bounded supplemental-verification schema-2 bundle
-  per platform/runtime. Its manifest binds the exact source and workflow checkpoints,
-  automation actor/context, run URL, platform/runtime identity, selected impact,
-  configured timeouts, output byte counts/digests, redacted diagnostic summaries,
-  truncation state, and the hashes of its schema-3 profile reports. Historical
-  supplemental schema-1 bundles and verification schema-1/schema-2 reports remain
-  readable under their released semantics. GitHub's artifact id and digest complete
-  the immutable remote reference; this supplements rather than replaces N-1
-  lifecycle evidence.
-- Projects without plan-decision opt-in continue using bounded plan schema 2. An
-  opted-in project uses plan schema 3 provenance and the pre-implementation gate.
-  Selective-impact consumers may add optional capabilities on project schema 3,
-  while new integrations use bounded project schema 4. Plan schemas 1 and 2 and the
-  pre-existing fields of project schemas 1-3 retain their published validation
-  behavior instead of being tightened in place.
-- `release.json` is the single release-identity owner. Governed GitHub tag and title
-  are both exactly `v<SemVer>`; package metadata, runtime version, artifact names,
-  authorization evidence, and later consumer locks must match it. Public-impact PRs
-  add bounded `release-changes/<id>.json` fragments; automation aggregates them into
-  one reviewed Release PR and never writes a chosen version directly to protected
-  `main`. Recorded bootstrap history transitions once through a separately typed
-  bootstrap-authority bundle, then all later releases require a public N-1 lifecycle
-  receipt.
-- `VERSIONING.md` owns package-versus-schema classification and the explicit
-  Renovate-assisted adoption boundary. `processctl publication prepare-release`
-  derives and materializes the only permitted next package version from the complete
-  fragment set.
-- Project commands run without a shell and inherit the caller environment. Never put
-  secrets in manifests, arguments, or reports.
-- Consumer skill roots are distribution-owned: unmanaged `SKILL.md` files or catalog
-  files fail `sync` and `doctor`. Project-specific policy belongs in `AGENTS.md`,
-  product contracts, source, and the manifest's command bindings.
-- Host-specific launchers, agent role files, and model settings are optional external
-  integrations. They are neither bundled into the core nor required in consumer
-  repositories.
-- The managed pull-request template and publication validators are shared process
-  policy. Consumer repositories may append project-specific requirements after the
-  managed block but do not copy or redefine the common convention.
+    }
+
+Commands are argument arrays, never shell strings. Each command has a finite timeout.
+Output has a hard aggregate budget; evidence stores byte counts and hashes, never raw
+stdout or stderr that could contain secrets.
+
+Pin the process in requirements/process.in:
+
+    --only-binary :all:
+    engineering-process==0.9.0
+
+Generate requirements/process.txt with hashes, install that lock, then run:
+
+    processctl adoption apply \
+      --project-root . \
+      --requirements-lock requirements/process.txt
+
+The transaction writes only managed surfaces:
+
+- .agents/skills/<distributed-skill>
+- the marked block in .github/PULL_REQUEST_TEMPLATE.md
+- .process/adopt-process.py
+- .process/process.lock
+- the marked engineering-process block in AGENTS.md
+- a schema migration of .process/project.json
+
+It removes obsolete skills named by the previous process lock and preserves
+consumer-owned skills and instructions. Applying the same version twice is a no-op.
+The legacy managed runner can enter 1.0 directly, so consumers do not need a chain of
+per-version migration documents. The same transaction deletes the retired migration
+directory and standing automation policy; the Windows Job Object helper remains a
+managed runtime-containment asset.
+
+The three authored lifecycle documents stay intentionally small. A change contains
+source, scope, outcomes, and profiles; a plan binds its digest; a review binds the
+assigned checkpoint:
+
+    {
+      "schemaVersion": 5,
+      "id": "change-123",
+      "summary": "Deliver the accepted behavior",
+      "source": "issue-123",
+      "comparisonBase": "main",
+      "risk": "medium",
+      "affectedProjects": ["my-project"],
+      "acceptanceCriteria": [
+        {"id": "works", "outcome": "The observable behavior works"}
+      ],
+      "requiredProfiles": ["development", "review"]
+    }
+
+    {
+      "schemaVersion": 4,
+      "changeId": "change-123",
+      "contractDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "approach": "Implement through the existing owner.",
+      "workItems": [
+        {
+          "id": "implementation",
+          "outcome": "Deliver and prove the behavior",
+          "affectedPaths": ["src/", "tests/"]
+        }
+      ],
+      "risks": []
+    }
+
+    {
+      "schemaVersion": 5,
+      "changeId": "change-123",
+      "reviewer": {
+        "actorId": "review-agent",
+        "contextId": "review-123",
+        "kind": "agent"
+      },
+      "checkpoint": {
+        "head": "0000000000000000000000000000000000000000",
+        "fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "fileCount": 1,
+        "byteCount": 1
+      },
+      "verdict": "approved",
+      "summary": "Accepted outcomes and evidence are complete.",
+      "findings": []
+    }
+
+## Running a change
+
+Create and validate a change contract, then register it:
+
+    processctl contract validate --kind change change.json
+    processctl change start \
+      --actor implementation-agent \
+      --context change-123 \
+      --contract change.json
+
+Register a plan bound to the returned contract digest:
+
+    processctl change plan \
+      --change-id change-123 \
+      --actor implementation-agent \
+      --context change-123 \
+      --plan plan.json
+
+Register implementation and run every required profile:
+
+    processctl change implement \
+      --change-id change-123 \
+      --actor implementation-agent \
+      --context change-123
+    processctl change verify --change-id change-123 --profile development
+    processctl change verify --change-id change-123 --profile review
+
+Assign an independent reviewer and submit its report:
+
+    processctl change review start \
+      --change-id change-123 \
+      --actor review-agent \
+      --context review-123
+
+Write the report at the returned reportPath (under .process/runs, so it does not
+change the reviewed snapshot), then submit it:
+
+    processctl change review submit \
+      --change-id change-123 \
+      --review .process/runs/change-123/review-1.json
+
+changes-requested returns to implementation and increments the cycle. The first
+review is bounded by the frozen acceptance criteria. The same reviewer
+checks correction diffs; new blockers are admitted only for remediation regressions
+or a reasoned P0/P1 miss inside the original contract. A third changes-requested
+review blocks the change after two correction cycles—it never waives review.
+
+approved can finish only while the repository still matches the reviewed snapshot:
+
+    processctl change finish \
+      --change-id change-123 \
+      --actor coordinator \
+      --context finish-123
+
+At any point:
+
+    processctl change status --change-id change-123 --json
+
+## Release to consumer PR
+
+Every opted-in consumer uses Renovate's pip-compile manager. Its engineering-process
+package rule is enabled, never automerges, and runs exactly:
+
+    python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt
+
+postUpgradeTasks.fileFilters includes the managed paths, so Renovate commits the new
+hash lock and the fully materialized process in the same pull request. A self-hosted
+Renovate administrator must allow only this anchored command and must keep shell
+execution disabled:
+
+    ^python \.process/adopt-process\.py --project-root \. --requirements-lock requirements/process\.txt$
+
+The release workflow publishes exact wheel and sdist bytes to PyPI, verifies their
+registry hashes, creates the immutable GitHub release, and sends one authenticated
+engineering-process-published event to renovate-ops. That control plane runs Renovate
+for each repository whose protected config explicitly opts in. Each consumer's normal
+CI and independent review decide whether its PR can merge.
+
+This repository opts in through .github/renovate.json, so it receives the same
+adoption PR as every other consumer. See SELF_HOSTING.md and RELEASING.md.
+
+## Compatibility
+
+Version 1.x retains a few small pre-1.0 command shapes so existing consumers can
+pass their first adoption PR:
+
+- setup runs only the consumer-owned setup arrays migrated from its old manifest;
+- doctor --profile validates the selected profile.
+- publication validate-branch, validate-commit, validate-range, and validate-pr remain
+  read-only while consumers move those conventions into their own repositories.
+
+They do not restore the removed governance machinery and can be deleted in the next
+package major after all known consumers have adopted 1.x.
 
 ## Development
 
-~~~text
-python -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python verification/run_test_suite.py
-.venv/bin/python processctl.py skills validate --root process_assets/skills
-.venv/bin/python processctl.py digest
-~~~
+    python -m pip install \
+      -r engineering_process/requirements-runtime.txt \
+      -r engineering_process/requirements-dev.txt \
+      -r engineering_process/requirements-build.txt
+    python verification/run_test_suite.py
+    python processctl.py skills validate --root process_assets/skills
+    python verification/verify_distribution.py
 
-Version 0.x remains a compatibility pilot. A 1.0 release requires publishing the CLI,
-running consumer CI through the published artifact, and completing forward tests on
-representative agent hosts. Portable evaluation fixtures live in `evals/cases.json`.
-Automated Release PR authorization, repository controls, recovery rules, and the
-secretless PyPI publisher identity are defined in
-[`RELEASING.md`](https://github.com/phuongnse/engineering-process/blob/main/RELEASING.md).
+The process repository requires a real consumer incident or request in every process
+change contract. PROCESS_IMPROVEMENT.md explains that brake.

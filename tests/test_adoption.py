@@ -1,628 +1,405 @@
-import hashlib
+from __future__ import annotations
+
+import importlib.util
 import json
 import os
-import tempfile
-import unittest
 from pathlib import Path
+import subprocess
+import tempfile
+import time
+import unittest
 from unittest import mock
+import sys
 
-import engineering_process.adoption as adoption
 from engineering_process import VERSION
-from engineering_process.adoption import (
-    _checkout_requirements_path,
-    _read_bounded_regular_file,
-    apply_adoption,
-    check_adoption,
-    validate_requirements_lock,
-)
-from engineering_process.bootstrap import initialize_project
-from engineering_process.contracts import ContractError, read_json
+from engineering_process.adoption import apply_adoption, check_adoption
+from engineering_process.contracts import ProcessError, read_json
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
 
 
+def write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
+def load_managed_adopter(name: str) -> object:
+    path = PROCESS_ROOT / "templates" / "adopt-process.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class AdoptionTests(unittest.TestCase):
-    def target_requirements_bytes(self) -> bytes:
-        return (
-            "--only-binary :all:\n\n"
-            f"engineering-process=={VERSION} \\\n"
-            f"    --hash=sha256:{'0' * 64}\n"
-        ).encode("utf-8")
-
-    def prepare_project(self, root: Path) -> Path:
-        manifest = root / "project.json"
-        manifest.write_text(
-            json.dumps(
-                {
-                    "schemaVersion": 1,
-                    "project": "consumer",
-                    "lifecycle": {"requiredProfiles": ["development"]},
-                    "profiles": {
-                        "development": [
-                            {
-                                "id": "unit",
-                                "run": ["python", "-c", "raise SystemExit(0)"],
-                                "timeoutSeconds": 30,
-                            }
-                        ]
-                    },
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        legacy_project = {
+            "schemaVersion": 3,
+            "project": "consumer",
+            "lifecycle": {"requiredProfiles": ["development"]},
+            "profiles": {
+                "development": [
+                    {
+                        "id": "unit",
+                        "run": ["python", "-m", "unittest"],
+                        "timeoutSeconds": 300,
+                        "components": ["legacy-field-is-dropped"],
+                    }
+                ]
+            },
+            "environment": {
+                "defaultProfile": "development",
+                "foregroundOnly": True,
+                "profiles": {
+                    "development": ["python-runtime"],
+                    "review": ["python-runtime"],
                 },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        initialize_project(
-            root,
-            PROCESS_ROOT,
-            manifest_path=manifest,
-            requested_bundles=["docs"],
-            replace=False,
-        )
-        requirements = root / "requirements" / "process.txt"
-        requirements.parent.mkdir()
-        requirements.write_bytes(self.target_requirements_bytes())
-        return requirements
-
-    def prepare_project_migration(
-        self, root: Path, *, from_version: str = "0.1.0"
-    ) -> tuple[Path, bytes, bytes]:
-        project_path = root / ".process" / "project.json"
-        source = project_path.read_bytes()
-        target = json.loads(source)
-        target["profiles"]["development"][0]["timeoutSeconds"] = 31
-        target_content = (
-            json.dumps(target, ensure_ascii=False, indent=2) + "\n"
-        ).encode("utf-8")
-        migration = {
-            "schemaVersion": 1,
-            "fromProcessVersion": from_version,
-            "toProcessVersion": VERSION,
-            "sourceProjectDigest": (
-                "sha256:" + hashlib.sha256(source).hexdigest()
-            ),
-            "targetProjectDigest": (
-                "sha256:" + hashlib.sha256(target_content).hexdigest()
-            ),
-            "project": target,
+                "requirements": [
+                    {
+                        "id": "python-runtime",
+                        "description": "Python is available",
+                        "probe": {
+                            "run": ["python", "--version"],
+                            "timeoutSeconds": 30,
+                            "readOnly": True,
+                        },
+                        "remediation": "Install Python",
+                    }
+                ],
+                "managedTools": [],
+                "setupActions": [
+                    {
+                        "id": "install-legacy-tool",
+                        "kind": "managed-tool",
+                        "tool": "legacy-tool",
+                        "timeoutSeconds": 30,
+                    },
+                    {
+                        "id": "prepare-native-tool",
+                        "kind": "command",
+                        "run": ["python", "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 30,
+                        "mutations": ["project-files"],
+                    }
+                ]
+            },
         }
-        migration_path = (
-            root / ".process" / "adoption-migrations" / f"{VERSION}.json"
+        write_json(self.root / ".process" / "project.json", legacy_project)
+        write_json(
+            self.root / ".process" / "process.lock",
+            {
+                "schemaVersion": 1,
+                "process": {"version": "0.4.0", "digest": "sha256:" + "0" * 64},
+                "skills": ["old-skill", "run-change"],
+            },
         )
-        migration_path.parent.mkdir()
-        migration_path.write_text(
-            json.dumps(migration, ensure_ascii=False, indent=2) + "\n",
+        old_skill = self.root / ".agents" / "skills" / "old-skill"
+        old_skill.mkdir(parents=True)
+        (old_skill / "SKILL.md").write_text("old\n", encoding="utf-8")
+        (old_skill / "consumer-notes.md").write_text(
+            "consumer owned\n", encoding="utf-8"
+        )
+        old_run = self.root / ".agents" / "skills" / "run-change"
+        old_run.mkdir(parents=True)
+        (old_run / "SKILL.md").write_text("legacy\n", encoding="utf-8")
+        (old_run / "obsolete.txt").write_text("remove\n", encoding="utf-8")
+        references = old_run / "references"
+        references.mkdir()
+        (references / "execution.md").write_text("managed legacy reference\n", encoding="utf-8")
+        custom = self.root / ".agents" / "skills" / "consumer-owned"
+        custom.mkdir(parents=True)
+        (custom / "SKILL.md").write_text("keep\n", encoding="utf-8")
+        (self.root / "AGENTS.md").write_text(
+            "# Consumer rules\n\n<!-- engineering-process:start -->\nold\n<!-- engineering-process:end -->\n",
             encoding="utf-8",
         )
-        return migration_path, source, target_content
+        (self.root / ".process" / "adopt-process.py").write_text("old runner\n", encoding="utf-8")
+        (self.root / ".process" / "adopt-process-windows-job.py").write_text("old helper\n", encoding="utf-8")
+        (self.root / ".process" / "automation.json").write_text("{}\n", encoding="utf-8")
+        migration = self.root / ".process" / "adoption-migrations" / "0.7.0.json"
+        migration.parent.mkdir(parents=True)
+        migration.write_text("{}\n", encoding="utf-8")
+        self.requirements = self.root / "requirements" / "process.txt"
+        self.requirements.parent.mkdir()
+        self.requirements.write_text(
+            f"engineering-process=={VERSION} \\\n+    --hash=sha256:{'a' * 64}\n"
+            "jsonschema==4.26.0 \\\n+    --hash=sha256:" + "b" * 64 + "\n",
+            encoding="utf-8",
+        )
 
-    def test_requirements_lock_binds_exact_hashed_public_authority(self):
-        with tempfile.TemporaryDirectory() as directory:
-            requirements = Path(directory) / "process.txt"
-            requirements.write_bytes(self.target_requirements_bytes())
-            lock = validate_requirements_lock(requirements)
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
 
-        authority = next(pin for pin in lock.pins if pin.name == "engineering-process")
-        self.assertEqual(VERSION, authority.version)
-        self.assertTrue(authority.hashes)
-        self.assertRegex(lock.digest, r"^sha256:[0-9a-f]{64}$")
+    def test_legacy_consumer_converges_and_second_apply_is_noop(self) -> None:
+        first = apply_adoption(
+            self.root, PROCESS_ROOT, self.requirements, requirements_source=self.requirements
+        )
+        self.assertEqual("applied", first["status"])
+        self.assertEqual(
+            "consumer owned\n",
+            (
+                self.root
+                / ".agents"
+                / "skills"
+                / "old-skill"
+                / "consumer-notes.md"
+            ).read_text(encoding="utf-8"),
+        )
+        self.assertFalse(
+            (self.root / ".agents" / "skills" / "old-skill" / "SKILL.md").exists()
+        )
+        self.assertEqual(
+            (PROCESS_ROOT / "templates" / "adopt-process-windows-job.py").read_bytes(),
+            (self.root / ".process" / "adopt-process-windows-job.py").read_bytes(),
+        )
+        self.assertFalse((self.root / ".process" / "automation.json").exists())
+        self.assertFalse((self.root / ".process" / "adoption-migrations").exists())
+        self.assertTrue((self.root / ".agents" / "skills" / "consumer-owned" / "SKILL.md").is_file())
+        self.assertTrue((self.root / ".agents" / "skills" / "improve-process" / "SKILL.md").is_file())
+        self.assertEqual(
+            "remove\n",
+            (self.root / ".agents" / "skills" / "run-change" / "obsolete.txt").read_text(
+                encoding="utf-8"
+            ),
+        )
+        self.assertFalse(
+            (self.root / ".agents" / "skills" / "run-change" / "references" / "execution.md").exists()
+        )
+        self.assertIn(
+            "Independent review",
+            (self.root / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(
+                encoding="utf-8"
+            ),
+        )
+        self.assertIn("# Consumer rules", (self.root / "AGENTS.md").read_text(encoding="utf-8"))
+        project = read_json(self.root / ".process" / "project.json")
+        self.assertEqual(5, project["schemaVersion"])
+        self.assertEqual(1, len(project["setup"]))
+        self.assertEqual("prepare-native-tool", project["setup"][0]["id"])
+        lock = read_json(self.root / ".process" / "process.lock")
+        self.assertEqual(2, lock["schemaVersion"])
+        self.assertEqual(VERSION, lock["process"]["version"])
+        self.assertIn(".agents/skills/run-change/SKILL.md", lock["managedFiles"])
+        self.assertIn(".process/adopt-process-windows-job.py", lock["managedFiles"])
 
-    def test_apply_updates_lock_and_all_managed_assets_as_one_candidate(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            lock_path = root / ".process" / "process.lock"
-            previous = read_json(lock_path)
-            previous["process"]["version"] = "0.1.0"
-            lock_path.write_text(
-                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
-            )
-            managed = root / ".process" / "adopt-process.py"
-            managed.write_text(
-                managed.read_text(encoding="utf-8").replace(
-                    "COMMAND_TIMEOUT_SECONDS = 300",
-                    "COMMAND_TIMEOUT_SECONDS = 299",
-                ),
-                encoding="utf-8",
-            )
+        second = apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+        self.assertEqual("unchanged", second["status"])
+        self.assertEqual("passed", check_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
 
-            result = apply_adoption(root, PROCESS_ROOT, requirements)
+    def test_wrong_or_unhashed_pin_is_rejected(self) -> None:
+        self.requirements.write_text("engineering-process==99.0.0\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "pins 99.0.0"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+        self.requirements.write_text(f"engineering-process=={VERSION}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "not hash locked"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
 
-            updated = read_json(lock_path)
-            self.assertEqual("0.1.0", result["previousVersion"])
-            self.assertEqual(VERSION, updated["process"]["version"])
-            self.assertIn("maintain-docs", updated["skills"])
-            self.assertEqual(
-                (PROCESS_ROOT / "templates" / "adopt-process.py").read_bytes(),
-                managed.read_bytes(),
-            )
-            self.assertEqual(
-                (
-                    PROCESS_ROOT
-                    / "templates"
-                    / "adopt-process-windows-job.py"
-                ).read_bytes(),
-                (
-                    root / ".process" / "adopt-process-windows-job.py"
-                ).read_bytes(),
-            )
-            self.assertEqual(
-                [],
-                check_adoption(root, PROCESS_ROOT, requirements)["issues"],
-            )
+    def test_consumer_owned_skill_name_collision_fails_closed(self) -> None:
+        collision = self.root / ".agents" / "skills" / "improve-process" / "SKILL.md"
+        collision.parent.mkdir(parents=True)
+        collision.write_text("consumer skill\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "consumer-owned path collides"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+        self.assertEqual("consumer skill\n", collision.read_text(encoding="utf-8"))
 
-    def test_apply_is_idempotent_and_preserves_selected_optional_skills(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
+    def test_v2_lock_cannot_claim_a_consumer_owned_path(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text("consumer documentation\n", encoding="utf-8")
+        write_json(
+            self.root / ".process" / "process.lock",
+            {
+                "schemaVersion": 2,
+                "process": {
+                    "package": "engineering-process",
+                    "version": "0.4.0",
+                    "digest": "sha256:" + "0" * 64,
+                },
+                "requirementsDigest": "sha256:" + "1" * 64,
+                "skills": ["old-skill", "run-change"],
+                "managedFiles": ["README.md"],
+            },
+        )
 
-            first = apply_adoption(root, PROCESS_ROOT, requirements)
-            first_lock = (root / ".process" / "process.lock").read_bytes()
-            second = apply_adoption(root, PROCESS_ROOT, requirements)
+        with self.assertRaisesRegex(ProcessError, "managedFiles"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
 
-            self.assertEqual(first_lock, (root / ".process" / "process.lock").read_bytes())
-            self.assertEqual(first["digest"], second["digest"])
-            self.assertIn("maintain-docs", second["skills"])
+        self.assertEqual(
+            "consumer documentation\n", readme.read_text(encoding="utf-8")
+        )
 
-    def test_apply_materializes_consumer_owned_project_migration_atomically(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            lock_path = root / ".process" / "process.lock"
-            previous = read_json(lock_path)
-            previous["process"]["version"] = "0.1.0"
-            lock_path.write_text(
-                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
-            )
-            migration_path, _, target = self.prepare_project_migration(root)
-
-            pending = check_adoption(root, PROCESS_ROOT, requirements)
-            self.assertIn("migration is pending", "\n".join(pending["issues"]))
-
-            result = apply_adoption(root, PROCESS_ROOT, requirements)
-
-            self.assertEqual(target, (root / ".process" / "project.json").read_bytes())
-            self.assertEqual("applied", result["projectMigration"]["status"])
-            self.assertEqual(
-                migration_path.relative_to(root).as_posix(),
-                result["projectMigration"]["path"],
-            )
-            self.assertEqual(
-                [], check_adoption(root, PROCESS_ROOT, requirements)["issues"]
-            )
-            second = apply_adoption(root, PROCESS_ROOT, requirements)
-            self.assertEqual("applied", second["projectMigration"]["status"])
-
-    def test_apply_rejects_stale_project_migration_before_writes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            lock_path = root / ".process" / "process.lock"
-            before_lock = lock_path.read_bytes()
-            self.prepare_project_migration(root)
-            project_path = root / ".process" / "project.json"
-            project_path.write_bytes(project_path.read_bytes() + b"\n")
-
-            with self.assertRaisesRegex(ContractError, "matches neither"):
-                apply_adoption(root, PROCESS_ROOT, requirements)
-
-            self.assertEqual(before_lock, lock_path.read_bytes())
-
-    def test_apply_rolls_back_project_migration_with_managed_targets(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            lock_path = root / ".process" / "process.lock"
-            previous = read_json(lock_path)
-            previous["process"]["version"] = "0.1.0"
-            lock_path.write_text(
-                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
-            )
-            _, source, _ = self.prepare_project_migration(root)
-            before_lock = lock_path.read_bytes()
-
-            with (
-                mock.patch(
-                    "engineering_process.adoption.sync_skills",
-                    side_effect=ContractError("injected migration failure"),
-                ),
-                self.assertRaisesRegex(ContractError, "injected migration failure"),
-            ):
-                apply_adoption(root, PROCESS_ROOT, requirements)
-
-            self.assertEqual(before_lock, lock_path.read_bytes())
-            self.assertEqual(
-                source, (root / ".process" / "project.json").read_bytes()
-            )
-
-    def test_transition_rollback_probe_observes_the_real_transaction_boundary(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            lock_path = root / ".process" / "process.lock"
-            previous = read_json(lock_path)
-            previous["process"]["version"] = "0.1.0"
-            lock_path.write_text(
-                json.dumps(previous, indent=2) + "\n", encoding="utf-8"
-            )
-            _, project_before, _ = self.prepare_project_migration(root)
-            runner = root / ".process" / "adopt-process.py"
-            runner_before = runner.read_bytes()
-            lock_before = lock_path.read_bytes()
-
-            with self.assertRaisesRegex(
-                ContractError, "controlled authority-transition rollback probe"
-            ):
-                apply_adoption(
-                    root,
-                    PROCESS_ROOT,
-                    requirements,
-                    rollback_probe=True,
-                )
-
-            self.assertEqual(lock_before, lock_path.read_bytes())
-            self.assertEqual(
-                project_before, (root / ".process" / "project.json").read_bytes()
-            )
-            self.assertEqual(runner_before, runner.read_bytes())
-
-    def test_apply_rejects_invalid_target_digest_before_writes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            migration_path, _, _ = self.prepare_project_migration(root)
-            migration = read_json(migration_path)
-            migration["targetProjectDigest"] = f"sha256:{'0' * 64}"
-            migration_path.write_text(
-                json.dumps(migration, indent=2) + "\n", encoding="utf-8"
-            )
-            lock_path = root / ".process" / "process.lock"
-            before = lock_path.read_bytes()
-
-            with self.assertRaisesRegex(ContractError, "does not match project"):
-                apply_adoption(root, PROCESS_ROOT, requirements)
-
-            self.assertEqual(before, lock_path.read_bytes())
-
-    def test_project_migration_is_size_bounded(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            migration_path, _, _ = self.prepare_project_migration(root)
-
-            with (
-                mock.patch(
-                    "engineering_process.adoption.MAX_MANAGED_ADOPTION_FILE_BYTES",
-                    migration_path.stat().st_size - 1,
-                ),
-                self.assertRaisesRegex(ContractError, "exceeds"),
-            ):
-                apply_adoption(root, PROCESS_ROOT, requirements)
-
-    def test_project_migration_rejects_a_symlink(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            migration_path, _, _ = self.prepare_project_migration(root)
-            target = migration_path.with_suffix(".target.json")
-            migration_path.rename(target)
-            try:
-                migration_path.symlink_to(target)
-            except OSError as error:
-                self.skipTest(f"symlink unavailable: {error}")
-
-            with self.assertRaisesRegex(ContractError, "link or reparse"):
-                apply_adoption(root, PROCESS_ROOT, requirements)
-
-    def test_apply_binds_private_snapshot_to_checkout_requirements_source(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            tempfile.TemporaryDirectory() as snapshot_directory,
-        ):
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            snapshot = Path(snapshot_directory) / "process.snapshot.txt"
-            snapshot.write_bytes(requirements.read_bytes())
-
-            result = apply_adoption(
-                root,
+    def test_private_snapshot_must_match_checkout_lock(self) -> None:
+        snapshot = self.root / "requirements" / "snapshot.txt"
+        snapshot.write_text(self.requirements.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "differ"):
+            apply_adoption(
+                self.root,
                 PROCESS_ROOT,
                 snapshot,
-                requirements_source=requirements,
-                expected_requirements_digest=(
-                    "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest()
-                ),
+                requirements_source=self.requirements,
             )
 
-            self.assertEqual(
-                "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest(),
-                result["requirementsDigest"],
-            )
+    def test_write_failure_restores_all_original_files(self) -> None:
+        original_lock = (self.root / ".process" / "process.lock").read_bytes()
+        original_replace = os.replace
+        calls = 0
 
-    def test_apply_rolls_back_if_checkout_requirements_change(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            tempfile.TemporaryDirectory() as snapshot_directory,
+        def fail_second(source: object, target: object, *args: object, **kwargs: object) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected write failure")
+            original_replace(source, target, *args, **kwargs)
+
+        with mock.patch("engineering_process.adoption.os.replace", fail_second):
+            with self.assertRaisesRegex(ProcessError, "rolled back"):
+                apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+        self.assertEqual(original_lock, (self.root / ".process" / "process.lock").read_bytes())
+        self.assertEqual("old\n", (self.root / ".agents" / "skills" / "old-skill" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_predictable_temporary_symlink_cannot_escape_checkout(self) -> None:
+        outside = Path(self.temporary.name).parent / f"outside-{id(self)}.txt"
+        outside.write_text("outside\n", encoding="utf-8")
+        trap = self.root / ".AGENTS.md.adoption.tmp"
+        trap.symlink_to(outside)
+        try:
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+            self.assertEqual("outside\n", outside.read_text(encoding="utf-8"))
+            self.assertFalse((self.root / "AGENTS.md").is_symlink())
+        finally:
+            outside.unlink(missing_ok=True)
+
+    def test_post_write_guard_failure_rolls_back_managed_state(self) -> None:
+        original_lock = (self.root / ".process" / "process.lock").read_bytes()
+        original_replace = os.replace
+        changed = False
+
+        def change_requirements_after_first_write(
+            source: object, target: object, *args: object, **kwargs: object
+        ) -> None:
+            nonlocal changed
+            original_replace(source, target, *args, **kwargs)
+            if not changed:
+                changed = True
+                self.requirements.write_bytes(self.requirements.read_bytes() + b"# raced\n")
+
+        with mock.patch(
+            "engineering_process.adoption.os.replace",
+            change_requirements_after_first_write,
         ):
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            snapshot = Path(snapshot_directory) / "process.snapshot.txt"
-            snapshot.write_bytes(requirements.read_bytes())
-            lock = root / ".process" / "process.lock"
-            agents = root / "AGENTS.md"
-            runner = root / ".process" / "adopt-process.py"
-            before = {
-                path: path.read_bytes() for path in (lock, agents, runner)
-            }
-
-            def mutate_requirements(*args, **kwargs):
-                del args, kwargs
-                agents.write_text("partial\n", encoding="utf-8")
-                runner.write_text("partial\n", encoding="utf-8")
-                requirements.write_bytes(
-                    requirements.read_bytes() + b"\n# concurrent mutation\n"
-                )
-                return []
-
-            with (
-                mock.patch(
-                    "engineering_process.adoption.sync_skills",
-                    side_effect=mutate_requirements,
-                ),
-                self.assertRaisesRegex(ContractError, "requirements source changed"),
-            ):
+            with self.assertRaisesRegex(ProcessError, "rolled back"):
                 apply_adoption(
-                    root,
+                    self.root,
                     PROCESS_ROOT,
-                    snapshot,
-                    requirements_source=requirements,
-                    expected_requirements_digest=(
-                        "sha256:" + hashlib.sha256(snapshot.read_bytes()).hexdigest()
-                    ),
+                    self.requirements,
+                    requirements_source=self.requirements,
                 )
-
-            self.assertEqual(
-                before,
-                {path: path.read_bytes() for path in (lock, agents, runner)},
-            )
-
-    def test_apply_rolls_back_every_managed_target_on_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            lock = root / ".process" / "process.lock"
-            agents = root / "AGENTS.md"
-            runner = root / ".process" / "adopt-process.py"
-            windows_helper = (
-                root / ".process" / "adopt-process-windows-job.py"
-            )
-            before = {
-                path: path.read_bytes()
-                for path in (lock, agents, runner, windows_helper)
-            }
-
-            def fail_after_partial_write(*args, **kwargs):
-                agents.write_text("partial\n", encoding="utf-8")
-                runner.write_text("partial\n", encoding="utf-8")
-                windows_helper.write_text("partial\n", encoding="utf-8")
-                raise ContractError("injected adoption failure")
-
-            with (
-                mock.patch(
-                    "engineering_process.adoption.sync_skills",
-                    side_effect=fail_after_partial_write,
-                ),
-                self.assertRaisesRegex(ContractError, "injected adoption failure"),
-            ):
-                apply_adoption(root, PROCESS_ROOT, requirements)
-
-            self.assertEqual(
-                before,
-                {
-                    path: path.read_bytes()
-                    for path in (lock, agents, runner, windows_helper)
-                },
-            )
-
-    def test_requirements_lock_rejects_unhashed_or_mismatched_authority(self):
-        cases = (
-            "--only-binary :all:\nengineering-process==0.1.1\n",
-            (
-                "--only-binary :all:\nengineering-process==9.9.9 \\\n"
-                f"    --hash=sha256:{'0' * 64}\n"
-            ),
-            (
-                "--only-binary :all:\nhttps://example.invalid/process.whl \\\n"
-                f"    --hash=sha256:{'0' * 64}\n"
-            ),
+        self.assertEqual(
+            original_lock,
+            (self.root / ".process" / "process.lock").read_bytes(),
         )
-        for content in cases:
-            with self.subTest(content=content.splitlines()[-1]):
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "process.txt"
-                    path.write_text(content, encoding="utf-8")
-                    with self.assertRaises(ContractError):
-                        validate_requirements_lock(path)
 
-    def test_requirements_lock_rejects_a_symlink(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            target = root / "target.txt"
-            target.write_bytes(
-                (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
-            )
-            link = root / "process.txt"
-            try:
-                link.symlink_to(target)
-            except OSError as error:
-                self.skipTest(f"symlink unavailable: {error}")
-
-            with self.assertRaisesRegex(ContractError, "regular file"):
-                validate_requirements_lock(link)
-
-    def test_apply_rejects_unexpected_snapshot_digest_before_writes(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            tempfile.TemporaryDirectory() as snapshot_directory,
-        ):
-            root = Path(directory)
-            requirements = self.prepare_project(root)
-            snapshot = Path(snapshot_directory) / "process.snapshot.txt"
-            snapshot.write_bytes(requirements.read_bytes())
-            lock = root / ".process" / "process.lock"
-            before = lock.read_bytes()
-
-            with self.assertRaisesRegex(ContractError, "runner expectation"):
-                apply_adoption(
-                    root,
-                    PROCESS_ROOT,
-                    snapshot,
-                    requirements_source=requirements,
-                    expected_requirements_digest=f"sha256:{'0' * 64}",
-                )
-
-            self.assertEqual(before, lock.read_bytes())
-
-    def test_checkout_path_rejects_a_link_in_its_parent_chain(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            inside = root / "inside"
-            inside.mkdir()
-            source = inside / "process.txt"
-            source.write_bytes(
-                (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
-            )
-            alias = root / "requirements"
-            try:
-                alias.symlink_to(inside, target_is_directory=True)
-            except OSError as error:
-                self.skipTest(f"directory symlink unavailable: {error}")
-
-            with self.assertRaisesRegex(ContractError, "link or reparse"):
-                _checkout_requirements_path(root, alias / "process.txt")
-
-    def test_checkout_path_accepts_an_equivalent_root_alias(self):
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory).resolve()
-            canonical_parent = base / "canonical"
-            project = canonical_parent / "project"
-            requirements = project / "requirements"
-            requirements.mkdir(parents=True)
-            source = requirements / "process.txt"
-            source.write_bytes(
-                (PROCESS_ROOT / "requirements" / "process.txt").read_bytes()
-            )
-            alias_parent = base / "alias"
-            try:
-                alias_parent.symlink_to(canonical_parent, target_is_directory=True)
-            except OSError as error:
-                self.skipTest(f"directory symlink unavailable: {error}")
-            alias_root = alias_parent / "project"
-            alias_source = alias_root / "requirements" / "process.txt"
-
-            self.assertEqual(
-                alias_source,
-                _checkout_requirements_path(alias_root, alias_source),
-            )
-            self.assertEqual(
-                alias_source,
-                _checkout_requirements_path(project, alias_source),
+    def test_managed_runner_enforces_aggregate_output_limit(self) -> None:
+        module = load_managed_adopter("managed_adopter")
+        with self.assertRaisesRegex(RuntimeError, "output exceeded"):
+            module._run(
+                [sys.executable, "-c", "print('x' * 2000000)"],
+                cwd=self.root,
             )
 
-    def test_checkout_path_rejects_a_parent_link_created_during_validation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            requirements = root / "requirements"
-            saved = root / "saved-requirements"
-            alternate = root / "alternate"
-            requirements.mkdir()
-            alternate.mkdir()
-            (requirements / "process.txt").write_bytes(b"authority A\n")
-            (alternate / "process.txt").write_bytes(b"authority B\n")
-            real_chain = adoption._path_identity_chain
-            calls = 0
-
-            def swap_after_chain(chain_root, path):
-                nonlocal calls
-                result = real_chain(chain_root, path)
-                calls += 1
-                if calls == 1:
-                    requirements.rename(saved)
-                    try:
-                        requirements.symlink_to(
-                            alternate, target_is_directory=True
-                        )
-                    except OSError as error:
-                        self.skipTest(
-                            f"directory symlink unavailable: {error}"
-                        )
-                return result
-
-            with (
-                mock.patch(
-                    "engineering_process.adoption._path_identity_chain",
-                    side_effect=swap_after_chain,
-                ),
-                self.assertRaisesRegex(
-                    ContractError, "link or reparse|changed while validating"
-                ),
-            ):
-                _checkout_requirements_path(
-                    root, requirements / "process.txt"
-                )
-
-    def test_parent_swap_during_installed_authority_read_is_detected(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            tempfile.TemporaryDirectory() as outside_directory,
-        ):
-            root = Path(directory).resolve()
-            inside = root / "inside"
-            saved = root / "saved"
-            outside = Path(outside_directory).resolve()
-            inside.mkdir()
-            (inside / "process.txt").write_bytes(b"authority A\n")
-            (outside / "process.txt").write_bytes(b"authority B\n")
-            source = inside / "process.txt"
-            real_open = os.open
-
-            def swap_then_open(path, flags, *args):
-                inside.rename(saved)
-                try:
-                    inside.symlink_to(outside, target_is_directory=True)
-                except OSError as error:
-                    self.skipTest(f"directory symlink unavailable: {error}")
-                return real_open(path, flags, *args)
-
-            with (
-                mock.patch(
-                    "engineering_process.adoption.os.open",
-                    side_effect=swap_then_open,
-                ),
-                self.assertRaisesRegex(
-                    ContractError, "changed while opening|link or reparse"
-                ),
-            ):
-                _read_bounded_regular_file(source, containment_root=root)
-
-    def test_apply_rejects_checkout_as_its_own_adoption_authority(self):
-        with self.assertRaisesRegex(ContractError, "installed outside"):
-            apply_adoption(
-                PROCESS_ROOT,
-                PROCESS_ROOT,
-                PROCESS_ROOT / "requirements" / "process.txt",
+    def test_managed_runner_stops_immediately_when_output_limit_is_exceeded(self) -> None:
+        module = load_managed_adopter("managed_adopter_early_output")
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "output exceeded"):
+            module._run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, time; "
+                    "sys.stdout.write('x' * 2000000); sys.stdout.flush(); "
+                    "time.sleep(5)",
+                ],
+                cwd=self.root,
             )
+        self.assertLess(time.monotonic() - started, 2)
 
-    def test_apply_rejects_an_arbitrary_external_process_root(self):
-        with tempfile.TemporaryDirectory() as directory:
-            external = Path(directory) / "untrusted-authority"
-            with self.assertRaisesRegex(ContractError, "active installed process root"):
-                apply_adoption(
-                    PROCESS_ROOT,
-                    external,
-                    PROCESS_ROOT / "requirements" / "process.txt",
-                )
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"), "Linux subreaper ownership assertion"
+    )
+    def test_managed_runner_does_not_terminate_an_unrelated_child(self) -> None:
+        module = load_managed_adopter("managed_adopter_owned_children")
+        unrelated = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            module._run(
+                [sys.executable, "-c", "raise SystemExit(0)"], cwd=self.root
+            )
+            self.assertIsNone(unrelated.poll())
+        finally:
+            if unrelated.poll() is None:
+                unrelated.terminate()
+            unrelated.wait(timeout=3)
+
+    def test_managed_runner_does_not_surface_raw_stderr(self) -> None:
+        module = load_managed_adopter("managed_adopter_secret")
+        with self.assertRaises(RuntimeError) as caught:
+            module._run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; print('TOPSECRET', file=sys.stderr); raise SystemExit(2)",
+                ],
+                cwd=self.root,
+            )
+        self.assertNotIn("TOPSECRET", str(caught.exception))
+        self.assertIn("stderrSha256", str(caught.exception))
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"), "Linux subreaper containment assertion"
+    )
+    def test_managed_runner_terminates_detached_descendants(self) -> None:
+        module = load_managed_adopter("managed_adopter_detached")
+        pid_path = self.root / "detached.pid"
+        child = "import time; time.sleep(30)"
+        script = (
+            "import pathlib, subprocess, sys; "
+            f"p=subprocess.Popen([sys.executable, '-c', {child!r}], "
+            "start_new_session=True, stdout=subprocess.DEVNULL, "
+            "stderr=subprocess.DEVNULL); "
+            "pathlib.Path(sys.argv[1]).write_text(str(p.pid), encoding='utf-8')"
+        )
+        with self.assertRaisesRegex(RuntimeError, "descendant"):
+            module._run(
+                [sys.executable, "-c", script, str(pid_path)],
+                cwd=self.root,
+            )
+        pid = int(pid_path.read_text(encoding="utf-8"))
+        self.assertFalse(Path(f"/proc/{pid}").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object containment assertion")
+    def test_managed_runner_uses_windows_job_object(self) -> None:
+        module = load_managed_adopter("managed_adopter_windows")
+        pid_path = self.root / "windows-child.pid"
+        script = (
+            "import pathlib, subprocess, sys; "
+            "p=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+            "pathlib.Path(sys.argv[1]).write_text(str(p.pid), encoding='utf-8')"
+        )
+        with self.assertRaisesRegex(RuntimeError, "descendant"):
+            module._run(
+                [sys.executable, "-c", script, str(pid_path)],
+                cwd=self.root,
+            )
 
 
 if __name__ == "__main__":
