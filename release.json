@@ -1,13 +1,37 @@
 {
   "changes": [
     {
-      "id": "reap-exited-command-descendants",
-      "source": "https://github.com/phuongnse/engineering-process/pull/94",
-      "summary": "POSIX verification now reaps fully exited owned descendants without misclassifying them as abandoned live work.",
-      "type": "fix"
+      "id": "consumer-improvement-issues",
+      "source": "phuongnse/lyric-rail single-checkout process-improvement requirement",
+      "summary": "A consumer-only checkout can prepare, deduplicate, and owner-authorize a sanitized GitHub issue handoff for a confirmed process gap.",
+      "type": "capability"
+    },
+    {
+      "id": "operations-readiness-pack",
+      "source": "phuongnse/renovate-ops production-readiness application",
+      "summary": "The readiness contract includes an operations pack derived from the bounded renovate-ops control plane.",
+      "type": "capability"
+    },
+    {
+      "id": "production-readiness-foundation",
+      "source": "user-approved production-grade vertical slice for engineering-process, renovate-ops, and lyric-rail",
+      "summary": "Consumers can declare evidence-backed production capabilities through known readiness packs mapped to required verification profiles.",
+      "type": "capability"
+    },
+    {
+      "id": "progressive-desktop-readiness",
+      "source": "phuongnse/lyric-rail early-stage production-readiness application",
+      "summary": "Versioned readiness packs guide building consumers through enforced evidence and explicit planned gaps without making an immediate production claim.",
+      "type": "capability"
+    },
+    {
+      "id": "readiness-guidance-loop",
+      "source": "phuongnse/lyric-rail progressive readiness development loop",
+      "summary": "Managed delivery skills guide each change from consumer-owned readiness while preserving baseline profiles, enforced capabilities, and non-blocking planned gaps.",
+      "type": "capability"
     }
   ],
-  "previousVersion": "1.0.0",
+  "previousVersion": "1.0.1",
   "schemaVersion": 5,
-  "version": "1.0.1"
+  "version": "1.1.0"
 }
