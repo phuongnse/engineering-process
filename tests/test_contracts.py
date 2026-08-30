@@ -35,11 +35,14 @@ class ContractTests(unittest.TestCase):
             Draft202012Validator.check_schema(read_json(path))
 
     def test_live_repository_contracts_validate(self) -> None:
-        cases = (
+        cases = [
             (ROOT / ".process" / "process.lock", "process-lock"),
             (ROOT / "process-graph.json", "process-graph"),
             (ROOT / "release.json", "release"),
-            (ROOT / "release-changes" / "simplify-process-core.json", "release-change"),
+        ]
+        cases.extend(
+            (path, "release-change")
+            for path in sorted((ROOT / "release-changes").glob("*.json"))
         )
         for path, kind in cases:
             with self.subTest(path=path):

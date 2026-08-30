@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from engineering_process.contracts import ProcessError, read_json
+from engineering_process.contracts import ProcessError, read_json, write_json_atomic
 from engineering_process.release import derive_next_version, validate_release
 from verification.normalize_sdist import normalize
 
@@ -19,9 +19,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class ReleaseTests(unittest.TestCase):
     def test_current_release_identity_is_consistent(self) -> None:
-        result = validate_release(ROOT, ROOT, tag="v0.9.0")
-        self.assertEqual("0.9.0", result["version"])
-        self.assertEqual(1, result["changeCount"])
+        release = read_json(ROOT / "release.json")
+        result = validate_release(ROOT, ROOT, tag=f"v{release['version']}")
+        self.assertEqual(release["version"], result["version"])
+        self.assertEqual(len(release["changes"]), result["changeCount"])
 
     def test_semver_is_derived_from_change_classification(self) -> None:
         self.assertEqual("0.9.1", derive_next_version("0.9.0", ["fix"]))
@@ -29,11 +30,27 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual("1.0.0", derive_next_version("0.9.0", ["breaking"]))
         self.assertEqual("3.0.0", derive_next_version("2.4.1", ["fix", "breaking"]))
 
-    def test_simplification_fragment_derives_one_dot_zero(self) -> None:
-        fragment = read_json(ROOT / "release-changes" / "simplify-process-core.json")
-        self.assertEqual("1.0.0", derive_next_version("0.9.0", [fragment["type"]]))
+    def test_release_change_classification_matches_live_state(self) -> None:
+        release = read_json(ROOT / "release.json")
+        pending = [
+            read_json(path)
+            for path in sorted((ROOT / "release-changes").glob("*.json"))
+        ]
+        if pending:
+            derived = derive_next_version(
+                release["version"], (fragment["type"] for fragment in pending)
+            )
+            self.assertNotEqual(release["version"], derived)
+        else:
+            derived = derive_next_version(
+                release["previousVersion"],
+                (change["type"] for change in release["changes"]),
+            )
+            self.assertEqual(release["version"], derived)
 
-    def test_release_preparation_materializes_one_dot_zero_in_a_copy(self) -> None:
+    def test_release_preparation_materializes_next_version_in_a_copy(self) -> None:
+        current = read_json(ROOT / "release.json")
+        expected = derive_next_version(current["version"], ["fix"])
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "source"
             shutil.copytree(
@@ -43,8 +60,20 @@ class ReleaseTests(unittest.TestCase):
                     ".git", ".venv", "build", "*.egg-info", "__pycache__"
                 ),
             )
+            for path in (target / "release-changes").glob("*.json"):
+                path.unlink()
+            write_json_atomic(
+                target / "release-changes" / "test-fix.json",
+                {
+                    "schemaVersion": 1,
+                    "id": "test-fix",
+                    "type": "fix",
+                    "summary": "Exercise release preparation against live state.",
+                    "source": "release test fixture",
+                },
+            )
             result = subprocess.run(
-                [sys.executable, "verification/prepare_release.py", "1.0.0"],
+                [sys.executable, "verification/prepare_release.py", expected],
                 cwd=target,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -55,12 +84,12 @@ class ReleaseTests(unittest.TestCase):
             )
             self.assertEqual(0, result.returncode, result.stderr)
             prepared = read_json(target / "release.json")
-            self.assertEqual("1.0.0", prepared["version"])
-            self.assertEqual("0.9.0", prepared["previousVersion"])
-            self.assertFalse(
-                (target / "release-changes" / "simplify-process-core.json").exists()
+            self.assertEqual(expected, prepared["version"])
+            self.assertEqual(current["version"], prepared["previousVersion"])
+            self.assertEqual([], list((target / "release-changes").glob("*.json")))
+            self.assertIn(
+                f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )
-            self.assertIn('version = "1.0.0"', (target / "pyproject.toml").read_text())
 
     def test_invalid_change_type_fails(self) -> None:
         with self.assertRaises(ProcessError):
