@@ -77,6 +77,11 @@ class AutomationTests(unittest.TestCase):
             "GH_TOKEN: ${{ steps.release-token.outputs.token }}", publish_job
         )
         self.assertNotIn("GH_TOKEN: ${{ github.token }}", publish_job)
+        self.assertIn('"repos/$GITHUB_REPOSITORY/git/refs"', publish_job)
+        self.assertIn('-f ref="refs/tags/$RELEASE_TAG"', publish_job)
+        self.assertIn('-f sha="${{ needs.metadata.outputs.source_sha }}"', publish_job)
+        self.assertIn("--verify-tag", publish_job)
+        self.assertNotIn("--target", publish_job)
         trusted_checkout = workflow.index("          ref: main")
         preflight = workflow.index("name: Authorize release source from trusted main")
         source_checkout = workflow.index("ref: ${{ steps.release.outputs.source_sha }}")

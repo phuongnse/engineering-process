@@ -178,10 +178,16 @@ jobs:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
+          if ! git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" \
+              -f sha="${{ needs.metadata.outputs.source_sha }}"
+          fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --draft \
-              --target "${{ needs.metadata.outputs.source_sha }}" \
+              --verify-tag \
               --title "$RELEASE_TAG" \
               --generate-notes
           fi
