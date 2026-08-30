@@ -208,7 +208,7 @@ At any point:
 ## Release to consumer PR
 
 Every opted-in consumer uses Renovate's pip-compile manager. Its engineering-process
-package rule is enabled, never automerges, and runs exactly:
+package rule keeps the adoption pull request in draft and runs exactly:
 
     python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt
 
@@ -223,7 +223,8 @@ The release workflow publishes exact wheel and sdist bytes to PyPI, verifies the
 registry hashes, creates the immutable GitHub release, and sends one authenticated
 engineering-process-published event to renovate-ops. That control plane runs Renovate
 for each repository whose protected config explicitly opts in. Each consumer's normal
-CI and independent review decide whether its PR can merge.
+CI and independent review decide whether its draft PR can merge; the consumer owner
+authorizes that merge.
 
 This repository opts in through .github/renovate.json, so it receives the same
 adoption PR as every other consumer. See SELF_HOSTING.md and RELEASING.md.
