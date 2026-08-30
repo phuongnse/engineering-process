@@ -3,6 +3,7 @@
   "extends": ["config:recommended"],
   "enabled": true,
   "automerge": false,
+  "draftPR": true,
   "branchPrefix": "automation/renovate/",
   "dependencyDashboard": false,
   "rangeStrategy": "pin",
