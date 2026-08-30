@@ -28,7 +28,7 @@ class ArchitectureTests(unittest.TestCase):
         actual = {path.name for path in (ROOT / "engineering_process").glob("*.py")}
         self.assertTrue(removed_modules.isdisjoint(actual))
         workflows = {path.name for path in (ROOT / ".github" / "workflows").glob("*.yml")}
-        self.assertEqual({"ci.yml", "release-pr.yml", "release.yml"}, workflows)
+        self.assertEqual({"ci.yml", "publish.yml", "release-pr.yml"}, workflows)
 
     def test_source_skills_have_no_orphaned_legacy_directories(self) -> None:
         skills = {

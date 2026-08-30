@@ -7,9 +7,18 @@ on:
       - engineering_process/__init__.py
       - pyproject.toml
       - release.json
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full main-ancestry release commit to resume
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+env:
+  RELEASE_SOURCE_SHA: ${{ inputs.release_sha || github.sha }}
 
 jobs:
   metadata:
@@ -17,35 +26,48 @@ jobs:
     outputs:
       dispatch: ${{ steps.release.outputs.dispatch }}
       publish: ${{ steps.release.outputs.publish }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_SOURCE_SHA }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - run: python -m pip install -r engineering_process/requirements-runtime.txt --editable .
       - id: release
         run: |
+          if [[ ! "$RELEASE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release source must be a full commit SHA" >&2
+            exit 1
+          fi
+          git fetch origin main
+          git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main
+          for file in engineering_process/__init__.py pyproject.toml release.json; do
+            if ! git diff --name-only "$RELEASE_SOURCE_SHA^" "$RELEASE_SOURCE_SHA" -- "$file" | grep -Fx "$file"; then
+              echo "release source did not change $file" >&2
+              exit 1
+            fi
+          done
           version="$(python -c 'from engineering_process import VERSION; print(VERSION)')"
           tag="v$version"
           python processctl.py release validate --tag "$tag"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if git rev-parse --verify --quiet "refs/tags/$tag"; then
-            if [ "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA" ]; then
-              echo "publish=true" >> "$GITHUB_OUTPUT"
-              echo "dispatch=true" >> "$GITHUB_OUTPUT"
-            else
+            if [ "$(git rev-list -n 1 "$tag")" != "$RELEASE_SOURCE_SHA" ]; then
               echo "tag $tag points to a different commit" >&2
               exit 1
             fi
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-            echo "dispatch=true" >> "$GITHUB_OUTPUT"
           fi
+          {
+            echo "source_sha=$RELEASE_SOURCE_SHA"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=true"
+            echo "dispatch=true"
+          } >> "$GITHUB_OUTPUT"
 
   publish:
     needs: metadata
@@ -59,6 +81,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          ref: ${{ needs.metadata.outputs.source_sha }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
@@ -74,7 +97,9 @@ jobs:
       - run: python processctl.py release validate --tag "${{ needs.metadata.outputs.tag }}"
       - name: Derive reproducible build timestamp
         id: source
-        run: echo "epoch=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+        run: >-
+          echo "epoch=$(git show -s --format=%ct
+          '${{ needs.metadata.outputs.source_sha }}')" >> "$GITHUB_OUTPUT"
       - name: Build reproducible release files
         env:
           PYTHONHASHSEED: "0"
@@ -133,7 +158,7 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --draft \
-              --target "$GITHUB_SHA" \
+              --target "${{ needs.metadata.outputs.source_sha }}" \
               --title "$RELEASE_TAG" \
               --generate-notes
           fi
