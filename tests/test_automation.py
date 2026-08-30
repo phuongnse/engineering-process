@@ -19,6 +19,8 @@ class AutomationTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(rules))
         rule = rules[0]
+        self.assertFalse(config["automerge"])
+        self.assertTrue(config["draftPR"])
         self.assertTrue(rule["enabled"])
         self.assertFalse(rule["automerge"])
         self.assertEqual("automation/renovate/", config["branchPrefix"])
