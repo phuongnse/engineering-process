@@ -1,0 +1,52 @@
+{
+  "target": "production",
+  "packs": [
+    "library-cli"
+  ],
+  "capabilities": [
+    {
+      "id": "correctness",
+      "evidenceProfiles": [
+        "development"
+      ]
+    },
+    {
+      "id": "runtime-safety",
+      "evidenceProfiles": [
+        "development"
+      ]
+    },
+    {
+      "id": "compatibility",
+      "evidenceProfiles": [
+        "development"
+      ]
+    },
+    {
+      "id": "portability",
+      "evidenceProfiles": [
+        "development",
+        "review"
+      ]
+    },
+    {
+      "id": "installability",
+      "evidenceProfiles": [
+        "review"
+      ]
+    },
+    {
+      "id": "distribution-integrity",
+      "evidenceProfiles": [
+        "review"
+      ]
+    },
+    {
+      "id": "adoption-integrity",
+      "evidenceProfiles": [
+        "development",
+        "review"
+      ]
+    }
+  ]
+}

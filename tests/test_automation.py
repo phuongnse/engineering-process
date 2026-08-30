@@ -134,6 +134,16 @@ class AutomationTests(unittest.TestCase):
         self.assertLess(producer_install, adoption_check)
         self.assertLess(adoption_check, doctor)
 
+    def test_readiness_sidecar_preserves_the_adopted_authority_bootstrap(self) -> None:
+        project = json.loads((ROOT / ".process" / "project.json").read_text(encoding="utf-8"))
+        readiness = json.loads((ROOT / ".process" / "readiness.json").read_text(encoding="utf-8"))
+        self.assertNotIn("readiness", project)
+        self.assertEqual("production", readiness["target"])
+        self.assertIn("engineering-process==1.0.1", (ROOT / "requirements" / "process.in").read_text(encoding="utf-8"))
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("processctl adoption check", workflow)
+        self.assertIn("processctl doctor --project-root .", workflow)
+
     def test_external_actions_are_immutably_pinned(self) -> None:
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
             for reference in re.findall(r"uses:\s*([^\s#]+)", workflow.read_text(encoding="utf-8")):

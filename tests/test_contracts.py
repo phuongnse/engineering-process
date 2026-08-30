@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import unittest
 
@@ -7,7 +8,12 @@ from jsonschema import Draft202012Validator
 
 from engineering_process.contracts import ProcessError, read_json, validate_document
 from engineering_process.distribution import schemas_root
-from engineering_process.project import load_project, normalize_project, require_consumer_evidence
+from engineering_process.project import (
+    load_project,
+    normalize_project,
+    readiness_summary,
+    require_consumer_evidence,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,6 +67,50 @@ class ContractTests(unittest.TestCase):
         lock = read_json(ROOT / ".process" / "process.lock")
         lock["$schema"] = "https://engineering-process.invalid/schemas/process-lock.schema.json"
         validate_document(lock, "process-lock", schema_root=SCHEMAS)
+
+    def test_live_readiness_resolves_library_cli_coverage(self) -> None:
+        project = load_project(ROOT, ROOT)
+        readiness = readiness_summary(project)
+        self.assertEqual(["library-cli"], readiness["packs"])
+        self.assertEqual(
+            {
+                "adoption-integrity",
+                "compatibility",
+                "correctness",
+                "distribution-integrity",
+                "installability",
+                "portability",
+                "runtime-safety",
+            },
+            set(readiness["capabilities"]),
+        )
+
+    def test_readiness_fails_closed_on_incomplete_or_ambiguous_evidence(self) -> None:
+        live = read_json(ROOT / ".process" / "project.json")
+        live["readiness"] = read_json(ROOT / ".process" / "readiness.json")
+        cases = []
+        missing = deepcopy(live)
+        missing["readiness"]["capabilities"].pop()
+        cases.append((missing, "missing capabilities"))
+        duplicate = deepcopy(live)
+        duplicate["readiness"]["capabilities"].append(
+            {"id": "correctness", "evidenceProfiles": ["review"]}
+        )
+        cases.append((duplicate, "ids must be unique"))
+        unknown = deepcopy(live)
+        unknown["readiness"]["capabilities"][0]["evidenceProfiles"] = ["missing"]
+        cases.append((unknown, "unknown profiles"))
+        optional = deepcopy(live)
+        optional["profiles"]["security"] = deepcopy(optional["profiles"]["review"])
+        optional["readiness"]["capabilities"][0]["evidenceProfiles"] = ["security"]
+        cases.append((optional, "optional profiles"))
+        for project, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ProcessError, message):
+                normalize_project(project, ROOT)
+
+    def test_readiness_remains_optional_for_existing_schema_v5_consumers(self) -> None:
+        project = read_json(ROOT / ".process" / "project.json")
+        self.assertIsNone(readiness_summary(normalize_project(project, ROOT)))
 
 
 if __name__ == "__main__":

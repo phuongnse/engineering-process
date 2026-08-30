@@ -68,10 +68,46 @@ Commands are argument arrays, never shell strings. Each command has a finite tim
 Output has a hard aggregate budget; evidence stores byte counts and hashes, never raw
 stdout or stderr that could contain secrets.
 
+### Production readiness
+
+A consumer declares `.process/readiness.json` with a production target and maps each
+required capability to one or more project-required profiles. A known pack fails
+closed when a capability is absent, duplicated, references an unknown profile, or
+relies only on an optional profile:
+
+    {
+      "target": "production",
+      "packs": ["library-cli"],
+      "capabilities": [
+        {"id": "correctness", "evidenceProfiles": ["development"]},
+        {"id": "runtime-safety", "evidenceProfiles": ["development"]},
+        {"id": "compatibility", "evidenceProfiles": ["development"]},
+        {"id": "portability", "evidenceProfiles": ["development", "review"]},
+        {"id": "installability", "evidenceProfiles": ["review"]},
+        {"id": "distribution-integrity", "evidenceProfiles": ["review"]},
+        {"id": "adoption-integrity", "evidenceProfiles": ["development", "review"]}
+      ]
+    }
+
+`project validate` and `doctor` resolve that declaration to the exact checks owned by
+the consumer. The declaration does not make a weak command sufficient: normal CI and
+independent review still judge whether those commands prove the named capability.
+
+The sidecar is a deliberate self-hosting boundary. Public authority N continues to
+validate the unchanged strict `.process/project.json` while source N+1 validates and
+self-applies the new readiness contract. Adoption leaves the consumer-owned sidecar
+in place, so every later authority can repeat the same forward-compatible sequence.
+
+The first pack is intentionally only `library-cli`, derived from this repository as a
+real producer and self-consumer. The approved `operations` and `desktop`/`frontend`
+packs will be extracted while applying readiness to renovate-ops and LyricRail; they
+are not specified in advance. Consumers without readiness remain compatible during
+that evidence-backed rollout.
+
 Pin the process in requirements/process.in:
 
     --only-binary :all:
-    engineering-process==0.9.0
+    engineering-process==1.0.1
 
 Generate requirements/process.txt with hashes, install that lock, then run:
 
