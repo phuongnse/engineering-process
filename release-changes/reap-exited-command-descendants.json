@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "reap-exited-command-descendants",
-  "type": "fix",
-  "summary": "POSIX verification now reaps fully exited owned descendants without misclassifying them as abandoned live work.",
-  "source": "https://github.com/phuongnse/engineering-process/pull/94"
-}

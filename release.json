@@ -1,13 +1,13 @@
 {
   "changes": [
     {
-      "id": "simplify-process-core",
-      "source": "engineering-process and renovate-ops adoption failures through 0.9.0",
-      "summary": "Replace the governance stack with one six-phase lifecycle, eight routed skills, and direct managed adoption.",
-      "type": "breaking"
+      "id": "reap-exited-command-descendants",
+      "source": "https://github.com/phuongnse/engineering-process/pull/94",
+      "summary": "POSIX verification now reaps fully exited owned descendants without misclassifying them as abandoned live work.",
+      "type": "fix"
     }
   ],
-  "previousVersion": "0.9.0",
+  "previousVersion": "1.0.0",
   "schemaVersion": 5,
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
