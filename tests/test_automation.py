@@ -60,16 +60,24 @@ class AutomationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("adopted-process:", workflow)
-        self.assertIn("--require-hashes", workflow)
-        self.assertIn("Install exact producer dependencies for doctor", workflow)
+        adopted_job = workflow.split("  adopted-process:\n", maxsplit=1)[1].split(
+            "\n  test:\n", maxsplit=1
+        )[0]
+        self.assertIn("--require-hashes", adopted_job)
+        self.assertIn("Install exact producer dependencies for doctor", adopted_job)
         for requirements in (
             "engineering_process/requirements-runtime.txt",
             "engineering_process/requirements-dev.txt",
             "engineering_process/requirements-build.txt",
         ):
-            self.assertIn(f"-r {requirements}", workflow)
-        self.assertIn("processctl adoption check", workflow)
-        self.assertIn("processctl doctor --project-root .", workflow)
+            self.assertIn(f"-r {requirements}", adopted_job)
+        producer_install = adopted_job.index(
+            "Install exact producer dependencies for doctor"
+        )
+        adoption_check = adopted_job.index("processctl adoption check")
+        doctor = adopted_job.index("processctl doctor --project-root .")
+        self.assertLess(producer_install, adoption_check)
+        self.assertLess(adoption_check, doctor)
 
     def test_external_actions_are_immutably_pinned(self) -> None:
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
