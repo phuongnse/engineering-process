@@ -19,6 +19,7 @@ from .supervision import CleanupOutcome, NATURAL_DRAIN_GRACE_MILLISECONDS
 PR_SET_CHILD_SUBREAPER = 36
 RUN_ID_ENVIRONMENT_VARIABLE = "ENGINEERING_PROCESS_RUN_ID"
 PROCESS_TABLE_TIMEOUT_SECONDS = 10
+PROCESS_TABLE_OBSERVATION_INTERVAL_SECONDS = 0.05
 _SUBREAPER_ENABLED = False
 
 
@@ -37,9 +38,8 @@ def _ps_process_table() -> tuple[dict[int, int], str | None]:
     try:
         result = subprocess.run(
             ["ps", "-axo", "pid=,ppid="],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=PROCESS_TABLE_TIMEOUT_SECONDS,
-            check=False, text=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=PROCESS_TABLE_TIMEOUT_SECONDS, check=False, text=True,
         )
     except subprocess.TimeoutExpired:
         return {}, f"process table snapshot timed out after {PROCESS_TABLE_TIMEOUT_SECONDS} seconds"
@@ -47,13 +47,11 @@ def _ps_process_table() -> tuple[dict[int, int], str | None]:
         return {}, "process table snapshot could not start"
     if result.returncode != 0:
         return {}, f"process table snapshot exited with status {result.returncode}"
-    table: dict[int, int] = {}
-    for line in result.stdout.splitlines():
-        try:
-            pid, parent = (int(value) for value in line.split())
-        except (ValueError, TypeError):
-            continue
-        table[pid] = parent
+    try:
+        rows = (line.split() for line in result.stdout.splitlines())
+        table = {int(pid): int(parent) for pid, parent in rows}
+    except (TypeError, ValueError):
+        return {}, "process table snapshot was malformed"
     if os.getpid() not in table:
         return {}, "process table snapshot was incomplete"
     return table, None
@@ -179,6 +177,7 @@ class PosixProcessSupervisor:
     def __init__(self) -> None:
         self._known_descendants: dict[int, set[int]] = {}
         self._run_ids: dict[int, str] = {}
+        self._last_observation: dict[int, float] = {}
         self._observation_errors: dict[int, str] = {}
 
     def resolve_application(
@@ -243,11 +242,16 @@ class PosixProcessSupervisor:
         )
         self._known_descendants[process.pid] = set()
         self._run_ids[process.pid] = run_id
-        self.observe(process)
+        self._observation_errors.pop(process.pid, None)
+        self._observe(process, force=True)
         return process
 
-    def observe(self, process: subprocess.Popen[bytes]) -> None:
+    def _observe(self, process: subprocess.Popen[bytes], *, force: bool) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_observation.get(process.pid, 0) < PROCESS_TABLE_OBSERVATION_INTERVAL_SECONDS:
+            return
         table, error = _process_table()
+        self._last_observation[process.pid] = time.monotonic()
         known = self._known_descendants.setdefault(process.pid, set())
         if error is not None:
             self._observation_errors.setdefault(process.pid, error)
@@ -262,23 +266,19 @@ class PosixProcessSupervisor:
                     and pid != process.pid
                     and _has_run_id(pid, run_id)
                 )
-        time.sleep(0.04)
 
-    def _terminate_detached(
-        self,
-        process: subprocess.Popen[bytes],
-        grace_seconds: float,
-    ) -> CleanupOutcome:
-        self.observe(process)
+    def observe(self, process: subprocess.Popen[bytes]) -> None:
+        self._observe(process, force=False)
+
+    def _terminate_detached(self, process: subprocess.Popen[bytes], grace_seconds: float) -> CleanupOutcome:
+        self._observe(process, force=True)
         candidates = self._known_descendants.pop(process.pid, set())
         self._run_ids.pop(process.pid, None)
+        self._last_observation.pop(process.pid, None)
         observation_error = self._observation_errors.pop(process.pid, None)
         live = {pid for pid in candidates if _pid_alive(pid)}
         if not live:
-            return CleanupOutcome(
-                bounded=observation_error is None,
-                error=observation_error,
-            )
+            return CleanupOutcome(bounded=observation_error is None, error=observation_error)
         _signal_processes(live, signal.SIGTERM)
         deadline = time.monotonic() + grace_seconds
         while time.monotonic() < deadline and any(_pid_alive(pid) for pid in live):
@@ -313,7 +313,7 @@ class PosixProcessSupervisor:
         *,
         grace_seconds: float,
     ) -> CleanupOutcome:
-        self.observe(process)
+        self._observe(process, force=True)
         if not _terminate_root(process, grace_seconds):
             detached = self._terminate_detached(process, grace_seconds)
             error = "command root process survived bounded process-group termination"
@@ -342,7 +342,7 @@ class PosixProcessSupervisor:
         # alive, even after the original process has exited. Give descendants that
         # were synchronously asked to stop one short bounded interval to disappear
         # naturally before classifying them as abandoned background work.
-        self.observe(process)
+        self._observe(process, force=True)
         if not _process_group_exists(process.pid):
             return self._terminate_detached(process, grace_seconds)
         natural_drain_seconds = min(

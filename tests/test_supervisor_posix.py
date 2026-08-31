@@ -44,20 +44,32 @@ class PosixSupervisorTests(unittest.TestCase):
         with patch.object(posix.subprocess, "run", return_value=result):
             table, error = posix._ps_process_table()
         self.assertEqual({}, table)
-        self.assertEqual("process table snapshot was incomplete", error)
+        self.assertEqual("process table snapshot was malformed", error)
 
-    def test_routine_observation_spaces_process_table_snapshots(self) -> None:
+        result = SimpleNamespace(
+            returncode=0,
+            stdout=f"{os.getpid()} 1\nmalformed-row\n",
+        )
+        with patch.object(posix.subprocess, "run", return_value=result):
+            table, error = posix._ps_process_table()
+        self.assertEqual({}, table)
+        self.assertEqual("process table snapshot was malformed", error)
+
+    def test_routine_observation_is_throttled_but_boundaries_are_forced(self) -> None:
         supervisor = posix.PosixProcessSupervisor()
         process = SimpleNamespace(pid=12345)
         with (
             patch.object(posix, "_process_table", return_value=({}, None)) as snapshot,
-            patch.object(posix.time, "sleep") as pause,
+            patch.object(
+                posix.time,
+                "monotonic",
+                side_effect=(1.0, 1.001, 1.01, 1.02, 1.021),
+            ),
         ):
             supervisor.observe(process)
             supervisor.observe(process)
+            supervisor._observe(process, force=True)
         self.assertEqual(2, snapshot.call_count)
-        self.assertEqual(2, pause.call_count)
-        self.assertTrue(all(item.args == (0.04,) for item in pause.call_args_list))
 
     def test_snapshot_failure_makes_detached_cleanup_fail_closed(self) -> None:
         supervisor = posix.PosixProcessSupervisor()
