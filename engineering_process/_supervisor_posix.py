@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import ctypes
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from .supervision import CleanupOutcome, NATURAL_DRAIN_GRACE_MILLISECONDS
 
 PR_SET_CHILD_SUBREAPER = 36
 RUN_ID_ENVIRONMENT_VARIABLE = "ENGINEERING_PROCESS_RUN_ID"
+PROCESS_TABLE_TIMEOUT_SECONDS = 10
 _SUBREAPER_ENABLED = False
 
 
@@ -31,39 +33,47 @@ def _enable_subreaper() -> None:
     _SUBREAPER_ENABLED = True
 
 
-def _process_table() -> dict[int, int]:
+def _ps_process_table() -> tuple[dict[int, int], str | None]:
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid="],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=PROCESS_TABLE_TIMEOUT_SECONDS,
+            check=False, text=True,
+        )
+    except subprocess.TimeoutExpired:
+        return {}, f"process table snapshot timed out after {PROCESS_TABLE_TIMEOUT_SECONDS} seconds"
+    except OSError:
+        return {}, "process table snapshot could not start"
+    if result.returncode != 0:
+        return {}, f"process table snapshot exited with status {result.returncode}"
+    table: dict[int, int] = {}
+    for line in result.stdout.splitlines():
+        try:
+            pid, parent = (int(value) for value in line.split())
+        except (ValueError, TypeError):
+            continue
+        table[pid] = parent
+    if os.getpid() not in table:
+        return {}, "process table snapshot was incomplete"
+    return table, None
+
+
+def _process_table() -> tuple[dict[int, int], str | None]:
     table: dict[int, int] = {}
     if Path("/proc").is_dir():
         for entry in Path("/proc").iterdir():
             if not entry.name.isdecimal():
                 continue
             try:
-                for line in (entry / "status").read_text(
-                    encoding="utf-8", errors="replace"
-                ).splitlines():
+                for line in (entry / "status").read_text(encoding="utf-8", errors="replace").splitlines():
                     if line.startswith("PPid:"):
                         table[int(entry.name)] = int(line.split()[1])
                         break
             except (OSError, ValueError, IndexError):
                 continue
-        return table
-    result = subprocess.run(
-        ["ps", "-axo", "pid=,ppid="],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        timeout=2,
-        check=False,
-        text=True,
-    )
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            try:
-                pid, parent = (int(value) for value in line.split())
-            except (ValueError, TypeError):
-                continue
-            table[pid] = parent
-    return table
+        return table, None
+    return _ps_process_table()
 
 
 def _descendants(root: int, table: Mapping[int, int]) -> set[int]:
@@ -100,10 +110,8 @@ def _pid_alive(pid: int) -> bool:
         try:
             state = status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
             if state == "Z":
-                try:
+                with suppress(OSError):
                     os.waitpid(pid, os.WNOHANG)
-                except OSError:
-                    pass
                 return False
         except (OSError, IndexError):
             pass
@@ -111,11 +119,9 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _process_group_exists(process_group: int) -> bool:
-    try:
+    with suppress(OSError):
         while os.waitpid(-process_group, os.WNOHANG)[0]:
             pass
-    except OSError:
-        pass
     try:
         os.killpg(process_group, 0)
     except ProcessLookupError:
@@ -127,10 +133,8 @@ def _process_group_exists(process_group: int) -> bool:
 
 def _signal_processes(processes: set[int], signal_number: int) -> None:
     for pid in processes:
-        try:
+        with suppress(OSError):
             os.kill(pid, signal_number)
-        except OSError:
-            pass
 
 
 def _wait_for_process_group(process_group: int, timeout: float) -> bool:
@@ -145,20 +149,12 @@ def _wait_for_process_group(process_group: int, timeout: float) -> bool:
 def _terminate_group(process_group: int, grace_seconds: float) -> CleanupOutcome:
     if not _process_group_exists(process_group):
         return CleanupOutcome(bounded=True)
-    try:
+    with suppress(OSError):
         os.killpg(process_group, signal.SIGTERM)
-    except ProcessLookupError:
-        return CleanupOutcome(bounded=True, descendants_found=True)
-    except OSError:
-        pass
     if _wait_for_process_group(process_group, grace_seconds):
         return CleanupOutcome(bounded=True, descendants_found=True)
-    try:
+    with suppress(OSError):
         os.killpg(process_group, signal.SIGKILL)
-    except ProcessLookupError:
-        return CleanupOutcome(bounded=True, descendants_found=True)
-    except OSError:
-        pass
     bounded = _wait_for_process_group(process_group, grace_seconds)
     return CleanupOutcome(
         bounded=bounded,
@@ -167,10 +163,23 @@ def _terminate_group(process_group: int, grace_seconds: float) -> CleanupOutcome
     )
 
 
+def _terminate_root(process: subprocess.Popen[bytes], grace_seconds: float) -> bool:
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        with suppress(OSError):
+            os.killpg(process.pid, signal_number)
+        try:
+            process.wait(timeout=grace_seconds)
+            return True
+        except subprocess.TimeoutExpired:
+            pass
+    return False
+
+
 class PosixProcessSupervisor:
     def __init__(self) -> None:
         self._known_descendants: dict[int, set[int]] = {}
         self._run_ids: dict[int, str] = {}
+        self._observation_errors: dict[int, str] = {}
 
     def resolve_application(
         self,
@@ -238,21 +247,22 @@ class PosixProcessSupervisor:
         return process
 
     def observe(self, process: subprocess.Popen[bytes]) -> None:
-        table = _process_table()
+        table, error = _process_table()
         known = self._known_descendants.setdefault(process.pid, set())
-        known.update(_descendants(process.pid, table))
-        run_id = self._run_ids.get(process.pid)
-        if sys.platform.startswith("linux") and run_id is not None:
-            adopted = {
-                pid
-                for pid, parent in table.items()
-                if (
-                    parent == os.getpid()
+        if error is not None:
+            self._observation_errors.setdefault(process.pid, error)
+        else:
+            known.update(_descendants(process.pid, table))
+            run_id = self._run_ids.get(process.pid)
+            if sys.platform.startswith("linux") and run_id is not None:
+                known.update(
+                    pid
+                    for pid, parent in table.items()
+                    if parent == os.getpid()
                     and pid != process.pid
                     and _has_run_id(pid, run_id)
                 )
-            }
-            known.update(adopted)
+        time.sleep(0.04)
 
     def _terminate_detached(
         self,
@@ -262,9 +272,13 @@ class PosixProcessSupervisor:
         self.observe(process)
         candidates = self._known_descendants.pop(process.pid, set())
         self._run_ids.pop(process.pid, None)
+        observation_error = self._observation_errors.pop(process.pid, None)
         live = {pid for pid in candidates if _pid_alive(pid)}
         if not live:
-            return CleanupOutcome(bounded=True)
+            return CleanupOutcome(
+                bounded=observation_error is None,
+                error=observation_error,
+            )
         _signal_processes(live, signal.SIGTERM)
         deadline = time.monotonic() + grace_seconds
         while time.monotonic() < deadline and any(_pid_alive(pid) for pid in live):
@@ -281,11 +295,16 @@ class PosixProcessSupervisor:
                 os.waitpid(pid, os.WNOHANG)
             except (ChildProcessError, OSError):
                 pass
-        bounded = not any(_pid_alive(pid) for pid in live)
+        descendants_bounded = not any(_pid_alive(pid) for pid in live)
+        error = observation_error or (
+            None
+            if descendants_bounded
+            else "detached descendants survived bounded termination"
+        )
         return CleanupOutcome(
-            bounded=bounded,
+            bounded=descendants_bounded and error is None,
             descendants_found=True,
-            error=None if bounded else "detached descendants survived bounded termination",
+            error=error,
         )
 
     def terminate(
@@ -295,33 +314,14 @@ class PosixProcessSupervisor:
         grace_seconds: float,
     ) -> CleanupOutcome:
         self.observe(process)
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            pass
-        try:
-            process.wait(timeout=grace_seconds)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=grace_seconds)
-            except subprocess.TimeoutExpired:
-                detached = self._terminate_detached(process, grace_seconds)
-                return CleanupOutcome(
-                    bounded=False,
-                    descendants_found=detached.descendants_found,
-                    error=(
-                        "command root process survived bounded process-group termination"
-                        + (f"; {detached.error}" if detached.error else "")
-                    ),
-                )
+        if not _terminate_root(process, grace_seconds):
+            detached = self._terminate_detached(process, grace_seconds)
+            error = "command root process survived bounded process-group termination"
+            return CleanupOutcome(
+                bounded=False,
+                descendants_found=detached.descendants_found,
+                error=error + (f"; {detached.error}" if detached.error else ""),
+            )
         descendants = _terminate_group(process.pid, grace_seconds)
         detached = self._terminate_detached(process, grace_seconds)
         return CleanupOutcome(
