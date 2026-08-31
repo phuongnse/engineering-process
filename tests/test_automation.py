@@ -141,7 +141,15 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual("production", readiness["target"])
         self.assertEqual("production", readiness["stage"])
         self.assertEqual([{"id": "library-cli", "version": 1}], readiness["packs"])
-        self.assertIn("engineering-process==1.0.1", (ROOT / "requirements" / "process.in").read_text(encoding="utf-8"))
+        adopted = json.loads(
+            (ROOT / ".process" / "process.lock").read_text(encoding="utf-8")
+        )
+        requirements = (ROOT / "requirements" / "process.in").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            f"engineering-process=={adopted['process']['version']}", requirements
+        )
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("processctl adoption check", workflow)
         self.assertIn("processctl doctor --project-root .", workflow)
