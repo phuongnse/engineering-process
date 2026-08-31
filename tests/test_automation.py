@@ -7,6 +7,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parent.parent
+ACTIVE_PROCESS_PIN = re.compile(
+    r"^engineering-process==([^\s\\]+)\s*$", re.MULTILINE
+)
 
 
 class AutomationTests(unittest.TestCase):
@@ -147,12 +150,20 @@ class AutomationTests(unittest.TestCase):
         requirements = (ROOT / "requirements" / "process.in").read_text(
             encoding="utf-8"
         )
-        self.assertIn(
-            f"engineering-process=={adopted['process']['version']}", requirements
+        self.assertEqual(
+            [adopted["process"]["version"]], ACTIVE_PROCESS_PIN.findall(requirements)
         )
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("processctl adoption check", workflow)
         self.assertIn("processctl doctor --project-root .", workflow)
+
+    def test_self_adoption_pin_parser_ignores_comments_and_prefix_collisions(self) -> None:
+        self.assertEqual(
+            ["1.0.10"], ACTIVE_PROCESS_PIN.findall("engineering-process==1.0.10\n")
+        )
+        self.assertEqual(
+            [], ACTIVE_PROCESS_PIN.findall("# engineering-process==1.0.1\n")
+        )
 
     def test_external_actions_are_immutably_pinned(self) -> None:
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
