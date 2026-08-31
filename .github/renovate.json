@@ -8,7 +8,7 @@
   "rangeStrategy": "pin",
   "constraints": {
     "pipTools": "==7.6.1",
-    "python": "==3.14"
+    "python": "3.14.7"
   },
   "pip-compile": {
     "managerFilePatterns": ["/^requirements\\/process\\.txt$/"]

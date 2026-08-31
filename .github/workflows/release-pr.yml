@@ -24,9 +24,9 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.14"
+          python-version: "3.14.7"
       - name: Install release preparation dependency
         run: python -m pip install -r engineering_process/requirements-runtime.txt
       - name: Validate requested version
