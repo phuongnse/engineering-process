@@ -1,7 +1,0 @@
-{
-  "id": "posix-supervisor-snapshot",
-  "schemaVersion": 1,
-  "source": "https://github.com/phuongnse/engineering-process/issues/106",
-  "summary": "POSIX command supervision throttles fallback process-table polling and converts bounded snapshot failures into fail-closed cleanup results.",
-  "type": "fix"
-}
