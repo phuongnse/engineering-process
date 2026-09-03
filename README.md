@@ -138,10 +138,14 @@ must not guess open-world meaning from keywords, identifiers, filenames, diagnos
 text, or growing exception lists.
 
 Plan schema version 5 requires a reasoned applicability decision for every invariant
-and real work-item references for each applicable entry. Review schema version 7
-requires an independent result and evidence for each entry. A violation links to a
-blocking finding, so it cannot coexist with approval. Structural completeness is
-machine-enforced; the reviewer remains responsible for contextual truth.
+and real work-item references for each applicable entry. A change started by this
+authority records that writer requirement before planning. The public reader retains
+schema version 4 so a run started by an earlier 1.x authority can still validate and
+register its old plan; that registration is assigned review schema version 6. Review
+schema version 7 requires an independent result and evidence for each entry. A
+violation links to a blocking finding, so it cannot coexist with approval. Structural
+completeness is machine-enforced; the reviewer remains responsible for contextual
+truth.
 
 This assessment is not a production certificate. Production still requires the
 consumer's immutable readiness pack, every required capability in `enforced` state,
@@ -311,9 +315,9 @@ Version 6 distinguishes priority from severity: priority records impact if unres
 while severity alone controls the current lifecycle gate. Every non-blocking finding
 in versions 6 and 7 records one disposition: `resolved` with a rationale, or
 `accepted-risk` / `tracked-follow-up` with a rationale, owner, and stable HTTPS
-`recordUrl`. Version 7 adds the production-engineering resolution. Assignments created
-from older registered plans remain readable and finishable with their assigned
-version 5 or 6 evidence.
+`recordUrl`. Version 7 adds the production-engineering resolution. Earlier plan and
+review documents remain readable, and their runs remain registrable or finishable
+with the version selected by the authority that started the relevant phase.
 
 ## Running a change
 

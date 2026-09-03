@@ -108,6 +108,17 @@ class ProductionEngineeringTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "unknown work items"):
             validate_plan_assessments(dangling, ROOT)
 
+    def test_plan_version_four_remains_readable_without_new_assessments(self) -> None:
+        legacy = deepcopy(self.plan)
+        legacy["schemaVersion"] = 4
+        legacy.pop("productionEngineering")
+        validate_document(legacy, "plan", schema_root=SCHEMAS)
+        validate_plan_assessments(legacy, ROOT)
+
+        legacy["productionEngineering"] = self.plan["productionEngineering"]
+        with self.assertRaisesRegex(ProcessError, "should not be valid"):
+            validate_document(legacy, "plan", schema_root=SCHEMAS)
+
     def test_plan_applicability_shape_fails_closed(self) -> None:
         applicable_without_evidence = deepcopy(self.plan)
         applicable_without_evidence["productionEngineering"][0]["evidenceWorkItems"] = []

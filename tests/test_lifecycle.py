@@ -279,6 +279,31 @@ class LifecycleTests(unittest.TestCase):
             lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
         )
 
+    def test_new_run_rejects_the_legacy_plan_writer(self) -> None:
+        start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            self.contract_path,
+            actor_id="author",
+            context_id="author-context",
+            kind="agent",
+        )
+        legacy = deepcopy(self.plan)
+        legacy["schemaVersion"] = 4
+        legacy.pop("productionEngineering")
+        write_json(self.plan_path, legacy)
+        with self.assertRaisesRegex(ProcessError, "schemaVersion must be 5"):
+            register_plan(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                self.plan_path,
+                actor_id="author",
+                context_id="author-context",
+                kind="agent",
+            )
+
     def test_new_review_assignment_requires_version_seven_and_dispositions(self) -> None:
         self.begin()
         self.verify_all()
@@ -316,11 +341,40 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("approved", state["phase"])
 
     def test_legacy_plan_uses_version_six_review_evidence(self) -> None:
-        self.begin()
+        start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            self.contract_path,
+            actor_id="author",
+            context_id="author-context",
+            kind="agent",
+        )
         run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
         run = json.loads(run_path.read_text(encoding="utf-8"))
-        run.pop("requiredReviewSchemaVersion")
+        run.pop("requiredPlanSchemaVersion")
         write_json(run_path, run)
+        legacy = deepcopy(self.plan)
+        legacy["schemaVersion"] = 4
+        legacy.pop("productionEngineering")
+        write_json(self.plan_path, legacy)
+        register_plan(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            self.plan_path,
+            actor_id="author",
+            context_id="author-context",
+            kind="agent",
+        )
+        begin_implementation(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="implementer",
+            context_id="implementation-context",
+            kind="agent",
+        )
         self.verify_all()
         state = start_review(
             self.root,

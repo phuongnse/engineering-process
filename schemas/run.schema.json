@@ -54,7 +54,8 @@
         {"type": "null"}
       ]
     },
-    "requiredReviewSchemaVersion": {"const": 7},
+    "requiredPlanSchemaVersion": {"const": 5},
+    "requiredReviewSchemaVersion": {"enum": [6, 7]},
     "history": {
       "type": "array",
       "maxItems": 2048,

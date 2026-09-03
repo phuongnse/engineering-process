@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import tempfile
 import unittest
 
 from engineering_process.cli import build_parser, main
@@ -73,6 +74,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(2, code)
         result = json.loads(output.getvalue())
         self.assertEqual("failed", result["status"])
+
+    def test_contract_validate_keeps_the_plan_v4_reader(self) -> None:
+        legacy = {
+            "schemaVersion": 4,
+            "changeId": "legacy-change",
+            "contractDigest": "sha256:" + "0" * 64,
+            "approach": "Implement the accepted legacy plan.",
+            "workItems": [
+                {
+                    "id": "implementation",
+                    "outcome": "Deliver the accepted behavior.",
+                    "affectedPaths": ["src/"],
+                }
+            ],
+            "risks": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.json"
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main(
+                    [
+                        "contract",
+                        "validate",
+                        "--process-root",
+                        str(ROOT),
+                        "--kind",
+                        "plan",
+                        str(path),
+                        "--json",
+                    ]
+                )
+        self.assertEqual(0, code)
+        self.assertEqual("passed", json.loads(output.getvalue())["status"])
 
     def test_project_validate_reports_resolved_production_readiness(self) -> None:
         output = io.StringIO()
