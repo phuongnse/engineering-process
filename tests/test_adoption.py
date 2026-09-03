@@ -178,6 +178,7 @@ class AdoptionTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn(source_template, adopted_template)
         self.assertIn("- Completion receipt:", adopted_template)
+        self.assertIn("## Completion gate", adopted_template)
         self.assertNotIn("Record the independent reviewer", adopted_template)
         self.assertIn("# Consumer rules", (self.root / "AGENTS.md").read_text(encoding="utf-8"))
         project = read_json(self.root / ".process" / "project.json")

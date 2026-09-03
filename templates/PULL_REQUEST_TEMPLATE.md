@@ -27,6 +27,8 @@ lifecycle state. -->
 - Blocking findings: <!-- Open count and status. -->
 - Non-blocking dispositions: <!-- Resolution, or owner plus durable HTTPS record. -->
 
+## Completion gate
+
 - [ ] Accepted scope is implemented without silent expansion.
 - [ ] Required profiles pass on the reviewed snapshot.
 - [ ] Independent review approved with no blocking finding.

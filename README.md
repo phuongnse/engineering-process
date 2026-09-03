@@ -279,18 +279,20 @@ approved can finish only while the repository still matches the reviewed snapsho
 ### Public pull-request evidence
 
 The managed pull-request template keeps public assurance separate from local
-lifecycle identity. Its four sections and labeled fields are ordered and stable:
+lifecycle identity. Its five sections and labeled fields are ordered and stable:
 outcome and scope; source, risk, compatibility, and stack; profiles, snapshot, and
-completion receipt; then verdict, cycles, blocking status, and non-blocking
-dispositions. The public description never needs an actor ID, context ID, reviewer
+completion receipt; verdict, cycles, blocking status, and non-blocking dispositions;
+and a distinct completion gate for the overall assertions.
+The public description never needs an actor ID, context ID, reviewer
 handle, or local `.process/runs` path. Those values remain in lifecycle state, where
 they enforce self-review rejection but do not pretend to be provider-authenticated
 review identities.
 
 `processctl publication validate-pr` checks that public contract deterministically.
 It rejects missing, repeated, misplaced, hidden, unordered, or unsupported visible
-structure. Ready pull requests must have every completion checkbox checked; drafts
-may retain unchecked work. The managed template never solicits execution identity,
+structure. Completion checkboxes belong only to the Completion gate section. Ready
+pull requests must have every checkbox checked; drafts may retain unchecked work.
+The managed template never solicits execution identity,
 and authors plus independent review keep it out of free-form values. The validator is
 a positive grammar for public fields; it deliberately does not guess identities from
 an open-ended vocabulary of names or labels.

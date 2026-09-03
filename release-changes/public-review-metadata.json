@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "id": "public-review-metadata",
   "type": "capability",
-  "summary": "Distribute and validate one public pull-request evidence format without execution-only reviewer identities.",
+  "summary": "Distribute and validate one public pull-request evidence hierarchy with distinct review outcomes and a completion gate, without execution-only reviewer identities.",
   "source": "https://github.com/phuongnse/engineering-process/issues/116"
 }

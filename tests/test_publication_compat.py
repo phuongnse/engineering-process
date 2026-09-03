@@ -38,6 +38,8 @@ CANONICAL_BODY = """## Summary
 - Blocking findings: 0 open
 - Non-blocking dispositions: none
 
+## Completion gate
+
 - [x] Accepted scope is implemented without silent expansion.
 - [x] Required profiles pass on the reviewed snapshot.
 - [x] Independent review approved with no blocking finding.
@@ -75,6 +77,14 @@ class PublicationCompatibilityTests(unittest.TestCase):
         self.assertIn(
             "pull request body is missing ## Contract and risk",
             self.validate_body(without_contract),
+        )
+
+        without_completion = CANONICAL_BODY.replace(
+            "## Completion gate\n", "Completion gate\n", 1
+        )
+        self.assertIn(
+            "pull request body is missing ## Completion gate",
+            self.validate_body(without_completion),
         )
 
         repeated = CANONICAL_BODY.replace(
@@ -178,7 +188,7 @@ class PublicationCompatibilityTests(unittest.TestCase):
         )
         self.assertEqual([], self.validate_body(unchecked, state="draft"))
 
-    def test_pull_request_requires_ordered_checklist_in_review_section(self) -> None:
+    def test_pull_request_requires_ordered_checklist_in_completion_section(self) -> None:
         first = "- [x] Accepted scope is implemented without silent expansion."
         second = "- [x] Required profiles pass on the reviewed snapshot."
         out_of_order = CANONICAL_BODY.replace(
@@ -200,12 +210,13 @@ class PublicationCompatibilityTests(unittest.TestCase):
             self.validate_body(misplaced),
         )
 
-        early = CANONICAL_BODY.replace(f"\n{first}", "", 1).replace(
-            "- Verdict: approved", f"{first}\n- Verdict: approved", 1
+        mixed_hierarchy = CANONICAL_BODY.replace(f"\n{first}", "", 1).replace(
+            "## Completion gate", f"{first}\n\n## Completion gate", 1
         )
         self.assertIn(
-            "pull request body checklist must follow review fields",
-            self.validate_body(early),
+            "pull request body misplaces checklist item: "
+            "Accepted scope is implemented without silent expansion.",
+            self.validate_body(mixed_hierarchy),
         )
 
     def test_pull_request_uses_only_rendered_top_level_structure(self) -> None:
