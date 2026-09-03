@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "windows-descendant-cleanup",
-  "type": "fix",
-  "summary": "Preserve successful Windows checks while safely terminating descendants left after the primary command exits.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/109"
-}
