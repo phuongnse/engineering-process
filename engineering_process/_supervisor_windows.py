@@ -10,7 +10,7 @@ import threading
 from typing import Mapping
 
 from .helper_launch import isolated_helper_command
-from .supervision import CleanupOutcome
+from ._supervisor_contract import CleanupOutcome
 
 
 _UNSUPPORTED_SHELL_SUFFIXES = {".bat", ".cmd"}
