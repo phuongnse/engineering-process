@@ -17,8 +17,35 @@ class AutomationTests(unittest.TestCase):
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(
             encoding="utf-8"
         )
+        expected_sections = [
+            "## Summary",
+            "## Contract and risk",
+            "## Verification",
+            "## Independent review",
+        ]
+        self.assertEqual(
+            expected_sections,
+            [line for line in template.splitlines() if line.startswith("## ")],
+        )
+        for field in (
+            "Outcome",
+            "Scope",
+            "Source",
+            "Risk",
+            "Compatibility",
+            "Stack",
+            "Profiles",
+            "Snapshot",
+            "Completion receipt",
+            "Verdict",
+            "Cycles",
+            "Blocking findings",
+            "Non-blocking dispositions",
+        ):
+            self.assertIn(f"- {field}:", template)
+        self.assertIn("Keep reviewer actor/context IDs", template)
+        self.assertNotIn("Record the independent reviewer", template)
         self.assertIn("Every non-blocking finding has a recorded disposition.", template)
-        self.assertIn("accepted-risk and tracked-follow-up entries need an owner", template)
 
     def test_renovate_process_rule_materializes_the_complete_adoption(self) -> None:
         config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
