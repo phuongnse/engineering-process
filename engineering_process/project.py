@@ -170,3 +170,9 @@ def required_profiles(project: dict[str, Any]) -> tuple[str, ...]:
 def require_consumer_evidence(project: dict[str, Any]) -> bool:
     policy = project["lifecycle"].get("processChanges", {})
     return bool(policy.get("requireConsumerEvidence", False))
+
+
+def accepted_issue_url_prefix(project: dict[str, Any]) -> str | None:
+    return project["lifecycle"].get("processChanges", {}).get(
+        "acceptedIssueUrlPrefix"
+    )
