@@ -191,7 +191,7 @@ assigned checkpoint:
     }
 
     {
-      "schemaVersion": 5,
+      "schemaVersion": 6,
       "changeId": "change-123",
       "reviewer": {
         "actorId": "review-agent",
@@ -208,6 +208,13 @@ assigned checkpoint:
       "summary": "Accepted outcomes and evidence are complete.",
       "findings": []
     }
+
+`change review start` returns the exact `reportSchemaVersion` for its assignment.
+Version 6 distinguishes priority from severity: priority records impact if unresolved,
+while severity alone controls the current lifecycle gate. Every non-blocking finding
+records one disposition: `resolved` with a rationale, or `accepted-risk` /
+`tracked-follow-up` with a rationale, owner, and stable HTTPS `recordUrl`. Assignments
+created before this marker remain readable and finishable with version 5 evidence.
 
 ## Running a change
 

@@ -38,6 +38,7 @@ NEXT_COMMAND = {
     "blocked": None,
 }
 MAX_REVIEW_CORRECTION_CYCLES = 2
+REVIEW_SCHEMA_VERSION = 6
 
 
 def _now() -> str:
@@ -337,6 +338,7 @@ def start_review(
         "reviewer": reviewer,
         "checkpoint": checkpoint,
         "startedAt": _now(),
+        "reportSchemaVersion": REVIEW_SCHEMA_VERSION,
     }
     state["phase"] = "review-pending"
     _event(state, "review-started", reviewer)
@@ -356,6 +358,9 @@ def submit_review(
         review_path, "review", schema_root=schemas_root(process_root)
     )
     assignment = state["reviewAssignment"]
+    expected_schema = assignment.get("reportSchemaVersion", 5)
+    if review["schemaVersion"] != expected_schema:
+        raise ProcessError(f"review schemaVersion must be {expected_schema} for this assignment")
     if review["changeId"] != change_id:
         raise ProcessError("review changeId does not match lifecycle state")
     if review["reviewer"] != assignment["reviewer"]:
@@ -366,17 +371,13 @@ def submit_review(
     if not same_checkpoint(current, assignment["checkpoint"]):
         raise ProcessError("repository changed after review assignment")
 
-    blocking = [
-        finding for finding in review["findings"] if finding["severity"] == "blocking"
-    ]
+    blocking = [finding for finding in review["findings"] if finding["severity"] == "blocking"]
     if review["verdict"] == "approved" and blocking:
         raise ProcessError("an approved review cannot contain blocking findings")
     if review["verdict"] == "changes-requested" and not blocking:
         raise ProcessError("changes-requested requires at least one blocking finding")
 
-    criteria = {
-        item["id"] for item in state["contract"]["document"]["acceptanceCriteria"]
-    }
+    criteria = {item["id"] for item in state["contract"]["document"]["acceptanceCriteria"]}
     finding_ids = [finding["id"] for finding in review["findings"]]
     if len(finding_ids) != len(set(finding_ids)):
         raise ProcessError("review finding ids must be unique")
