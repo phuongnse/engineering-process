@@ -4,9 +4,9 @@
   "title": "Engineering implementation plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "changeId", "contractDigest", "approach", "workItems", "risks"],
+  "required": ["schemaVersion", "changeId", "contractDigest", "approach", "workItems", "risks", "productionEngineering"],
   "properties": {
-    "schemaVersion": {"const": 4},
+    "schemaVersion": {"const": 5},
     "changeId": {"$ref": "#/$defs/id"},
     "contractDigest": {"$ref": "#/$defs/digest"},
     "approach": {"type": "string", "minLength": 1, "maxLength": 4000},
@@ -43,6 +43,11 @@
           "mitigation": {"type": "string", "minLength": 1, "maxLength": 1000}
         }
       }
+    },
+    "productionEngineering": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/invariantAssessment"}
     }
   },
   "$defs": {
@@ -52,6 +57,31 @@
       "maxLength": 128,
       "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
     },
-    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "invariantAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "applicability", "rationale", "evidenceWorkItems"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "applicability": {"enum": ["applicable", "not-applicable"]},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+        "evidenceWorkItems": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"applicability": {"const": "applicable"}},
+            "required": ["applicability"]
+          },
+          "then": {"properties": {"evidenceWorkItems": {"minItems": 1}}},
+          "else": {"properties": {"evidenceWorkItems": {"maxItems": 0}}}
+        }
+      ]
+    }
   }
 }

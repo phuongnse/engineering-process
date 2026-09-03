@@ -162,6 +162,22 @@ class AdoptionTests(unittest.TestCase):
         self.assertTrue((self.root / ".agents" / "skills" / "consumer-owned" / "SKILL.md").is_file())
         self.assertTrue((self.root / ".agents" / "skills" / "improve-process" / "SKILL.md").is_file())
         self.assertEqual(
+            (
+                PROCESS_ROOT
+                / "process_assets"
+                / "skills"
+                / "production-engineering"
+                / "invariants.json"
+            ).read_bytes(),
+            (
+                self.root
+                / ".agents"
+                / "skills"
+                / "production-engineering"
+                / "invariants.json"
+            ).read_bytes(),
+        )
+        self.assertEqual(
             "remove\n",
             (self.root / ".agents" / "skills" / "run-change" / "obsolete.txt").read_text(
                 encoding="utf-8"

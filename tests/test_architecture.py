@@ -18,6 +18,7 @@ LAYERS = {
     "distribution": 1,
     "repository": 1,
     "project": 2,
+    "production_engineering": 2,
     "publication_compat": 2,
     "release": 2,
     "skills": 2,
@@ -150,7 +151,6 @@ class ArchitectureTests(unittest.TestCase):
             path.parent.name
             for path in (ROOT / "process_assets" / "skills").glob("*/SKILL.md")
         }
-        self.assertEqual(8, len(skills))
         self.assertNotIn("publish-change", skills)
         self.assertNotIn("cross-repo-change", skills)
 

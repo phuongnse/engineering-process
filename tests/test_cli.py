@@ -52,7 +52,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(0, code)
         result = json.loads(output.getvalue())
         self.assertEqual("passed", result["status"])
-        self.assertEqual(8, result["count"])
+        self.assertEqual(len(result["skills"]), result["count"])
+        self.assertIn("production-engineering", result["skills"])
 
     def test_contract_error_returns_nonzero_json(self) -> None:
         output = io.StringIO()

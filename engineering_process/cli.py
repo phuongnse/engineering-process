@@ -35,6 +35,10 @@ from .lifecycle import (
     verify_change,
 )
 from .project import load_project, readiness_summary
+from .production_engineering import (
+    validate_plan_assessments,
+    validate_review_assessments,
+)
 from .publication_compat import (
     branch_issues,
     commit_issues,
@@ -117,7 +121,15 @@ def command_lock_validate(args: argparse.Namespace) -> Result:
 
 def command_contract_validate(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
-    load_and_validate(args.path, args.kind, schema_root=schemas_root(process_root))
+    document = load_and_validate(
+        args.path,
+        args.kind,
+        schema_root=schemas_root(process_root),
+    )
+    if args.kind == "plan":
+        validate_plan_assessments(document, process_root)
+    elif args.kind == "review":
+        validate_review_assessments(document, process_root)
     return _result("contract validate", kind=args.kind, path=str(args.path)), 0
 
 

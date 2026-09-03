@@ -27,6 +27,7 @@ class ContractTests(unittest.TestCase):
             "plan",
             "process-graph",
             "process-lock",
+            "production-engineering",
             "project",
             "project-legacy",
             "receipt",

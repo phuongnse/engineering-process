@@ -13,9 +13,9 @@ release decisions.
 
 The distribution has four live parts:
 
-1. Eight skills under process_assets/skills, all reachable from run-change.
+1. Managed skills under process_assets/skills, all reachable from run-change.
 2. One processctl state machine under engineering_process/lifecycle.py.
-3. Eleven JSON Schemas that are loaded directly by the runtime.
+3. JSON Schemas that are loaded directly by the runtime.
 4. One adoption transaction that synchronizes managed skills and configuration from
    an exact hash-locked package.
 
@@ -120,6 +120,33 @@ runtime/license delivery, Linux advisory resolution, real-host workspace securit
 updater, incident recovery, and independent security review remain planned.
 Consumers without readiness remain compatible during that evidence-backed rollout.
 
+### Production engineering invariants
+
+Every new plan and independent review applies one small, versioned invariant floor:
+
+- authoritative structure for open-world decisions;
+- one authoritative source for shared policy;
+- bounded, least-authority side effects;
+- explicit compatibility and migration boundaries;
+- assurance bound to current objective evidence and independent judgment.
+
+The canonical triggers, required structures, prohibited failures, and expected
+evidence live once in the managed `production-engineering/invariants.json` asset.
+They are cross-domain invariants, not a catalog of preferred design patterns. A
+closed, owner-versioned protocol may use literal state or enum tables; automation
+must not guess open-world meaning from keywords, identifiers, filenames, diagnostic
+text, or growing exception lists.
+
+Plan schema version 5 requires a reasoned applicability decision for every invariant
+and real work-item references for each applicable entry. Review schema version 7
+requires an independent result and evidence for each entry. A violation links to a
+blocking finding, so it cannot coexist with approval. Structural completeness is
+machine-enforced; the reviewer remains responsible for contextual truth.
+
+This assessment is not a production certificate. Production still requires the
+consumer's immutable readiness pack, every required capability in `enforced` state,
+fresh consumer-owned verification on the exact candidate, and independent review.
+
 For each ordinary change, `run-change` first surfaces this readiness view. The accepted
 request and consumer rules determine which capabilities are affected. Every change
 retains the project's baseline `requiredProfiles`; start and plan add any conditional
@@ -182,7 +209,7 @@ assigned checkpoint:
     }
 
     {
-      "schemaVersion": 4,
+      "schemaVersion": 5,
       "changeId": "change-123",
       "contractDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "approach": "Implement through the existing owner.",
@@ -193,11 +220,43 @@ assigned checkpoint:
           "affectedPaths": ["src/", "tests/"]
         }
       ],
-      "risks": []
+      "risks": [],
+      "productionEngineering": [
+        {
+          "id": "authoritative-structure",
+          "applicability": "not-applicable",
+          "rationale": "The change does not classify an extensible vocabulary.",
+          "evidenceWorkItems": []
+        },
+        {
+          "id": "single-policy-source",
+          "applicability": "not-applicable",
+          "rationale": "The change introduces no shared policy copy.",
+          "evidenceWorkItems": []
+        },
+        {
+          "id": "bounded-side-effects",
+          "applicability": "not-applicable",
+          "rationale": "The change introduces no resource-bearing side effect.",
+          "evidenceWorkItems": []
+        },
+        {
+          "id": "contractual-evolution",
+          "applicability": "not-applicable",
+          "rationale": "The change does not alter a persisted or public contract.",
+          "evidenceWorkItems": []
+        },
+        {
+          "id": "evidence-bound-assurance",
+          "applicability": "applicable",
+          "rationale": "Completion must be proven on the exact candidate.",
+          "evidenceWorkItems": ["implementation"]
+        }
+      ]
     }
 
     {
-      "schemaVersion": 6,
+      "schemaVersion": 7,
       "changeId": "change-123",
       "reviewer": {
         "actorId": "review-agent",
@@ -212,15 +271,49 @@ assigned checkpoint:
       },
       "verdict": "approved",
       "summary": "Accepted outcomes and evidence are complete.",
-      "findings": []
+      "findings": [],
+      "productionEngineering": [
+        {
+          "id": "authoritative-structure",
+          "status": "not-applicable",
+          "rationale": "No open-world classification is present.",
+          "evidence": []
+        },
+        {
+          "id": "single-policy-source",
+          "status": "not-applicable",
+          "rationale": "No shared policy copy is present.",
+          "evidence": []
+        },
+        {
+          "id": "bounded-side-effects",
+          "status": "not-applicable",
+          "rationale": "No resource-bearing side effect is present.",
+          "evidence": []
+        },
+        {
+          "id": "contractual-evolution",
+          "status": "not-applicable",
+          "rationale": "No persisted or public contract changed.",
+          "evidence": []
+        },
+        {
+          "id": "evidence-bound-assurance",
+          "status": "satisfied",
+          "rationale": "Required profiles passed on the assigned snapshot.",
+          "evidence": ["development and review profile reports"]
+        }
+      ]
     }
 
 `change review start` returns the exact `reportSchemaVersion` for its assignment.
 Version 6 distinguishes priority from severity: priority records impact if unresolved,
 while severity alone controls the current lifecycle gate. Every non-blocking finding
-records one disposition: `resolved` with a rationale, or `accepted-risk` /
-`tracked-follow-up` with a rationale, owner, and stable HTTPS `recordUrl`. Assignments
-created before this marker remain readable and finishable with version 5 evidence.
+in versions 6 and 7 records one disposition: `resolved` with a rationale, or
+`accepted-risk` / `tracked-follow-up` with a rationale, owner, and stable HTTPS
+`recordUrl`. Version 7 adds the production-engineering resolution. Assignments created
+from older registered plans remain readable and finishable with their assigned
+version 5 or 6 evidence.
 
 ## Running a change
 

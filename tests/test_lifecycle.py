@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 import subprocess
@@ -19,6 +20,7 @@ from engineering_process.lifecycle import (
     verify_change,
 )
 from engineering_process.project import normalize_project
+from engineering_process.production_engineering import load_invariant_floor
 from engineering_process.repository import repository_snapshot
 
 
@@ -81,8 +83,11 @@ class LifecycleTests(unittest.TestCase):
         }
         self.contract_path = self.root / "change.json"
         write_json(self.contract_path, self.contract)
+        self.invariant_ids = [
+            item["id"] for item in load_invariant_floor(PROCESS_ROOT)["invariants"]
+        ]
         self.plan = {
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "changeId": "sample-change",
             "contractDigest": digest_json(self.contract),
             "approach": "Make and verify the bounded change.",
@@ -94,6 +99,15 @@ class LifecycleTests(unittest.TestCase):
                 }
             ],
             "risks": [],
+            "productionEngineering": [
+                {
+                    "id": invariant_id,
+                    "applicability": "applicable",
+                    "rationale": "The sample exercises this production boundary.",
+                    "evidenceWorkItems": ["implementation"],
+                }
+                for invariant_id in self.invariant_ids
+            ],
         }
         self.plan_path = self.root / "plan.json"
         write_json(self.plan_path, self.plan)
@@ -149,13 +163,13 @@ class LifecycleTests(unittest.TestCase):
                     "severity": "blocking",
                     "priority": "P1",
                     "criterionId": "works",
-                    "origin": "contract",
+                    "origin": "production-invariant",
                     "summary": "The bounded behavior is incorrect.",
                     "location": "product.txt",
                 }
             ]
         return {
-            "schemaVersion": 6,
+            "schemaVersion": 7,
             "changeId": "sample-change",
             "reviewer": {
                 "actorId": "reviewer",
@@ -166,6 +180,31 @@ class LifecycleTests(unittest.TestCase):
             "verdict": verdict,
             "summary": "Reviewed the accepted snapshot.",
             "findings": findings,
+            "productionEngineering": [
+                {
+                    "id": invariant_id,
+                    "status": (
+                        "violated"
+                        if verdict == "changes-requested"
+                        and invariant_id == "evidence-bound-assurance"
+                        else "satisfied"
+                    ),
+                    "rationale": "The exact snapshot provides the required evidence.",
+                    "evidence": (
+                        []
+                        if verdict == "changes-requested"
+                        and invariant_id == "evidence-bound-assurance"
+                        else ["development and review profiles"]
+                    ),
+                    **(
+                        {"findingId": "bug"}
+                        if verdict == "changes-requested"
+                        and invariant_id == "evidence-bound-assurance"
+                        else {}
+                    ),
+                }
+                for invariant_id in self.invariant_ids
+            ],
         }
 
     def non_blocking_finding(self) -> dict[str, object]:
@@ -212,7 +251,35 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
 
-    def test_new_review_assignment_requires_version_six_dispositions(self) -> None:
+    def test_plan_registration_requires_every_canonical_invariant(self) -> None:
+        start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            self.contract_path,
+            actor_id="author",
+            context_id="author-context",
+            kind="agent",
+        )
+        invalid = deepcopy(self.plan)
+        invalid["productionEngineering"].pop()
+        write_json(self.plan_path, invalid)
+        with self.assertRaisesRegex(ProcessError, "canonical invariants"):
+            register_plan(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                self.plan_path,
+                actor_id="author",
+                context_id="author-context",
+                kind="agent",
+            )
+        self.assertEqual(
+            "specified",
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
+        )
+
+    def test_new_review_assignment_requires_version_seven_and_dispositions(self) -> None:
         self.begin()
         self.verify_all()
         state = start_review(
@@ -223,15 +290,16 @@ class LifecycleTests(unittest.TestCase):
             context_id="review-context",
             kind="agent",
         )
-        self.assertEqual(6, state["reviewAssignment"]["reportSchemaVersion"])
+        self.assertEqual(7, state["reviewAssignment"]["reportSchemaVersion"])
         review_path = self.root / ".process" / "runs" / "review-input.json"
         review = self.review_document("approved")
-        review["schemaVersion"] = 5
+        review["schemaVersion"] = 6
+        review.pop("productionEngineering")
         write_json(review_path, review)
-        with self.assertRaisesRegex(ProcessError, "schemaVersion must be 6"):
+        with self.assertRaisesRegex(ProcessError, "schemaVersion must be 7"):
             submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
 
-        review["schemaVersion"] = 6
+        review = self.review_document("approved")
         review["findings"] = [self.non_blocking_finding()]
         write_json(review_path, review)
         with self.assertRaisesRegex(ProcessError, "disposition"):
@@ -247,7 +315,46 @@ class LifecycleTests(unittest.TestCase):
         state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
         self.assertEqual("approved", state["phase"])
 
-    def test_legacy_review_assignment_and_version_five_evidence_can_finish(self) -> None:
+    def test_legacy_plan_uses_version_six_review_evidence(self) -> None:
+        self.begin()
+        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        run.pop("requiredReviewSchemaVersion")
+        write_json(run_path, run)
+        self.verify_all()
+        state = start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        self.assertEqual(6, state["reviewAssignment"]["reportSchemaVersion"])
+
+        review = self.review_document("approved")
+        review["schemaVersion"] = 6
+        review.pop("productionEngineering")
+        review["findings"] = [self.non_blocking_finding()]
+        review["findings"][0]["disposition"] = {
+            "status": "resolved",
+            "rationale": "Resolved in the reviewed snapshot.",
+        }
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, review)
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        self.assertEqual("approved", state["phase"])
+        state, _ = finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="coordinator",
+            context_id="finish-context",
+            kind="agent",
+        )
+        self.assertEqual("completed", state["phase"])
+
+    def test_unversioned_legacy_assignment_accepts_version_five_review(self) -> None:
         self.begin()
         self.verify_all()
         start_review(
@@ -265,20 +372,12 @@ class LifecycleTests(unittest.TestCase):
 
         review = self.review_document("approved")
         review["schemaVersion"] = 5
+        review.pop("productionEngineering")
         review["findings"] = [self.non_blocking_finding()]
         review_path = self.root / ".process" / "runs" / "review-input.json"
         write_json(review_path, review)
         state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
         self.assertEqual("approved", state["phase"])
-        state, _ = finish_change(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="coordinator",
-            context_id="finish-context",
-            kind="agent",
-        )
-        self.assertEqual("completed", state["phase"])
 
     def test_self_review_rejects_actor_or_context_reuse(self) -> None:
         self.begin()

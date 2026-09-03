@@ -21,6 +21,7 @@ CONTRACT_KINDS = (
     "plan",
     "process-graph",
     "process-lock",
+    "production-engineering",
     "project",
     "project-legacy",
     "receipt",
