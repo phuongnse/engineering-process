@@ -20,7 +20,8 @@
 ## Independent review
 
 <!-- Report outcomes only. Keep reviewer actor/context IDs and local run paths in
-lifecycle state. -->
+lifecycle state. List every non-blocking disposition; accepted-risk and
+tracked-follow-up entries need an owner and durable HTTPS record. -->
 
 - Verdict: <!-- approved, changes requested, or pending while draft. -->
 - Cycles: <!-- Review-cycle count. -->

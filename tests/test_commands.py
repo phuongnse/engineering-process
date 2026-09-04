@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -7,8 +9,38 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 
 from engineering_process.commands import run_check, run_profile
+from engineering_process.supervision import CleanupOutcome
+
+
+def windows_process_is_running(process_id: int) -> bool:
+    from ctypes import wintypes
+
+    synchronize = 0x00100000
+    wait_failed = 0xFFFFFFFF
+    wait_timeout = 0x00000102
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(synchronize, False, process_id)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # ERROR_INVALID_PARAMETER: the PID no longer exists.
+            return False
+        raise ctypes.WinError(error)
+    try:
+        result = kernel32.WaitForSingleObject(handle, 0)
+        if result == wait_failed:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return result == wait_timeout
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 class CommandTests(unittest.TestCase):
@@ -64,6 +96,27 @@ class CommandTests(unittest.TestCase):
         self.assertEqual("failed", report["status"])
         self.assertTrue(report["timedOut"])
 
+    def test_unbounded_cleanup_fails_without_an_adapter_error(self) -> None:
+        process = Mock(stdout=io.BytesIO(), stderr=io.BytesIO(), returncode=0)
+        process.poll.return_value = 0
+        supervisor = Mock()
+        supervisor.spawn.return_value = process
+        supervisor.finalize.return_value = CleanupOutcome(bounded=False)
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "engineering_process.commands.process_supervisor",
+            return_value=supervisor,
+        ):
+            report = run_check(
+                Path(directory),
+                {
+                    "id": "unbounded-cleanup",
+                    "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                    "timeoutSeconds": 10,
+                },
+            )
+        self.assertEqual("failed", report["status"])
+        self.assertTrue(report["streamFailed"])
+
     @unittest.skipUnless(
         sys.platform.startswith("linux"), "Linux subreaper ownership assertion"
     )
@@ -93,7 +146,7 @@ class CommandTests(unittest.TestCase):
             unrelated.wait(timeout=3)
 
     @unittest.skipIf(os.name == "nt", "POSIX process-group assertion")
-    def test_surviving_descendant_is_terminated_and_fails(self) -> None:
+    def test_surviving_descendant_is_terminated_after_success(self) -> None:
         script = (
             "import subprocess, sys; "
             "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
@@ -108,7 +161,7 @@ class CommandTests(unittest.TestCase):
                     "timeoutSeconds": 10,
                 },
             )
-        self.assertEqual("failed", report["status"])
+        self.assertEqual("passed", report["status"])
         self.assertTrue(report["descendantsTerminated"])
 
     @unittest.skipUnless(
@@ -142,7 +195,7 @@ class CommandTests(unittest.TestCase):
     @unittest.skipUnless(
         sys.platform.startswith("linux"), "Linux subreaper containment assertion"
     )
-    def test_detached_descendant_is_terminated_and_fails(self) -> None:
+    def test_detached_descendant_is_terminated_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             pid_path = root / "child.pid"
@@ -166,12 +219,12 @@ class CommandTests(unittest.TestCase):
             deadline = time.monotonic() + 3
             while Path(f"/proc/{pid}").exists() and time.monotonic() < deadline:
                 time.sleep(0.02)
-        self.assertEqual("failed", report["status"])
+        self.assertEqual("passed", report["status"])
         self.assertTrue(report["descendantsTerminated"])
         self.assertFalse(Path(f"/proc/{pid}").exists())
 
     @unittest.skipUnless(os.name == "nt", "Windows Job Object containment assertion")
-    def test_windows_job_object_terminates_descendants(self) -> None:
+    def test_windows_job_object_terminates_descendants_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             pid_path = root / "child.pid"
@@ -189,8 +242,10 @@ class CommandTests(unittest.TestCase):
                     "timeoutSeconds": 10,
                 },
             )
-        self.assertEqual("failed", report["status"])
+            pid = int(pid_path.read_text(encoding="utf-8"))
+        self.assertEqual("passed", report["status"])
         self.assertTrue(report["descendantsTerminated"])
+        self.assertFalse(windows_process_is_running(pid))
 
 
 if __name__ == "__main__":

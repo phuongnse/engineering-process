@@ -46,6 +46,8 @@ class AutomationTests(unittest.TestCase):
             self.assertIn(f"- {field}:", template)
         self.assertIn("Keep reviewer actor/context IDs", template)
         self.assertNotIn("Record the independent reviewer", template)
+        self.assertIn("accepted-risk and", template)
+        self.assertIn("tracked-follow-up entries need an owner", template)
         self.assertLess(
             template.index("## Independent review"),
             template.index("## Completion gate"),
