@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "platform-neutral-distribution-digests",
+  "type": "fix",
+  "summary": "Order distribution and skill digest inputs by canonical relative POSIX paths on every platform.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/131"
+}

@@ -65,12 +65,17 @@ def skill_names(root: Path) -> tuple[str, ...]:
     return names
 
 
+def _ordered_paths(root: Path, paths: Iterable[Path]) -> list[Path]:
+    return sorted(paths, key=lambda path: path.relative_to(root).as_posix())
+
+
 def _asset_paths(root: Path) -> Iterable[tuple[str, Path]]:
     skill_directory = skills_root(root)
-    for path in sorted(skill_directory.rglob("*")):
+    for path in _ordered_paths(skill_directory, skill_directory.rglob("*")):
         if path.is_file():
             yield f"skills/{path.relative_to(skill_directory).as_posix()}", path
-    for path in sorted(schemas_root(root).glob("*.json")):
+    schema_directory = schemas_root(root)
+    for path in _ordered_paths(schema_directory, schema_directory.glob("*.json")):
         yield f"schemas/{path.name}", path
     for name in (
         "AGENTS.process.md",
@@ -110,7 +115,7 @@ def distribution_digest(root: Path) -> str:
 
 def skill_digest(path: Path) -> str:
     digest = hashlib.sha256()
-    for file_path in sorted(path.rglob("*")):
+    for file_path in _ordered_paths(path, path.rglob("*")):
         if not file_path.is_file() or file_path.name == ".engineering-process.json":
             continue
         relative = file_path.relative_to(path).as_posix().encode("utf-8")
