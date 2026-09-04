@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "pypi-cache-horizon-before-adoption",
-  "type": "fix",
-  "summary": "Wait for valid pre-publication PyPI Simple responses to expire before dispatching consumer adoption.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/134"
-}

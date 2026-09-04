@@ -1,13 +1,13 @@
 {
   "changes": [
     {
-      "id": "final-adoption-closures",
-      "source": "https://github.com/phuongnse/engineering-process/issues/136",
-      "summary": "Allow completed final consumer adoptions to close multiple durable issues with one canonical repeated-keyword reference line.",
+      "id": "pypi-cache-horizon-before-adoption",
+      "source": "https://github.com/phuongnse/engineering-process/issues/134",
+      "summary": "Wait for valid pre-publication PyPI Simple responses to expire before dispatching consumer adoption.",
       "type": "fix"
     }
   ],
-  "previousVersion": "1.2.1",
+  "previousVersion": "1.2.2",
   "schemaVersion": 5,
-  "version": "1.2.2"
+  "version": "1.2.3"
 }
