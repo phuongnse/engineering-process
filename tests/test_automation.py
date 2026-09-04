@@ -105,6 +105,26 @@ class AutomationTests(unittest.TestCase):
             "  dispatch-adoption:\n    name: Dispatch consumer adoption\n", workflow
         )
         self.assertIn("needs: [metadata, publish]", workflow)
+        dispatch_job = workflow.split("\n  dispatch-adoption:\n", maxsplit=1)[1]
+        self.assertIn("    timeout-minutes: 20\n", dispatch_job)
+        cache_wait = dispatch_job.split(
+            "      - name: Wait for consumer Simple caches to expire\n", maxsplit=1
+        )[1].split(
+            "      - name: Create short-lived Renovate event token\n", maxsplit=1
+        )[0]
+        self.assertIn("MAX_SIMPLE_CACHE_SECONDS = 900", cache_wait)
+        self.assertIn('item["upload_time_iso_8601"]', dispatch_job)
+        self.assertIn(
+            "LATEST_UPLOAD: ${{ steps.distribution.outputs.latest_upload }}",
+            cache_wait,
+        )
+        self.assertIn('response.headers.get("Cache-Control")', cache_wait)
+        self.assertIn('"Accept": "application/vnd.pypi.simple.v1+json"', cache_wait)
+        self.assertIn("time.sleep(remaining)", cache_wait)
+        self.assertLess(
+            dispatch_job.index("      - name: Bind the published distribution\n"),
+            dispatch_job.index("      - name: Wait for consumer Simple caches to expire\n"),
+        )
         self.assertIn("Verify PyPI exposes the exact built hashes", workflow)
         visibility = workflow.split(
             "      - name: Verify PyPI exposes the exact built hashes\n", maxsplit=1
