@@ -118,9 +118,10 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("${{ steps.release.outputs.published_at }}", cache_wait)
         self.assertIn(
-            "ref: ${{ needs.metadata.outputs.source_sha }}",
+            "ref: ${{ github.sha }}",
             dispatch_job,
         )
+        self.assertNotIn("ref: ${{ needs.metadata.outputs.source_sha }}", dispatch_job)
         self.assertIn(
             'published_at=$(gh release view "$RELEASE_TAG"',
             dispatch_job,
