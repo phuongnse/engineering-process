@@ -13,12 +13,46 @@ ACTIVE_PROCESS_PIN = re.compile(
 
 
 class AutomationTests(unittest.TestCase):
-    def test_pull_request_handoff_records_non_blocking_dispositions(self) -> None:
+    def test_pull_request_template_defines_public_evidence_hierarchy(self) -> None:
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(
             encoding="utf-8"
         )
+        expected_sections = [
+            "## Summary",
+            "## Contract and risk",
+            "## Verification",
+            "## Independent review",
+            "## Completion gate",
+        ]
+        self.assertEqual(
+            expected_sections,
+            [line for line in template.splitlines() if line.startswith("## ")],
+        )
+        for field in (
+            "Outcome",
+            "Scope",
+            "Source",
+            "Risk",
+            "Compatibility",
+            "Stack",
+            "Profiles",
+            "Snapshot",
+            "Completion receipt",
+            "Verdict",
+            "Cycles",
+            "Blocking findings",
+            "Non-blocking dispositions",
+        ):
+            self.assertIn(f"- {field}:", template)
+        self.assertIn("Keep reviewer actor/context IDs", template)
+        self.assertNotIn("Record the independent reviewer", template)
+        self.assertIn("accepted-risk and", template)
+        self.assertIn("tracked-follow-up entries need an owner", template)
+        self.assertLess(
+            template.index("## Independent review"),
+            template.index("## Completion gate"),
+        )
         self.assertIn("Every non-blocking finding has a recorded disposition.", template)
-        self.assertIn("accepted-risk and tracked-follow-up entries need an owner", template)
 
     def test_renovate_process_rule_materializes_the_complete_adoption(self) -> None:
         config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
