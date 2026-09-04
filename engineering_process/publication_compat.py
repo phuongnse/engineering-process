@@ -31,6 +31,7 @@ PR_SECTIONS = (
     "## Contract and risk",
     "## Verification",
     "## Independent review",
+    "## Completion gate",
 )
 # This is a closed publication protocol, not a vocabulary for inferring prose meaning.
 PR_FIELDS = {
@@ -166,7 +167,6 @@ def _pull_request_body_issues(body: str, state: str) -> list[str]:
             section: (start + 1, end)
             for section, start, end in zip(PR_SECTIONS, section_positions, boundaries)
         }
-    field_positions: dict[str, int] = {}
     for section, expected_fields in PR_FIELDS.items():
         ordered_fields: list[int] = []
         for field in expected_fields:
@@ -182,7 +182,6 @@ def _pull_request_body_issues(body: str, state: str) -> list[str]:
                 issues.append(f"pull request body repeats {field}")
             else:
                 position, match = matches[0]
-                field_positions[field] = position
                 ordered_fields.append(position)
                 if not match.group(1).strip():
                     issues.append(f"pull request body has no value for {field}")
@@ -196,7 +195,7 @@ def _pull_request_body_issues(body: str, state: str) -> list[str]:
             issues.append(f"pull request body fields are out of order in {section}")
 
     checklist_positions: list[int] = []
-    review_range = section_ranges.get("## Independent review")
+    completion_range = section_ranges.get("## Completion gate")
     for check in PR_CHECKS:
         pattern = re.compile(rf"^- \[([ xX])\] {re.escape(check)}$")
         matches = [
@@ -211,16 +210,15 @@ def _pull_request_body_issues(body: str, state: str) -> list[str]:
         else:
             position, match = matches[0]
             checklist_positions.append(position)
-            if review_range and not review_range[0] <= position < review_range[1]:
+            if completion_range and not (
+                completion_range[0] <= position < completion_range[1]
+            ):
                 issues.append(f"pull request body misplaces checklist item: {check}")
             if state == "ready" and match.group(1).lower() != "x":
                 issues.append(f"ready pull request has unchecked item: {check}")
     if len(checklist_positions) == len(PR_CHECKS):
         if checklist_positions != sorted(checklist_positions):
             issues.append("pull request body checklist items are out of order")
-        final_field = field_positions.get("Non-blocking dispositions")
-        if final_field is not None and checklist_positions[0] <= final_field:
-            issues.append("pull request body checklist must follow review fields")
     reference_positions = [
         index
         for index, line in enumerate(lines)
