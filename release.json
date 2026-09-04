@@ -1,19 +1,13 @@
 {
   "changes": [
     {
-      "id": "platform-neutral-distribution-digests",
-      "source": "https://github.com/phuongnse/engineering-process/issues/131",
-      "summary": "Order distribution and skill digest inputs by canonical relative POSIX paths on every platform.",
-      "type": "fix"
-    },
-    {
-      "id": "pypi-simple-before-adoption",
-      "source": "https://github.com/phuongnse/engineering-process/issues/134",
-      "summary": "Require exact typed PyPI Simple API visibility before finalizing a release and dispatching consumer adoption.",
+      "id": "final-adoption-closures",
+      "source": "https://github.com/phuongnse/engineering-process/issues/136",
+      "summary": "Allow completed final consumer adoptions to close multiple durable issues with one canonical repeated-keyword reference line.",
       "type": "fix"
     }
   ],
-  "previousVersion": "1.2.0",
+  "previousVersion": "1.2.1",
   "schemaVersion": 5,
-  "version": "1.2.1"
+  "version": "1.2.2"
 }
