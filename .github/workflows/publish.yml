@@ -22,6 +22,7 @@ env:
 
 jobs:
   metadata:
+    name: Authorize release
     runs-on: ubuntu-latest
     outputs:
       dispatch: ${{ steps.release.outputs.dispatch }}
@@ -82,6 +83,7 @@ jobs:
       - run: python processctl.py release validate --tag "${{ steps.release.outputs.tag }}"
 
   publish:
+    name: Publish immutable release
     needs: metadata
     if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-latest
@@ -240,6 +242,7 @@ jobs:
           gh release edit "$RELEASE_TAG" --draft=false
 
   dispatch-adoption:
+    name: Dispatch consumer adoption
     needs: [metadata, publish]
     if: >-
       always() &&
