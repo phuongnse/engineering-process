@@ -20,12 +20,15 @@
 ## Independent review
 
 <!-- Report outcomes only. Keep reviewer actor/context IDs and local run paths in
-lifecycle state. -->
+lifecycle state. List every non-blocking disposition; accepted-risk and
+tracked-follow-up entries need an owner and durable HTTPS record. -->
 
 - Verdict: <!-- approved, changes requested, or pending while draft. -->
 - Cycles: <!-- Review-cycle count. -->
 - Blocking findings: <!-- Open count and status. -->
 - Non-blocking dispositions: <!-- Resolution, or owner plus durable HTTPS record. -->
+
+## Completion gate
 
 - [ ] Accepted scope is implemented without silent expansion.
 - [ ] Required profiles pass on the reviewed snapshot.
