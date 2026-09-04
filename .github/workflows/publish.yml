@@ -270,14 +270,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.metadata.outputs.source_sha }}
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - name: Download the immutable release files
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
+          echo "published_at=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)" >> "$GITHUB_OUTPUT"
           mkdir "$RUNNER_TEMP/distribution"
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
@@ -292,7 +298,6 @@ jobs:
           import hashlib
           import json
           import os
-          from datetime import datetime, timezone
           from pathlib import Path
           from urllib.request import urlopen
 
@@ -304,12 +309,6 @@ jobs:
           expected = {item["filename"]: item["digests"]["sha256"] for item in payload["urls"]}
           if actual != expected:
               raise RuntimeError(f"GitHub and PyPI release files differ: {actual} != {expected}")
-          uploads = [
-              datetime.fromisoformat(item["upload_time_iso_8601"].replace("Z", "+00:00"))
-              for item in payload["urls"]
-          ]
-          if not uploads or any(upload.tzinfo is None for upload in uploads):
-              raise RuntimeError("PyPI artifacts require timezone-aware upload timestamps")
           digest = hashlib.sha256()
           for path in sorted(files):
               name = path.name.encode()
@@ -318,58 +317,11 @@ jobs:
               digest.update(name)
               digest.update(hashlib.sha256(content).digest())
           print(f"digest=sha256:{digest.hexdigest()}")
-          print(f"latest_upload={max(uploads).astimezone(timezone.utc).isoformat()}")
           PY
       - name: Wait for consumer Simple caches to expire
-        env:
-          LATEST_UPLOAD: ${{ steps.distribution.outputs.latest_upload }}
-        run: |
-          python - <<'PY'
-          import os
-          import time
-          from datetime import datetime, timedelta, timezone
-          from urllib.request import Request, urlopen
-
-          MAX_SIMPLE_CACHE_SECONDS = 900
-          CLOCK_MARGIN_SECONDS = 5
-          MAX_FUTURE_SKEW_SECONDS = 60
-
-          simple_request = Request(
-              "https://pypi.org/simple/engineering-process/",
-              headers={"Accept": "application/vnd.pypi.simple.v1+json"},
-          )
-          with urlopen(simple_request, timeout=20) as response:
-              if response.headers.get_content_type() != "application/vnd.pypi.simple.v1+json":
-                  raise RuntimeError("PyPI Simple API did not return PEP 691 JSON")
-              cache_control = response.headers.get("Cache-Control")
-          if cache_control is None:
-              raise RuntimeError("PyPI Simple API did not declare Cache-Control")
-          max_ages = []
-          for directive in cache_control.split(","):
-              name, separator, value = directive.strip().partition("=")
-              if name.lower() != "max-age":
-                  continue
-              if separator != "=" or not value.isdecimal():
-                  raise RuntimeError("PyPI Simple API declared an invalid max-age")
-              max_ages.append(int(value))
-          if len(max_ages) != 1:
-              raise RuntimeError("PyPI Simple API must declare exactly one max-age")
-          max_age = max_ages[0]
-          if max_age > MAX_SIMPLE_CACHE_SECONDS:
-              raise RuntimeError(f"PyPI Simple API max-age exceeds {MAX_SIMPLE_CACHE_SECONDS} seconds")
-
-          now = datetime.now(timezone.utc)
-          latest_upload = datetime.fromisoformat(os.environ["LATEST_UPLOAD"])
-          if (latest_upload - now).total_seconds() > MAX_FUTURE_SKEW_SECONDS:
-              raise RuntimeError("PyPI artifact upload timestamp is too far in the future")
-          deadline = latest_upload + timedelta(
-              seconds=max_age + CLOCK_MARGIN_SECONDS
-          )
-          remaining = max(0.0, (deadline - now).total_seconds())
-          if remaining:
-              print(f"Waiting {remaining:.0f} seconds for consumer Simple caches")
-              time.sleep(remaining)
-          PY
+        run: >-
+          python verification/wait_for_pypi_cache_horizon.py
+          '${{ steps.release.outputs.published_at }}'
       - name: Create short-lived Renovate event token
         id: renovate-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

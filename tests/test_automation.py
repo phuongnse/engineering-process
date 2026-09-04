@@ -112,15 +112,19 @@ class AutomationTests(unittest.TestCase):
         )[1].split(
             "      - name: Create short-lived Renovate event token\n", maxsplit=1
         )[0]
-        self.assertIn("MAX_SIMPLE_CACHE_SECONDS = 900", cache_wait)
-        self.assertIn('item["upload_time_iso_8601"]', dispatch_job)
         self.assertIn(
-            "LATEST_UPLOAD: ${{ steps.distribution.outputs.latest_upload }}",
+            "python verification/wait_for_pypi_cache_horizon.py",
             cache_wait,
         )
-        self.assertIn('response.headers.get("Cache-Control")', cache_wait)
-        self.assertIn('"Accept": "application/vnd.pypi.simple.v1+json"', cache_wait)
-        self.assertIn("time.sleep(remaining)", cache_wait)
+        self.assertIn("${{ steps.release.outputs.published_at }}", cache_wait)
+        self.assertIn(
+            "ref: ${{ needs.metadata.outputs.source_sha }}",
+            dispatch_job,
+        )
+        self.assertIn(
+            'published_at=$(gh release view "$RELEASE_TAG"',
+            dispatch_job,
+        )
         self.assertLess(
             dispatch_job.index("      - name: Bind the published distribution\n"),
             dispatch_job.index("      - name: Wait for consumer Simple caches to expire\n"),
