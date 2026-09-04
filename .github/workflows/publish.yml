@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - engineering_process/__init__.py
-      - pyproject.toml
       - release.json
   workflow_dispatch:
     inputs:

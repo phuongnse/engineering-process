@@ -53,13 +53,22 @@ jobs:
           git switch -c "$branch"
           git add engineering_process/__init__.py pyproject.toml release.json release-changes
           git commit -m "chore(release): prepare v$RELEASE_VERSION"
+          existing_pr="$(gh pr list --head "$branch" --state open --limit 1 --json number,isDraft)"
+          pr_number="$(jq -r '.[0].number // empty' <<<"$existing_pr")"
+          is_draft="$(jq -r '.[0].isDraft // empty' <<<"$existing_pr")"
+          if [ -n "$pr_number" ] && [ "$is_draft" != "true" ]; then
+            gh pr ready "$pr_number" --undo
+          fi
           git push --force-with-lease origin "$branch"
-          if gh pr view "$branch" >/dev/null 2>&1; then
-            gh pr edit "$branch" --title "chore(release): v$RELEASE_VERSION"
+          if [ -n "$pr_number" ]; then
+            gh pr edit "$pr_number" \
+              --title "chore(release): v$RELEASE_VERSION" \
+              --body-file .github/release-pr-body.md
           else
             gh pr create \
               --base main \
               --head "$branch" \
               --title "chore(release): v$RELEASE_VERSION" \
-              --body "Generated from reviewed release-change fragments. Merge is the publication authorization."
+              --draft \
+              --body-file .github/release-pr-body.md
           fi

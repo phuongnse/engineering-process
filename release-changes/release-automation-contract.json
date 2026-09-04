@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "release-automation-contract",
+  "type": "fix",
+  "summary": "Generate canonical draft release pull requests and trigger publication only from the release authorization manifest.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/128"
+}

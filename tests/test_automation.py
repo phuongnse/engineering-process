@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import unittest
 
+from engineering_process.publication_compat import validate_pull_request
+
 
 ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_PROCESS_PIN = re.compile(
@@ -107,6 +109,14 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("points to a different commit", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("release_sha:", workflow)
+        push_trigger = workflow.split("  workflow_dispatch:", maxsplit=1)[0]
+        self.assertIn("      - release.json", push_trigger)
+        self.assertNotIn("      - pyproject.toml", push_trigger)
+        self.assertNotIn("      - engineering_process/__init__.py", push_trigger)
+        self.assertIn(
+            "for file in engineering_process/__init__.py pyproject.toml release.json; do",
+            workflow,
+        )
         self.assertIn('git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main', workflow)
         self.assertIn("needs.metadata.outputs.source_sha", workflow)
         self.assertNotIn('--target "$GITHUB_SHA"', workflow)
@@ -143,6 +153,34 @@ class AutomationTests(unittest.TestCase):
         self.assertLess(trusted_checkout, preflight)
         self.assertLess(preflight, source_checkout)
         self.assertLess(source_checkout, editable_install)
+
+    def test_release_pull_request_starts_and_refreshes_as_canonical_draft(self) -> None:
+        body_path = ROOT / ".github" / "release-pr-body.md"
+        result = validate_pull_request(
+            title="chore(release): v1.2.0",
+            branch="automation/release/v1.2.0",
+            state="draft",
+            body_path=body_path,
+        )
+        self.assertEqual([], result["issues"])
+        body = body_path.read_text(encoding="utf-8")
+        self.assertEqual(4, body.count("- [ ]"))
+
+        workflow = (
+            ROOT / ".github" / "workflows" / "release-pr.yml"
+        ).read_text(encoding="utf-8")
+        query = workflow.index('gh pr list --head "$branch" --state open')
+        reset = workflow.index('gh pr ready "$pr_number" --undo')
+        push = workflow.index('git push --force-with-lease origin "$branch"')
+        edit = workflow.index('gh pr edit "$pr_number"')
+        self.assertLess(query, reset)
+        self.assertLess(reset, push)
+        self.assertLess(push, edit)
+        self.assertNotIn("2>/dev/null", workflow)
+        self.assertEqual(2, workflow.count("--body-file .github/release-pr-body.md"))
+        create = workflow.split("            gh pr create \\\n", maxsplit=1)[1]
+        self.assertIn("              --draft \\\n", create)
+        self.assertNotIn("--body \"Generated from", workflow)
 
     def test_ci_checks_the_adopted_hash_locked_distribution_separately(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
