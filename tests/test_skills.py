@@ -11,23 +11,22 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class SkillTests(unittest.TestCase):
-    def test_distribution_has_one_reachable_eight_skill_graph(self) -> None:
+    def test_distribution_has_one_complete_reachable_skill_graph(self) -> None:
         result = validate_skills(ROOT / "process_assets" / "skills", process_root=ROOT)
-        self.assertEqual(8, result["count"])
         self.assertEqual("run-change", result["entrySkill"])
-        self.assertEqual(
-            {
-                "finish-change",
-                "implement-change",
-                "improve-process",
-                "plan-change",
-                "review-change",
-                "run-change",
-                "start-change",
-                "verify-change",
-            },
-            set(result["skills"]),
-        )
+        expected = {
+            "finish-change",
+            "implement-change",
+            "improve-process",
+            "plan-change",
+            "production-engineering",
+            "review-change",
+            "run-change",
+            "start-change",
+            "verify-change",
+        }
+        self.assertEqual(expected, set(result["skills"]))
+        self.assertEqual(len(expected), result["count"])
 
     def test_graph_exposes_only_the_six_phase_cli(self) -> None:
         graph = read_json(ROOT / "process-graph.json")
@@ -54,7 +53,18 @@ class SkillTests(unittest.TestCase):
             "run-change": ("processctl project validate", "never choose the\nproduct roadmap autonomously"),
             "start-change": ("affected\nenforced capability", "Unrelated planned gaps remain visible and non-blocking"),
             "plan-change": ("do not add unrelated planned gaps", "checklist edit alone is not evidence"),
-            "implement-change": ("Never auto-promote", "do not work unrelated planned\ngaps"),
+            "implement-change": (
+                "Never auto-promote",
+                "do not work unrelated planned\ngaps",
+                "production-engineering",
+            ),
+            "production-engineering": (
+                "small correctness floor",
+                "not a design-pattern catalog",
+                "open-world meaning",
+                "Approval is impossible",
+                "readiness declaration",
+            ),
             "verify-change": ("do not run every planned production gate", "same snapshot"),
             "review-change": (
                 "Do not block the change merely because unrelated planned capabilities",
@@ -73,7 +83,7 @@ class SkillTests(unittest.TestCase):
             text = (roots / skill / "SKILL.md").read_text(encoding="utf-8")
             for fragment in fragments:
                 with self.subTest(skill=skill, fragment=fragment):
-                    self.assertIn(fragment, text)
+                    self.assertIn(" ".join(fragment.split()), " ".join(text.split()))
 
     def test_improve_process_supports_owner_authorized_issue_handoff(self) -> None:
         text = (ROOT / "process_assets" / "skills" / "improve-process" / "SKILL.md").read_text(encoding="utf-8")

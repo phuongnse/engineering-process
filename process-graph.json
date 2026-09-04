@@ -2,7 +2,8 @@
   "schemaVersion": 2,
   "entrySkill": "run-change",
   "specializations": {
-    "processChange": "improve-process"
+    "processChange": "improve-process",
+    "productionEngineering": "production-engineering"
   },
   "states": [
     {

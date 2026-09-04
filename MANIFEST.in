@@ -1,4 +1,4 @@
 include process-graph.json
-recursive-include process_assets/skills SKILL.md
+recursive-include process_assets/skills SKILL.md *.json
 recursive-include schemas *.json
 recursive-include templates *.md *.py

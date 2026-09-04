@@ -27,6 +27,12 @@ from .project import (
     require_consumer_evidence,
     required_profiles,
 )
+from .production_engineering import (
+    PLAN_SCHEMA_VERSION,
+    REVIEW_SCHEMA_VERSION,
+    validate_plan_assessments,
+    validate_review_assessments,
+)
 from .repository import repository_snapshot, same_checkpoint
 
 
@@ -42,7 +48,7 @@ NEXT_COMMAND = {
     "blocked": None,
 }
 MAX_REVIEW_CORRECTION_CYCLES = 2
-REVIEW_SCHEMA_VERSION = 6
+PRE_INVARIANT_REVIEW_SCHEMA_VERSION = 6
 
 
 def _now() -> str:
@@ -177,6 +183,7 @@ def start_change(
         "review": None,
         "reviewHistory": [],
         "receipt": None,
+        "requiredPlanSchemaVersion": PLAN_SCHEMA_VERSION,
         "history": [],
     }
     _event(state, "started", actor)
@@ -197,12 +204,23 @@ def register_plan(
     state = _load_state(project_root, process_root, change_id)
     _require_phase(state, "specified")
     plan = load_and_validate(plan_path, "plan", schema_root=schemas_root(process_root))
+    validate_plan_assessments(plan, process_root)
+    expected_schema = state.get("requiredPlanSchemaVersion")
+    if expected_schema is not None and plan["schemaVersion"] != expected_schema:
+        raise ProcessError(
+            f"plan schemaVersion must be {expected_schema} for this change"
+        )
     if plan["changeId"] != change_id:
         raise ProcessError("plan changeId does not match lifecycle state")
     if plan["contractDigest"] != state["contract"]["digest"]:
         raise ProcessError("plan contractDigest does not match the accepted contract")
     actor = _actor(actor_id, context_id, kind)
     state["plan"] = {"digest": digest_json(plan), "document": plan}
+    state["requiredReviewSchemaVersion"] = (
+        REVIEW_SCHEMA_VERSION
+        if plan["schemaVersion"] == PLAN_SCHEMA_VERSION
+        else PRE_INVARIANT_REVIEW_SCHEMA_VERSION
+    )
     state["phase"] = "planned"
     _event(state, "planned", actor)
     _save_state(project_root, process_root, state)
@@ -355,7 +373,10 @@ def start_review(
         "reviewer": reviewer,
         "checkpoint": checkpoint,
         "startedAt": _now(),
-        "reportSchemaVersion": REVIEW_SCHEMA_VERSION,
+        "reportSchemaVersion": state.get(
+            "requiredReviewSchemaVersion",
+            PRE_INVARIANT_REVIEW_SCHEMA_VERSION,
+        ),
     }
     state["phase"] = "review-pending"
     _event(state, "review-started", reviewer)
@@ -378,6 +399,7 @@ def submit_review(
     expected_schema = assignment.get("reportSchemaVersion", 5)
     if review["schemaVersion"] != expected_schema:
         raise ProcessError(f"review schemaVersion must be {expected_schema} for this assignment")
+    validate_review_assessments(review, process_root)
     if review["changeId"] != change_id:
         raise ProcessError("review changeId does not match lifecycle state")
     if review["reviewer"] != assignment["reviewer"]:
@@ -418,10 +440,15 @@ def submit_review(
             for field in ("criterionId", "origin", "priority")
         ):
             raise ProcessError("carried review finding identity fields are immutable")
+    first_pass_origins = {"contract"}
+    if review["schemaVersion"] == REVIEW_SCHEMA_VERSION:
+        first_pass_origins.add("production-invariant")
     if not state["reviewHistory"] and any(
-        finding["origin"] != "contract" for finding in blocking
+        finding["origin"] not in first_pass_origins for finding in blocking
     ):
-        raise ProcessError("first-pass blockers must originate in the frozen contract")
+        raise ProcessError(
+            "first-pass blockers must originate in the frozen contract or production invariant floor"
+        )
     if state["reviewHistory"]:
         for finding in blocking:
             if finding["id"] in prior_blocking_ids:

@@ -50,6 +50,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
   "schemas/plan.schema.json",
   "schemas/process-graph.schema.json",
   "schemas/process-lock.schema.json",
+  "schemas/production-engineering.schema.json",
   "schemas/project-legacy.schema.json",
   "schemas/project.schema.json",
   "schemas/receipt.schema.json",
@@ -62,6 +63,10 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 "share/engineering-process/skills/implement-change" = ["process_assets/skills/implement-change/SKILL.md"]
 "share/engineering-process/skills/improve-process" = ["process_assets/skills/improve-process/SKILL.md"]
 "share/engineering-process/skills/plan-change" = ["process_assets/skills/plan-change/SKILL.md"]
+"share/engineering-process/skills/production-engineering" = [
+  "process_assets/skills/production-engineering/SKILL.md",
+  "process_assets/skills/production-engineering/invariants.json",
+]
 "share/engineering-process/skills/review-change" = ["process_assets/skills/review-change/SKILL.md"]
 "share/engineering-process/skills/run-change" = ["process_assets/skills/run-change/SKILL.md"]
 "share/engineering-process/skills/start-change" = ["process_assets/skills/start-change/SKILL.md"]

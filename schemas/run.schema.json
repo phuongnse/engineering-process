@@ -54,6 +54,8 @@
         {"type": "null"}
       ]
     },
+    "requiredPlanSchemaVersion": {"const": 5},
+    "requiredReviewSchemaVersion": {"enum": [6, 7]},
     "history": {
       "type": "array",
       "maxItems": 2048,
@@ -170,7 +172,7 @@
         "reviewer": {"$ref": "#/$defs/actor"},
         "checkpoint": {"$ref": "#/$defs/checkpoint"},
         "startedAt": {"type": "string", "format": "date-time"},
-        "reportSchemaVersion": {"enum": [5, 6]}
+        "reportSchemaVersion": {"enum": [5, 6, 7]}
       }
     }
   }
