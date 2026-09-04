@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "changeId", "reviewer", "checkpoint", "verdict", "summary", "findings"],
   "properties": {
-    "schemaVersion": {"const": 5},
+    "schemaVersion": {"enum": [5, 6]},
     "changeId": {"$ref": "#/$defs/id"},
     "reviewer": {"$ref": "#/$defs/actor"},
     "checkpoint": {"$ref": "#/$defs/checkpoint"},
@@ -27,11 +27,27 @@
           "origin": {"enum": ["contract", "remediation-regression", "critical-late"]},
           "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
           "location": {"type": "string", "minLength": 1, "maxLength": 1000},
-          "lateRationale": {"type": "string", "minLength": 1, "maxLength": 2000}
+          "lateRationale": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "disposition": {"$ref": "#/$defs/disposition"}
         }
       }
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 6}}, "required": ["schemaVersion"]},
+      "then": {
+        "properties": {
+          "findings": {
+            "items": {
+              "if": {"properties": {"severity": {"const": "non-blocking"}}, "required": ["severity"]},
+              "then": {"required": ["disposition"]}
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": {
       "type": "string",
@@ -48,6 +64,26 @@
         "contextId": {"type": "string", "minLength": 1, "maxLength": 200},
         "kind": {"enum": ["agent", "human"]}
       }
+    },
+    "disposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "rationale"],
+      "properties": {
+        "status": {"enum": ["resolved", "accepted-risk", "tracked-follow-up"]},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+        "owner": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "\\S"},
+        "recordUrl": {"type": "string", "minLength": 9, "maxLength": 1000, "pattern": "^https://\\S+$"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"status": {"enum": ["accepted-risk", "tracked-follow-up"]}},
+            "required": ["status"]
+          },
+          "then": {"required": ["owner", "recordUrl"]}
+        }
+      ]
     },
     "checkpoint": {
       "type": "object",

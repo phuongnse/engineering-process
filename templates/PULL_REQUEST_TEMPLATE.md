@@ -13,9 +13,12 @@
 
 ## Independent review
 
-<!-- Record the independent reviewer, verdict, and blocking-finding status. -->
+<!-- Record the independent reviewer, verdict, and blocking-finding status. List every
+non-blocking disposition; accepted-risk and tracked-follow-up entries need an owner
+and durable HTTPS record. -->
 
 - [ ] Accepted scope is implemented without silent expansion.
 - [ ] Required profiles pass on the current snapshot.
 - [ ] An independent reviewer approved with no blocking finding.
+- [ ] Every non-blocking finding has a recorded disposition.
 <!-- engineering-process:pr-description:end -->

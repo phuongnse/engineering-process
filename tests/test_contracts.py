@@ -63,6 +63,68 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(project, "project", schema_root=SCHEMAS)
 
+    def test_review_v6_requires_durable_non_blocking_dispositions(self) -> None:
+        review = {
+            "schemaVersion": 6,
+            "changeId": "sample-change",
+            "reviewer": {
+                "actorId": "reviewer",
+                "contextId": "review-context",
+                "kind": "agent",
+            },
+            "checkpoint": {
+                "head": "0" * 40,
+                "fingerprint": f"sha256:{'0' * 64}",
+                "fileCount": 1,
+                "byteCount": 1,
+            },
+            "verdict": "approved",
+            "summary": "Reviewed the accepted snapshot.",
+            "findings": [
+                {
+                    "id": "follow-up",
+                    "severity": "non-blocking",
+                    "priority": "P3",
+                    "criterionId": "works",
+                    "origin": "contract",
+                    "summary": "A bounded follow-up remains.",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ProcessError, "disposition"):
+            validate_document(review, "review", schema_root=SCHEMAS)
+
+        legacy = deepcopy(review)
+        legacy["schemaVersion"] = 5
+        validate_document(legacy, "review", schema_root=SCHEMAS)
+
+        resolved = deepcopy(review)
+        resolved["findings"][0]["disposition"] = {
+            "status": "resolved",
+            "rationale": "Resolved in the reviewed snapshot.",
+        }
+        validate_document(resolved, "review", schema_root=SCHEMAS)
+
+        for status in ("accepted-risk", "tracked-follow-up"):
+            durable = deepcopy(review)
+            durable["findings"][0]["disposition"] = {
+                "status": status,
+                "rationale": "The accepted behavior remains complete.",
+                "owner": "process-owner",
+                "recordUrl": "https://github.com/phuongnse/engineering-process/issues/111",
+            }
+            with self.subTest(status=status):
+                validate_document(durable, "review", schema_root=SCHEMAS)
+            durable["findings"][0]["disposition"].pop("owner")
+            with self.subTest(status=status, missing="owner"):
+                with self.assertRaisesRegex(ProcessError, "owner"):
+                    validate_document(durable, "review", schema_root=SCHEMAS)
+            durable["findings"][0]["disposition"]["owner"] = "process-owner"
+            durable["findings"][0]["disposition"]["recordUrl"] = "http://example.invalid/111"
+            with self.subTest(status=status, invalid="recordUrl"):
+                with self.assertRaisesRegex(ProcessError, "recordUrl"):
+                    validate_document(durable, "review", schema_root=SCHEMAS)
+
     def test_released_process_lock_schema_uri_remains_accepted(self) -> None:
         lock = read_json(ROOT / ".process" / "process.lock")
         lock["$schema"] = "https://engineering-process.invalid/schemas/process-lock.schema.json"

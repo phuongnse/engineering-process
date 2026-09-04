@@ -13,6 +13,13 @@ ACTIVE_PROCESS_PIN = re.compile(
 
 
 class AutomationTests(unittest.TestCase):
+    def test_pull_request_handoff_records_non_blocking_dispositions(self) -> None:
+        template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Every non-blocking finding has a recorded disposition.", template)
+        self.assertIn("accepted-risk and tracked-follow-up entries need an owner", template)
+
     def test_renovate_process_rule_materializes_the_complete_adoption(self) -> None:
         config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
         rules = [

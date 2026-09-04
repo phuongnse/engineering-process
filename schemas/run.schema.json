@@ -169,7 +169,8 @@
       "properties": {
         "reviewer": {"$ref": "#/$defs/actor"},
         "checkpoint": {"$ref": "#/$defs/checkpoint"},
-        "startedAt": {"type": "string", "format": "date-time"}
+        "startedAt": {"type": "string", "format": "date-time"},
+        "reportSchemaVersion": {"enum": [5, 6]}
       }
     }
   }

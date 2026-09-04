@@ -154,7 +154,7 @@ class LifecycleTests(unittest.TestCase):
                 }
             ]
         return {
-            "schemaVersion": 5,
+            "schemaVersion": 6,
             "changeId": "sample-change",
             "reviewer": {
                 "actorId": "reviewer",
@@ -165,6 +165,17 @@ class LifecycleTests(unittest.TestCase):
             "verdict": verdict,
             "summary": "Reviewed the accepted snapshot.",
             "findings": findings,
+        }
+
+    def non_blocking_finding(self) -> dict[str, object]:
+        return {
+            "id": "follow-up",
+            "severity": "non-blocking",
+            "priority": "P3",
+            "criterionId": "works",
+            "origin": "contract",
+            "summary": "A bounded follow-up remains.",
+            "location": "product.txt",
         }
 
     def test_happy_path_writes_one_completion_receipt(self) -> None:
@@ -199,6 +210,74 @@ class LifecycleTests(unittest.TestCase):
             (self.root / ".process" / "receipts" / "sample-change.json").is_file()
         )
         self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
+
+    def test_new_review_assignment_requires_version_six_dispositions(self) -> None:
+        self.begin()
+        self.verify_all()
+        state = start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        self.assertEqual(6, state["reviewAssignment"]["reportSchemaVersion"])
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        review = self.review_document("approved")
+        review["schemaVersion"] = 5
+        write_json(review_path, review)
+        with self.assertRaisesRegex(ProcessError, "schemaVersion must be 6"):
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        review["schemaVersion"] = 6
+        review["findings"] = [self.non_blocking_finding()]
+        write_json(review_path, review)
+        with self.assertRaisesRegex(ProcessError, "disposition"):
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        review["findings"][0]["disposition"] = {
+            "status": "tracked-follow-up",
+            "rationale": "The accepted behavior is complete; hardening is separate.",
+            "owner": "process-owner",
+            "recordUrl": "https://github.com/phuongnse/engineering-process/issues/111",
+        }
+        write_json(review_path, review)
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        self.assertEqual("approved", state["phase"])
+
+    def test_legacy_review_assignment_and_version_five_evidence_can_finish(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        run["reviewAssignment"].pop("reportSchemaVersion")
+        write_json(run_path, run)
+
+        review = self.review_document("approved")
+        review["schemaVersion"] = 5
+        review["findings"] = [self.non_blocking_finding()]
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, review)
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        self.assertEqual("approved", state["phase"])
+        state, _ = finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="coordinator",
+            context_id="finish-context",
+            kind="agent",
+        )
+        self.assertEqual("completed", state["phase"])
 
     def test_self_review_rejects_actor_or_context_reuse(self) -> None:
         self.begin()

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "nonblocking-finding-disposition",
+  "type": "capability",
+  "summary": "Require structured dispositions for non-blocking findings from new review assignments while preserving legacy evidence.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/111"
+}

@@ -56,8 +56,17 @@ class SkillTests(unittest.TestCase):
             "plan-change": ("do not add unrelated planned gaps", "checklist edit alone is not evidence"),
             "implement-change": ("Never auto-promote", "do not work unrelated planned\ngaps"),
             "verify-change": ("do not run every planned production gate", "same snapshot"),
-            "review-change": ("Do not block the change merely because unrelated planned capabilities", "reject promotion by prose"),
-            "finish-change": ("Finish never edits readiness", "remaining planned\ngaps"),
+            "review-change": (
+                "Do not block the change merely because unrelated planned capabilities",
+                "Priority records impact if the finding remains unresolved",
+                "never omit an\nobservation merely to reach approval",
+                "stable\nHTTPS `recordUrl`",
+            ),
+            "finish-change": (
+                "Finish never edits\nreadiness",
+                "remaining planned\ngaps",
+                "owner and stable record URL",
+            ),
             "improve-process": ("new immutable pack version", "never\nself-publishes or self-merges"),
         }
         for skill, fragments in required.items():

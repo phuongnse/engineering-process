@@ -13,10 +13,18 @@ implementer in the current cycle. Start the assignment:
 Review the accepted contract, plan, complete diff, focused tests, and verification
 evidence. The first pass is comprehensive within that frozen contract. Every finding
 maps to one accepted criterion and records priority, origin, severity, and location.
-Ideas outside the contract are proposals, not blocking findings. approved may contain
-non-blocking observations but no blocking finding; changes-requested requires at least
-one blocking finding. Write the report to the reportPath returned by review
-start; that path is process state and does not mutate the reviewed snapshot.
+Priority records impact if the finding remains unresolved; severity controls the
+current lifecycle gate and is not derived mechanically from priority. Ideas outside
+the contract are proposals, not blocking findings. approved may contain non-blocking
+observations but no blocking finding; changes-requested requires at least one blocking
+finding.
+
+Use the `reportSchemaVersion` and `reportPath` returned by review start. In schema
+version 6, every non-blocking finding has a disposition and rationale; never omit an
+observation merely to reach approval. `resolved` records why the reviewed snapshot
+closes it. `accepted-risk` and `tracked-follow-up` also record an owner and stable
+HTTPS `recordUrl`. The report path is process state and does not mutate the reviewed
+snapshot.
 
 Read the consumer readiness result and repository rules. Check the complete diff for
 an affected enforced capability omitted from the contract, weakened evidence, a pack
