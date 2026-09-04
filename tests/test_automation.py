@@ -167,6 +167,8 @@ class AutomationTests(unittest.TestCase):
         publish_job = workflow.split("  publish:\n", maxsplit=1)[1].split(
             "\n  dispatch-adoption:\n", maxsplit=1
         )[0]
+        self.assertIn("ref: ${{ needs.metadata.outputs.source_sha }}", publish_job)
+        self.assertNotIn("ref: ${{ github.sha }}", publish_job)
         self.assertIn("id: release-token", publish_job)
         self.assertIn("repositories: engineering-process", publish_job)
         self.assertIn("permission-contents: write", publish_job)
