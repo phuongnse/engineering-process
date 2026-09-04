@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "review-improvement-disposition",
-  "type": "capability",
-  "summary": "Require new independent reviews to classify process-improvement scope and link shared gaps to a durable issue.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/127"
-}
