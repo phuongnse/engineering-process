@@ -53,8 +53,9 @@ PR_CHECKS = (
 )
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 NON_MARKDOWN_LINE_SEPARATOR = re.compile("[\v\f\x85\u2028\u2029]")
+ISSUE_TARGET = r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*"
 ISSUE_REFERENCE = re.compile(
-    r"^Refs (?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*\.$"
+    rf"^(?:Refs {ISSUE_TARGET}|Closes {ISSUE_TARGET}(?:, closes {ISSUE_TARGET})*)\.$"
 )
 
 
@@ -232,6 +233,10 @@ def _pull_request_body_issues(body: str, state: str) -> list[str]:
         and reference_positions[0] <= checklist_positions[-1]
     ):
         issues.append("pull request body issue reference must follow the checklist")
+    if state == "draft" and any(
+        lines[position].startswith("Closes ") for position in reference_positions
+    ):
+        issues.append("draft pull request cannot close issues")
     field_patterns = tuple(
         re.compile(rf"^- {re.escape(field)}:\s*.*$")
         for fields in PR_FIELDS.values()

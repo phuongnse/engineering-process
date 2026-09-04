@@ -290,6 +290,42 @@ class PublicationCompatibilityTests(unittest.TestCase):
             self.validate_body(repeated),
         )
 
+    def test_final_adoption_can_close_multiple_issues_only_when_ready(self) -> None:
+        closing = (
+            f"{CANONICAL_BODY}\n"
+            "Closes example/process#123, closes #456, closes other/repository#789.\n"
+        )
+        self.assertEqual([], self.validate_body(closing))
+        self.assertIn(
+            "draft pull request cannot close issues",
+            self.validate_body(closing, state="draft"),
+        )
+
+        unchecked = closing.replace(
+            "- [x] Required profiles", "- [ ] Required profiles", 1
+        )
+        self.assertIn(
+            "ready pull request has unchecked item: Required profiles pass on the reviewed snapshot.",
+            self.validate_body(unchecked),
+        )
+
+        for malformed in (
+            "Closes example/process#123, #456.",
+            "Closes example/process#123, Closes #456.",
+            "Fixes example/process#123.",
+            "Closes example/process#0.",
+        ):
+            with self.subTest(malformed=malformed):
+                issues = self.validate_body(f"{CANONICAL_BODY}\n{malformed}\n")
+                self.assertTrue(
+                    any(
+                        issue.startswith(
+                            "pull request body has unsupported visible content at line "
+                        )
+                        for issue in issues
+                    )
+                )
+
     def test_pull_request_ignores_template_comments(self) -> None:
         body = CANONICAL_BODY.replace(
             "- Outcome: Preserve the requested behavior.",

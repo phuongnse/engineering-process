@@ -398,6 +398,10 @@ review identities.
 It rejects missing, repeated, misplaced, hidden, unordered, or unsupported visible
 structure. Completion checkboxes belong only to the Completion gate section. Ready
 pull requests must have every checkbox checked; drafts may retain unchecked work.
+One trailing `Refs ISSUE.` line remains optional. A ready, contract-identified final
+consumer adoption may instead use `Closes ISSUE, closes OWNER/REPOSITORY#NUMBER.` with
+the complete keyword/reference syntax repeated for every issue; drafts cannot close
+issues. Producer and intermediate pull requests do not close release-source issues.
 The managed template never solicits execution identity,
 and authors plus independent review keep it out of free-form values. The validator is
 a positive grammar for public fields; it deliberately does not guess identities from
