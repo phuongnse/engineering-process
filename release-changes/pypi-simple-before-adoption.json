@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "pypi-simple-before-adoption",
-  "type": "fix",
-  "summary": "Require exact typed PyPI Simple API visibility before finalizing a release and dispatching consumer adoption.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/134"
-}
