@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "final-adoption-closures",
+  "type": "fix",
+  "summary": "Allow completed final consumer adoptions to close multiple durable issues with one canonical repeated-keyword reference line.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/136"
+}

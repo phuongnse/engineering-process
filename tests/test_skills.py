@@ -78,6 +78,8 @@ class SkillTests(unittest.TestCase):
                 "Finish never edits\nreadiness",
                 "remaining planned\ngaps",
                 "owner and stable record URL",
+                "contract-identified final consumer adoption",
+                "Closes ISSUE, closes ISSUE",
             ),
             "improve-process": (
                 "new immutable pack version",

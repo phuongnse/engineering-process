@@ -55,6 +55,8 @@ class AutomationTests(unittest.TestCase):
             template.index("## Completion gate"),
         )
         self.assertIn("Every non-blocking finding has a recorded disposition.", template)
+        self.assertIn("Final verified consumer adoption only", template)
+        self.assertIn("Closes ISSUE, closes OWNER/REPOSITORY#NUMBER", template)
 
     def test_renovate_process_rule_materializes_the_complete_adoption(self) -> None:
         config = json.loads((ROOT / ".github" / "renovate.json").read_text(encoding="utf-8"))
