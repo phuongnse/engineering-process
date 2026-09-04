@@ -149,7 +149,6 @@ jobs:
               "https://pypi.org/simple/engineering-process/",
               headers={
                   "Accept": "application/vnd.pypi.simple.v1+json",
-                  "Cache-Control": "no-cache",
               },
           )
           for attempt in range(12):

@@ -109,7 +109,6 @@ class AutomationTests(unittest.TestCase):
         )[1].split("      - name: Create short-lived release token\n", maxsplit=1)[0]
         self.assertIn("for attempt in range(12)", visibility)
         self.assertIn('"Accept": "application/vnd.pypi.simple.v1+json"', visibility)
-        self.assertIn('"Cache-Control": "no-cache"', visibility)
         self.assertIn(
             "if actual == expected and simple_actual == expected:", visibility
         )
