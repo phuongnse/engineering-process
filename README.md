@@ -307,17 +307,26 @@ assigned checkpoint:
           "rationale": "Required profiles passed on the assigned snapshot.",
           "evidence": ["development and review profile reports"]
         }
-      ]
+      ],
+      "processImprovement": {
+        "status": "none",
+        "rationale": "No reusable shared-process problem was observed."
+      }
     }
 
-`change review start` returns the exact `reportSchemaVersion` for its assignment.
+`change review start` returns the exact `reportSchemaVersion` for its assignment and
+bounded `processSignals` derived from existing lifecycle events. Signals are prompts
+for independent judgment, not evidence that hidden external actions occurred.
 Version 6 distinguishes priority from severity: priority records impact if unresolved,
 while severity alone controls the current lifecycle gate. Every non-blocking finding
 in versions 6 and 7 records one disposition: `resolved` with a rationale, or
 `accepted-risk` / `tracked-follow-up` with a rationale, owner, and stable HTTPS
-`recordUrl`. Version 7 adds the production-engineering resolution. Earlier plan and
-review documents remain readable, and their runs remain registrable or finishable
-with the version selected by the authority that started the relevant phase.
+`recordUrl`. Version 7 adds the production-engineering resolution and requires a
+`processImprovement` classification of `none`, `consumer-specific`, or
+`shared-process`. A shared-process report requires an existing, owner-authorized issue
+URL; without it, the review remains pending. Earlier plan and review documents remain
+readable, and their runs remain registrable or finishable with the version selected by
+the authority that started the relevant phase.
 
 ## Running a change
 

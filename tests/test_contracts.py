@@ -126,6 +126,69 @@ class ContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProcessError, "recordUrl"):
                     validate_document(durable, "review", schema_root=SCHEMAS)
 
+    def test_review_v7_requires_a_process_improvement_disposition(self) -> None:
+        review = {
+            "schemaVersion": 7,
+            "changeId": "sample-change",
+            "reviewer": {
+                "actorId": "reviewer",
+                "contextId": "review-context",
+                "kind": "agent",
+            },
+            "checkpoint": {
+                "head": "0" * 40,
+                "fingerprint": f"sha256:{'0' * 64}",
+                "fileCount": 1,
+                "byteCount": 1,
+            },
+            "verdict": "approved",
+            "summary": "Reviewed the accepted snapshot.",
+            "findings": [],
+            "productionEngineering": [
+                {
+                    "id": "authoritative-structure",
+                    "status": "not-applicable",
+                    "rationale": "No open-world classification is present.",
+                    "evidence": [],
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ProcessError, "processImprovement"):
+            validate_document(review, "review", schema_root=SCHEMAS)
+
+        for status in ("none", "consumer-specific"):
+            review["processImprovement"] = {
+                "status": status,
+                "rationale": "The observation is not a shared process gap.",
+            }
+            with self.subTest(status=status):
+                validate_document(review, "review", schema_root=SCHEMAS)
+
+        review["processImprovement"] = {
+            "status": "shared-process",
+            "rationale": "The consumer exposed a reusable process gap.",
+        }
+        with self.assertRaisesRegex(ProcessError, "recordUrl"):
+            validate_document(review, "review", schema_root=SCHEMAS)
+        review["processImprovement"]["recordUrl"] = "http://example.invalid/127"
+        with self.assertRaisesRegex(ProcessError, "recordUrl"):
+            validate_document(review, "review", schema_root=SCHEMAS)
+        review["processImprovement"]["recordUrl"] = (
+            "https://github.com/phuongnse/engineering-process/issues/127"
+        )
+        validate_document(review, "review", schema_root=SCHEMAS)
+
+        for version in (5, 6):
+            legacy = deepcopy(review)
+            legacy["schemaVersion"] = version
+            legacy.pop("productionEngineering")
+            with self.subTest(version=version, field="forbidden"):
+                with self.assertRaisesRegex(ProcessError, "processImprovement"):
+                    validate_document(legacy, "review", schema_root=SCHEMAS)
+            legacy.pop("processImprovement")
+            with self.subTest(version=version, field="absent"):
+                validate_document(legacy, "review", schema_root=SCHEMAS)
+
     def test_released_process_lock_schema_uri_remains_accepted(self) -> None:
         lock = read_json(ROOT / ".process" / "process.lock")
         lock["$schema"] = "https://engineering-process.invalid/schemas/process-lock.schema.json"

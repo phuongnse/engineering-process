@@ -71,6 +71,10 @@ class ProductionEngineeringTests(unittest.TestCase):
                 }
                 for invariant_id in self.ids
             ],
+            "processImprovement": {
+                "status": "none",
+                "rationale": "No reusable process problem was observed.",
+            },
         }
 
     def test_floor_is_small_versioned_and_cross_domain(self) -> None:

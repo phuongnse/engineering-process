@@ -71,13 +71,19 @@ class SkillTests(unittest.TestCase):
                 "Priority records impact if the finding remains unresolved",
                 "never omit an\nobservation merely to reach approval",
                 "stable\nHTTPS `recordUrl`",
+                "bounded `processSignals`",
+                "keep the assignment `review-pending`",
             ),
             "finish-change": (
                 "Finish never edits\nreadiness",
                 "remaining planned\ngaps",
                 "owner and stable record URL",
             ),
-            "improve-process": ("new immutable pack version", "never\nself-publishes or self-merges"),
+            "improve-process": (
+                "new immutable pack version",
+                "pending schema-version 7 review",
+                "never\nself-publishes or self-merges",
+            ),
         }
         for skill, fragments in required.items():
             text = (roots / skill / "SKILL.md").read_text(encoding="utf-8")
@@ -97,6 +103,7 @@ class SkillTests(unittest.TestCase):
             "open-issue search URL containing the complete stable key",
             "must search and reuse an\nexisting issue before manual submission",
             "use its URL as the process change `source`",
+            "a `shared-process` disposition cannot submit without that\n`recordUrl`",
             "Close the issue only after",
         ):
             with self.subTest(fragment=fragment):

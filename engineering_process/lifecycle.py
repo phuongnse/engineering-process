@@ -110,6 +110,19 @@ def _event(
     )
 
 
+def process_improvement_signals(state: dict[str, Any]) -> list[str]:
+    signals: set[str] = set()
+    for item in state["history"]:
+        if item["event"] == "profile-failed":
+            signals.add("profile-failed")
+        elif (
+            item["event"] == "review-submitted"
+            and item["details"].get("verdict") == "changes-requested"
+        ):
+            signals.add("review-changes-requested")
+    return sorted(signals)
+
+
 def _require_phase(state: dict[str, Any], *phases: str) -> None:
     if state["phase"] not in phases:
         expected = ", ".join(phases)
