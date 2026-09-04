@@ -155,6 +155,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
             )
             descendants = descendants or cleanup.descendants_found
             cleanup_error = cleanup_error or cleanup.error
+            cleanup_error = cleanup_error or (None if cleanup.bounded else "unbounded cleanup")
     exit_code = process.returncode if process.returncode is not None else -1
 
     for reader in readers:
@@ -173,7 +174,6 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         exit_code == 0
         and not timed_out
         and not output_exceeded
-        and not descendants
         and not stream_failed
     )
     return {
