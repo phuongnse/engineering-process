@@ -266,17 +266,24 @@ jobs:
       needs.metadata.outputs.dispatch == 'true' &&
       (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - name: Download the immutable release files
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
+          echo "published_at=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)" >> "$GITHUB_OUTPUT"
           mkdir "$RUNNER_TEMP/distribution"
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
@@ -311,6 +318,10 @@ jobs:
               digest.update(hashlib.sha256(content).digest())
           print(f"digest=sha256:{digest.hexdigest()}")
           PY
+      - name: Wait for consumer Simple caches to expire
+        run: >-
+          python verification/wait_for_pypi_cache_horizon.py
+          '${{ steps.release.outputs.published_at }}'
       - name: Create short-lived Renovate event token
         id: renovate-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

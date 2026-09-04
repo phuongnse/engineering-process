@@ -105,6 +105,31 @@ class AutomationTests(unittest.TestCase):
             "  dispatch-adoption:\n    name: Dispatch consumer adoption\n", workflow
         )
         self.assertIn("needs: [metadata, publish]", workflow)
+        dispatch_job = workflow.split("\n  dispatch-adoption:\n", maxsplit=1)[1]
+        self.assertIn("    timeout-minutes: 20\n", dispatch_job)
+        cache_wait = dispatch_job.split(
+            "      - name: Wait for consumer Simple caches to expire\n", maxsplit=1
+        )[1].split(
+            "      - name: Create short-lived Renovate event token\n", maxsplit=1
+        )[0]
+        self.assertIn(
+            "python verification/wait_for_pypi_cache_horizon.py",
+            cache_wait,
+        )
+        self.assertIn("${{ steps.release.outputs.published_at }}", cache_wait)
+        self.assertIn(
+            "ref: ${{ github.sha }}",
+            dispatch_job,
+        )
+        self.assertNotIn("ref: ${{ needs.metadata.outputs.source_sha }}", dispatch_job)
+        self.assertIn(
+            'published_at=$(gh release view "$RELEASE_TAG"',
+            dispatch_job,
+        )
+        self.assertLess(
+            dispatch_job.index("      - name: Bind the published distribution\n"),
+            dispatch_job.index("      - name: Wait for consumer Simple caches to expire\n"),
+        )
         self.assertIn("Verify PyPI exposes the exact built hashes", workflow)
         visibility = workflow.split(
             "      - name: Verify PyPI exposes the exact built hashes\n", maxsplit=1
@@ -142,6 +167,8 @@ class AutomationTests(unittest.TestCase):
         publish_job = workflow.split("  publish:\n", maxsplit=1)[1].split(
             "\n  dispatch-adoption:\n", maxsplit=1
         )[0]
+        self.assertIn("ref: ${{ needs.metadata.outputs.source_sha }}", publish_job)
+        self.assertNotIn("ref: ${{ github.sha }}", publish_job)
         self.assertIn("id: release-token", publish_job)
         self.assertIn("repositories: engineering-process", publish_job)
         self.assertIn("permission-contents: write", publish_job)
