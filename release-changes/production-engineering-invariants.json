@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "production-engineering-invariants",
-  "type": "capability",
-  "summary": "Require canonical production-engineering assessments in new plans and independent reviews without open-world keyword inference.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/119"
-}

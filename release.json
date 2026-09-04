@@ -1,13 +1,55 @@
 {
   "changes": [
     {
-      "id": "windows-descendant-cleanup",
-      "source": "https://github.com/phuongnse/engineering-process/issues/109",
-      "summary": "Preserve successful Windows checks while safely terminating descendants left after the primary command exits.",
+      "id": "architecture-fitness",
+      "source": "https://github.com/phuongnse/engineering-process/issues/114",
+      "summary": "Replace arbitrary module and source-line caps with semantic architecture fitness checks.",
       "type": "fix"
+    },
+    {
+      "id": "ci-check-naming",
+      "source": "https://github.com/phuongnse/engineering-process/issues/117",
+      "summary": "Adopt stable sentence-case CI display names and the immutable shared naming verifier.",
+      "type": "fix"
+    },
+    {
+      "id": "nonblocking-finding-disposition",
+      "source": "https://github.com/phuongnse/engineering-process/issues/111",
+      "summary": "Require structured dispositions for non-blocking findings from new review assignments while preserving legacy evidence.",
+      "type": "capability"
+    },
+    {
+      "id": "process-issue-handoff",
+      "source": "https://github.com/phuongnse/engineering-process/issues/110",
+      "summary": "Allow process producers to require numbered consumer issues from an owner-selected repository before starting a change.",
+      "type": "capability"
+    },
+    {
+      "id": "production-engineering-invariants",
+      "source": "https://github.com/phuongnse/engineering-process/issues/119",
+      "summary": "Require canonical production-engineering assessments in new plans and independent reviews without open-world keyword inference.",
+      "type": "capability"
+    },
+    {
+      "id": "public-review-metadata",
+      "source": "https://github.com/phuongnse/engineering-process/issues/116",
+      "summary": "Distribute and validate one public pull-request evidence hierarchy with distinct review outcomes and a completion gate, without execution-only reviewer identities.",
+      "type": "capability"
+    },
+    {
+      "id": "release-automation-contract",
+      "source": "https://github.com/phuongnse/engineering-process/issues/128",
+      "summary": "Generate canonical draft release pull requests and trigger publication only from the release authorization manifest.",
+      "type": "fix"
+    },
+    {
+      "id": "review-improvement-disposition",
+      "source": "https://github.com/phuongnse/engineering-process/issues/127",
+      "summary": "Require new independent reviews to classify process-improvement scope and link shared gaps to a durable issue.",
+      "type": "capability"
     }
   ],
-  "previousVersion": "1.1.1",
+  "previousVersion": "1.1.2",
   "schemaVersion": 5,
-  "version": "1.1.2"
+  "version": "1.2.0"
 }

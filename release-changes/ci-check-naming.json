@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "ci-check-naming",
-  "type": "fix",
-  "summary": "Adopt stable sentence-case CI display names and the immutable shared naming verifier.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/117"
-}
