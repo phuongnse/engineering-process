@@ -52,6 +52,12 @@ Accepted intake becomes the process change `source` and `consumerEvidence`. The 
 does not authorize implementation or block the consumer, and it closes only after a
 released correction is adopted and validated in the originating consumer.
 
+A process producer can set `lifecycle.processChanges.acceptedIssueUrlPrefix` to its
+owner-selected HTTPS issue namespace. `change start` then accepts only that exact
+prefix followed by a canonical positive integer, before any lifecycle state is
+written. This local check prevents placeholders and cross-repository handoffs without
+network access or consumer credentials; issue acceptance remains an owner decision.
+
 Use an ordinary issue or pull request for cross-repository discussion. Then run the
 same start, plan, implement, verify, review, finish lifecycle as every other change.
 The producer does not need a federation protocol, catalog, recommendation chain, or

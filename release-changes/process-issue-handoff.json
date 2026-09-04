@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "process-issue-handoff",
+  "type": "capability",
+  "summary": "Allow process producers to require numbered consumer issues from an owner-selected repository before starting a change.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/110"
+}

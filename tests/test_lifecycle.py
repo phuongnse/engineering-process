@@ -18,6 +18,7 @@ from engineering_process.lifecycle import (
     submit_review,
     verify_change,
 )
+from engineering_process.project import normalize_project
 from engineering_process.repository import repository_snapshot
 
 
@@ -505,6 +506,108 @@ class LifecycleTests(unittest.TestCase):
                 context_id="author-context",
                 kind="agent",
             )
+
+    def test_process_change_policy_requires_accepted_issue_url(self) -> None:
+        prefix = "https://github.com/example/process/issues/"
+        self.project["lifecycle"]["processChanges"] = {
+            "requireConsumerEvidence": True,
+            "acceptedIssueUrlPrefix": prefix,
+        }
+        self.contract["consumerEvidence"] = [
+            {"repository": "consumer", "incident": "A shared invariant failed."}
+        ]
+        invalid_sources = (
+            "issue-1",
+            "https://github.com/other/process/issues/1",
+            prefix,
+            prefix + "0",
+            prefix + "01",
+            prefix + "1?state=open",
+            prefix + "1#comment",
+        )
+        for source in invalid_sources:
+            with self.subTest(source=source):
+                self.contract["source"] = source
+                write_json(self.contract_path, self.contract)
+                with self.assertRaisesRegex(ProcessError, "numbered issue"):
+                    start_change(
+                        self.root,
+                        PROCESS_ROOT,
+                        self.project,
+                        self.contract_path,
+                        actor_id="author",
+                        context_id="author-context",
+                        kind="agent",
+                    )
+                self.assertFalse(
+                    (self.root / ".process" / "runs" / "sample-change").exists()
+                )
+
+        self.contract["source"] = prefix + "42"
+        write_json(self.contract_path, self.contract)
+        state = start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            self.contract_path,
+            actor_id="author",
+            context_id="author-context",
+            kind="agent",
+        )
+        self.assertEqual("specified", state["phase"])
+
+    def test_process_change_policy_rejects_malformed_issue_prefix(self) -> None:
+        self.contract["consumerEvidence"] = [
+            {"repository": "consumer", "incident": "A shared invariant failed."}
+        ]
+        invalid_prefixes = (
+            "https:////",
+            "http://github.com/example/process/issues/",
+            "https://-github.com/example/process/issues/",
+            "https://github.com/example/process/issues/?state=open",
+            "https://github.com/example/process/issues/\n",
+        )
+        for prefix in invalid_prefixes:
+            with self.subTest(prefix=prefix):
+                self.contract["source"] = prefix + "42"
+                write_json(self.contract_path, self.contract)
+                self.project["lifecycle"]["processChanges"] = {
+                    "requireConsumerEvidence": True,
+                    "acceptedIssueUrlPrefix": prefix,
+                }
+                with self.assertRaises(ProcessError):
+                    project = normalize_project(self.project, PROCESS_ROOT)
+                    start_change(
+                        self.root,
+                        PROCESS_ROOT,
+                        project,
+                        self.contract_path,
+                        actor_id="author",
+                        context_id="author-context",
+                        kind="agent",
+                    )
+                self.assertFalse(
+                    (self.root / ".process" / "runs" / "sample-change").exists()
+                )
+
+    def test_evidence_only_process_change_policy_remains_compatible(self) -> None:
+        self.project["lifecycle"]["processChanges"] = {
+            "requireConsumerEvidence": True
+        }
+        self.contract["consumerEvidence"] = [
+            {"repository": "consumer", "incident": "A shared invariant failed."}
+        ]
+        write_json(self.contract_path, self.contract)
+        state = start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            self.contract_path,
+            actor_id="author",
+            context_id="author-context",
+            kind="agent",
+        )
+        self.assertEqual("specified", state["phase"])
 
 
 if __name__ == "__main__":

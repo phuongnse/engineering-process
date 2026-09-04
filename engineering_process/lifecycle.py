@@ -22,7 +22,11 @@ from .contracts import (
     write_json_atomic,
 )
 from .distribution import schemas_root
-from .project import require_consumer_evidence, required_profiles
+from .project import (
+    accepted_issue_url_prefix,
+    require_consumer_evidence,
+    required_profiles,
+)
 from .repository import repository_snapshot, same_checkpoint
 
 
@@ -142,6 +146,19 @@ def start_change(
         raise ProcessError(
             "this project requires a real consumer incident or request before changing the process"
         )
+    issue_prefix = accepted_issue_url_prefix(project)
+    if issue_prefix is not None:
+        source = contract["source"]
+        issue_number = source[len(issue_prefix):] if source.startswith(issue_prefix) else ""
+        if (
+            not issue_number
+            or not issue_number.isascii()
+            or not issue_number.isdigit()
+            or issue_number.startswith("0")
+        ):
+            raise ProcessError(
+                "change source must be a numbered issue under the configured accepted issue URL prefix"
+            )
     if project["project"] not in contract["affectedProjects"]:
         raise ProcessError("change affectedProjects must include the current project")
 
