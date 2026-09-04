@@ -29,6 +29,12 @@ may have implemented the current cycle. There is no attestation hierarchy,
 recommendation chain, authority-transition protocol, remote-evidence federation, or
 second handwritten validator.
 
+Runtime architecture is enforced by semantic fitness functions, not module or source-
+line quotas. Every module has an explicit dependency layer, imports point toward lower
+layers, the internal graph remains acyclic, and lifecycle.py alone owns state
+transitions behind the CLI adapter. Size metrics may guide refactoring but do not
+decide correctness or release eligibility.
+
 ## Consumer configuration
 
 Python 3.11 or newer and Git are required. A consumer owns .process/project.json:

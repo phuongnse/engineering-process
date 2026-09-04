@@ -13,7 +13,7 @@ import sys
 import time
 from typing import Mapping
 
-from .supervision import CleanupOutcome, NATURAL_DRAIN_GRACE_MILLISECONDS
+from ._supervisor_contract import CleanupOutcome, NATURAL_DRAIN_GRACE_MILLISECONDS
 
 
 PR_SET_CHILD_SUBREAPER = 36

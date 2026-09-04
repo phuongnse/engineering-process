@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "architecture-fitness",
+  "type": "fix",
+  "summary": "Replace arbitrary module and source-line caps with semantic architecture fitness checks.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/114"
+}
