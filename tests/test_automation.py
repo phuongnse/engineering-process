@@ -84,9 +84,15 @@ class AutomationTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
         )
+        self.assertTrue(workflow.startswith("name: Publish release\n"))
         self.assertIn("engineering-process-published", workflow)
         self.assertIn("repos/phuongnse/renovate-ops/dispatches", workflow)
         self.assertIn("dispatch-adoption:", workflow)
+        self.assertIn("  metadata:\n    name: Authorize release\n", workflow)
+        self.assertIn("  publish:\n    name: Publish immutable release\n", workflow)
+        self.assertIn(
+            "  dispatch-adoption:\n    name: Dispatch consumer adoption\n", workflow
+        )
         self.assertIn("needs: [metadata, publish]", workflow)
         self.assertIn("Verify PyPI exposes the exact built hashes", workflow)
         self.assertIn("SOURCE_DATE_EPOCH", workflow)
@@ -135,23 +141,28 @@ class AutomationTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
+        self.assertTrue(workflow.startswith("name: CI\n"))
         policy_job = "  policy-verification:\n" + workflow.split(
             "  policy-verification:\n", maxsplit=1
         )[1].split("\n  adopted-process:\n", maxsplit=1)[0]
         self.assertEqual(
             "  policy-verification:\n"
-            "    name: policy-verification\n"
+            "    name: Policy verification\n"
             "    if: github.event_name == 'pull_request'\n"
             "    permissions:\n"
             "      contents: read\n"
             "      pull-requests: read\n"
             "    uses: phuongnse/renovate-ops/.github/workflows/"
             "policy-verification.yml@"
-            "5fb53c2295c0f62c29d34c8141121b71198769f4\n",
+            "38d952b8c94604df10fadc48b6c830a144ea1137\n",
             policy_job,
         )
-        self.assertIn("name: verify (${{ matrix.os }}, ${{ matrix.python }})", workflow)
-        self.assertIn("adopted-process:", workflow)
+        self.assertIn(
+            "name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})", workflow
+        )
+        self.assertIn(
+            "  adopted-process:\n    name: Adopted public process\n", workflow
+        )
         adopted_job = workflow.split("  adopted-process:\n", maxsplit=1)[1].split(
             "\n  test:\n", maxsplit=1
         )[0]
@@ -170,6 +181,14 @@ class AutomationTests(unittest.TestCase):
         doctor = adopted_job.index("processctl doctor --project-root .")
         self.assertLess(producer_install, adoption_check)
         self.assertLess(adoption_check, doctor)
+
+        release_workflow = (
+            ROOT / ".github" / "workflows" / "release-pr.yml"
+        ).read_text(encoding="utf-8")
+        self.assertTrue(release_workflow.startswith("name: Prepare release PR\n"))
+        self.assertIn(
+            "  prepare:\n    name: Prepare release pull request\n", release_workflow
+        )
 
     def test_readiness_sidecar_preserves_the_adopted_authority_bootstrap(self) -> None:
         project = json.loads((ROOT / ".process" / "project.json").read_text(encoding="utf-8"))
