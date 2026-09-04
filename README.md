@@ -233,9 +233,9 @@ assigned checkpoint:
           "evidenceWorkItems": []
         },
         {
-          "id": "single-policy-source",
+          "id": "single-policy-authority",
           "applicability": "not-applicable",
-          "rationale": "The change introduces no shared policy copy.",
+          "rationale": "The change introduces no shared policy authority.",
           "evidenceWorkItems": []
         },
         {
@@ -284,9 +284,9 @@ assigned checkpoint:
           "evidence": []
         },
         {
-          "id": "single-policy-source",
+          "id": "single-policy-authority",
           "status": "not-applicable",
-          "rationale": "No shared policy copy is present.",
+          "rationale": "No shared policy authority is present.",
           "evidence": []
         },
         {

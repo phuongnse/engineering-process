@@ -5,9 +5,13 @@ description: Apply the small production-engineering invariant floor during plann
 
 # Production engineering invariants
 
-Use the [canonical invariant definitions](invariants.json) for every new plan. They
+Assess the [canonical invariant definitions](invariants.json) for every new plan. They
 are a small correctness floor, not a design-pattern catalog and not a claim that one
 architecture fits every repository.
+
+Keep the core floor at no more than seven invariants. Adding one requires evidence
+from a real consumer; first prefer clarifying or consolidating an existing invariant.
+This is a design budget, not an assessment or a substitute for evidence.
 
 At plan time, assess every invariant as `applicable` or `not-applicable`. Explain the
 decision from the invariant's trigger. Every applicable assessment names the work

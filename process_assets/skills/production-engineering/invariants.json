@@ -11,8 +11,8 @@
       "evidence": "Exercise valid previously unseen values, invalid structured states, and the authoritative boundary that makes the decision."
     },
     {
-      "id": "single-policy-source",
-      "title": "Single policy source",
+      "id": "single-policy-authority",
+      "title": "Single policy authority",
       "trigger": "One rule, vocabulary, or compatibility decision is consumed by more than one runtime, schema, template, generated artifact, or repository.",
       "requiredStructure": "Assign one authoritative owner. Generate derived copies or prove their parity, and version immutable consumer-facing policy where independent release timing exists.",
       "prohibitedFailure": "Do not maintain hand-synchronized semantic copies that can drift while each copy remains locally valid.",
@@ -21,7 +21,7 @@
     {
       "id": "bounded-side-effects",
       "title": "Bounded side effects",
-      "trigger": "The change handles external input, subprocesses, networks, filesystems, cleanup, retries, native behavior, privileges, or another resource-bearing side effect.",
+      "trigger": "The change introduces or materially changes a resource-bearing or privileged side effect whose failure, lifetime, cleanup, retry, or platform behavior can escape the local operation.",
       "requiredStructure": "Define explicit scope, resource and time bounds, cancellation and failure behavior, cleanup ownership, and the least authority needed; isolate platform-specific or privileged behavior behind a narrow boundary.",
       "prohibitedFailure": "Do not allow unbounded work, broad cleanup, ambient authority, swallowed failure, or a silent fallback that weakens the claimed guarantee.",
       "evidence": "Exercise success, boundary exhaustion, interruption, failure propagation, cleanup scope, and platform adapters that the change affects."
@@ -29,7 +29,7 @@
     {
       "id": "contractual-evolution",
       "title": "Contractual evolution",
-      "trigger": "The change affects a persisted format, public API or CLI, package, protocol, schema, platform promise, migration, or recovery path.",
+      "trigger": "The change alters a released, persisted, externally consumed, or independently versioned format, API, CLI, package contract, protocol, schema, platform promise, migration, or recovery path.",
       "requiredStructure": "State compatibility and migration behavior explicitly. Version immutable contracts, preserve supported readers and writers, or declare and verify an intentional breaking boundary and recovery path.",
       "prohibitedFailure": "Do not mutate a released contract implicitly, rely on an undocumented migration, or claim compatibility from current-version tests alone.",
       "evidence": "Exercise supported old and new fixtures, installed artifacts, failure and recovery behavior, and every claimed platform or compatibility boundary."

@@ -20,6 +20,7 @@ SCHEMAS = schemas_root(ROOT)
 class ProductionEngineeringTests(unittest.TestCase):
     def setUp(self) -> None:
         floor = load_invariant_floor(ROOT)
+        self.floor = floor
         self.ids = [item["id"] for item in floor["invariants"]]
         self.plan = {
             "schemaVersion": 5,
@@ -76,13 +77,31 @@ class ProductionEngineeringTests(unittest.TestCase):
         self.assertEqual(
             [
                 "authoritative-structure",
-                "single-policy-source",
+                "single-policy-authority",
                 "bounded-side-effects",
                 "contractual-evolution",
                 "evidence-bound-assurance",
             ],
             self.ids,
         )
+        invariants = {item["id"]: item for item in self.floor["invariants"]}
+        self.assertEqual(
+            "Single policy authority",
+            invariants["single-policy-authority"]["title"],
+        )
+        self.assertIn(
+            "can escape the local operation",
+            invariants["bounded-side-effects"]["trigger"],
+        )
+        self.assertIn(
+            "externally consumed",
+            invariants["contractual-evolution"]["trigger"],
+        )
+        skill = (
+            ROOT / "process_assets" / "skills" / "production-engineering" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Assess the [canonical invariant definitions]", skill)
+        self.assertIn("no more than seven invariants", skill)
 
     def test_plan_requires_canonical_order_and_real_work_items(self) -> None:
         validate_document(self.plan, "plan", schema_root=SCHEMAS)
