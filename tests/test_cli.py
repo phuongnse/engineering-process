@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from engineering_process.cli import build_parser, main
+from engineering_process.cli import build_parser, command_change_review_start, main
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -131,6 +133,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual([{"id": "library-cli", "version": 1}], result["readiness"]["packs"])
         self.assertEqual([], result["readiness"]["plannedCapabilities"])
         self.assertIn("distribution-integrity", result["readiness"]["capabilities"])
+
+    def test_review_start_reports_bounded_process_signals(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "review-pending",
+            "cycle": 2,
+            "reviewAssignment": {"reportSchemaVersion": 7},
+            "history": [
+                {"event": "profile-failed", "details": {}},
+                {"event": "unrelated-event", "details": {"verdict": "changes-requested"}},
+            ],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            actor="reviewer",
+            context="review-context",
+            actor_kind="agent",
+        )
+        with patch("engineering_process.cli.start_review", return_value=state):
+            result, code = command_change_review_start(args)
+        self.assertEqual(0, code)
+        self.assertEqual(["profile-failed"], result["processSignals"])
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from engineering_process.lifecycle import (
     begin_implementation,
     finish_change,
     lifecycle_status,
+    process_improvement_signals,
     register_plan,
     start_change,
     start_review,
@@ -205,6 +206,10 @@ class LifecycleTests(unittest.TestCase):
                 }
                 for invariant_id in self.invariant_ids
             ],
+            "processImprovement": {
+                "status": "none",
+                "rationale": "No reusable process problem was observed.",
+            },
         }
 
     def non_blocking_finding(self) -> dict[str, object]:
@@ -320,8 +325,15 @@ class LifecycleTests(unittest.TestCase):
         review = self.review_document("approved")
         review["schemaVersion"] = 6
         review.pop("productionEngineering")
+        review.pop("processImprovement")
         write_json(review_path, review)
         with self.assertRaisesRegex(ProcessError, "schemaVersion must be 7"):
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        review = self.review_document("approved")
+        review.pop("processImprovement")
+        write_json(review_path, review)
+        with self.assertRaisesRegex(ProcessError, "processImprovement"):
             submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
 
         review = self.review_document("approved")
@@ -336,6 +348,38 @@ class LifecycleTests(unittest.TestCase):
             "owner": "process-owner",
             "recordUrl": "https://github.com/phuongnse/engineering-process/issues/111",
         }
+        write_json(review_path, review)
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        self.assertEqual("approved", state["phase"])
+
+    def test_shared_process_disposition_requires_a_durable_record_before_submit(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        review = self.review_document("approved")
+        review["processImprovement"] = {
+            "status": "shared-process",
+            "rationale": "The consumer exposed a reusable process gap.",
+        }
+        write_json(review_path, review)
+        with self.assertRaisesRegex(ProcessError, "recordUrl"):
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        self.assertEqual(
+            "review-pending",
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
+        )
+
+        review["processImprovement"]["recordUrl"] = (
+            "https://github.com/phuongnse/engineering-process/issues/127"
+        )
         write_json(review_path, review)
         state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
         self.assertEqual("approved", state["phase"])
@@ -389,6 +433,7 @@ class LifecycleTests(unittest.TestCase):
         review = self.review_document("approved")
         review["schemaVersion"] = 6
         review.pop("productionEngineering")
+        review.pop("processImprovement")
         review["findings"] = [self.non_blocking_finding()]
         review["findings"][0]["disposition"] = {
             "status": "resolved",
@@ -427,6 +472,7 @@ class LifecycleTests(unittest.TestCase):
         review = self.review_document("approved")
         review["schemaVersion"] = 5
         review.pop("productionEngineering")
+        review.pop("processImprovement")
         review["findings"] = [self.non_blocking_finding()]
         review_path = self.root / ".process" / "runs" / "review-input.json"
         write_json(review_path, review)
@@ -538,6 +584,9 @@ class LifecycleTests(unittest.TestCase):
         write_json(review_path, self.review_document("changes-requested"))
         state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
         self.assertEqual("changes-requested", state["phase"])
+        self.assertEqual(
+            ["review-changes-requested"], process_improvement_signals(state)
+        )
         state = begin_implementation(
             self.root,
             PROCESS_ROOT,
@@ -644,6 +693,7 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual("failed", report["status"])
         self.assertEqual("implementing", state["phase"])
+        self.assertEqual(["profile-failed"], process_improvement_signals(state))
 
     def test_process_change_policy_requires_consumer_evidence(self) -> None:
         self.project["lifecycle"]["processChanges"] = {

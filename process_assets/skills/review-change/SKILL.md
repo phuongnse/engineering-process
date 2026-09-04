@@ -35,6 +35,15 @@ reviewed snapshot closes it. `accepted-risk` and `tracked-follow-up` also record
 owner and stable HTTPS `recordUrl`. The report path is process state and does not
 mutate the reviewed snapshot.
 
+Review start also returns bounded `processSignals` derived from exact lifecycle
+events. Treat them as prompts for judgment, not proof of a shared defect; independently
+consider consumer evidence that the lifecycle cannot observe. Every schema-version 7
+report classifies `processImprovement` as `none`, `consumer-specific`, or
+`shared-process` and gives a concrete rationale. Consumer-specific behavior stays in
+the consumer. For `shared-process`, keep the assignment `review-pending` and route the
+candidate through **improve-process**. Submit only after an existing or owner-authorized
+issue supplies the stable HTTPS `recordUrl`; the review itself remains read-only.
+
 Read the consumer readiness result and repository rules. Check the complete diff for
 an affected enforced capability omitted from the contract, weakened evidence, a pack
 version changed implicitly, or a planned gap made blocking without accepted scope.

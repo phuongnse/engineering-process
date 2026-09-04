@@ -36,7 +36,8 @@
       "type": "array",
       "minItems": 1,
       "items": {"$ref": "#/$defs/invariantAssessment"}
-    }
+    },
+    "processImprovement": {"$ref": "#/$defs/processImprovement"}
   },
   "allOf": [
     {
@@ -56,6 +57,11 @@
       "if": {"properties": {"schemaVersion": {"const": 7}}, "required": ["schemaVersion"]},
       "then": {"required": ["productionEngineering"]},
       "else": {"not": {"required": ["productionEngineering"]}}
+    },
+    {
+      "if": {"properties": {"schemaVersion": {"const": 7}}, "required": ["schemaVersion"]},
+      "then": {"required": ["processImprovement"]},
+      "else": {"not": {"required": ["processImprovement"]}}
     },
     {
       "if": {"properties": {"schemaVersion": {"enum": [5, 6]}}, "required": ["schemaVersion"]},
@@ -124,6 +130,25 @@
             "required": ["status"]
           },
           "then": {"required": ["owner", "recordUrl"]}
+        }
+      ]
+    },
+    "processImprovement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "rationale"],
+      "properties": {
+        "status": {"enum": ["none", "consumer-specific", "shared-process"]},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+        "recordUrl": {"type": "string", "minLength": 9, "maxLength": 1000, "pattern": "^https://\\S+$"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"status": {"const": "shared-process"}},
+            "required": ["status"]
+          },
+          "then": {"required": ["recordUrl"]}
         }
       ]
     },

@@ -28,6 +28,7 @@ from .lifecycle import (
     begin_implementation,
     finish_change,
     lifecycle_status,
+    process_improvement_signals,
     register_plan,
     start_change,
     start_review,
@@ -310,6 +311,7 @@ def command_change_review_start(args: argparse.Namespace) -> Result:
         "change review start",
         state,
         assignment=state["reviewAssignment"],
+        processSignals=process_improvement_signals(state),
         reportPath=f".process/runs/{args.change_id}/review-{state['cycle']}.json",
     ), 0
 
