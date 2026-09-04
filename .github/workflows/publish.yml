@@ -136,7 +136,7 @@ jobs:
           import os
           from pathlib import Path
           import time
-          from urllib.request import urlopen
+          from urllib.request import Request, urlopen
 
           expected = {
               path.name: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -145,6 +145,12 @@ jobs:
               and (path.suffix == ".whl" or path.name.endswith(".tar.gz"))
           }
           url = f"https://pypi.org/pypi/engineering-process/{os.environ['RELEASE_VERSION']}/json"
+          simple_request = Request(
+              "https://pypi.org/simple/engineering-process/",
+              headers={
+                  "Accept": "application/vnd.pypi.simple.v1+json",
+              },
+          )
           for attempt in range(12):
               try:
                   with urlopen(url, timeout=20) as response:
@@ -153,13 +159,25 @@ jobs:
                       item["filename"]: item["digests"]["sha256"]
                       for item in payload["urls"]
                   }
-                  if actual == expected:
+                  with urlopen(simple_request, timeout=20) as response:
+                      if response.headers.get_content_type() != "application/vnd.pypi.simple.v1+json":
+                          raise RuntimeError("PyPI Simple API did not return PEP 691 JSON")
+                      simple_payload = json.load(response)
+                  simple_actual = {
+                      item["filename"]: item["hashes"].get("sha256")
+                      for item in simple_payload["files"]
+                      if item["filename"] in expected
+                  }
+                  if actual == expected and simple_actual == expected:
                       break
               except Exception:
                   if attempt == 11:
                       raise
               if attempt == 11:
-                  raise RuntimeError(f"PyPI files differ: expected {expected}, got {actual}")
+                  raise RuntimeError(
+                      f"PyPI files differ: expected {expected}, "
+                      f"JSON API {actual}, Simple API {simple_actual}"
+                  )
               time.sleep(10)
           PY
       - name: Create short-lived release token

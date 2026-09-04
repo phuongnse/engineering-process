@@ -104,6 +104,15 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("needs: [metadata, publish]", workflow)
         self.assertIn("Verify PyPI exposes the exact built hashes", workflow)
+        visibility = workflow.split(
+            "      - name: Verify PyPI exposes the exact built hashes\n", maxsplit=1
+        )[1].split("      - name: Create short-lived release token\n", maxsplit=1)[0]
+        self.assertIn("for attempt in range(12)", visibility)
+        self.assertIn('"Accept": "application/vnd.pypi.simple.v1+json"', visibility)
+        self.assertIn(
+            "if actual == expected and simple_actual == expected:", visibility
+        )
+        self.assertIn("PyPI Simple API did not return PEP 691 JSON", visibility)
         self.assertIn("SOURCE_DATE_EPOCH", workflow)
         self.assertIn("verification/normalize_sdist.py", workflow)
         self.assertIn("points to a different commit", workflow)
