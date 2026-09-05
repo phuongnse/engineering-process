@@ -34,4 +34,6 @@ tracked-follow-up entries need an owner and durable HTTPS record. -->
 - [ ] Required profiles pass on the reviewed snapshot.
 - [ ] Independent review approved with no blocking finding.
 - [ ] Every non-blocking finding has a recorded disposition.
+<!-- Producer/intermediate PR: Refs ISSUE. Final verified consumer adoption only:
+Closes ISSUE, closes OWNER/REPOSITORY#NUMBER. Repeat the keyword for every issue. -->
 <!-- engineering-process:pr-description:end -->
