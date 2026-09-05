@@ -599,6 +599,43 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("implementing", state["phase"])
         self.assertEqual({}, state["verification"])
 
+    def test_resolved_invariant_finishes_with_its_identity_and_history_preserved(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        first = self.review_document("changes-requested")
+        first["findings"][0]["priority"] = "P2"
+        first_path = self.root / ".process" / "runs" / "first-review.json"
+        write_json(first_path, first)
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", first_path)
+        self.assertEqual("changes-requested", state["phase"])
+
+        begin_implementation(self.root, PROCESS_ROOT, "sample-change", actor_id="implementer", context_id="implementation-context-2", kind="agent")
+        (self.root / "product.txt").write_text("corrected\n", encoding="utf-8")
+        self.verify_all()
+        start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        approved = self.review_document("approved")
+        carried = deepcopy(first["findings"][0])
+        carried["severity"] = "non-blocking"
+        carried["disposition"] = {"status": "resolved", "rationale": "The corrected candidate satisfies the invariant with fresh verification."}
+        approved["findings"] = [carried]
+        second_path = self.root / ".process" / "runs" / "second-review.json"
+        for field, changed in (("priority", "P3"), ("origin", "contract")):
+            invalid = deepcopy(approved)
+            invalid["findings"][0][field] = changed
+            write_json(second_path, invalid)
+            with self.subTest(field=field), self.assertRaisesRegex(ProcessError, "identity fields are immutable"):
+                submit_review(self.root, PROCESS_ROOT, "sample-change", second_path)
+        write_json(second_path, approved)
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", second_path)
+        self.assertEqual("approved", state["phase"])
+        self.assertEqual(first, state["reviewHistory"][0]["document"])
+        self.assertEqual(approved, state["reviewHistory"][1]["document"])
+        state, receipt = finish_change(self.root, PROCESS_ROOT, "sample-change", actor_id="coordinator", context_id="finish-context", kind="agent")
+        self.assertEqual("completed", state["phase"])
+        self.assertEqual(2, state["cycle"])
+        self.assertEqual("approved", receipt["review"]["verdict"])
+
     def test_correction_review_requires_the_original_reviewer_identity(self) -> None:
         self.begin()
         self.verify_all()

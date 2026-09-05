@@ -98,7 +98,12 @@ def validate_review_assessments(review: dict[str, Any], process_root: Path) -> N
     unlinked = sorted(
         finding_id
         for finding_id, finding in findings.items()
-        if finding["origin"] == "production-invariant" and finding_id not in linked
+        if finding["origin"] == "production-invariant"
+        and finding_id not in linked
+        and not (
+            finding["severity"] == "non-blocking"
+            and finding.get("disposition", {}).get("status") == "resolved"
+        )
     )
     if unlinked:
         raise ProcessError(
