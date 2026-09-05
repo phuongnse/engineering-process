@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "resolved-invariant-review-completion",
-  "type": "fix",
-  "summary": "Allow resolved production-invariant findings to retain their identity through correction review without waiving any current violation.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/146"
-}

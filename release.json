@@ -1,13 +1,19 @@
 {
   "changes": [
     {
-      "id": "review-priority-definitions",
-      "source": "https://github.com/phuongnse/engineering-process/issues/111",
-      "summary": "Define the process's P0-P3 review-impact convention and its independent relationship to blocking decisions.",
+      "id": "canonical-distribution-text-boundary",
+      "source": "https://github.com/phuongnse/engineering-process/issues/146",
+      "summary": "Write release identity text with explicit LF and reject non-canonical producer text bytes before packaging; clarify byte-bound artifact assurance.",
+      "type": "fix"
+    },
+    {
+      "id": "resolved-invariant-review-completion",
+      "source": "https://github.com/phuongnse/engineering-process/issues/146",
+      "summary": "Allow resolved production-invariant findings to retain their identity through correction review without waiving any current violation.",
       "type": "fix"
     }
   ],
-  "previousVersion": "1.2.3",
+  "previousVersion": "1.2.4",
   "schemaVersion": 5,
-  "version": "1.2.4"
+  "version": "1.2.5"
 }
