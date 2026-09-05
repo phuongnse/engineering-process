@@ -793,6 +793,34 @@ class LifecycleTests(unittest.TestCase):
                     (self.root / ".process" / "runs" / "sample-change").exists()
                 )
 
+    def test_live_producer_policy_requires_its_accepted_issue(self) -> None:
+        project = json.loads((PROCESS_ROOT / ".process" / "project.json").read_text())
+        self.project["lifecycle"]["processChanges"] = project["lifecycle"]["processChanges"]
+        self.contract["consumerEvidence"] = [
+            {"repository": "engineering-process", "incident": "Deferred issue handoff enablement."}
+        ]
+        for source in (
+            "issue-110",
+            "https://github.com/other/process/issues/110",
+            "https://github.com/phuongnse/engineering-process/pull/118",
+        ):
+            with self.subTest(source=source):
+                self.contract["source"] = source
+                write_json(self.contract_path, self.contract)
+                with self.assertRaisesRegex(ProcessError, "numbered issue"):
+                    start_change(
+                        self.root, PROCESS_ROOT, self.project, self.contract_path,
+                        actor_id="author", context_id="author-context", kind="agent",
+                    )
+                self.assertFalse((self.root / ".process" / "runs").exists())
+        self.contract["source"] = "https://github.com/phuongnse/engineering-process/issues/110"
+        write_json(self.contract_path, self.contract)
+        state = start_change(
+            self.root, PROCESS_ROOT, self.project, self.contract_path,
+            actor_id="author", context_id="author-context", kind="agent",
+        )
+        self.assertEqual("specified", state["phase"])
+
     def test_evidence_only_process_change_policy_remains_compatible(self) -> None:
         self.project["lifecycle"]["processChanges"] = {
             "requireConsumerEvidence": True
