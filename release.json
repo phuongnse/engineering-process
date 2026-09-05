@@ -1,13 +1,13 @@
 {
   "changes": [
     {
-      "id": "pypi-cache-horizon-before-adoption",
-      "source": "https://github.com/phuongnse/engineering-process/issues/134",
-      "summary": "Wait for valid pre-publication PyPI Simple responses to expire before dispatching consumer adoption.",
+      "id": "review-priority-definitions",
+      "source": "https://github.com/phuongnse/engineering-process/issues/111",
+      "summary": "Define the process's P0-P3 review-impact convention and its independent relationship to blocking decisions.",
       "type": "fix"
     }
   ],
-  "previousVersion": "1.2.2",
+  "previousVersion": "1.2.3",
   "schemaVersion": 5,
-  "version": "1.2.3"
+  "version": "1.2.4"
 }
