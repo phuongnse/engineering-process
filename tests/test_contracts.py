@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import tempfile
 import unittest
 
 from jsonschema import Draft202012Validator
 
-from engineering_process.contracts import ProcessError, read_json, validate_document
+from engineering_process.contracts import (
+    ProcessError,
+    formatted_json_bytes,
+    read_json,
+    validate_document,
+    write_json_atomic,
+)
 from engineering_process.distribution import schemas_root
 from engineering_process.project import (
     load_project,
@@ -21,6 +28,16 @@ SCHEMAS = schemas_root(ROOT)
 
 
 class ContractTests(unittest.TestCase):
+    def test_json_documents_have_one_utf8_lf_representation(self) -> None:
+        document = {"z": "\u0111", "a": 1}
+        expected = b'{\n  "a": 1,\n  "z": "\xc4\x91"\n}\n'
+        self.assertEqual(expected, formatted_json_bytes(document))
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "document.json"
+            write_json_atomic(target, document)
+            self.assertEqual(expected, target.read_bytes())
+            self.assertEqual(document, read_json(target))
+
     def test_every_schema_is_valid_and_is_used(self) -> None:
         expected = {
             "change",

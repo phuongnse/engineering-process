@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Pending process draft; generated from templates/PULL_REQUEST_TEMPLATE.md.",
+  "prBodyTemplate": "{{{header}}}",
+  "prHeader": "## Summary\n\n- Outcome: Update {{#each upgrades}}{{depName}} from {{currentValue}}{{#if currentDigest}} ({{currentDigest}}){{/if}} to {{newValue}}{{#if newDigest}} ({{newDigest}}){{/if}}{{#unless @last}}; {{/unless}}{{/each}}.\n- Scope: {{#each upgrades}}{{packageFile}}{{#unless @last}}; {{/unless}}{{/each}}.\n\n## Contract and risk\n\n- Source: pending\n- Risk: pending\n- Compatibility: pending\n- Stack: pending\n\n## Verification\n\n- Profiles: pending\n- Snapshot: pending\n- Completion receipt: pending\n\n## Independent review\n\n- Verdict: pending\n- Cycles: pending\n- Blocking findings: pending\n- Non-blocking dispositions: pending\n\n## Completion gate\n\n- [ ] Accepted scope is implemented without silent expansion.\n- [ ] Required profiles pass on the reviewed snapshot.\n- [ ] Independent review approved with no blocking finding.\n- [ ] Every non-blocking finding has a recorded disposition.\n"
+}

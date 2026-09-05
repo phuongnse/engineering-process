@@ -447,6 +447,39 @@ authorizes that merge.
 This repository opts in through .github/renovate.json, so it receives the same
 adoption PR as every other consumer. See SELF_HOSTING.md and RELEASING.md.
 
+The optional [Renovate preset](templates/renovate.json) is generated from the
+canonical public template. It supplies only `prHeader` and `prBodyTemplate`;
+dependency selection, supported platforms, schedules, major-update approval,
+commands, draft policy, and merge authority remain consumer-owned. Regenerate it
+with `python verification/generate_renovate_preset.py`; `--check` rejects drift.
+
+Consumers add `github>phuongnse/engineering-process//templates/renovate#COMMIT_SHA`
+to their existing `extends` array, replacing `COMMIT_SHA` with the full source
+commit of a verified release that contains the preset. Remove obsolete inline
+`prHeader` and `prBodyTemplate` overrides, including matching package-rule overrides.
+The preset targets the canonical draft grammar used by 1.2.4 and this distribution;
+it does not claim compatibility with earlier publication contracts. A future
+grammar change must preserve this adapter or ship an explicit consumer migration.
+
+Renovate resolves presets from the protected base configuration before dependency
+updates and post-upgrade tasks. Bootstrap the compatible preset in that base before
+relying on its generated drafts; changing the candidate configuration alone cannot
+repair the same run's body. Verify the native rendered body against both the base
+and candidate process authority during adoption. Pending fields and unchecked
+Completion gate items are proposals, never evidence or approval.
+
+Before collecting lifecycle evidence for a bot PR, apply its configured
+`stopUpdatingLabel` (Renovate's default is `stop-updating`) and confirm the head is
+unchanged after any in-flight bot run finishes. Keep the label through verification,
+independent review, receipt and the consumer-owned merge. Do not request a native
+rebase or dashboard retry while reviewing: an explicit retry can resume updates.
+If the candidate changes, open a new implementation cycle and collect fresh
+evidence. Remove the pause label only when returning the PR to automation.
+
+These are native [shared preset](https://docs.renovatebot.com/config-presets/) and
+[review pause](https://docs.renovatebot.com/configuration-options/#stopupdatinglabel)
+boundaries; the control plane does not become a second PR publisher.
+
 ## Compatibility
 
 Version 1.x retains a few small pre-1.0 command shapes so existing consumers can
