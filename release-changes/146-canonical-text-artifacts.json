@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "canonical-distribution-text-boundary",
+  "type": "fix",
+  "summary": "Write release identity text with explicit LF and reject non-canonical producer text bytes before packaging; clarify byte-bound artifact assurance.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/146"
+}

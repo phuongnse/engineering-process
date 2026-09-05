@@ -12,12 +12,44 @@ import unittest
 from engineering_process.contracts import ProcessError, read_json, write_json_atomic
 from engineering_process.release import derive_next_version, validate_release
 from verification.normalize_sdist import normalize
+from verification.prepare_release import _replace_once
+from verification.verify_distribution import validate_distribution_text
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_replacement_writes_explicit_lf_on_every_host(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "version.txt"
+            for source in (b"version=old\nnext\n", b"version=old\r\nnext\r\n", b"version=old\r\nnext\n"):
+                with self.subTest(source=source):
+                    target.write_bytes(source)
+                    _replace_once(target, "old", "new")
+                    self.assertEqual(b"version=new\nnext\n", target.read_bytes())
+
+    def test_distribution_text_uses_the_declared_inventory_and_rejects_byte_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "engineering_process").mkdir()
+            (root / "assets").mkdir()
+            (root / "pyproject.toml").write_bytes(b'[tool.setuptools.data-files]\n"share/process" = ["assets/newly-declared.fragment"]\n')
+            (root / "release.json").write_bytes(b"{}\n")
+            (root / "engineering_process" / "__init__.py").write_bytes(b'VERSION = "1.0.0"\n')
+            (root / "opaque.bin").write_bytes(b"\x00\xff\r\n")
+            target = root / "assets" / "newly-declared.fragment"
+            valid = b"first\nsecond\n"
+            target.write_bytes(valid)
+            validate_distribution_text(root)
+            for invalid in (b"first\r\nsecond\r\n", b"first\r\nsecond\n", b"\xef\xbb\xbf" + valid, b"\xff\n"):
+                with self.subTest(invalid=invalid):
+                    target.write_bytes(invalid)
+                    with self.assertRaisesRegex(RuntimeError, "UTF-8 without BOM and use LF"):
+                        validate_distribution_text(root)
+                    target.write_bytes(valid)
+                    validate_distribution_text(root)
+
     def test_current_release_identity_is_consistent(self) -> None:
         release = read_json(ROOT / "release.json")
         result = validate_release(ROOT, ROOT, tag=f"v{release['version']}")
@@ -90,6 +122,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn(
                 f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )
+            validate_distribution_text(target)
 
     def test_invalid_change_type_fails(self) -> None:
         with self.assertRaises(ProcessError):

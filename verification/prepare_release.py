@@ -26,7 +26,7 @@ def _replace_once(path: Path, old: str, new: str) -> None:
     if text.count(old) != 1:
         raise ProcessError(f"{path}: expected exactly one {old!r}")
     temporary = path.with_name(f".{path.name}.release.tmp")
-    temporary.write_text(text.replace(old, new), encoding="utf-8")
+    temporary.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
     temporary.replace(path)
 
 

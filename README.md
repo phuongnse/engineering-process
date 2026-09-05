@@ -417,6 +417,14 @@ At any point:
 
 ## Release to consumer PR
 
+This producer's release identity inputs and text assets declared by
+`tool.setuptools.data-files` use UTF-8 without BOM and LF, matching `.gitattributes`.
+Writers select that representation explicitly; JSON writers use
+`write_json_atomic`. Existing distribution verification checks the declared text
+bytes before building. It rejects CRLF, mixed endings, BOM and invalid UTF-8 even
+when text-mode reads or Git conversion would hide the difference. Binary data and
+fixtures outside that text inventory retain their own format contracts.
+
 Every opted-in consumer uses Renovate's pip-compile manager. Its engineering-process
 package rule keeps the adoption pull request in draft and runs exactly:
 

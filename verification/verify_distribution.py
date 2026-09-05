@@ -8,11 +8,32 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-
-from normalize_sdist import normalize
-
+import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from verification.normalize_sdist import normalize  # noqa: E402
+
+
+def _utf8_lf(path: Path) -> str:
+    data = path.read_bytes()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise RuntimeError(f"{path}: distribution text must be UTF-8 without BOM and use LF") from error
+    if data.startswith(b"\xef\xbb\xbf") or b"\r" in data:
+        raise RuntimeError(f"{path}: distribution text must be UTF-8 without BOM and use LF")
+    return text
+
+
+def validate_distribution_text(root: Path) -> None:
+    metadata = tomllib.loads(_utf8_lf(root / "pyproject.toml"))
+    paths = ["release.json", "engineering_process/__init__.py"]
+    for declared in metadata["tool"]["setuptools"]["data-files"].values():
+        paths.extend(declared)
+    for relative in dict.fromkeys(paths):
+        _utf8_lf(root / relative)
 
 
 def run(
@@ -35,6 +56,7 @@ def run(
 
 
 def main() -> int:
+    validate_distribution_text(PROJECT_ROOT)
     with tempfile.TemporaryDirectory(prefix="engineering-process-dist-") as directory:
         root = Path(directory)
         artifacts = root / "dist"
