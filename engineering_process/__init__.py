@@ -1,3 +1,3 @@
 """Agent-neutral engineering process."""
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"

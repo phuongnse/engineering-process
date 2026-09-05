@@ -1,19 +1,13 @@
 {
   "changes": [
     {
-      "id": "canonical-distribution-text-boundary",
+      "id": "renovate-canonical-pending-preset",
       "source": "https://github.com/phuongnse/engineering-process/issues/146",
-      "summary": "Write release identity text with explicit LF and reject non-canonical producer text bytes before packaging; clarify byte-bound artifact assurance.",
-      "type": "fix"
-    },
-    {
-      "id": "resolved-invariant-review-completion",
-      "source": "https://github.com/phuongnse/engineering-process/issues/146",
-      "summary": "Allow resolved production-invariant findings to retain their identity through correction review without waiving any current violation.",
+      "summary": "Generate a shared Renovate pending-description preset from the canonical public template and document immutable consumer configuration and native review handoff.",
       "type": "fix"
     }
   ],
-  "previousVersion": "1.2.4",
+  "previousVersion": "1.2.5",
   "schemaVersion": 5,
-  "version": "1.2.5"
+  "version": "1.2.6"
 }
