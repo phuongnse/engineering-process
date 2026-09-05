@@ -29,6 +29,16 @@ class ReleaseTests(unittest.TestCase):
                     _replace_once(target, "old", "new")
                     self.assertEqual(b"version=new\nnext\n", target.read_bytes())
 
+    def test_release_replacement_rejects_bom_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "version.txt"
+            original = b'\xef\xbb\xbfVERSION = "old"\r\n'
+            target.write_bytes(original)
+            with self.assertRaisesRegex(ProcessError, "UTF-8 without BOM"):
+                _replace_once(target, "old", "new")
+            self.assertEqual(original, target.read_bytes())
+            self.assertFalse(target.with_name(f".{target.name}.release.tmp").exists())
+
     def test_distribution_text_uses_the_declared_inventory_and_rejects_byte_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
