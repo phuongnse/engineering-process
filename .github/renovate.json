@@ -18,6 +18,12 @@
   },
   "packageRules": [
     {
+      "description": "Keep the supported Python range under consumer control",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["requires-python"],
+      "enabled": false
+    },
+    {
       "description": "Adopt each published engineering-process release as a complete managed pull request",
       "matchManagers": ["pip-compile"],
       "matchFileNames": [
