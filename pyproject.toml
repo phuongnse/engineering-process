@@ -42,6 +42,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 "share/engineering-process/templates" = [
   "templates/AGENTS.process.md",
   "templates/PULL_REQUEST_TEMPLATE.md",
+  "templates/renovate.json",
   "templates/adopt-process.py",
   "templates/adopt-process-windows-job.py",
 ]

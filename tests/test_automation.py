@@ -5,7 +5,9 @@ from pathlib import Path
 import re
 import unittest
 
-from engineering_process.publication_compat import validate_pull_request
+from engineering_process.contracts import ProcessError
+from engineering_process.publication_compat import _pull_request_body_issues, validate_pull_request
+from verification.generate_renovate_preset import generate_preset
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,6 +17,18 @@ ACTIVE_PROCESS_PIN = re.compile(
 
 
 class AutomationTests(unittest.TestCase):
+    def test_renovate_preset_matches_the_canonical_pending_template(self) -> None:
+        template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
+        preset = json.loads((ROOT / "templates" / "renovate.json").read_text(encoding="utf-8"))
+        self.assertEqual(generate_preset(template), preset)
+        self.assertEqual([], _pull_request_body_issues(preset["prHeader"], "draft"))
+        self.assertTrue(_pull_request_body_issues(preset["prHeader"], "ready"))
+
+    def test_renovate_preset_rejects_an_incomplete_public_contract(self) -> None:
+        template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
+        with self.assertRaises(ProcessError):
+            generate_preset(template.replace("## Completion gate", "## Other"))
+
     def test_pull_request_template_defines_public_evidence_hierarchy(self) -> None:
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(
             encoding="utf-8"

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "renovate-canonical-pending-preset",
+  "type": "fix",
+  "summary": "Generate a shared Renovate pending-description preset from the canonical public template and document immutable consumer configuration and native review handoff.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/146"
+}

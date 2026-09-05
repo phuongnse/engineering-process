@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 
@@ -78,6 +79,14 @@ def main() -> int:
         if len(wheels) != 1 or len(sdists) != 1:
             raise RuntimeError("build must produce exactly one wheel and one sdist")
         normalize(sdists[0], epoch)
+        expected_preset = (PROJECT_ROOT / "templates" / "renovate.json").read_bytes()
+        with tarfile.open(sdists[0]) as archive:
+            presets = [name for name in archive.getnames() if name.endswith("/templates/renovate.json")]
+            if len(presets) != 1:
+                raise RuntimeError("sdist must contain exactly one generated Renovate preset")
+            with archive.extractfile(presets[0]) as preset:
+                if preset.read() != expected_preset:
+                    raise RuntimeError("sdist Renovate preset differs from the canonical source")
 
         environment = root / "venv"
         run([sys.executable, "-m", "venv", str(environment)], cwd=root)
@@ -88,6 +97,9 @@ def main() -> int:
             cwd=root,
         )
         run([str(processctl), "--version"], cwd=root, timeout=30)
+        installed_preset = environment / "share" / "engineering-process" / "templates" / "renovate.json"
+        if installed_preset.read_bytes() != expected_preset:
+            raise RuntimeError("installed wheel Renovate preset differs from the canonical source")
         run([str(processctl), "skills", "validate", "--json"], cwd=root, timeout=30)
         run(
             [
