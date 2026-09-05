@@ -17,6 +17,11 @@ from engineering_process.contracts import ProcessError, read_json
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
+PREVIOUS_SKILLS = (
+    "run-change", "start-change", "plan-change", "implement-change",
+    "verify-change", "review-change", "finish-change", "improve-process",
+    "production-engineering",
+)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -135,6 +140,80 @@ class AdoptionTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def previous_catalog_consumer(self) -> Path:
+        consumer = (self.root / "previous-catalog").resolve()
+        write_json(consumer / ".process" / "project.json", read_json(self.root / ".process" / "project.json"))
+        managed = []
+        for name in PREVIOUS_SKILLS:
+            directory = consumer / ".agents" / "skills" / name
+            directory.mkdir(parents=True)
+            (directory / "SKILL.md").write_bytes(
+                f"---\nname: {name}\ndescription: Previous release skill.\n---\n".encode("utf-8")
+            )
+            write_json(directory / ".engineering-process.json", {
+                "schemaVersion": 1, "managedBy": "engineering-process",
+                "version": "1.2.6", "digest": "sha256:" + "0" * 64,
+            })
+            (directory / "consumer-notes.md").write_bytes(b"consumer owned\n")
+            managed.extend(f".agents/skills/{name}/{file}" for file in ("SKILL.md", ".engineering-process.json"))
+        invariant = Path(".agents/skills/production-engineering/invariants.json")
+        (consumer / invariant).write_bytes(
+            (PROCESS_ROOT / "process_assets" / "skills" / "production-engineering" / "invariants.json").read_bytes()
+        )
+        managed.append(invariant.as_posix())
+        write_json(consumer / ".process" / "process.lock", {
+            "schemaVersion": 2,
+            "process": {"package": "engineering-process", "version": "1.2.6", "digest": "sha256:" + "0" * 64},
+            "requirementsDigest": "sha256:" + "1" * 64,
+            "skills": list(PREVIOUS_SKILLS), "managedFiles": managed,
+        })
+        (consumer / "AGENTS.md").write_bytes(
+            b"# Consumer rules\n\n<!-- engineering-process:start -->\nUse run-change.\n<!-- engineering-process:end -->\n"
+        )
+        return consumer
+
+    def test_previous_catalog_migrates_all_eight_names_and_is_idempotent(self) -> None:
+        consumer = self.previous_catalog_consumer()
+        self.assertEqual("applied", apply_adoption(consumer, PROCESS_ROOT, self.requirements)["status"])
+        lock = read_json(consumer / ".process" / "process.lock")
+        expected = {path.name for path in (PROCESS_ROOT / "process_assets" / "skills").iterdir() if path.is_dir()}
+        self.assertEqual(expected, set(lock["skills"]))
+        installed = consumer / ".agents" / "skills"
+        self.assertEqual(expected, {path.name for path in installed.iterdir() if (path / "SKILL.md").is_file()})
+        for name in PREVIOUS_SKILLS:
+            with self.subTest(name=name):
+                self.assertEqual(b"consumer owned\n", (installed / name / "consumer-notes.md").read_bytes())
+                if name != "production-engineering":
+                    for filename in ("SKILL.md", ".engineering-process.json"):
+                        self.assertFalse((installed / name / filename).exists())
+                        self.assertNotIn(f".agents/skills/{name}/{filename}", lock["managedFiles"])
+        instructions = (consumer / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("# Consumer rules", instructions)
+        self.assertIn("deliver-change", instructions)
+        self.assertNotIn("run-change", instructions)
+        self.assertEqual("passed", check_adoption(consumer, PROCESS_ROOT, self.requirements)["status"])
+        self.assertEqual("unchanged", apply_adoption(consumer, PROCESS_ROOT, self.requirements)["status"])
+
+    def test_previous_catalog_is_restored_after_rename_cleanup_failure(self) -> None:
+        consumer = self.previous_catalog_consumer()
+        before = {path.relative_to(consumer): path.read_bytes() for path in consumer.rglob("*") if path.is_file()}
+        original_unlink = Path.unlink
+        failed = False
+
+        def fail_old_skill_removal(path: Path, *args: object, **kwargs: object) -> None:
+            nonlocal failed
+            if not failed and path == consumer / ".agents" / "skills" / "run-change" / "SKILL.md":
+                failed = True
+                raise OSError("injected old-skill cleanup failure")
+            original_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", fail_old_skill_removal), self.assertRaisesRegex(ProcessError, "was rolled back"):
+            apply_adoption(consumer, PROCESS_ROOT, self.requirements)
+        self.assertTrue(failed)
+        self.assertEqual(before, {path.relative_to(consumer): path.read_bytes() for path in consumer.rglob("*") if path.is_file()})
+        self.assertEqual("applied", apply_adoption(consumer, PROCESS_ROOT, self.requirements)["status"])
+        self.assertEqual("passed", check_adoption(consumer, PROCESS_ROOT, self.requirements)["status"])
+
     def test_legacy_consumer_converges_and_second_apply_is_noop(self) -> None:
         first = apply_adoption(
             self.root, PROCESS_ROOT, self.requirements, requirements_source=self.requirements
@@ -160,7 +239,8 @@ class AdoptionTests(unittest.TestCase):
         self.assertFalse((self.root / ".process" / "automation.json").exists())
         self.assertFalse((self.root / ".process" / "adoption-migrations").exists())
         self.assertTrue((self.root / ".agents" / "skills" / "consumer-owned" / "SKILL.md").is_file())
-        self.assertTrue((self.root / ".agents" / "skills" / "improve-process" / "SKILL.md").is_file())
+        self.assertTrue((self.root / ".agents" / "skills" / "process-improve" / "SKILL.md").is_file())
+        self.assertFalse((self.root / ".agents" / "skills" / "run-change" / "SKILL.md").exists())
         self.assertEqual(
             (
                 PROCESS_ROOT
@@ -204,7 +284,7 @@ class AdoptionTests(unittest.TestCase):
         lock = read_json(self.root / ".process" / "process.lock")
         self.assertEqual(2, lock["schemaVersion"])
         self.assertEqual(VERSION, lock["process"]["version"])
-        self.assertIn(".agents/skills/run-change/SKILL.md", lock["managedFiles"])
+        self.assertIn(".agents/skills/deliver-change/SKILL.md", lock["managedFiles"])
         self.assertIn(".process/adopt-process-windows-job.py", lock["managedFiles"])
 
         second = apply_adoption(self.root, PROCESS_ROOT, self.requirements)
@@ -220,7 +300,7 @@ class AdoptionTests(unittest.TestCase):
             apply_adoption(self.root, PROCESS_ROOT, self.requirements)
 
     def test_consumer_owned_skill_name_collision_fails_closed(self) -> None:
-        collision = self.root / ".agents" / "skills" / "improve-process" / "SKILL.md"
+        collision = self.root / ".agents" / "skills" / "process-improve" / "SKILL.md"
         collision.parent.mkdir(parents=True)
         collision.write_text("consumer skill\n", encoding="utf-8")
         with self.assertRaisesRegex(ProcessError, "consumer-owned path collides"):

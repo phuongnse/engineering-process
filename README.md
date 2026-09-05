@@ -9,11 +9,27 @@ Portable skills explain what to do. processctl owns state transitions and curren
 evidence. Each consumer owns its product rules, exact commands, merge policy, and
 release decisions.
 
+Start delivery work with [deliver-change](process_assets/skills/deliver-change/SKILL.md).
+It selects the current phase from lifecycle state; callers do not select a phase skill:
+
+    deliver-change
+      change-start -> change-plan -> change-implement -> change-verify
+        -> change-review -> change-complete
+
+[process-improve](process_assets/skills/process-improve/SKILL.md) handles a reusable
+process problem, then returns delivery to the same lifecycle.
+[production-engineering](process_assets/skills/production-engineering/SKILL.md) supplies
+the invariant floor consulted from planning through independent review. Both are
+reachable specializations; neither advances lifecycle state. `change-complete` calls
+the existing `processctl change finish` command.
+
+For migration from the previous skill identifiers, see [Versioning](VERSIONING.md#skill-namespace-migration).
+
 ## Architecture
 
 The distribution has four live parts:
 
-1. Managed skills under process_assets/skills, all reachable from run-change.
+1. Managed skills under process_assets/skills, all reachable from deliver-change.
 2. One processctl state machine under engineering_process/lifecycle.py.
 3. JSON Schemas that are loaded directly by the runtime.
 4. One adoption transaction that synchronizes managed skills and configuration from
@@ -151,7 +167,7 @@ This assessment is not a production certificate. Production still requires the
 consumer's immutable readiness pack, every required capability in `enforced` state,
 fresh consumer-owned verification on the exact candidate, and independent review.
 
-For each ordinary change, `run-change` first surfaces this readiness view. The accepted
+For each ordinary change, `deliver-change` first surfaces this readiness view. The accepted
 request and consumer rules determine which capabilities are affected. Every change
 retains the project's baseline `requiredProfiles`; start and plan add any conditional
 evidence profiles needed by affected capabilities and include a planned gap only when
@@ -160,7 +176,7 @@ floor. A planned-to-enforced promotion is a reviewed consumer source diff with f
 evidence. Unrelated planned gaps remain visible but do not block development, and no
 skill chooses product priorities or changes readiness automatically.
 
-When a consumer incident exposes a reusable process gap, `improve-process` first keeps
+When a consumer incident exposes a reusable process gap, `process-improve` first keeps
 the consumer safe, then prepares a sanitized GitHub issue draft from that checkout.
 It deduplicates by consumer/process-version/invariant, requires owner authorization
 before `gh issue create`, and uses an accepted issue as the later process change source
@@ -328,7 +344,7 @@ URL; without it, the review remains pending. Earlier plan and review documents r
 readable, and their runs remain registrable or finishable with the version selected by
 the authority that started the relevant phase.
 
-The [finding priority definitions](process_assets/skills/review-change/SKILL.md#finding-priority)
+The [finding priority definitions](process_assets/skills/change-review/SKILL.md#finding-priority)
 are the canonical P0-P3 impact convention for this process, including examples and
 their relationship to blocking decisions.
 

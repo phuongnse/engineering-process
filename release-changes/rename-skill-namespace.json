@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "rename-skill-namespace",
+  "type": "breaking",
+  "summary": "Rename all eight delivery/process skills to deliver-change, change-start, change-plan, change-implement, change-verify, change-review, change-complete, and process-improve; preserve CLI/lifecycle behavior and migrate owned skill files through normal adoption.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/155"
+}

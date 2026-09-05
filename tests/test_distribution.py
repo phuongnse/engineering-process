@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 
 from engineering_process.distribution import distribution_digest, skill_digest
@@ -20,6 +21,24 @@ def framed_digest(entries: list[tuple[str, bytes]]) -> str:
 
 
 class DistributionTests(unittest.TestCase):
+    def test_packaged_skill_assets_match_the_source_catalog(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        declared = {
+            target: set(paths)
+            for target, paths in metadata["tool"]["setuptools"]["data-files"].items()
+            if target.startswith("share/engineering-process/skills/")
+        }
+        expected = {
+            f"share/engineering-process/skills/{directory.name}": {
+                path.relative_to(root).as_posix()
+                for path in directory.rglob("*") if path.is_file()
+            }
+            for directory in (root / "process_assets" / "skills").iterdir()
+            if directory.is_dir()
+        }
+        self.assertEqual(expected, declared)
+
     def test_digests_follow_canonical_relative_posix_order(self) -> None:
         entries = [
             ("skills/sample/SKILL.md", b"skill\n"),
