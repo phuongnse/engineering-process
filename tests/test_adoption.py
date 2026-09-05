@@ -141,7 +141,7 @@ class AdoptionTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def previous_catalog_consumer(self) -> Path:
-        consumer = self.root / "previous-catalog"
+        consumer = (self.root / "previous-catalog").resolve()
         write_json(consumer / ".process" / "project.json", read_json(self.root / ".process" / "project.json"))
         managed = []
         for name in PREVIOUS_SKILLS:
