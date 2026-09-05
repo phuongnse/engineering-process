@@ -190,6 +190,31 @@ class ProductionEngineeringTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "blocking finding"):
             validate_review_assessments(violation, ROOT)
 
+    def test_resolved_invariant_findings_do_not_require_a_current_violation(self) -> None:
+        review = deepcopy(self.review)
+        review["findings"] = [{
+            "id": "resolved-invariant",
+            "severity": "non-blocking",
+            "priority": "P2",
+            "criterionId": "works",
+            "origin": "production-invariant",
+            "summary": "The previous invariant violation is resolved on this snapshot.",
+            "disposition": {"status": "resolved", "rationale": "The corrected structure and current evidence satisfy the invariant."},
+        }]
+        validate_document(review, "review", schema_root=SCHEMAS)
+        validate_review_assessments(review, ROOT)
+        for status in ("accepted-risk", "tracked-follow-up"):
+            with self.subTest(status=status):
+                review["findings"][0]["disposition"] = {
+                    "status": status,
+                    "rationale": "The invariant violation remains open.",
+                    "owner": "consumer-owner",
+                    "recordUrl": "https://example.invalid/issues/1",
+                }
+                validate_document(review, "review", schema_root=SCHEMAS)
+                with self.assertRaisesRegex(ProcessError, "must be linked"):
+                    validate_review_assessments(review, ROOT)
+
     def test_review_cannot_approve_a_violation_or_leave_invariant_finding_unlinked(self) -> None:
         violation = deepcopy(self.review)
         assessment = violation["productionEngineering"][0]
