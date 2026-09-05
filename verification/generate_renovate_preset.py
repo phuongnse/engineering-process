@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 import re
 import sys
@@ -12,7 +11,11 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from engineering_process.contracts import ProcessError  # noqa: E402
+from engineering_process.contracts import (  # noqa: E402
+    ProcessError,
+    formatted_json_bytes,
+    write_json_atomic,
+)
 from engineering_process.publication_compat import (  # noqa: E402
     _pull_request_body_issues,
     _without_html_comments,
@@ -51,12 +54,12 @@ def main() -> int:
     args = parser.parse_args()
     target = PROJECT_ROOT / "templates" / "renovate.json"
     template = target.with_name("PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
-    expected = json.dumps(generate_preset(template), ensure_ascii=False, indent=2) + "\n"
+    preset = generate_preset(template)
     if args.check:
-        if target.read_text(encoding="utf-8") != expected:
+        if target.read_bytes() != formatted_json_bytes(preset):
             raise ProcessError("templates/renovate.json is stale; run verification/generate_renovate_preset.py")
     else:
-        target.write_text(expected, encoding="utf-8")
+        write_json_atomic(target, preset)
     return 0
 
 

@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError
 from engineering_process.publication_compat import _pull_request_body_issues, validate_pull_request
 from verification.generate_renovate_preset import generate_preset
+from verification import generate_renovate_preset
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +31,33 @@ class AutomationTests(unittest.TestCase):
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
         with self.assertRaises(ProcessError):
             generate_preset(template.replace("## Completion gate", "## Other"))
+
+    def test_renovate_generator_rejects_changed_bytes_and_recovers(self) -> None:
+        template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_bytes()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "templates").mkdir()
+            (root / "templates" / "PULL_REQUEST_TEMPLATE.md").write_bytes(template)
+            target = root / "templates" / "renovate.json"
+            with patch.object(generate_renovate_preset, "PROJECT_ROOT", root), patch("sys.argv", ["generate"]):
+                self.assertEqual(0, generate_renovate_preset.main())
+                expected = target.read_bytes()
+                self.assertNotIn(b"\r", expected)
+                self.assertFalse(expected.startswith(b"\xef\xbb\xbf"))
+                for changed in (
+                    expected.replace(b"\n", b"\r\n"),
+                    expected.replace(b"\n", b"\r\n", 1),
+                    b"\xef\xbb\xbf" + expected,
+                ):
+                    with self.subTest(changed=changed[:20]):
+                        target.write_bytes(changed)
+                        with patch("sys.argv", ["generate", "--check"]):
+                            with self.assertRaisesRegex(ProcessError, "is stale"):
+                                generate_renovate_preset.main()
+                        self.assertEqual(0, generate_renovate_preset.main())
+                        self.assertEqual(expected, target.read_bytes())
+                with patch("sys.argv", ["generate", "--check"]):
+                    self.assertEqual(0, generate_renovate_preset.main())
 
     def test_pull_request_template_defines_public_evidence_hierarchy(self) -> None:
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(

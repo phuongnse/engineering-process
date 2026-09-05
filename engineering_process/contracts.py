@@ -67,9 +67,9 @@ def digest_json(value: Any) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
-def write_json_atomic(path: Path, value: Any) -> None:
-    """Write canonical human-readable JSON without exposing a partial file."""
-    data = (
+def formatted_json_bytes(value: Any) -> bytes:
+    """Serialize human-readable JSON as UTF-8 without BOM, using LF."""
+    return (
         json.dumps(
             value,
             ensure_ascii=False,
@@ -79,6 +79,11 @@ def write_json_atomic(path: Path, value: Any) -> None:
         )
         + "\n"
     ).encode("utf-8")
+
+
+def write_json_atomic(path: Path, value: Any) -> None:
+    """Write canonical human-readable JSON without exposing a partial file."""
+    data = formatted_json_bytes(value)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     try:
