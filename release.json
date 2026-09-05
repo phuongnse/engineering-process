@@ -1,13 +1,13 @@
 {
   "changes": [
     {
-      "id": "renovate-canonical-pending-preset",
-      "source": "https://github.com/phuongnse/engineering-process/issues/146",
-      "summary": "Generate a shared Renovate pending-description preset from the canonical public template and document immutable consumer configuration and native review handoff.",
-      "type": "fix"
+      "id": "rename-skill-namespace",
+      "source": "https://github.com/phuongnse/engineering-process/issues/155",
+      "summary": "Rename all eight delivery/process skills to deliver-change, change-start, change-plan, change-implement, change-verify, change-review, change-complete, and process-improve; preserve CLI/lifecycle behavior and migrate owned skill files through normal adoption.",
+      "type": "breaking"
     }
   ],
-  "previousVersion": "1.2.5",
+  "previousVersion": "1.2.6",
   "schemaVersion": 5,
-  "version": "1.2.6"
+  "version": "2.0.0"
 }
