@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "review-priority-definitions",
+  "type": "fix",
+  "summary": "Define the process's P0-P3 review-impact convention and its independent relationship to blocking decisions.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/111"
+}

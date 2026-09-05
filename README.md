@@ -328,6 +328,10 @@ URL; without it, the review remains pending. Earlier plan and review documents r
 readable, and their runs remain registrable or finishable with the version selected by
 the authority that started the relevant phase.
 
+The [finding priority definitions](process_assets/skills/review-change/SKILL.md#finding-priority)
+are the canonical P0-P3 impact convention for this process, including examples and
+their relationship to blocking decisions.
+
 ## Running a change
 
 Create and validate a change contract, then register it:
