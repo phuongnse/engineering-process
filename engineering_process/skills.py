@@ -90,6 +90,21 @@ def validate_skills(
     graph = load_and_validate(
         graph_path, "process-graph", schema_root=schemas_root(process_root)
     )
+    owners = {state["id"]: state["ownerSkill"] for state in graph["states"]}
+    if len(owners) != len(graph["states"]):
+        raise ProcessError("process graph state ids must be unique")
+    for state in graph["states"]:
+        for transition in state["transitions"]:
+            destination = transition["nextState"]
+            skill = transition["nextSkill"]
+            if (destination is None) != (skill is None):
+                raise ProcessError("process graph terminal transitions must have both targets null")
+            if destination is not None and destination not in owners:
+                raise ProcessError(f"process graph references missing state: {destination}")
+            if skill is not None and skill not in names:
+                raise ProcessError(
+                    f"process graph transition from {state['id']} references missing skill: {skill}"
+                )
     routed = {graph["entrySkill"]}
     routed.update(state["ownerSkill"] for state in graph["states"])
     routed.update(graph.get("specializations", {}).values())

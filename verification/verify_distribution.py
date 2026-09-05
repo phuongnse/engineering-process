@@ -58,6 +58,11 @@ def run(
 
 def main() -> int:
     validate_distribution_text(PROJECT_ROOT)
+    source_skill_root = PROJECT_ROOT / "process_assets" / "skills"
+    source_skills = {
+        path.relative_to(source_skill_root).as_posix(): path.read_bytes()
+        for path in source_skill_root.rglob("*") if path.is_file()
+    }
     with tempfile.TemporaryDirectory(prefix="engineering-process-dist-") as directory:
         root = Path(directory)
         artifacts = root / "dist"
@@ -87,6 +92,14 @@ def main() -> int:
             with archive.extractfile(presets[0]) as preset:
                 if preset.read() != expected_preset:
                     raise RuntimeError("sdist Renovate preset differs from the canonical source")
+            sdist_skills = {}
+            for member in archive.getmembers():
+                _prefix, separator, relative = member.name.partition("/process_assets/skills/")
+                if separator and member.isfile():
+                    with archive.extractfile(member) as stream:
+                        sdist_skills[relative] = stream.read()
+            if sdist_skills != source_skills:
+                raise RuntimeError("sdist skill catalog differs from the canonical source")
 
         environment = root / "venv"
         run([sys.executable, "-m", "venv", str(environment)], cwd=root)
@@ -100,6 +113,13 @@ def main() -> int:
         installed_preset = environment / "share" / "engineering-process" / "templates" / "renovate.json"
         if installed_preset.read_bytes() != expected_preset:
             raise RuntimeError("installed wheel Renovate preset differs from the canonical source")
+        installed_skill_root = environment / "share" / "engineering-process" / "skills"
+        installed_skills = {
+            path.relative_to(installed_skill_root).as_posix(): path.read_bytes()
+            for path in installed_skill_root.rglob("*") if path.is_file()
+        }
+        if installed_skills != source_skills:
+            raise RuntimeError("installed wheel skill catalog differs from the canonical source")
         run([str(processctl), "skills", "validate", "--json"], cwd=root, timeout=30)
         run(
             [

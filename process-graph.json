@@ -1,83 +1,83 @@
 {
   "schemaVersion": 2,
-  "entrySkill": "run-change",
+  "entrySkill": "deliver-change",
   "specializations": {
-    "processChange": "improve-process",
+    "processChange": "process-improve",
     "productionEngineering": "production-engineering"
   },
   "states": [
     {
       "id": "unregistered",
-      "ownerSkill": "start-change",
+      "ownerSkill": "change-start",
       "commands": ["change start"],
       "transitions": [
-        {"result": "success", "nextState": "specified", "nextSkill": "plan-change"}
+        {"result": "success", "nextState": "specified", "nextSkill": "change-plan"}
       ]
     },
     {
       "id": "specified",
-      "ownerSkill": "plan-change",
+      "ownerSkill": "change-plan",
       "commands": ["change plan"],
       "transitions": [
-        {"result": "success", "nextState": "planned", "nextSkill": "implement-change"}
+        {"result": "success", "nextState": "planned", "nextSkill": "change-implement"}
       ]
     },
     {
       "id": "planned",
-      "ownerSkill": "implement-change",
+      "ownerSkill": "change-implement",
       "commands": ["change implement"],
       "transitions": [
-        {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"}
+        {"result": "success", "nextState": "implementing", "nextSkill": "change-verify"}
       ]
     },
     {
       "id": "implementing",
-      "ownerSkill": "verify-change",
+      "ownerSkill": "change-verify",
       "commands": ["change implement", "change verify"],
       "transitions": [
-        {"result": "profile-passed", "nextState": "implementing", "nextSkill": "verify-change"},
-        {"result": "all-passed", "nextState": "verified", "nextSkill": "review-change"}
+        {"result": "profile-passed", "nextState": "implementing", "nextSkill": "change-verify"},
+        {"result": "all-passed", "nextState": "verified", "nextSkill": "change-review"}
       ]
     },
     {
       "id": "verified",
-      "ownerSkill": "review-change",
+      "ownerSkill": "change-review",
       "commands": ["change implement", "change review start"],
       "transitions": [
-        {"result": "assigned", "nextState": "review-pending", "nextSkill": "review-change"},
-        {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
+        {"result": "assigned", "nextState": "review-pending", "nextSkill": "change-review"},
+        {"result": "source-changed", "nextState": "implementing", "nextSkill": "change-implement"}
       ]
     },
     {
       "id": "review-pending",
-      "ownerSkill": "review-change",
+      "ownerSkill": "change-review",
       "commands": ["change implement", "change review submit"],
       "transitions": [
-        {"result": "approved", "nextState": "approved", "nextSkill": "finish-change"},
-        {"result": "changes-requested", "nextState": "changes-requested", "nextSkill": "implement-change"},
-        {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
+        {"result": "approved", "nextState": "approved", "nextSkill": "change-complete"},
+        {"result": "changes-requested", "nextState": "changes-requested", "nextSkill": "change-implement"},
+        {"result": "source-changed", "nextState": "implementing", "nextSkill": "change-implement"}
       ]
     },
     {
       "id": "changes-requested",
-      "ownerSkill": "implement-change",
+      "ownerSkill": "change-implement",
       "commands": ["change implement"],
       "transitions": [
-        {"result": "success", "nextState": "implementing", "nextSkill": "verify-change"}
+        {"result": "success", "nextState": "implementing", "nextSkill": "change-verify"}
       ]
     },
     {
       "id": "approved",
-      "ownerSkill": "finish-change",
+      "ownerSkill": "change-complete",
       "commands": ["change finish", "change implement"],
       "transitions": [
         {"result": "success", "nextState": null, "nextSkill": null},
-        {"result": "source-changed", "nextState": "implementing", "nextSkill": "implement-change"}
+        {"result": "source-changed", "nextState": "implementing", "nextSkill": "change-implement"}
       ]
     },
     {
       "id": "blocked",
-      "ownerSkill": "run-change",
+      "ownerSkill": "deliver-change",
       "commands": [],
       "transitions": []
     }

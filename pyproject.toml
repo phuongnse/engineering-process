@@ -60,15 +60,15 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
   "schemas/review.schema.json",
   "schemas/run.schema.json",
 ]
-"share/engineering-process/skills/finish-change" = ["process_assets/skills/finish-change/SKILL.md"]
-"share/engineering-process/skills/implement-change" = ["process_assets/skills/implement-change/SKILL.md"]
-"share/engineering-process/skills/improve-process" = ["process_assets/skills/improve-process/SKILL.md"]
-"share/engineering-process/skills/plan-change" = ["process_assets/skills/plan-change/SKILL.md"]
+"share/engineering-process/skills/change-complete" = ["process_assets/skills/change-complete/SKILL.md"]
+"share/engineering-process/skills/change-implement" = ["process_assets/skills/change-implement/SKILL.md"]
+"share/engineering-process/skills/change-plan" = ["process_assets/skills/change-plan/SKILL.md"]
+"share/engineering-process/skills/change-review" = ["process_assets/skills/change-review/SKILL.md"]
+"share/engineering-process/skills/change-start" = ["process_assets/skills/change-start/SKILL.md"]
+"share/engineering-process/skills/change-verify" = ["process_assets/skills/change-verify/SKILL.md"]
+"share/engineering-process/skills/deliver-change" = ["process_assets/skills/deliver-change/SKILL.md"]
+"share/engineering-process/skills/process-improve" = ["process_assets/skills/process-improve/SKILL.md"]
 "share/engineering-process/skills/production-engineering" = [
   "process_assets/skills/production-engineering/SKILL.md",
   "process_assets/skills/production-engineering/invariants.json",
 ]
-"share/engineering-process/skills/review-change" = ["process_assets/skills/review-change/SKILL.md"]
-"share/engineering-process/skills/run-change" = ["process_assets/skills/run-change/SKILL.md"]
-"share/engineering-process/skills/start-change" = ["process_assets/skills/start-change/SKILL.md"]
-"share/engineering-process/skills/verify-change" = ["process_assets/skills/verify-change/SKILL.md"]
