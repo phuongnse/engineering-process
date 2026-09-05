@@ -23,10 +23,12 @@ from engineering_process.release import derive_next_version  # noqa: E402
 
 def _replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
+    if text.startswith("\ufeff"):
+        raise ProcessError(f"{path}: release source text must be UTF-8 without BOM")
     if text.count(old) != 1:
         raise ProcessError(f"{path}: expected exactly one {old!r}")
     temporary = path.with_name(f".{path.name}.release.tmp")
-    temporary.write_text(text.replace(old, new), encoding="utf-8")
+    temporary.write_text(text.replace(old, new), encoding="utf-8", newline="\n")
     temporary.replace(path)
 
 
