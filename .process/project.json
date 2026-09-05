@@ -1,6 +1,7 @@
 {
   "lifecycle": {
     "processChanges": {
+      "acceptedIssueUrlPrefix": "https://github.com/phuongnse/engineering-process/issues/",
       "requireConsumerEvidence": true
     },
     "requiredProfiles": [
