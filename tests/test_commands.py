@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from engineering_process.commands import run_check, run_profile
+from engineering_process.contracts import ProcessError
 from engineering_process.supervision import CleanupOutcome
 
 
@@ -82,6 +83,127 @@ class CommandTests(unittest.TestCase):
             report = run_profile(Path(directory), project, "development")
         self.assertEqual("failed", report["status"])
         self.assertEqual(["fail"], [item["id"] for item in report["checks"]])
+        self.assertEqual({"kind": "profile"}, report["scope"])
+        self.assertEqual(
+            {
+                "kind": "selective-check-reproduction",
+                "profile": "development",
+                "check": "fail",
+                "position": 1,
+                "command": [
+                    "processctl",
+                    "verify",
+                    "--profile",
+                    "development",
+                    "--check-position",
+                    "1",
+                ],
+            },
+            report["diagnostic"],
+        )
+
+    def test_profile_failure_descriptor_excludes_child_details(self) -> None:
+        secret = "TOPSECRET-DIAGNOSTIC-VALUE"
+        project = {
+            "profiles": {
+                "rust": [
+                    {
+                        "id": "format",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    },
+                    {
+                        "id": "rust-tests",
+                        "run": [
+                            sys.executable,
+                            "-c",
+                            f"import sys; print({secret!r}); print({secret!r}, file=sys.stderr); raise SystemExit(101)",
+                        ],
+                        "timeoutSeconds": 10,
+                    },
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="secret-working-directory-") as directory:
+            report = run_profile(Path(directory), project, "rust")
+        self.assertEqual(["format", "rust-tests"], [item["id"] for item in report["checks"]])
+        self.assertEqual(101, report["checks"][-1]["exitCode"])
+        self.assertEqual("rust-tests", report["diagnostic"]["check"])
+        self.assertEqual(2, report["diagnostic"]["position"])
+        rendered = repr(report)
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn(sys.executable, rendered)
+        self.assertNotIn("secret-working-directory", rendered)
+
+    def test_selective_reproduction_runs_only_the_named_check(self) -> None:
+        project = {
+            "profiles": {
+                "rust": [
+                    {
+                        "id": "would-fail",
+                        "run": [sys.executable, "-c", "raise SystemExit(7)"],
+                        "timeoutSeconds": 10,
+                    },
+                    {
+                        "id": "rust-tests",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    },
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_profile(Path(directory), project, "rust", check_position=2)
+        self.assertEqual("passed", report["status"])
+        self.assertEqual(
+            {"kind": "check", "check": "rust-tests", "position": 2},
+            report["scope"],
+        )
+        self.assertEqual(["rust-tests"], [item["id"] for item in report["checks"]])
+        self.assertNotIn("diagnostic", report)
+
+    def test_duplicate_ids_reproduce_one_authoritative_position(self) -> None:
+        project = {
+            "profiles": {
+                "rust": [
+                    {
+                        "id": "rust-tests",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    },
+                    {
+                        "id": "rust-tests",
+                        "run": [sys.executable, "-c", "raise SystemExit(101)"],
+                        "timeoutSeconds": 10,
+                    }
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_profile(Path(directory), project, "rust")
+            reproduced = run_profile(
+                Path(directory), project, "rust", check_position=2
+            )
+        self.assertEqual(2, report["diagnostic"]["position"])
+        self.assertEqual(["rust-tests"], [item["id"] for item in reproduced["checks"]])
+        self.assertEqual(101, reproduced["checks"][0]["exitCode"])
+
+    def test_selective_reproduction_rejects_unknown_position(self) -> None:
+        project = {
+            "profiles": {
+                "rust": [
+                    {
+                        "id": "rust-tests",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    }
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(
+            ProcessError, "profile rust has no check at position: 2"
+        ):
+            run_profile(Path(directory), project, "rust", check_position=2)
 
     def test_timeout_is_a_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

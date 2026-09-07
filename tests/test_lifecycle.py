@@ -256,6 +256,49 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
 
+    def test_failed_profile_persists_only_safe_diagnostic_metadata(self) -> None:
+        self.begin()
+        secret = "TOPSECRET-LIFECYCLE-VALUE"
+        self.project["profiles"]["development"] = [
+            {
+                "id": "format",
+                "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                "timeoutSeconds": 10,
+            },
+            {
+                "id": "rust-tests",
+                "run": [
+                    sys.executable,
+                    "-c",
+                    f"import sys; print({secret!r}, file=sys.stderr); raise SystemExit(101)",
+                ],
+                "timeoutSeconds": 10,
+            },
+        ]
+        state, report = verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        self.assertEqual("implementing", state["phase"])
+        self.assertEqual({"kind": "profile"}, report["scope"])
+        self.assertEqual("rust-tests", report["diagnostic"]["check"])
+        persisted = (
+            self.root / ".process" / "runs" / "sample-change" / "run.json"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(secret, persisted)
+        self.assertNotIn(sys.executable, persisted)
+
+    def test_existing_run_without_diagnostic_fields_remains_readable(self) -> None:
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        run["verification"]["development"].pop("scope")
+        write_json(run_path, run)
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual("implementing", state["phase"])
+
     def test_plan_registration_requires_every_canonical_invariant(self) -> None:
         start_change(
             self.root,

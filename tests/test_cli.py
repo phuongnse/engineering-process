@@ -38,6 +38,13 @@ class CliTests(unittest.TestCase):
             set(subparsers.choices),
         )
 
+    def test_verify_accepts_an_explicit_diagnostic_check(self) -> None:
+        args = build_parser().parse_args(
+            ["verify", "--profile", "rust", "--check-position", "2"]
+        )
+        self.assertEqual("rust", args.profile)
+        self.assertEqual(2, args.check_position)
+
     def test_skills_validate_emits_machine_readable_result(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

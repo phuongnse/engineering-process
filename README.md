@@ -90,6 +90,20 @@ Commands are argument arrays, never shell strings. Each command has a finite tim
 Output has a hard aggregate budget; evidence stores byte counts and hashes, never raw
 stdout or stderr that could contain secrets.
 
+A failed profile also reports a safe `diagnostic` descriptor containing only its
+validated profile identifier, check identifier, canonical one-based profile position,
+and a fixed `processctl` argument array. The position remains unambiguous even when a
+compatible project has duplicate check identifiers. Run that array from the project
+root to reproduce only the failed configured check through the same bounded runner,
+for example:
+
+    processctl verify --profile rust --check-position 3
+
+This selective run is diagnostic only: it does not expose captured output, replace a
+required full-profile run, or count as lifecycle verification evidence. Maintainers
+who need semantic tool output must use a tool-owned structured report or run the
+consumer command in an appropriately trusted environment.
+
 ### Production readiness
 
 A consumer declares `.process/readiness.json` with production as its direction, its

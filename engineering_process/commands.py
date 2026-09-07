@@ -199,20 +199,61 @@ def run_profile(
     project_root: Path,
     project: dict[str, Any],
     profile: str,
+    *,
+    check_position: int | None = None,
 ) -> dict[str, Any]:
-    checks = project["profiles"].get(profile)
-    if checks is None:
+    configured_checks = project["profiles"].get(profile)
+    if configured_checks is None:
         raise ProcessError(f"unknown verification profile: {profile}")
+    if check_position is None:
+        checks = configured_checks
+        positions = range(1, len(checks) + 1)
+    else:
+        if check_position < 1 or check_position > len(configured_checks):
+            raise ProcessError(
+                f"profile {profile} has no check at position: {check_position}"
+            )
+        checks = [configured_checks[check_position - 1]]
+        positions = [check_position]
     reports: list[dict[str, Any]] = []
-    for check in checks:
+    failed_position: int | None = None
+    for position, check in zip(positions, checks, strict=True):
         report = run_check(project_root, check)
         reports.append(report)
         if report["status"] != "passed":
+            failed_position = position
             break
-    return {
+    result = {
         "profile": profile,
         "status": "passed" if len(reports) == len(checks) and all(
             report["status"] == "passed" for report in reports
         ) else "failed",
+        "scope": (
+            {"kind": "profile"}
+            if check_position is None
+            else {
+                "kind": "check",
+                "check": checks[0]["id"],
+                "position": check_position,
+            }
+        ),
         "checks": reports,
     }
+    failed = next((report for report in reports if report["status"] == "failed"), None)
+    if failed is not None:
+        assert failed_position is not None
+        result["diagnostic"] = {
+            "kind": "selective-check-reproduction",
+            "profile": profile,
+            "check": failed["id"],
+            "position": failed_position,
+            "command": [
+                "processctl",
+                "verify",
+                "--profile",
+                profile,
+                "--check-position",
+                str(failed_position),
+            ],
+        }
+    return result
