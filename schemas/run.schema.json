@@ -147,6 +147,51 @@
         "stderr": {"$ref": "#/$defs/stream"}
       }
     },
+    "verificationScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "profile"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "check", "position"],
+          "properties": {
+            "kind": {"const": "check"},
+            "check": {"$ref": "#/$defs/id"},
+            "position": {"type": "integer", "minimum": 1, "maximum": 32}
+          }
+        }
+      ]
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "profile", "check", "position", "command"],
+      "properties": {
+        "kind": {"const": "selective-check-reproduction"},
+        "profile": {"$ref": "#/$defs/id"},
+        "check": {"$ref": "#/$defs/id"},
+        "position": {"type": "integer", "minimum": 1, "maximum": 32},
+        "command": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "prefixItems": [
+            {"const": "processctl"},
+            {"const": "verify"},
+            {"const": "--profile"},
+            {"$ref": "#/$defs/id"},
+            {"const": "--check-position"},
+            {"type": "string", "pattern": "^(?:[1-9]|[12][0-9]|3[0-2])$"}
+          ],
+          "items": false
+        }
+      }
+    },
     "verificationReport": {
       "type": "object",
       "additionalProperties": false,
@@ -154,6 +199,8 @@
       "properties": {
         "profile": {"$ref": "#/$defs/id"},
         "status": {"enum": ["passed", "failed"]},
+        "scope": {"$ref": "#/$defs/verificationScope"},
+        "diagnostic": {"$ref": "#/$defs/diagnostic"},
         "checks": {
           "type": "array",
           "maxItems": 32,

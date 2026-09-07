@@ -81,6 +81,62 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(project, "project", schema_root=SCHEMAS)
 
+    def test_run_schema_accepts_legacy_and_safe_diagnostic_reports(self) -> None:
+        schema = read_json(SCHEMAS / "run.schema.json")
+        validator = Draft202012Validator(schema).evolve(
+            schema=schema["$defs"]["verificationReport"]
+        )
+        report = {
+            "profile": "rust",
+            "status": "failed",
+            "checks": [
+                {
+                    "id": "rust-tests",
+                    "status": "failed",
+                    "exitCode": 101,
+                    "timedOut": False,
+                    "outputExceeded": False,
+                    "descendantsTerminated": False,
+                    "streamFailed": False,
+                    "durationMs": 1,
+                    "stdout": {
+                        "bytes": 0,
+                        "sha256": f"sha256:{'0' * 64}",
+                        "truncated": False,
+                    },
+                    "stderr": {
+                        "bytes": 0,
+                        "sha256": f"sha256:{'0' * 64}",
+                        "truncated": False,
+                    },
+                }
+            ],
+            "checkpoint": {
+                "head": "0" * 40,
+                "fingerprint": f"sha256:{'0' * 64}",
+                "fileCount": 1,
+                "byteCount": 1,
+            },
+            "recordedAt": "2026-09-07T00:00:00+00:00",
+        }
+        validator.validate(report)
+        report["scope"] = {"kind": "profile"}
+        report["diagnostic"] = {
+            "kind": "selective-check-reproduction",
+            "profile": "rust",
+            "check": "rust-tests",
+            "position": 1,
+            "command": [
+                "processctl",
+                "verify",
+                "--profile",
+                "rust",
+                "--check-position",
+                "1",
+            ],
+        }
+        validator.validate(report)
+
     def test_review_v6_requires_durable_non_blocking_dispositions(self) -> None:
         review = {
             "schemaVersion": 6,

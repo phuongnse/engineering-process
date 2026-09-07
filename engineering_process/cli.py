@@ -61,6 +61,16 @@ def _root(value: str) -> Path:
     return path
 
 
+def _check_position(value: str) -> int:
+    try:
+        position = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("check position must be an integer") from error
+    if position < 1 or position > 32:
+        raise argparse.ArgumentTypeError("check position must be between 1 and 32")
+    return position
+
+
 def _process_root(args: argparse.Namespace) -> Path:
     return distribution_root(args.process_root)
 
@@ -209,7 +219,12 @@ def command_verify(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
     before = repository_snapshot(args.project_root)
-    report = run_profile(args.project_root, project, args.profile)
+    report = run_profile(
+        args.project_root,
+        project,
+        args.profile,
+        check_position=args.check_position,
+    )
     after = repository_snapshot(args.project_root)
     if not same_checkpoint(before, after):
         report["status"] = "failed"
@@ -433,6 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--allow", action="append", default=[])
     verify = _leaf(commands, "verify", command_verify, help="Run a project verification profile")
     verify.add_argument("--profile", required=True)
+    verify.add_argument("--check-position", type=_check_position)
     adoption = commands.add_parser("adoption", help="Apply or check managed adoption")
     adoption_commands = adoption.add_subparsers(dest="adoption_command", required=True)
     for name, handler in (("apply", command_adoption_apply), ("check", command_adoption_check)):
