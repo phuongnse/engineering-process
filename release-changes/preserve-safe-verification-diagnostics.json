@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "preserve-safe-verification-diagnostics",
-  "type": "fix",
-  "summary": "Add safe failed-check reproduction metadata without exposing captured command output or weakening full-profile lifecycle verification.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/159"
-}
