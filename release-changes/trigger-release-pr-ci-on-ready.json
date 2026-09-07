@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "trigger-release-pr-ci-on-ready",
+  "type": "fix",
+  "summary": "Run pull-request CI when an unchanged automation-generated release draft becomes ready for review.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/162"
+}
