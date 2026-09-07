@@ -269,6 +269,16 @@ class AutomationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertTrue(workflow.startswith("name: CI\n"))
+        events = workflow.split("on:\n", maxsplit=1)[1].split(
+            "\npermissions:\n", maxsplit=1
+        )[0]
+        self.assertEqual(
+            "  pull_request:\n"
+            "    types: [opened, synchronize, reopened, ready_for_review]\n"
+            "  push:\n"
+            "    branches: [main]\n",
+            events,
+        )
         policy_job = "  policy-verification:\n" + workflow.split(
             "  policy-verification:\n", maxsplit=1
         )[1].split("\n  adopted-process:\n", maxsplit=1)[0]
