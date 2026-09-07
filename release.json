@@ -1,13 +1,13 @@
 {
   "changes": [
     {
-      "id": "preserve-safe-verification-diagnostics",
-      "source": "https://github.com/phuongnse/engineering-process/issues/159",
-      "summary": "Add safe failed-check reproduction metadata without exposing captured command output or weakening full-profile lifecycle verification.",
+      "id": "trigger-release-pr-ci-on-ready",
+      "source": "https://github.com/phuongnse/engineering-process/issues/162",
+      "summary": "Run pull-request CI when an unchanged automation-generated release draft becomes ready for review.",
       "type": "fix"
     }
   ],
-  "previousVersion": "2.0.0",
+  "previousVersion": "2.0.1",
   "schemaVersion": 5,
-  "version": "2.0.1"
+  "version": "2.0.2"
 }
