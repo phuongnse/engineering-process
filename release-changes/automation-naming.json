@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "automation-naming",
-  "type": "capability",
-  "summary": "Generate and verify automation names from a default owner-role convention or a consumer-owned override. Bootstrap integrations can consume structured CLI output and check actual provider names before side effects; provider limits and authenticated identity remain consumer-owned.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/176"
-}
