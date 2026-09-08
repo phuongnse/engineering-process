@@ -249,6 +249,8 @@ consumer-owned skills and instructions. Applying the same version twice is a no-
 Consumer-owned `.process/standards.json` selections and override definitions are also
 preserved; the managed PR template follows the effective supported standard. See
 [consumer document standards](ARTIFACT_STANDARDS.md).
+[Automation naming](ARTIFACT_STANDARDS.md#automation-names) uses the same versioned
+selection and override mechanism; consumers apply it in their bootstrap and provider checks.
 The legacy managed runner can enter 1.0 directly, so consumers do not need a chain of
 per-version migration documents. The same transaction deletes the retired migration
 directory and standing automation policy; the Windows Job Object helper remains a

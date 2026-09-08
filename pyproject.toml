@@ -40,6 +40,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 [tool.setuptools.data-files]
 "share/engineering-process" = ["process-graph.json"]
 "share/engineering-process/process_assets/standards" = [
+  "process_assets/standards/automation-name.v1.json",
   "process_assets/standards/pull-request.v1.json",
   "process_assets/standards/release-notes.v1.json",
 ]
@@ -53,6 +54,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
 "share/engineering-process/schemas" = [
   "schemas/artifact-selection.schema.json",
   "schemas/artifact-standard.schema.json",
+  "schemas/automation-name-data.schema.json",
   "schemas/change.schema.json",
   "schemas/plan.schema.json",
   "schemas/process-graph.schema.json",

@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from . import VERSION
 from .adoption import apply_adoption, check_adoption
+from .automation_name import render_name
 from .artifact_standards import MAX_DOCUMENT_BYTES, read_document, resolve_standard
 from .commands import run_check, run_profile
 from .contracts import (
@@ -421,7 +422,7 @@ def command_artifact(args: argparse.Namespace) -> Result:
     else:
         data = load_and_validate(args.data_file, standard.document["adapter"] + "-data", schema_root=schemas_root(process_root)) if args.data_file is not None else None
         if data is not None:
-            renderer = {"pr-description": render_description, "release-notes": render_notes}[standard.document["adapter"]]
+            renderer = {"pr-description": render_description, "release-notes": render_notes, "automation-name": render_name}[standard.document["adapter"]]
             payload = renderer(standard, data, state=args.state, process_root=process_root).encode("utf-8")
             details["dataDigest"] = digest_json(data)
         elif operation == "render" or standard.document["adapter"] != "pr-description":
@@ -439,6 +440,8 @@ def command_artifact(args: argparse.Namespace) -> Result:
     if operation != "validate" and args.output is not None:
         args.output.write_bytes(payload)
         details["output"] = str(args.output)
+    elif operation == "render":
+        details["content"] = payload.decode("utf-8")
     status = "failed" if issues else "passed"
     return _result(f"artifact {operation}", status, **details, issues=issues), (1 if issues else 0)
 
@@ -542,7 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
     release_validate = _leaf(release_commands, "validate", command_release_validate)
     release_validate.add_argument("--tag")
 
-    artifact = commands.add_parser("artifact", help="Generate and verify consumer-selected document standards")
+    artifact = commands.add_parser("artifact", help="Generate and verify consumer-selected artifact standards")
     artifact_commands = artifact.add_subparsers(dest="artifact_command", required=True)
     for name in ("show", "template", "renovate-preset", "render", "validate"):
         leaf = _leaf(artifact_commands, name, command_artifact)
@@ -553,7 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "validate":
             leaf.add_argument("--body-file", type=Path, required=True)
         else:
-            leaf.add_argument("--output", type=Path, required=name != "show")
+            leaf.add_argument("--output", type=Path, required=name not in {"show", "render"})
 
     publication = commands.add_parser("publication", help=argparse.SUPPRESS)
     publication_commands = publication.add_subparsers(

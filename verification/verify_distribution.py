@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -141,7 +143,7 @@ def main() -> int:
         installed_standard_root = environment / "share" / "engineering-process" / "process_assets" / "standards"
         if {path.name: path.read_bytes() for path in installed_standard_root.glob("*.json")} != source_standards:
             raise RuntimeError("installed wheel standards differ from the canonical source")
-        for artifact in ("pull-request", "release-notes"):
+        for artifact in ("pull-request", "release-notes", "automation-name"):
             run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
         run([str(python), "-I", "-c", """
 from pathlib import Path
@@ -150,6 +152,7 @@ from engineering_process.artifact_standards import resolve_standard
 from engineering_process.contracts import write_json_atomic
 from engineering_process.distribution import distribution_root
 from engineering_process.pr_description import body_issues, render_description
+from engineering_process.automation_name import render_name
 consumer = Path.cwd() / 'consumer'
 consumer.mkdir()
 subprocess.run(['git', 'init', '-q', str(consumer)], check=True, capture_output=True, timeout=30)
@@ -165,8 +168,33 @@ body = render_description(standard).replace('- [ ]', '- [x]')
 assert '## Installed consumer changes' in body
 assert body_issues(body, 'draft', standard) == []
 assert any('unresolved value' in issue for issue in body_issues(body, 'ready', standard))
+name_standard = resolve_standard(consumer, assets, 'automation-name')
+assert render_name(name_standard, {'schemaVersion': 1, 'components': {'owner': 'Acme', 'role': 'Dependency-Updates'}}) == 'acme-dependency-updates\\n'
 print('Installed consumer standard and draft/ready checks: PASSED')
 """], cwd=root, timeout=30)
+        consumer = root / "consumer"
+        name_data = consumer / "name-data.json"
+        name_data.write_text(json.dumps({"schemaVersion": 1, "components": {"owner": "Acme", "role": "Dependency-Updates"}}), encoding="utf-8")
+        release_data = consumer / "release-data.json"
+        release_data.write_text(json.dumps({
+            "schemaVersion": 1, "title": "Fixture release", "introduction": "Reviewed fixture changes.",
+            "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "fixture-change"}],
+            "sections": {"upgrade": "No migration required."},
+        }), encoding="utf-8")
+        installed_root = environment / "share" / "engineering-process"
+        for artifact, data in (("automation-name", name_data), ("release-notes", release_data)):
+            body = consumer / f"{artifact}.txt"
+            run([str(processctl), "artifact", "render", "--artifact", artifact, "--data-file", str(data), "--output", str(body), "--json"], cwd=consumer, timeout=30)
+            run([str(processctl), "artifact", "validate", "--artifact", artifact, "--data-file", str(data), "--body-file", str(body), "--process-root", str(installed_root), "--json"], cwd=consumer, timeout=30)
+        template = consumer / "template.md"
+        run([str(processctl), "artifact", "template", "--artifact", "pull-request", "--output", str(template)], cwd=consumer, timeout=30)
+        run([str(processctl), "artifact", "validate", "--artifact", "pull-request", "--state", "draft", "--body-file", str(template)], cwd=consumer, timeout=30)
+        # The fixture lock binds this test wheel; public release locks are verified separately.
+        version = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+        requirements = consumer / "process.txt"
+        requirements.write_text(f"engineering-process=={version} --hash=sha256:{hashlib.sha256(wheels[0].read_bytes()).hexdigest()}\n", encoding="utf-8")
+        for operation in ("apply", "check", "apply", "check"):
+            run([str(processctl), "adoption", operation, "--requirements-lock", str(requirements), "--json"], cwd=consumer, timeout=60)
         run([str(processctl), "skills", "validate", "--json"], cwd=root, timeout=30)
         run(
             [

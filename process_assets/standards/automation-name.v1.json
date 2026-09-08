@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "process.automation-name",
+  "version": 1,
+  "artifact": "automation-name",
+  "adapter": "automation-name",
+  "rules": {
+    "components": [
+      "owner",
+      "role"
+    ],
+    "separator": "-",
+    "case": "lower",
+    "maxLength": 128
+  }
+}
