@@ -12,6 +12,7 @@ import tempfile
 from typing import Any, Callable
 
 from . import VERSION
+from .artifact_standards import resolve_standard
 from .contracts import ProcessError, read_json, validate_document
 from .distribution import (
     distribution_digest,
@@ -21,6 +22,7 @@ from .distribution import (
     skills_root,
 )
 from .project import normalize_project, project_path
+from .pr_description import render_template
 
 
 MAX_REQUIREMENTS_BYTES = 2_000_000
@@ -253,9 +255,9 @@ def _expected_files(
         "utf-8"
     )
 
-    pull_request_template = (
-        process_root / "templates" / "PULL_REQUEST_TEMPLATE.md"
-    ).read_text(encoding="utf-8")
+    pull_request_template = render_template(
+        resolve_standard(project_root, process_root, "pull-request"), process_root=process_root,
+    )
     pull_request_path = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
     existing_pull_request = (
         pull_request_path.read_text(encoding="utf-8")

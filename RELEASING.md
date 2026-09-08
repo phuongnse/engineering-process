@@ -38,6 +38,9 @@ Review this artifact alongside the manifest. Regenerate it with
 `python verification/render_release_notes.py --output RELEASE_NOTES.md`; local and
 CI checks use `--check RELEASE_NOTES.md` to reject missing or stale bytes. Do not
 maintain a second handwritten changelog.
+The wrapper supplies consumer-owned records and upgrade text to the reusable renderer
+under the selected `release-notes` standard. The same definition drives generation and
+byte comparison; [consumer overrides](ARTIFACT_STANDARDS.md) remain repository-owned.
 
 ## Publish
 

@@ -1,5 +1,6 @@
 include process-graph.json
 include RELEASE_NOTES.md
 recursive-include process_assets/skills SKILL.md *.json
+recursive-include process_assets/standards *.json
 recursive-include schemas *.json
 recursive-include templates *.md *.py *.json

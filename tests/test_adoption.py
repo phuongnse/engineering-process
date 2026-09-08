@@ -13,6 +13,7 @@ import sys
 
 from engineering_process import VERSION
 from engineering_process.adoption import apply_adoption, check_adoption
+from engineering_process.artifact_standards import resolve_standard
 from engineering_process.contracts import ProcessError, read_json
 
 
@@ -171,6 +172,26 @@ class AdoptionTests(unittest.TestCase):
             b"# Consumer rules\n\n<!-- engineering-process:start -->\nUse run-change.\n<!-- engineering-process:end -->\n"
         )
         return consumer
+
+    def test_adoption_preserves_consumer_standard_and_generates_its_template(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True, timeout=30)
+        document = resolve_standard(None, PROCESS_ROOT, "pull-request").document
+        document["id"] = "consumer.pr"
+        document["rules"]["sections"][0]["heading"] = "## Consumer changes"
+        definition = self.root / ".process" / "consumer-pr.json"
+        selector = self.root / ".process" / "standards.json"
+        write_json(definition, document)
+        write_json(selector, {"schemaVersion": 1, "artifacts": {"pull-request": {"path": ".process/consumer-pr.json"}}})
+        owned = {path: path.read_bytes() for path in (definition, selector)}
+        self.assertEqual("applied", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+        self.assertIn("## Consumer changes", (self.root / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8"))
+        for path, content in owned.items():
+            self.assertEqual(content, path.read_bytes())
+        lock = read_json(self.root / ".process" / "process.lock")
+        self.assertNotIn(".process/consumer-pr.json", lock["managedFiles"])
+        self.assertNotIn(".process/standards.json", lock["managedFiles"])
+        self.assertEqual("passed", check_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+        self.assertEqual("unchanged", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
 
     def test_previous_catalog_migrates_all_eight_names_and_is_idempotent(self) -> None:
         consumer = self.previous_catalog_consumer()

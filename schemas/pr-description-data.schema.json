@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/pr-description-data.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fields",
+    "checks"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "fields": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
+        "not": {
+          "pattern": "[\\r\\n]"
+        }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+        "pattern": "\\S",
+        "not": {
+          "pattern": "[\\r\\n\\v\\f\\u0085\\u2028\\u2029]"
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
+        "not": {
+          "pattern": "[\\r\\n]"
+        }
+      },
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "issueReference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S",
+      "not": {
+        "pattern": "[\\r\\n\\v\\f\\u0085\\u2028\\u2029]"
+      }
+    }
+  }
+}

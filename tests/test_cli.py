@@ -24,6 +24,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             {
                 "adoption",
+                "artifact",
                 "change",
                 "contract",
                 "doctor",

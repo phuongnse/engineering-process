@@ -5,54 +5,40 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import re
-import string
 import sys
-from urllib.parse import quote
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from engineering_process.contracts import ProcessError, load_and_validate  # noqa: E402
 from engineering_process.distribution import schemas_root  # noqa: E402
+from engineering_process.artifact_standards import resolve_standard  # noqa: E402
+from engineering_process.release_notes import render_notes  # noqa: E402
 
 
 REPOSITORY = "https://github.com/phuongnse/engineering-process"
 
 
-def _text(value: str) -> str:
-    return "".join("\\" + character if character in string.punctuation else character for character in " ".join(value.split()))
+def release_notes_data(release: dict) -> dict:
+    version, previous = release["version"], release["previousVersion"]
+    return {
+        "schemaVersion": 1,
+        "title": f"Engineering Process v{version}",
+        "introduction": f"Changes since v{previous}.",
+        "repositoryUrl": REPOSITORY,
+        "changes": [{key: change[key] for key in ("type", "summary", "source")} for change in release["changes"]],
+        "sections": {"upgrade": "\n\n".join([
+            "Merge the complete hash-locked package/adoption PR, update the local and CI environments to the selected version, and start a fresh agent session.",
+            "Consumer CI, naming conventions and branch-protection settings remain consumer-owned; adoption does not configure them automatically.",
+            f"See [versioning and compatibility]({REPOSITORY}/blob/v{version}/VERSIONING.md) and [adoption guidance]({REPOSITORY}/blob/v{version}/SELF_HOSTING.md).",
+        ])},
+        "footer": f"[Full change comparison]({REPOSITORY}/compare/v{previous}...v{version})",
+    }
 
 
 def render_release_notes(release: dict) -> str:
-    version, previous = release["version"], release["previousVersion"]
-    lines = [f"# Engineering Process v{version}", "", f"Changes since v{previous}.", ""]
-    for kind, heading in (("breaking", "Breaking changes"), ("capability", "Features"), ("fix", "Fixes")):
-        changes = [change for change in release["changes"] if change["type"] == kind]
-        if not changes:
-            continue
-        lines.extend([f"## {heading}", ""])
-        for change in changes:
-            source = change["source"].strip()
-            if source.startswith(("https://", "http://")):
-                issue = re.fullmatch(re.escape(REPOSITORY) + r"/(?:issues|pull)/([1-9][0-9]*)", source)
-                label = f"#{issue.group(1)}" if issue else "Source"
-                reference = f"[{label}]({quote(source, safe=':/?#&=%@+~')})"
-            else:
-                # Code spans keep GitHub from inventing issue, mention or commit links.
-                source = " ".join(source.split())
-                fence = "`" * (1 + max((len(run) for run in re.findall(r"`+", source)), default=0))
-                reference = f"{fence} {source} {fence}"
-            lines.append(f"- {_text(change['summary'])} ({reference})")
-        lines.append("")
-    lines.extend([
-        "## Upgrade and compatibility", "",
-        "Merge the complete hash-locked package/adoption PR, update the local and CI environments to the selected version, and start a fresh agent session.", "",
-        "Consumer CI, naming conventions and branch-protection settings remain consumer-owned; adoption does not configure them automatically.", "",
-        f"See [versioning and compatibility]({REPOSITORY}/blob/v{version}/VERSIONING.md) and [adoption guidance]({REPOSITORY}/blob/v{version}/SELF_HOSTING.md).", "",
-        f"[Full change comparison]({REPOSITORY}/compare/v{previous}...v{version})", "",
-    ])
-    return "\n".join(lines)
+    standard = resolve_standard(PROJECT_ROOT, PROJECT_ROOT, "release-notes")
+    return render_notes(standard, release_notes_data(release), process_root=PROJECT_ROOT)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,11 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--check", type=Path)
     args = parser.parse_args(argv)
     release = load_and_validate(PROJECT_ROOT / "release.json", "release", schema_root=schemas_root(PROJECT_ROOT))
-    expected = render_release_notes(release).encode("utf-8")
+    standard = resolve_standard(PROJECT_ROOT, PROJECT_ROOT, "release-notes")
+    expected = render_notes(standard, release_notes_data(release), process_root=PROJECT_ROOT).encode("utf-8")
     if args.check:
         if args.check.read_bytes() != expected:
             raise ProcessError(f"release notes are stale: {args.check}")
-        print("Release contents: PASSED")
+        print(f"Release contents: PASSED; {standard.document['id']}@{standard.document['version']} {standard.metadata['digest']}")
     else:
         args.output.write_bytes(expected)
         print(f"Release contents written: {args.output}")

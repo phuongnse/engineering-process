@@ -17,16 +17,21 @@ from jsonschema import Draft202012Validator
 
 MAX_JSON_BYTES = 2_000_000
 CONTRACT_KINDS = (
+    "artifact-selection",
+    "artifact-standard",
     "change",
     "plan",
     "process-graph",
     "process-lock",
     "production-engineering",
+    "pr-description-data",
     "project",
     "project-legacy",
     "receipt",
     "release-change",
     "release",
+    "release-notes-data",
+    "renovate-preset",
     "review",
     "run",
 )

@@ -77,6 +77,9 @@ def _asset_paths(root: Path) -> Iterable[tuple[str, Path]]:
     schema_directory = schemas_root(root)
     for path in _ordered_paths(schema_directory, schema_directory.glob("*.json")):
         yield f"schemas/{path.name}", path
+    standard_directory = root / "process_assets" / "standards"
+    for path in _ordered_paths(standard_directory, standard_directory.glob("*.json")):
+        yield f"standards/{path.name}", path
     for name in (
         "AGENTS.process.md",
         "PULL_REQUEST_TEMPLATE.md",

@@ -63,6 +63,10 @@ def main() -> int:
         path.relative_to(source_skill_root).as_posix(): path.read_bytes()
         for path in source_skill_root.rglob("*") if path.is_file()
     }
+    source_standards = {
+        path.name: path.read_bytes()
+        for path in (PROJECT_ROOT / "process_assets" / "standards").glob("*.json")
+    }
     with tempfile.TemporaryDirectory(prefix="engineering-process-dist-") as directory:
         root = Path(directory)
         artifacts = root / "dist"
@@ -106,6 +110,14 @@ def main() -> int:
                         sdist_skills[relative] = stream.read()
             if sdist_skills != source_skills:
                 raise RuntimeError("sdist skill catalog differs from the canonical source")
+            sdist_standards = {}
+            for member in archive.getmembers():
+                _prefix, separator, relative = member.name.partition("/process_assets/standards/")
+                if separator and member.isfile():
+                    with archive.extractfile(member) as stream:
+                        sdist_standards[relative] = stream.read()
+            if sdist_standards != source_standards:
+                raise RuntimeError("sdist standards differ from the canonical source")
 
         environment = root / "venv"
         run([sys.executable, "-m", "venv", str(environment)], cwd=root)
@@ -126,6 +138,35 @@ def main() -> int:
         }
         if installed_skills != source_skills:
             raise RuntimeError("installed wheel skill catalog differs from the canonical source")
+        installed_standard_root = environment / "share" / "engineering-process" / "process_assets" / "standards"
+        if {path.name: path.read_bytes() for path in installed_standard_root.glob("*.json")} != source_standards:
+            raise RuntimeError("installed wheel standards differ from the canonical source")
+        for artifact in ("pull-request", "release-notes"):
+            run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
+        run([str(python), "-I", "-c", """
+from pathlib import Path
+import subprocess
+from engineering_process.artifact_standards import resolve_standard
+from engineering_process.contracts import write_json_atomic
+from engineering_process.distribution import distribution_root
+from engineering_process.pr_description import body_issues, render_description
+consumer = Path.cwd() / 'consumer'
+consumer.mkdir()
+subprocess.run(['git', 'init', '-q', str(consumer)], check=True, capture_output=True, timeout=30)
+assets = distribution_root()
+document = resolve_standard(None, assets, 'pull-request').document
+document['id'] = 'installed.consumer-pr'
+document['rules']['sections'][0]['heading'] = '## Installed consumer changes'
+write_json_atomic(consumer / '.process' / 'pr.json', document)
+write_json_atomic(consumer / '.process' / 'standards.json', {
+    'schemaVersion': 1, 'artifacts': {'pull-request': {'path': '.process/pr.json'}}})
+standard = resolve_standard(consumer, assets, 'pull-request')
+body = render_description(standard).replace('- [ ]', '- [x]')
+assert '## Installed consumer changes' in body
+assert body_issues(body, 'draft', standard) == []
+assert any('unresolved value' in issue for issue in body_issues(body, 'ready', standard))
+print('Installed consumer standard and draft/ready checks: PASSED')
+"""], cwd=root, timeout=30)
         run([str(processctl), "skills", "validate", "--json"], cwd=root, timeout=30)
         run(
             [

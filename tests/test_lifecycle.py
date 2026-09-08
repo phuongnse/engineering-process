@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from engineering_process.contracts import ProcessError, digest_json
+from engineering_process.artifact_standards import resolve_standard
 from engineering_process.lifecycle import (
     begin_implementation,
     finish_change,
@@ -847,6 +848,23 @@ class LifecycleTests(unittest.TestCase):
                 context_id="implementation-context-4",
                 kind="agent",
             )
+
+    def test_consumer_standard_change_invalidates_verified_profile(self) -> None:
+        document = resolve_standard(None, PROCESS_ROOT, "pull-request").document
+        definition = self.root / ".process" / "consumer-pr.json"
+        write_json(definition, document)
+        write_json(self.root / ".process" / "standards.json", {"schemaVersion": 1, "artifacts": {"pull-request": {"path": ".process/consumer-pr.json"}}})
+        self.project["profiles"]["review"][0]["run"] = [
+            sys.executable, str(PROCESS_ROOT / "processctl.py"), "artifact", "show",
+            "--artifact", "pull-request", "--project-root", str(self.root), "--json",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        self.verify_all()
+        document["rules"]["sections"][0]["heading"] = "## Revised consumer requirements"
+        write_json(definition, document)
+        with self.assertRaisesRegex(ProcessError, "verification evidence is stale"):
+            start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
 
     def test_failed_profile_does_not_advance(self) -> None:
         self.project["profiles"]["development"][0]["run"] = [

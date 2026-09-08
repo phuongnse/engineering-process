@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "id": "process.pull-request",
+  "version": 1,
+  "artifact": "pull-request",
+  "adapter": "pr-description",
+  "pendingValues": [
+    "pending",
+    "pending...",
+    "pending…"
+  ],
+  "rules": {
+    "sections": [
+      {
+        "heading": "## Summary",
+        "fields": [
+          {
+            "id": "outcome",
+            "label": "Outcome",
+            "description": "Observable result delivered by this pull request."
+          },
+          {
+            "id": "scope",
+            "label": "Scope",
+            "description": "Bounded implementation surfaces changed."
+          }
+        ],
+        "checks": []
+      },
+      {
+        "heading": "## Contract and risk",
+        "fields": [
+          {
+            "id": "source",
+            "label": "Source",
+            "description": "Accepted issue or request URL."
+          },
+          {
+            "id": "risk",
+            "label": "Risk",
+            "description": "Consumer-assessed risk."
+          },
+          {
+            "id": "compatibility",
+            "label": "Compatibility",
+            "description": "Compatibility and migration impact, or none."
+          },
+          {
+            "id": "stack",
+            "label": "Stack",
+            "description": "Dependencies on other pull requests, or none."
+          }
+        ],
+        "checks": []
+      },
+      {
+        "heading": "## Verification",
+        "fields": [
+          {
+            "id": "profiles",
+            "label": "Profiles",
+            "description": "Exact canonical profiles that passed."
+          },
+          {
+            "id": "snapshot",
+            "label": "Snapshot",
+            "description": "Reviewed snapshot digest."
+          },
+          {
+            "id": "completion-receipt",
+            "label": "Completion receipt",
+            "description": "Completion receipt digest, or pending while draft."
+          }
+        ],
+        "checks": []
+      },
+      {
+        "heading": "## Independent review",
+        "fields": [
+          {
+            "id": "verdict",
+            "label": "Verdict",
+            "description": "Actual independent review outcome, or pending while draft."
+          },
+          {
+            "id": "cycles",
+            "label": "Cycles",
+            "description": "Review-cycle count."
+          },
+          {
+            "id": "blocking-findings",
+            "label": "Blocking findings",
+            "description": "Open count and status."
+          },
+          {
+            "id": "non-blocking-dispositions",
+            "label": "Non-blocking dispositions",
+            "description": "Resolution, or owner plus durable HTTPS record."
+          }
+        ],
+        "checks": []
+      },
+      {
+        "heading": "## Completion gate",
+        "fields": [],
+        "checks": [
+          {
+            "id": "accepted-scope",
+            "label": "Accepted scope is implemented without silent expansion."
+          },
+          {
+            "id": "required-profiles",
+            "label": "Required profiles pass on the reviewed snapshot."
+          },
+          {
+            "id": "independent-review",
+            "label": "Independent review approved with no blocking finding."
+          },
+          {
+            "id": "finding-dispositions",
+            "label": "Every non-blocking finding has a recorded disposition."
+          }
+        ]
+      }
+    ],
+    "issueReferences": true,
+    "guidance": "Report outcomes only. Keep reviewer actor/context IDs and local run paths in lifecycle state. List every non-blocking disposition; accepted-risk and tracked-follow-up entries need an owner and durable HTTPS record.\nThe author/coordinator fills known contract facts and then actual verification, review and completion results. Draft placeholders are not completed evidence.\nProducer/intermediate PR: Refs ISSUE. Final verified consumer adoption only: Closes ISSUE, closes OWNER/REPOSITORY#NUMBER. Repeat the closing keyword for every issue; put the reference after the completed checklist."
+  }
+}
