@@ -11,6 +11,7 @@
     "phase": {"enum": ["specified", "planned", "implementing", "verified", "review-pending", "approved", "changes-requested", "completed", "blocked"]},
     "cycle": {"type": "integer", "minimum": 0},
     "contract": {"$ref": "#/$defs/boundDocument"},
+    "comparisonBaseCommit": {"type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
     "plan": {"oneOf": [{"$ref": "#/$defs/boundDocument"}, {"type": "null"}]},
     "implementations": {
       "type": "array",

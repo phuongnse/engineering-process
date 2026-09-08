@@ -50,6 +50,12 @@ def _head(root: Path) -> str | None:
     return decoded
 
 
+def resolve_commit(root: Path, reference: str) -> str:
+    return _git(
+        root, ["rev-parse", "--verify", "--end-of-options", f"{reference}^{{commit}}"]
+    ).decode("ascii").strip()
+
+
 def repository_snapshot(root: Path) -> dict[str, Any]:
     root = root.resolve()
     if not (root / ".git").exists():

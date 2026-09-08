@@ -22,6 +22,14 @@
     ],
     "review": [
       {
+        "id": "publication-branch",
+        "run": [
+          "python",
+          "verification/verify_publication.py"
+        ],
+        "timeoutSeconds": 60
+      },
+      {
         "id": "portable-skills",
         "run": [
           "python",

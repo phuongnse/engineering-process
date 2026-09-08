@@ -146,6 +146,7 @@ class CliTests(unittest.TestCase):
             "changeId": "sample-change",
             "phase": "review-pending",
             "cycle": 2,
+            "comparisonBaseCommit": "a" * 40,
             "reviewAssignment": {"reportSchemaVersion": 7},
             "history": [
                 {"event": "profile-failed", "details": {}},
@@ -162,6 +163,10 @@ class CliTests(unittest.TestCase):
         )
         with patch("engineering_process.cli.start_review", return_value=state):
             result, code = command_change_review_start(args)
+            self.assertEqual("a" * 40, result["comparisonBaseCommit"])
+            del state["comparisonBaseCommit"]
+            legacy, _code = command_change_review_start(args)
+            self.assertNotIn("comparisonBaseCommit", legacy)
         self.assertEqual(0, code)
         self.assertEqual(["profile-failed"], result["processSignals"])
 

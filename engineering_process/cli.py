@@ -85,6 +85,7 @@ def _state_result(command: str, state: dict[str, Any], **details: Any) -> dict[s
         changeId=state["changeId"],
         phase=state["phase"],
         cycle=state["cycle"],
+        **({"comparisonBaseCommit": state["comparisonBaseCommit"]} if "comparisonBaseCommit" in state else {}),
         **details,
     )
 

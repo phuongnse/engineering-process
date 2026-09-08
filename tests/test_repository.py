@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from engineering_process.repository import repository_snapshot, same_checkpoint
+from engineering_process.repository import repository_snapshot, resolve_commit, same_checkpoint
 
 
 def git(root: Path, *arguments: str) -> None:
@@ -33,6 +33,17 @@ class RepositorySnapshotTests(unittest.TestCase):
             (root / "new.txt").write_text("new\n", encoding="utf-8")
             untracked = repository_snapshot(root)
             self.assertFalse(same_checkpoint(tracked, untracked))
+
+    def test_resolve_commit_accepts_branches_and_peels_annotated_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            git(root, "branch", "review-base")
+            git(root, "tag", "-a", "review-tag", "-m", "Review boundary")
+            expected = repository_snapshot(root)["head"]
+            for reference in ("HEAD", "review-base", "review-tag"):
+                with self.subTest(reference=reference):
+                    self.assertEqual(expected, resolve_commit(root, reference))
 
     def test_lifecycle_state_does_not_invalidate_its_own_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

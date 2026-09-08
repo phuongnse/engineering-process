@@ -158,6 +158,25 @@ runtime/license delivery, Linux advisory resolution, real-host workspace securit
 updater, incident recovery, and independent security review remain planned.
 Consumers without readiness remain compatible during that evidence-backed rollout.
 
+### Design quality
+
+Changes that materially alter logic, state, or collaboration boundaries carry
+consumer design standards in their existing acceptance criteria. The shared
+[design quality guidance](process_assets/skills/production-engineering/SKILL.md#design-quality)
+requires understandable responsibilities, data and state, ownership, and contracts.
+Agents actively introduce or refine cohesive abstractions when current requirements
+justify them, weighing comprehension and change locality against indirection.
+Consumer architecture and language choices remain authoritative.
+
+Start defines scoped design outcomes; the plan explains material choices in its
+existing approach and work items; implementation revisits the affected flow before
+verification. Independent review traces behavior and a concrete maintenance scenario
+against the actual code. Demonstrated violations of accepted criteria can block
+completion despite passing tests. Routine edits stay proportional, and a clear
+direct implementation remains valid. The existing lifecycle enforces criterion-bound
+findings and evidence freshness; contextual design quality remains the reviewer's
+judgment, without another gate, artifact, or canonical invariant.
+
 ### Production engineering invariants
 
 Every new plan and independent review applies one small, versioned invariant floor:
@@ -424,6 +443,19 @@ approved can finish only while the repository still matches the reviewed snapsho
       --actor coordinator \
       --context finish-123
 
+New runs preserve the accepted `comparisonBase` ref and contract digest, and record
+its resolved commit separately as `comparisonBaseCommit`. Start rejects missing or
+non-commit refs before writing the run. Lifecycle output supplies the recorded commit
+for review even after commits or branch movement. Older runs without this field stay
+readable; their original review boundary must be established from available history,
+not retrospectively claimed as pinned. If that boundary cannot be established, use
+an owner-selected replacement contract.
+
+Correction reports must retain every previously open blocker until its unchanged
+identity receives an explicit `resolved` disposition. Omitting it or changing it to
+`accepted-risk` or `tracked-follow-up` cannot retire the blocker. This applies to all
+supported review schemas; ordinary legacy non-blocking observations remain readable.
+
 ### Public pull-request evidence
 
 The managed pull-request template keeps public assurance separate from local
@@ -448,6 +480,15 @@ The managed template never solicits execution identity,
 and authors plus independent review keep it out of free-form values. The validator is
 a positive grammar for public fields; it deliberately does not guess identities from
 an open-ended vocabulary of names or labels.
+
+This producer's local `review` profile runs `verification/verify_publication.py`
+against the actual Git branch. `main` is the consumer's integration branch, not a
+proposal; detached local checkouts require explicit PR context instead of a guessed
+branch name. In CI, the `Adopted public process` job supplies actual PR metadata and
+the base/head commit range to the installed publication adapters. Metadata edits and
+draft-state changes rerun CI. Maintainers must keep this existing job in `main`'s
+required status checks alongside the other required checks. These publication choices
+belong to this consumer; the shared lifecycle does not impose a naming policy.
 
 At any point:
 

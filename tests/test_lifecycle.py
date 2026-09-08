@@ -223,6 +223,37 @@ class LifecycleTests(unittest.TestCase):
             "location": "product.txt",
         }
 
+    def test_start_freezes_the_base_without_rewriting_the_contract(self) -> None:
+        initial = repository_snapshot(self.root)["head"]
+        self.begin()
+        (self.root / "product.txt").write_text("implementation\n", encoding="utf-8")
+        git(self.root, "add", "product.txt")
+        git(self.root, "commit", "-qm", "fix: implement the accepted change")
+        self.verify_all()
+        state = start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        self.assertNotEqual(initial, state["reviewAssignment"]["checkpoint"]["head"])
+        self.assertEqual(initial, state["comparisonBaseCommit"])
+        self.assertEqual({"digest": digest_json(self.contract), "document": self.contract}, state["contract"])
+
+    def test_invalid_comparison_bases_do_not_create_a_run(self) -> None:
+        for reference in ("missing-review-base", "HEAD:product.txt", "--help"):
+            self.contract["comparisonBase"] = reference
+            write_json(self.contract_path, self.contract)
+            with self.subTest(reference=reference), self.assertRaises(ProcessError):
+                start_change(self.root, PROCESS_ROOT, self.project, self.contract_path, actor_id="author", context_id="author-context", kind="agent")
+            self.assertFalse((self.root / ".process/runs/sample-change/run.json").exists())
+
+    def test_old_run_without_a_pinned_base_remains_readable(self) -> None:
+        self.begin()
+        path = self.root / ".process/runs/sample-change/run.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        del state["comparisonBaseCommit"]
+        write_json(path, state)
+        self.verify_all()
+        state = start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        self.assertNotIn("comparisonBaseCommit", state)
+        self.assertEqual("HEAD", state["contract"]["document"]["comparisonBase"])
+
     def test_happy_path_writes_one_completion_receipt(self) -> None:
         self.begin()
         self.verify_all()
@@ -678,6 +709,62 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("completed", state["phase"])
         self.assertEqual(2, state["cycle"])
         self.assertEqual("approved", receipt["review"]["verdict"])
+
+    def test_open_blockers_cannot_disappear_or_be_waived_in_supported_reports(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        first = self.review_document("approved")
+        first["verdict"] = "changes-requested"
+        blocker = deepcopy(self.review_document("changes-requested")["findings"][0])
+        blocker["origin"] = "contract"
+        first["findings"] = [blocker]
+        report_path = self.root / ".process/runs/review-input.json"
+        write_json(report_path, first)
+        submit_review(self.root, PROCESS_ROOT, "sample-change", report_path)
+        begin_implementation(self.root, PROCESS_ROOT, "sample-change", actor_id="implementer", context_id="implementation-context-2", kind="agent")
+        self.verify_all()
+        start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        state_path = self.root / ".process/runs/sample-change/run.json"
+
+        # The same closure rule applies to every supported report reader.
+        for version in (5, 6, 7):
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["reviewAssignment"]["reportSchemaVersion"] = version
+            write_json(state_path, state)
+            for variant in ("omitted", "renamed", "accepted-risk", "tracked-follow-up"):
+                report = self.review_document("approved")
+                report["schemaVersion"] = version
+                if version < 7:
+                    del report["productionEngineering"]
+                    del report["processImprovement"]
+                finding = deepcopy(blocker)
+                finding["severity"] = "non-blocking"
+                finding["disposition"] = {
+                    "status": "resolved" if variant == "renamed" else variant,
+                    "rationale": "The previously reported behavior is still unimplemented.",
+                    "owner": "maintainer",
+                    "recordUrl": "https://example.invalid/issues/1",
+                }
+                if variant == "renamed":
+                    finding["id"] = "renamed-bug"
+                report["findings"] = [] if variant == "omitted" else [finding]
+                write_json(report_path, report)
+                with self.subTest(version=version, variant=variant), self.assertRaisesRegex(ProcessError, "prior blocking finding"):
+                    submit_review(self.root, PROCESS_ROOT, "sample-change", report_path)
+                self.assertEqual("review-pending", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+                with self.assertRaisesRegex(ProcessError, "expected approved"):
+                    finish_change(self.root, PROCESS_ROOT, "sample-change", actor_id="coordinator", context_id="finish", kind="agent")
+
+        resolved = deepcopy(blocker)
+        resolved["severity"] = "non-blocking"
+        resolved["disposition"] = {"status": "resolved", "rationale": "Independent reinspection establishes why the criterion is satisfied."}
+        report = self.review_document("approved")
+        report["findings"] = [resolved]
+        write_json(report_path, report)
+        submit_review(self.root, PROCESS_ROOT, "sample-change", report_path)
+        state, _receipt = finish_change(self.root, PROCESS_ROOT, "sample-change", actor_id="coordinator", context_id="finish", kind="agent")
+        self.assertEqual("completed", state["phase"])
 
     def test_correction_review_requires_the_original_reviewer_identity(self) -> None:
         self.begin()

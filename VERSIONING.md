@@ -14,6 +14,14 @@ Serialized documents have their own integer schemaVersion. Additive optional fie
 may retain a schema version. Removing, renaming, or changing required meaning needs a
 new schemaVersion and package-major migration.
 
+New run writers add the optional `comparisonBaseCommit` field to run schema 1 and
+expose it in lifecycle output. The accepted contract format and digest do not change.
+The updated reader accepts older records without this field and does not invent a
+historical frozen base for them. Older installed schemas may reject newly written
+records; this is new-reader/old-record compatibility, not forward compatibility.
+Historical blockers now require explicit resolution in subsequent reports; all
+supported review schemas already permit the `resolved` disposition.
+
 Version 1.0 is the intentional clean break from the pre-1.0 governance stack. Its
 adoption reader accepts old process locks and project manifests, then writes
 process-lock schema 2 and project schema 5. It does not require every intermediate
