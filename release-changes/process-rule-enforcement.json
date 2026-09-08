@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "process-rule-enforcement",
+  "type": "capability",
+  "summary": "Pin comparison refs in new lifecycle runs, require explicit blocker closure, and wire the producer's actual publication metadata into required verification while retaining older run readers.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/169"
+}

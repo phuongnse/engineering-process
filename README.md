@@ -443,6 +443,19 @@ approved can finish only while the repository still matches the reviewed snapsho
       --actor coordinator \
       --context finish-123
 
+New runs preserve the accepted `comparisonBase` ref and contract digest, and record
+its resolved commit separately as `comparisonBaseCommit`. Start rejects missing or
+non-commit refs before writing the run. Lifecycle output supplies the recorded commit
+for review even after commits or branch movement. Older runs without this field stay
+readable; their original review boundary must be established from available history,
+not retrospectively claimed as pinned. If that boundary cannot be established, use
+an owner-selected replacement contract.
+
+Correction reports must retain every previously open blocker until its unchanged
+identity receives an explicit `resolved` disposition. Omitting it or changing it to
+`accepted-risk` or `tracked-follow-up` cannot retire the blocker. This applies to all
+supported review schemas; ordinary legacy non-blocking observations remain readable.
+
 ### Public pull-request evidence
 
 The managed pull-request template keeps public assurance separate from local
@@ -467,6 +480,15 @@ The managed template never solicits execution identity,
 and authors plus independent review keep it out of free-form values. The validator is
 a positive grammar for public fields; it deliberately does not guess identities from
 an open-ended vocabulary of names or labels.
+
+This producer's local `review` profile runs `verification/verify_publication.py`
+against the actual Git branch. `main` is the consumer's integration branch, not a
+proposal; detached local checkouts require explicit PR context instead of a guessed
+branch name. In CI, the `Adopted public process` job supplies actual PR metadata and
+the base/head commit range to the installed publication adapters. Metadata edits and
+draft-state changes rerun CI. Maintainers must keep this existing job in `main`'s
+required status checks alongside the other required checks. These publication choices
+belong to this consumer; the shared lifecycle does not impose a naming policy.
 
 At any point:
 

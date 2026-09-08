@@ -10,6 +10,10 @@ behavior. Write a change contract containing the source request, comparison base
 risk, affected projects, observable acceptance criteria, and required verification
 profiles. Do not decide unresolved product behavior silently.
 
+Choose the consumer's comparison ref deliberately. Start resolves it once to an
+existing commit and returns `comparisonBaseCommit`; use that recorded commit for
+later diff/review work. The accepted contract and its digest retain the original ref.
+
 When the accepted change adds or materially changes logic, state, or collaboration
 boundaries, read the design quality guidance in **production-engineering**. Express
 applicable consumer design standards as observable outcomes in the existing

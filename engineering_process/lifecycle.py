@@ -33,7 +33,7 @@ from .production_engineering import (
     validate_plan_assessments,
     validate_review_assessments,
 )
-from .repository import repository_snapshot, same_checkpoint
+from .repository import repository_snapshot, resolve_commit, same_checkpoint
 
 
 NEXT_COMMAND = {
@@ -182,12 +182,14 @@ def start_change(
         raise ProcessError("change affectedProjects must include the current project")
 
     actor = _actor(actor_id, context_id, kind)
+    comparison_base = resolve_commit(project_root, contract["comparisonBase"])
     state: dict[str, Any] = {
         "schemaVersion": 1,
         "changeId": change_id,
         "phase": "specified",
         "cycle": 0,
         "contract": {"digest": digest_json(contract), "document": contract},
+        "comparisonBaseCommit": comparison_base,
         "plan": None,
         "implementations": [],
         "currentImplementation": None,
@@ -480,6 +482,19 @@ def submit_review(
                 and finding["priority"] not in {"P0", "P1"}
             ):
                 raise ProcessError("critical-late blockers must be P0 or P1")
+
+    current_findings = {finding["id"]: finding for finding in review["findings"]}
+    for finding_id, prior in prior_findings.items():
+        if prior["severity"] != "blocking":
+            continue
+        current_finding = current_findings.get(finding_id)
+        if current_finding is None:
+            raise ProcessError(f"prior blocking finding must not be omitted: {finding_id}")
+        if (
+            current_finding["severity"] != "blocking"
+            and current_finding.get("disposition", {}).get("status") != "resolved"
+        ):
+            raise ProcessError(f"prior blocking finding must remain blocking or be resolved: {finding_id}")
 
     state["review"] = {"digest": digest_json(review), "document": review}
     state["reviewHistory"].append(

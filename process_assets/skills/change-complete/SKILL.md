@@ -7,7 +7,11 @@ description: Complete an approved change when routed by deliver-change, only whi
 
 Confirm the lifecycle is approved, every required profile passed, every blocking
 finding is closed, every non-blocking finding has its required disposition, and the
-repository still matches the reviewed snapshot. Then run:
+repository still matches the reviewed snapshot.
+Every previously open blocker must have remained visible until the reviewer recorded
+its explicit resolution; an omitted finding is not a closed finding.
+
+Run:
 
     processctl change finish --change-id ID --actor ACTOR --context CONTEXT
 

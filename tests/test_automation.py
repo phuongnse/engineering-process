@@ -274,7 +274,7 @@ class AutomationTests(unittest.TestCase):
         )[0]
         self.assertEqual(
             "  pull_request:\n"
-            "    types: [opened, synchronize, reopened, ready_for_review]\n"
+            "    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]\n"
             "  push:\n"
             "    branches: [main]\n",
             events,
@@ -318,6 +318,12 @@ class AutomationTests(unittest.TestCase):
         doctor = adopted_job.index("processctl doctor --project-root .")
         self.assertLess(producer_install, adoption_check)
         self.assertLess(adoption_check, doctor)
+        publication = adopted_job.index("python verification/verify_publication.py --pull-request")
+        self.assertLess(doctor, publication)
+        self.assertIn("fetch-depth: 0", adopted_job)
+        for field in ("head.ref", "title", "body", "draft", "base.sha", "head.sha"):
+            self.assertIn(f"github.event.pull_request.{field}", adopted_job)
+        self.assertNotIn("github.event.action", workflow)
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-pr.yml"

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
   push:
     branches: [main]
 
@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14.7"
@@ -53,6 +55,16 @@ jobs:
           --requirements-lock requirements/process.txt
       - name: Diagnose the adopted authority
         run: processctl doctor --project-root .
+      - name: Validate actual pull request publication
+        if: github.event_name == 'pull_request'
+        env:
+          PUBLICATION_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PUBLICATION_TITLE: ${{ github.event.pull_request.title }}
+          PUBLICATION_BODY: ${{ github.event.pull_request.body }}
+          PUBLICATION_DRAFT: ${{ toJSON(github.event.pull_request.draft) }}
+          PUBLICATION_BASE: ${{ github.event.pull_request.base.sha }}
+          PUBLICATION_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python verification/verify_publication.py --pull-request
 
   test:
     name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})

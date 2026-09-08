@@ -10,12 +10,18 @@ implementer in the current cycle. An implementer must hand off this phase to an
 actual reviewer, not perform it under another identity.
 
 For a new agent review, spawn a fresh agent/session without the implementation
-conversation. Supply the accepted contract and plan, comparison base, candidate
+conversation. Supply the accepted contract and plan, recorded `comparisonBaseCommit`, candidate
 path/checkpoint, and verification evidence. Request an independent assessment of
 the complete diff and relevant code/tests without suggesting a verdict. The same
 model, provider, or account may be used. If the environment cannot run or reach an
 independent reviewer, leave the change awaiting review and report that missing
 handoff.
+
+Use `comparisonBaseCommit` from lifecycle output or the run state; never re-resolve
+the original moving ref after implementation. Older runs may lack this field. Keep
+their accepted comparison boundary explicit and establish the complete diff from
+available history; if it cannot be established, request an owner-selected replacement
+contract rather than claiming the base was pinned at start.
 
 Use the runner's returned reviewer handle to continue the real reviewer. Record its
 actor/context in the existing assignment and retain the native task/session
@@ -43,6 +49,12 @@ current lifecycle gate and is not derived mechanically from priority. Ideas outs
 the contract are proposals, not blocking findings. approved may contain non-blocking
 observations but no blocking finding; changes-requested requires at least one blocking
 finding.
+
+Carry every previously open blocking finding into the next report with its identity
+unchanged. It must remain blocking or have a `resolved` disposition with the reason
+the reviewed snapshot closes it. Omission, `accepted-risk`, and `tracked-follow-up`
+cannot retire a blocker. This also applies to older report versions; their ordinary
+non-blocking observations keep the existing compatibility rules.
 
 Assess accepted design criteria separately from passing checks. Use
 **production-engineering** design guidance to trace a significant behavior and a
