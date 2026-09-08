@@ -35,6 +35,13 @@ shorter code, more layers, and named patterns do not establish design quality.
 Keep refactoring within the accepted scope and avoid unused flexibility. Record
 material rationale near the owned code when the structure cannot express it.
 
+For automation identities, use a declared naming convention with clear ownership and
+role. The packaged automation-name standard supplies a default that consumers may
+override. Consumer bootstrap and configuration code must apply and verify the same
+selected convention, including provider-returned names before subsequent side effects.
+Provider limits and authenticated identity remain consumer-owned checks; a conforming
+name is not evidence of authority. Treat a live rename as an explicit consumer migration.
+
 Assess these outcomes through the existing accepted criteria. They do not add entries
 to the canonical invariant assessments or expand an in-flight contract.
 
