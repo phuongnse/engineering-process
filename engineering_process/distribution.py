@@ -18,8 +18,8 @@ MAX_DISTRIBUTION_BYTES = 10_000_000
 def distribution_root(explicit: Path | None = None) -> Path:
     if explicit is not None:
         root = explicit.resolve()
-        if not (root / "process_assets" / "skills").is_dir():
-            raise ProcessError(f"{root}: process_assets/skills is missing")
+        if not skills_root(root).is_dir():
+            raise ProcessError(f"{root}: process_assets/skills or skills is missing")
         return root
 
     source = Path(__file__).resolve().parent.parent

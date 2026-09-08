@@ -6,7 +6,8 @@ import tempfile
 import tomllib
 import unittest
 
-from engineering_process.distribution import distribution_digest, skill_digest
+from engineering_process.distribution import distribution_digest, distribution_root, skill_digest
+from engineering_process.contracts import ProcessError
 
 
 def framed_digest(entries: list[tuple[str, bytes]]) -> str:
@@ -21,6 +22,17 @@ def framed_digest(entries: list[tuple[str, bytes]]) -> str:
 
 
 class DistributionTests(unittest.TestCase):
+    def test_explicit_roots_accept_source_and_installed_layouts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with self.assertRaises(ProcessError):
+                distribution_root(root)
+            for layout in ("process_assets/skills", "skills"):
+                skill_root = root / layout
+                skill_root.mkdir(parents=True)
+                self.assertEqual(root, distribution_root(root))
+                skill_root.rmdir()
+
     def test_packaged_skill_assets_match_the_source_catalog(self) -> None:
         root = Path(__file__).resolve().parent.parent
         metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
