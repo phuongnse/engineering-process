@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "intentional-design-guidance",
-  "type": "fix",
-  "summary": "Carry consumer design quality through accepted criteria, planning, implementation, and independent review, with proactive cohesive abstractions and evidence-based maintenance judgment.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/119"
-}
