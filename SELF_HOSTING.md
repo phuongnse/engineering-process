@@ -18,11 +18,17 @@ the exact package pin and hash lock, then the existing .process/adopt-process.py
 installs N+1 in an isolated environment. N+1 synchronizes its skills, adopter, lock,
 AGENTS block, and project-schema migration into the branch. Repeating the transaction
 must produce no diff.
+Consumer document-standard selections and definitions survive adoption. The generated
+PR-template block follows the effective definition; custom bot-body configuration is
+still consumer-owned and must match that standard before relying on its drafts.
 
 That branch is an ordinary dependency pull request. It runs normal CI and requires a
 reviewer independent of implementation before merge. Merge activates N+1 for later
 work. There is no authority-transition protocol, special bootstrap receipt, skipped
 release, or target-authored lifecycle proof.
+Renovate's draft is the handoff to the consumer. Its author/coordinator fills actual
+contract, verification, review and receipt results before ready/merge; unchecked boxes
+and pending fields are not a completed adoption claim.
 
 The pre-1.0 managed runner can invoke the 1.0 adoption command directly, so this
 repository can move from public 0.9.0 in one PR. The old managed skill tree remains in

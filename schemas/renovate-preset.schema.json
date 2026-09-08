@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/renovate-preset.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "description",
+    "prBodyTemplate",
+    "prHeader"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://docs.renovatebot.com/renovate-schema.json"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "prBodyTemplate": {
+      "const": "{{{header}}}"
+    },
+    "prHeader": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000000
+    }
+  }
+}

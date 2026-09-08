@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -10,10 +11,13 @@ from typing import Any, Callable
 
 from . import VERSION
 from .adoption import apply_adoption, check_adoption
+from .artifact_standards import MAX_DOCUMENT_BYTES, read_document, resolve_standard
 from .commands import run_check, run_profile
 from .contracts import (
     CONTRACT_KINDS,
     ProcessError,
+    digest_json,
+    formatted_json_bytes,
     load_and_validate,
     read_json,
     validate_document,
@@ -47,6 +51,8 @@ from .publication_compat import (
     validate_range,
 )
 from .release import validate_release
+from .pr_description import body_issues, render_description, render_renovate_preset, render_template
+from .release_notes import render_notes
 from .repository import repository_snapshot, same_checkpoint
 from .skills import validate_skills
 
@@ -391,9 +397,50 @@ def command_publication(args: argparse.Namespace) -> Result:
             branch=args.branch,
             state=args.state,
             body_path=args.body_file,
+            project_root=args.project_root,
+            process_root=_process_root(args),
         )
     status = "passed" if not details["issues"] else "failed"
     return _result(f"publication {name}", status=status, **details), (0 if status == "passed" else 1)
+
+
+def command_artifact(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    standard = resolve_standard(args.project_root, process_root, args.artifact)
+    details: dict[str, Any] = {"standard": standard.metadata}
+    operation = args.artifact_command
+    issues: list[str] = []
+    if operation == "show":
+        payload = formatted_json_bytes(standard.document)
+        if args.output is None:
+            details["definition"] = standard.document
+    elif operation == "template":
+        payload = render_template(standard, process_root=process_root).encode("utf-8")
+    elif operation == "renovate-preset":
+        payload = formatted_json_bytes(render_renovate_preset(standard, process_root=process_root))
+    else:
+        data = load_and_validate(args.data_file, standard.document["adapter"] + "-data", schema_root=schemas_root(process_root)) if args.data_file is not None else None
+        if data is not None:
+            renderer = {"pr-description": render_description, "release-notes": render_notes}[standard.document["adapter"]]
+            payload = renderer(standard, data, state=args.state, process_root=process_root).encode("utf-8")
+            details["dataDigest"] = digest_json(data)
+        elif operation == "render" or standard.document["adapter"] != "pr-description":
+            raise ProcessError("this artifact operation requires --data-file")
+        if operation == "validate":
+            actual = read_document(args.body_file)
+            if data is None:
+                issues = body_issues(actual.decode("utf-8"), args.state, standard)
+            elif actual != payload:
+                issues.append("artifact bytes differ from the selected standard and input data")
+            payload = actual
+    if len(payload) > MAX_DOCUMENT_BYTES:
+        raise ProcessError("artifact output exceeds its size limit")
+    details["artifactDigest"] = "sha256:" + hashlib.sha256(payload).hexdigest()
+    if operation != "validate" and args.output is not None:
+        args.output.write_bytes(payload)
+        details["output"] = str(args.output)
+    status = "failed" if issues else "passed"
+    return _result(f"artifact {operation}", status, **details, issues=issues), (1 if issues else 0)
 
 
 def _add_common(parser: argparse.ArgumentParser, *, project: bool = True) -> None:
@@ -495,6 +542,19 @@ def build_parser() -> argparse.ArgumentParser:
     release_validate = _leaf(release_commands, "validate", command_release_validate)
     release_validate.add_argument("--tag")
 
+    artifact = commands.add_parser("artifact", help="Generate and verify consumer-selected document standards")
+    artifact_commands = artifact.add_subparsers(dest="artifact_command", required=True)
+    for name in ("show", "template", "renovate-preset", "render", "validate"):
+        leaf = _leaf(artifact_commands, name, command_artifact)
+        leaf.add_argument("--artifact", required=True)
+        if name in {"render", "validate"}:
+            leaf.add_argument("--state", choices=("draft", "ready"), default="ready")
+            leaf.add_argument("--data-file", type=Path, required=name == "render")
+        if name == "validate":
+            leaf.add_argument("--body-file", type=Path, required=True)
+        else:
+            leaf.add_argument("--output", type=Path, required=name != "show")
+
     publication = commands.add_parser("publication", help=argparse.SUPPRESS)
     publication_commands = publication.add_subparsers(
         dest="publication_command", required=True
@@ -511,7 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     publication_range.add_argument("--branch", required=True)
     publication_range.add_argument("--range", dest="range_spec", required=True)
     publication_pr = _leaf(
-        publication_commands, "validate-pr", command_publication, project=False
+        publication_commands, "validate-pr", command_publication
     )
     publication_pr.add_argument("--title", required=True)
     publication_pr.add_argument("--branch", required=True)

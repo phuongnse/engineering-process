@@ -10,6 +10,10 @@ behavior. Write a change contract containing the source request, comparison base
 risk, affected projects, observable acceptance criteria, and required verification
 profiles. Do not decide unresolved product behavior silently.
 
+When the work produces a PR description or release notes, inspect the consumer's
+selected artifact standard and existing publication checks. The consumer may override
+the packaged defaults. Keep document-format choices separate from lifecycle approval.
+
 Choose the consumer's comparison ref deliberately. Start resolves it once to an
 existing commit and returns `comparisonBaseCommit`; use that recorded commit for
 later diff/review work. The accepted contract and its digest retain the original ref.

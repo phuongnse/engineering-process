@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/artifact-selection.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "artifacts": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
+        "not": {
+          "pattern": "[\\r\\n]"
+        }
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "builtin"
+            ],
+            "properties": {
+              "builtin": {
+                "type": "string",
+                "maxLength": 140,
+                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?@[1-9][0-9]{0,2}$",
+                "not": {
+                  "pattern": "[\\r\\n]"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?!/)(?!.*[\\\\:])(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//).+\\.json$",
+                "not": {
+                  "pattern": "[\\r\\n]"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

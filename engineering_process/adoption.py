@@ -12,6 +12,7 @@ import tempfile
 from typing import Any, Callable
 
 from . import VERSION
+from .artifact_standards import load_standard_catalog
 from .contracts import ProcessError, read_json, validate_document
 from .distribution import (
     distribution_digest,
@@ -21,6 +22,7 @@ from .distribution import (
     skills_root,
 )
 from .project import normalize_project, project_path
+from .pr_description import render_template
 
 
 MAX_REQUIREMENTS_BYTES = 2_000_000
@@ -253,9 +255,8 @@ def _expected_files(
         "utf-8"
     )
 
-    pull_request_template = (
-        process_root / "templates" / "PULL_REQUEST_TEMPLATE.md"
-    ).read_text(encoding="utf-8")
+    standards = load_standard_catalog(project_root, process_root)
+    pull_request_template = render_template(standards.resolve("pull-request"), process_root=process_root)
     pull_request_path = project_root / ".github" / "PULL_REQUEST_TEMPLATE.md"
     existing_pull_request = (
         pull_request_path.read_text(encoding="utf-8")
@@ -301,6 +302,12 @@ def _expected_files(
     writes[Path(".process/process.lock")] = (
         json.dumps(lock, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+    collisions = standards.consumer_files.intersection(writes.keys() | deletions)
+    if collisions:
+        raise ProcessError(
+            "consumer standard files conflict with managed adoption paths; move the definitions and update the selection: "
+            + ", ".join(sorted(path.as_posix() for path in collisions))
+        )
     total = sum(len(value) for value in writes.values())
     if total > MAX_MANAGED_BYTES:
         raise ProcessError("managed adoption output exceeds its aggregate limit")

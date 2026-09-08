@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import contextlib
+from copy import deepcopy
+import io
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+from engineering_process.artifact_standards import resolve_standard
+from engineering_process.cli import main
+from engineering_process.contracts import ProcessError, formatted_json_bytes
+from engineering_process.pr_description import body_issues, render_description, render_renovate_preset, render_template
+from engineering_process.publication_compat import validate_pull_request
+from engineering_process.release_notes import render_notes
+from engineering_process.repository import repository_snapshot
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class ArtifactStandardsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True, timeout=30)
+
+    def write(self, relative: str, value: object) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(formatted_json_bytes(value))
+        return path
+
+    def select(self, document: dict, *, path: str = ".process/company-standard.json"):
+        self.write(path, document)
+        self.write(".process/standards.json", {"schemaVersion": 1, "artifacts": {document["artifact"]: {"path": path}}})
+        return resolve_standard(self.root, ROOT, document["artifact"])
+
+    def cli(self, *arguments: str) -> tuple[int, dict]:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(["artifact", *arguments, "--project-root", str(self.root), "--process-root", str(ROOT), "--json"])
+        return code, json.loads(output.getvalue())
+
+    def test_ready_rejects_generated_placeholders_even_with_all_checks_completed(self) -> None:
+        standard = resolve_standard(self.root, ROOT, "pull-request")
+        body = render_description(standard).replace("- [ ]", "- [x]")
+        self.assertEqual([], body_issues(body, "draft", standard))
+        for pending in ("pending", "PENDING", "pending...", "pending…"):
+            with self.subTest(pending=pending):
+                path = self.root / "pr.md"
+                path.write_text(body.replace("pending", pending), encoding="utf-8")
+                result = validate_pull_request(title="fix: complete evidence", branch="fix/evidence", state="ready", body_path=path, project_root=self.root, process_root=ROOT)
+                self.assertTrue(any("unresolved value" in issue for issue in result["issues"]))
+        # Ordinary technical prose containing that word is not an unresolved token.
+        self.assertEqual([], body_issues(body.replace("pending", "Handle pending requests correctly."), "ready", standard))
+
+    def test_override_changes_generation_validation_and_renovate_together(self) -> None:
+        document = deepcopy(resolve_standard(None, ROOT, "pull-request").document)
+        document.update(id="company.pr", version=2)
+        summary = document["rules"]["sections"][0]
+        summary["heading"] = "## Changes delivered"
+        summary["fields"].reverse()
+        summary["fields"][0]["label"] = "Changed surfaces"
+        summary["fields"].append({"id": "rollout", "label": "Rollout", "description": "Consumer rollout decision."})
+        standard = self.select(document)
+        template = render_template(standard)
+        self.assertIn("## Changes delivered", template)
+        self.assertLess(template.index("- Changed surfaces:"), template.index("- Outcome:"))
+        preset = render_renovate_preset(standard)
+        self.assertIn("- Changed surfaces: {{#each upgrades}}", preset["prHeader"])
+        self.assertIn("- Rollout: pending", preset["prHeader"])
+        data = {"schemaVersion": 1, "fields": {field["id"]: "Reviewed consumer evidence." for section in standard.rules["sections"] for field in section["fields"]}, "checks": {check["id"]: True for section in standard.rules["sections"] for check in section["checks"]}}
+        body = render_description(standard, data, state="ready")
+        path = self.root / "pr.md"
+        path.write_bytes(body.encode("utf-8"))
+        result = validate_pull_request(title="feat: use consumer standard", branch="feat/standard", state="ready", body_path=path, project_root=self.root, process_root=ROOT)
+        self.assertEqual([], result["issues"])
+        self.assertEqual("company.pr", result["standard"]["id"])
+        self.assertTrue(body_issues(body, "ready", resolve_standard(None, ROOT, "pull-request")))
+        data["fields"].pop("rollout")
+        with self.assertRaisesRegex(ProcessError, "unresolved value for Rollout"):
+            render_description(standard, data, state="ready")
+
+    def test_explicit_invalid_selections_never_fall_back(self) -> None:
+        for reference in ({"builtin": "pull-request@999"}, {"path": ".process/missing.json"}, {"path": "../outside.json"}, {"builtin": "release-notes@1"}):
+            with self.subTest(reference=reference):
+                self.write(".process/standards.json", {"schemaVersion": 1, "artifacts": {"pull-request": reference}})
+                with self.assertRaises(ProcessError):
+                    resolve_standard(self.root, ROOT, "pull-request")
+
+    def test_schema_and_relationship_errors_are_rejected(self) -> None:
+        original = resolve_standard(None, ROOT, "pull-request").document
+        changes = []
+        unknown = deepcopy(original); unknown["adapter"] = "arbitrary-code"; changes.append(unknown)
+        duplicate = deepcopy(original); duplicate["rules"]["sections"].append(deepcopy(duplicate["rules"]["sections"][0])); changes.append(duplicate)
+        malformed = deepcopy(original); malformed["rules"]["sections"][0]["heading"] += "\n"; changes.append(malformed)
+        unsupported = deepcopy(original); unsupported["schemaVersion"] = 2; changes.append(unsupported)
+        for document in changes:
+            with self.subTest(document=document):
+                with self.assertRaises(ProcessError):
+                    self.select(document)
+
+    def test_ignored_or_lifecycle_state_overrides_cannot_escape_snapshot_binding(self) -> None:
+        document = resolve_standard(None, ROOT, "pull-request").document
+        (self.root / ".gitignore").write_text("hidden/\n", encoding="utf-8")
+        for path in ("hidden/standard.json", ".process/runs/standard.json", ".process/receipts/standard.json"):
+            with self.subTest(path=path), self.assertRaisesRegex(ProcessError, "snapshot"):
+                self.select(document, path=path)
+
+    def test_symlink_override_is_rejected(self) -> None:
+        document = resolve_standard(None, ROOT, "pull-request").document
+        actual = self.write("actual.json", document)
+        link = self.root / "linked.json"
+        try:
+            link.symlink_to(actual)
+        except OSError:
+            self.skipTest("host cannot create symlinks")
+        self.write(".process/standards.json", {"schemaVersion": 1, "artifacts": {"pull-request": {"path": "linked.json"}}})
+        with self.assertRaisesRegex(ProcessError, "links"):
+            resolve_standard(self.root, ROOT, "pull-request")
+
+    def test_override_changes_both_standard_digest_and_repository_snapshot(self) -> None:
+        document = deepcopy(resolve_standard(None, ROOT, "pull-request").document)
+        standard = self.select(document)
+        before = repository_snapshot(self.root)
+        document["rules"]["sections"][0]["heading"] = "## Revised scope"
+        changed = self.select(document)
+        self.assertNotEqual(standard.metadata["digest"], changed.metadata["digest"])
+        self.assertNotEqual(before["fingerprint"], repository_snapshot(self.root)["fingerprint"])
+
+    def test_another_document_kind_can_reuse_selection_without_lifecycle_changes(self) -> None:
+        document = deepcopy(resolve_standard(None, ROOT, "pull-request").document)
+        document.update(id="company.decision", artifact="decision-record")
+        document["rules"] = {"sections": [{"heading": "## Decision", "fields": [{"id": "decision", "label": "Decision", "description": "Accepted decision."}], "checks": []}], "issueReferences": False}
+        self.select(document)
+        data = self.write("decision.json", {"schemaVersion": 1, "fields": {"decision": "Use the existing boundary."}, "checks": {}})
+        path = self.root / "decision.md"
+        code, report = self.cli("render", "--artifact", "decision-record", "--data-file", str(data), "--output", str(path))
+        self.assertEqual(0, code, report)
+        code, verified = self.cli("validate", "--artifact", "decision-record", "--data-file", str(data), "--body-file", str(path))
+        self.assertEqual(0, code, verified)
+        self.assertEqual(report["standard"], verified["standard"])
+        self.assertEqual(report["artifactDigest"], verified["artifactDigest"])
+
+    def test_release_override_and_source_records_determine_verified_bytes(self) -> None:
+        document = deepcopy(resolve_standard(None, ROOT, "release-notes").document)
+        document.update(id="company.release", version=3)
+        document["rules"]["groups"].reverse()
+        document["rules"]["groups"][0]["heading"] = "Corrections"
+        document["rules"]["sections"].append({"id": "security", "heading": "Security impact"})
+        self.select(document)
+        data = {"schemaVersion": 1, "title": "Example v1.1.0", "introduction": "Changes since v1.0.0.", "changes": [{"type": "fix", "summary": "Keep literal *text* and 1. markers.", "source": "issue #10"}, {"type": "capability", "summary": "Add the requested behavior.", "source": "https://example.com/issues/12"}], "sections": {"upgrade": "No migration required.", "security": "No security behavior changed."}}
+        data_path = self.write("release-data.json", data)
+        path = self.root / "notes.md"
+        code, rendered = self.cli("render", "--artifact", "release-notes", "--data-file", str(data_path), "--output", str(path))
+        self.assertEqual(0, code, rendered)
+        self.assertIn(b"## Corrections", path.read_bytes())
+        self.assertNotIn(b"\r", path.read_bytes())
+        code, verified = self.cli("validate", "--artifact", "release-notes", "--data-file", str(data_path), "--body-file", str(path))
+        self.assertEqual(0, code, verified)
+        self.assertEqual(rendered["standard"], verified["standard"])
+        data["sections"]["security"] = "Additional review was required."
+        self.write("release-data.json", data)
+        self.assertEqual(1, self.cli("validate", "--artifact", "release-notes", "--data-file", str(data_path), "--body-file", str(path))[0])
+        self.assertEqual(2, self.cli("validate", "--artifact", "release-notes", "--body-file", str(path))[0])
+        data["sections"].pop("security")
+        self.write("release-data.json", data)
+        self.assertEqual(2, self.cli("render", "--artifact", "release-notes", "--data-file", str(data_path), "--output", str(path))[0])
+
+    def test_invalid_data_does_not_overwrite_output(self) -> None:
+        data = self.write("invalid.json", None)
+        output = self.root / "document.md"
+        output.write_bytes(b"keep me\n")
+        for kind in ("pull-request", "release-notes"):
+            with self.subTest(kind=kind):
+                code, result = self.cli("render", "--artifact", kind, "--data-file", str(data), "--output", str(output))
+                self.assertEqual(2, code, result)
+                self.assertEqual(b"keep me\n", output.read_bytes())
+
+    def test_release_ready_requires_resolved_values_and_known_change_types(self) -> None:
+        standard = resolve_standard(None, ROOT, "release-notes")
+        data = {"schemaVersion": 1, "title": "Example", "introduction": "Changes in this release.", "changes": [{"type": "fix", "summary": "Correct the behavior.", "source": "issue-1"}], "sections": {"upgrade": "pending"}}
+        self.assertIn("pending", render_notes(standard, data, state="draft"))
+        with self.assertRaisesRegex(ProcessError, "unresolved"):
+            render_notes(standard, data)
+        data["sections"]["upgrade"] = "No migration required."
+        data["changes"][0]["type"] = "unclassified"
+        with self.assertRaisesRegex(ProcessError, "unsupported change types"):
+            render_notes(standard, data)
+
+    def test_standard_and_ready_data_capacities_match_for_fields_and_checks(self) -> None:
+        for kind in ("fields", "checks"):
+            for count in (128, 129, 512):
+                with self.subTest(kind=kind, count=count):
+                    document = deepcopy(resolve_standard(None, ROOT, "pull-request").document)
+                    entries = [{"id": f"item-{index}", "label": f"Item {index}", **({"description": "Required consumer value."} if kind == "fields" else {})} for index in range(count)]
+                    document["rules"]["sections"] = [
+                        {"heading": f"## Section {start // 32}", "fields": [], "checks": [], kind: entries[start:start + 32]}
+                        for start in range(0, count, 32)
+                    ]
+                    standard = self.select(document)
+                    data = {"schemaVersion": 1, "fields": {}, "checks": {}}
+                    data[kind] = {entry["id"]: "Recorded consumer result." if kind == "fields" else True for entry in entries}
+                    body = render_description(standard, data, state="ready")
+                    self.assertEqual([], body_issues(body, "ready", standard))
+                    if count == 512:
+                        data[kind]["extra"] = "Recorded result." if kind == "fields" else True
+                        with self.assertRaisesRegex(ProcessError, "too many properties"):
+                            render_description(standard, data, state="ready")
+                        document["rules"]["sections"].append({"heading": "## Extra section", "fields": [], "checks": [], kind: [entries[0]]})
+                        with self.assertRaises(ProcessError):
+                            self.select(document)
+
+
+if __name__ == "__main__":
+    unittest.main()

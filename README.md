@@ -246,6 +246,9 @@ The transaction writes only managed surfaces:
 
 It removes obsolete skills named by the previous process lock and preserves
 consumer-owned skills and instructions. Applying the same version twice is a no-op.
+Consumer-owned `.process/standards.json` selections and override definitions are also
+preserved; the managed PR template follows the effective supported standard. See
+[consumer document standards](ARTIFACT_STANDARDS.md).
 The legacy managed runner can enter 1.0 directly, so consumers do not need a chain of
 per-version migration documents. The same transaction deletes the retired migration
 directory and standing automation policy; the Windows Job Object helper remains a
@@ -458,7 +461,7 @@ supported review schemas; ordinary legacy non-blocking observations remain reada
 
 ### Public pull-request evidence
 
-The managed pull-request template keeps public assurance separate from local
+The default pull-request standard keeps public assurance separate from local
 lifecycle identity. Its five sections and labeled fields are ordered and stable:
 outcome and scope; source, risk, compatibility, and stack; profiles, snapshot, and
 completion receipt; verdict, cycles, blocking status, and non-blocking dispositions;
@@ -468,10 +471,15 @@ handle, or local `.process/runs` path. Those values remain in lifecycle state, w
 they enforce self-review rejection but do not pretend to be provider-authenticated
 review identities.
 
-`processctl publication validate-pr` checks that public contract deterministically.
+The template and validator derive this contract from the same versioned definition.
+Consumers can select a supported override through `.process/standards.json`; see
+[generation, verification and custom-format boundaries](ARTIFACT_STANDARDS.md).
+`processctl publication validate-pr` checks that selected contract deterministically.
 It rejects missing, repeated, misplaced, hidden, unordered, or unsupported visible
 structure. Completion checkboxes belong only to the Completion gate section. Ready
-pull requests must have every checkbox checked; drafts may retain unchecked work.
+pull requests must have every checkbox checked and no unresolved default placeholder
+values; drafts may retain pending fields and unchecked work. The author/coordinator
+replaces them with actual evidence before ready/merge; the reviewer supplies the verdict.
 One trailing `Refs ISSUE.` line remains optional. A ready, contract-identified final
 consumer adoption may instead use `Closes ISSUE, closes OWNER/REPOSITORY#NUMBER.` with
 the complete keyword/reference syntax repeated for every issue; drafts cannot close
@@ -531,17 +539,19 @@ authorizes that merge.
 This repository opts in through .github/renovate.json, so it receives the same
 adoption PR as every other consumer. See SELF_HOSTING.md and RELEASING.md.
 
-The optional [Renovate preset](templates/renovate.json) is generated from the
-canonical public template. It supplies only `prHeader` and `prBodyTemplate`;
+The optional [Renovate preset](templates/renovate.json) and public template are generated
+from the packaged PR standard. It supplies only `prHeader` and `prBodyTemplate`;
 dependency selection, supported platforms, schedules, major-update approval,
 commands, draft policy, and merge authority remain consumer-owned. Regenerate it
 with `python verification/generate_renovate_preset.py`; `--check` rejects drift.
+Consumers overriding that standard can generate a matching preset with
+`processctl artifact renovate-preset`; wire it through their own Renovate configuration.
 
 Consumers add `github>phuongnse/engineering-process//templates/renovate#COMMIT_SHA`
 to their existing `extends` array, replacing `COMMIT_SHA` with the full source
 commit of a verified release that contains the preset. Remove obsolete inline
 `prHeader` and `prBodyTemplate` overrides, including matching package-rule overrides.
-The preset targets the canonical draft grammar used by 1.2.4 and this distribution;
+The default preset targets the draft grammar used by 1.2.4 and this distribution;
 it does not claim compatibility with earlier publication contracts. A future
 grammar change must preserve this adapter or ship an explicit consumer migration.
 

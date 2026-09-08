@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import re
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -16,36 +15,16 @@ from engineering_process.contracts import (  # noqa: E402
     formatted_json_bytes,
     write_json_atomic,
 )
-from engineering_process.publication_compat import (  # noqa: E402
-    _pull_request_body_issues,
-    _without_html_comments,
-)
+from engineering_process.artifact_standards import resolve_standard  # noqa: E402
+from engineering_process.distribution import distribution_root  # noqa: E402
+from engineering_process.pr_description import render_renovate_preset, render_template  # noqa: E402
 
 
 def generate_preset(template: str) -> dict[str, str]:
-    body, issues = _without_html_comments(template)
-    if issues:
-        raise ProcessError("; ".join(issues))
-    body = re.sub(r"(?m)^(- [^:\n]+:)[ \t]*$", r"\1 pending", body)
-    body = body.replace(
-        "- Outcome: pending",
-        "- Outcome: Update {{#each upgrades}}{{depName}} from {{currentValue}}"
-        "{{#if currentDigest}} ({{currentDigest}}){{/if}} to {{newValue}}"
-        "{{#if newDigest}} ({{newDigest}}){{/if}}{{#unless @last}}; {{/unless}}{{/each}}.",
-    ).replace(
-        "- Scope: pending",
-        "- Scope: {{#each upgrades}}{{packageFile}}{{#unless @last}}; {{/unless}}{{/each}}.",
-    )
-    body = re.sub(r"\n{3,}", "\n\n", body).strip() + "\n"
-    issues = _pull_request_body_issues(body, "draft")
-    if issues:
-        raise ProcessError("; ".join(issues))
-    return {
-        "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-        "description": "Pending process draft; generated from templates/PULL_REQUEST_TEMPLATE.md.",
-        "prBodyTemplate": "{{{header}}}",
-        "prHeader": body,
-    }
+    standard = resolve_standard(None, distribution_root(), "pull-request")
+    if template != render_template(standard):
+        raise ProcessError("PR template differs from its packaged standard; regenerate it")
+    return render_renovate_preset(standard)
 
 
 def main() -> int:
@@ -53,12 +32,17 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Reject a stale generated preset.")
     args = parser.parse_args()
     target = PROJECT_ROOT / "templates" / "renovate.json"
-    template = target.with_name("PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
+    standard = resolve_standard(None, distribution_root(), "pull-request")
+    template_path = target.with_name("PULL_REQUEST_TEMPLATE.md")
+    template = render_template(standard)
     preset = generate_preset(template)
     if args.check:
+        if template_path.read_bytes() != template.encode("utf-8"):
+            raise ProcessError("templates/PULL_REQUEST_TEMPLATE.md is stale; run verification/generate_renovate_preset.py")
         if target.read_bytes() != formatted_json_bytes(preset):
             raise ProcessError("templates/renovate.json is stale; run verification/generate_renovate_preset.py")
     else:
+        template_path.write_bytes(template.encode("utf-8"))
         write_json_atomic(target, preset)
     return 0
 

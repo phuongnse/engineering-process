@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "artifact-standards",
+  "type": "capability",
+  "summary": "Generate and verify PR descriptions and release notes from versioned standards with consumer-owned overrides preserved by adoption. Matching template and validator definitions reject unresolved default PR placeholders in ready state; custom formats retain consumer-owned validation profiles.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/174"
+}

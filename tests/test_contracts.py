@@ -40,16 +40,21 @@ class ContractTests(unittest.TestCase):
 
     def test_every_schema_is_valid_and_is_used(self) -> None:
         expected = {
+            "artifact-selection",
+            "artifact-standard",
             "change",
             "plan",
             "process-graph",
             "process-lock",
             "production-engineering",
+            "pr-description-data",
             "project",
             "project-legacy",
             "receipt",
             "release-change",
             "release",
+            "release-notes-data",
+            "renovate-preset",
             "review",
             "run",
         }
@@ -63,7 +68,12 @@ class ContractTests(unittest.TestCase):
             (ROOT / ".process" / "process.lock", "process-lock"),
             (ROOT / "process-graph.json", "process-graph"),
             (ROOT / "release.json", "release"),
+            (ROOT / "templates" / "renovate.json", "renovate-preset"),
         ]
+        cases.extend(
+            (path, "artifact-standard")
+            for path in sorted((ROOT / "process_assets" / "standards").glob("*.json"))
+        )
         cases.extend(
             (path, "release-change")
             for path in sorted((ROOT / "release-changes").glob("*.json"))

@@ -22,6 +22,18 @@ records; this is new-reader/old-record compatibility, not forward compatibility.
 Historical blockers now require explicit resolution in subsequent reports; all
 supported review schemas already permit the `resolved` disposition.
 
+Artifact selection, standard definitions and renderer inputs use their own schema 1
+documents. Packaged standard versions are immutable after publication. Consumers can
+pin a built-in version or select a complete consumer-owned override; unsupported
+explicit selections fail without fallback. Existing project, run and review schemas
+are unchanged. See [consumer document standards](ARTIFACT_STANDARDS.md).
+
+Existing publication command arguments remain valid. The updated PR adapter resolves
+the current consumer's selected standard and repairs the ready-placeholder gap; the
+default completed body structure is unchanged. Older runtimes do not apply these new
+selections or checks. Adopt and install the released package before enabling overrides,
+then regenerate matching consumer templates/bot configuration and collect new evidence.
+
 Version 1.0 is the intentional clean break from the pre-1.0 governance stack. Its
 adoption reader accepts old process locks and project manifests, then writes
 process-lock schema 2 and project schema 5. It does not require every intermediate
