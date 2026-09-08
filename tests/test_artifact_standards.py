@@ -192,6 +192,29 @@ class ArtifactStandardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "unsupported change types"):
             render_notes(standard, data)
 
+    def test_standard_and_ready_data_capacities_match_for_fields_and_checks(self) -> None:
+        for kind in ("fields", "checks"):
+            for count in (128, 129, 512):
+                with self.subTest(kind=kind, count=count):
+                    document = deepcopy(resolve_standard(None, ROOT, "pull-request").document)
+                    entries = [{"id": f"item-{index}", "label": f"Item {index}", **({"description": "Required consumer value."} if kind == "fields" else {})} for index in range(count)]
+                    document["rules"]["sections"] = [
+                        {"heading": f"## Section {start // 32}", "fields": [], "checks": [], kind: entries[start:start + 32]}
+                        for start in range(0, count, 32)
+                    ]
+                    standard = self.select(document)
+                    data = {"schemaVersion": 1, "fields": {}, "checks": {}}
+                    data[kind] = {entry["id"]: "Recorded consumer result." if kind == "fields" else True for entry in entries}
+                    body = render_description(standard, data, state="ready")
+                    self.assertEqual([], body_issues(body, "ready", standard))
+                    if count == 512:
+                        data[kind]["extra"] = "Recorded result." if kind == "fields" else True
+                        with self.assertRaisesRegex(ProcessError, "too many properties"):
+                            render_description(standard, data, state="ready")
+                        document["rules"]["sections"].append({"heading": "## Extra section", "fields": [], "checks": [], kind: [entries[0]]})
+                        with self.assertRaises(ProcessError):
+                            self.select(document)
+
 
 if __name__ == "__main__":
     unittest.main()

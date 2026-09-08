@@ -95,33 +95,53 @@ def read_document(path: Path) -> bytes:
     return data
 
 
-def resolve_standard(project_root: Path | None, process_root: Path, artifact: str) -> ArtifactStandard:
-    if len(artifact) > 128 or not IDENTIFIER.fullmatch(artifact):
-        raise ProcessError("artifact must be a canonical identifier")
-    schema_root = schemas_root(process_root)
-    selection = {"builtin": f"{artifact}@1"}
+@dataclass(frozen=True)
+class StandardCatalog:
+    """One selection snapshot for adapter resolution and adoption ownership checks."""
+
+    project_root: Path | None
+    process_root: Path
+    selections: dict[str, Any]
+    consumer_files: frozenset[Path]
+
+    def resolve(self, artifact: str) -> ArtifactStandard:
+        if len(artifact) > 128 or not IDENTIFIER.fullmatch(artifact):
+            raise ProcessError("artifact must be a canonical identifier")
+        selection = self.selections.get(artifact, {"builtin": f"{artifact}@1"})
+        if "path" in selection:
+            path = _consumer_file(self.project_root, selection["path"])
+            source = selection["path"]
+        else:
+            name, version = selection["builtin"].rsplit("@", 1)
+            path = self.process_root / "process_assets" / "standards" / f"{name}.v{version}.json"
+            source = selection["builtin"]
+            if path.is_symlink() or not path.is_file():
+                raise ProcessError(f"unsupported packaged artifact standard: {source}")
+        document = load_and_validate(path, "artifact-standard", schema_root=schemas_root(self.process_root))
+        if document["artifact"] != artifact:
+            raise ProcessError(f"selected standard is for {document['artifact']}, not {artifact}")
+        if "builtin" in selection and (name != artifact or document["version"] != int(version)):
+            raise ProcessError("packaged standard identity does not match its selection")
+        _validate_relations(document)
+        return ArtifactStandard(document, source)
+
+
+def load_standard_catalog(project_root: Path | None, process_root: Path) -> StandardCatalog:
+    selections: dict[str, Any] = {}
+    consumer_files: set[Path] = set()
     if project_root is not None:
         project_root = project_root.resolve()
         selector = project_root / ".process" / "standards.json"
         if selector.exists() or selector.is_symlink():
             document = load_and_validate(
                 _consumer_file(project_root, ".process/standards.json"),
-                "artifact-selection", schema_root=schema_root,
+                "artifact-selection", schema_root=schemas_root(process_root),
             )
-            selection = document["artifacts"].get(artifact, selection)
-    if "path" in selection:
-        path = _consumer_file(project_root, selection["path"])
-        source = selection["path"]
-    else:
-        name, version = selection["builtin"].rsplit("@", 1)
-        path = process_root / "process_assets" / "standards" / f"{name}.v{version}.json"
-        source = selection["builtin"]
-        if path.is_symlink() or not path.is_file():
-            raise ProcessError(f"unsupported packaged artifact standard: {source}")
-    document = load_and_validate(path, "artifact-standard", schema_root=schema_root)
-    if document["artifact"] != artifact:
-        raise ProcessError(f"selected standard is for {document['artifact']}, not {artifact}")
-    if "builtin" in selection and (name != artifact or document["version"] != int(version)):
-        raise ProcessError("packaged standard identity does not match its selection")
-    _validate_relations(document)
-    return ArtifactStandard(document, source)
+            selections = document["artifacts"]
+            consumer_files = {Path(".process/standards.json")}
+            consumer_files.update(Path(value["path"]) for value in selections.values() if "path" in value)
+    return StandardCatalog(project_root, process_root, selections, frozenset(consumer_files))
+
+
+def resolve_standard(project_root: Path | None, process_root: Path, artifact: str) -> ArtifactStandard:
+    return load_standard_catalog(project_root, process_root).resolve(artifact)

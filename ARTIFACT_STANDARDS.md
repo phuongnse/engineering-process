@@ -45,6 +45,10 @@ unsupported adapters/versions and artifact mismatches fail; explicit selection n
 silently falls back to a default. Paths must be canonical files within the consumer
 Git snapshot, outside ignored directories and lifecycle state. Links are rejected.
 Commit the selection and definitions with the consumer change.
+Adoption rejects a selection that occupies a file it must replace or retire, before
+writing or deleting anything. Move such definitions to consumer-owned paths and update
+the selection. This ownership check covers every selected artifact, including release
+definitions when adoption only needs to render a PR template.
 
 Adoption preserves those files and renders the managed PR-template block from the
 selected PR standard. Do not hand-edit that generated block. Changing the definition

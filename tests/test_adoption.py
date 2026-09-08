@@ -15,6 +15,7 @@ from engineering_process import VERSION
 from engineering_process.adoption import apply_adoption, check_adoption
 from engineering_process.artifact_standards import resolve_standard
 from engineering_process.contracts import ProcessError, read_json
+from engineering_process.repository import repository_snapshot
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -190,6 +191,44 @@ class AdoptionTests(unittest.TestCase):
         lock = read_json(self.root / ".process" / "process.lock")
         self.assertNotIn(".process/consumer-pr.json", lock["managedFiles"])
         self.assertNotIn(".process/standards.json", lock["managedFiles"])
+        self.assertEqual("passed", check_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+        self.assertEqual("unchanged", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+
+    def test_selected_standard_collisions_fail_before_any_adoption_mutation(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True, timeout=30)
+        self.assertEqual("applied", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+        selector = self.root / ".process" / "standards.json"
+        paths = (
+            ".process/automation.json",
+            ".process/adoption-migrations/2.2.0.json",
+            ".agents/skills/change-plan/.engineering-process.json",
+        )
+        for artifact in ("pull-request", "release-notes"):
+            document = resolve_standard(None, PROCESS_ROOT, artifact).document
+            for relative in paths:
+                with self.subTest(artifact=artifact, path=relative):
+                    definition = self.root / relative
+                    original = definition.read_bytes() if definition.exists() else None
+                    write_json(definition, document)
+                    write_json(selector, {"schemaVersion": 1, "artifacts": {artifact: {"path": relative}}})
+                    self.assertEqual(document["id"], resolve_standard(self.root, PROCESS_ROOT, artifact).document["id"])
+                    try:
+                        before = repository_snapshot(self.root)
+                        with self.assertRaisesRegex(ProcessError, "conflict with managed adoption paths"):
+                            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+                        self.assertEqual(before, repository_snapshot(self.root))
+                    finally:
+                        if original is None:
+                            definition.unlink()
+                        else:
+                            definition.write_bytes(original)
+        # Relocating the release-only override restores ordinary adoption and replay.
+        definition = self.root / ".process" / "consumer-release.json"
+        write_json(definition, document)
+        write_json(selector, {"schemaVersion": 1, "artifacts": {"release-notes": {"path": ".process/consumer-release.json"}}})
+        expected = definition.read_bytes()
+        self.assertIn(apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"], {"applied", "unchanged"})
+        self.assertEqual(expected, definition.read_bytes())
         self.assertEqual("passed", check_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
         self.assertEqual("unchanged", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
 
