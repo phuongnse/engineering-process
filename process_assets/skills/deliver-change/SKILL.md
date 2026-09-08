@@ -18,9 +18,10 @@ change status when a change already exists, then route exactly one current phase
 2. specified: use **change-plan**.
 3. planned or changes-requested: use **change-implement**.
 4. implementing: use **change-verify**.
-5. verified or review-pending: use **change-review**, resuming the existing assignment
-   when review is pending; if the repository changed after evidence was recorded,
-   use **change-implement** to open a new cycle.
+5. verified or review-pending: hand off to an actual independent reviewer through
+   **change-review**, resuming the existing assignment when review is pending; if the
+   repository changed after evidence was recorded, use **change-implement** to open a
+   new cycle.
 6. approved: use **change-complete**; a later repository change also reopens through
    **change-implement**.
 7. blocked: stop. The current contract cannot merge; the owner may narrow or
