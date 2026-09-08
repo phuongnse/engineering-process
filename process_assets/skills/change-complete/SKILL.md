@@ -20,6 +20,12 @@ marks the run completed.
 Completion does not itself grant merge, deployment, or release authority; those
 remain project-owned operations. Never report completion from prose alone.
 
+When the accepted work includes a release, make its contents reviewable: what ships,
+user impact, source issues or changes, and required upgrade/compatibility actions.
+Use the consumer's reviewed release records as the authority. The consumer owns
+format, tooling and publication decisions; a list of internal execution events or
+version-bump PR titles does not explain shipped behavior.
+
 Use a normal trailing `Refs ISSUE.` line for producer and intermediate pull requests.
 Only a contract-identified final consumer adoption that has verified the released
 behavior may use `Closes ISSUE, closes ISSUE.` after the completed public checklist.

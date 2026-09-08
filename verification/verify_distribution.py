@@ -86,6 +86,12 @@ def main() -> int:
         normalize(sdists[0], epoch)
         expected_preset = (PROJECT_ROOT / "templates" / "renovate.json").read_bytes()
         with tarfile.open(sdists[0]) as archive:
+            notes = [name for name in archive.getnames() if name.endswith("/RELEASE_NOTES.md")]
+            if len(notes) != 1:
+                raise RuntimeError("sdist must contain exactly one reviewed release notes file")
+            with archive.extractfile(notes[0]) as content:
+                if content.read() != (PROJECT_ROOT / "RELEASE_NOTES.md").read_bytes():
+                    raise RuntimeError("sdist release notes differ from the reviewed source")
             presets = [name for name in archive.getnames() if name.endswith("/templates/renovate.json")]
             if len(presets) != 1:
                 raise RuntimeError("sdist must contain exactly one generated Renovate preset")

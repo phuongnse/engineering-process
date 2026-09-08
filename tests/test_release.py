@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
+import contextlib
+import io
+import json
 import shutil
 import hashlib
 import os
@@ -8,11 +12,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError, read_json, write_json_atomic
 from engineering_process.release import derive_next_version, validate_release
 from verification.normalize_sdist import normalize
 from verification.prepare_release import _replace_once
+from verification import render_release_notes as notes_renderer
 from verification.verify_distribution import validate_distribution_text
 
 
@@ -20,6 +26,86 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_notes_group_every_change_and_keep_sources_and_upgrade_context(self) -> None:
+        release = {
+            "schemaVersion": 5, "version": "3.0.0", "previousVersion": "2.1.0",
+            "changes": [
+                {"id": kind, "type": kind, "summary": f"Observable {kind} behavior", "source": f"https://github.com/phuongnse/engineering-process/issues/{number}"}
+                for number, kind in enumerate(("fix", "capability", "breaking"), 1)
+            ],
+        }
+        notes = notes_renderer.render_release_notes(release)
+        self.assertLess(notes.index("## Breaking changes"), notes.index("## Features"))
+        self.assertLess(notes.index("## Features"), notes.index("## Fixes"))
+        for number, change in enumerate(release["changes"], 1):
+            self.assertEqual(1, notes.count(change["summary"]))
+            self.assertIn(f"[#{number}]({change['source']})", notes)
+        self.assertIn("compare/v2.1.0...v3.0.0", notes)
+        self.assertIn("blob/v3.0.0/VERSIONING.md", notes)
+        self.assertIn("Consumer CI", notes)
+        self.assertNotIn("\r", notes)
+
+    def test_notes_treat_metadata_as_text_and_do_not_invent_source_links(self) -> None:
+        release = deepcopy(read_json(ROOT / "release.json"))
+        release["changes"] = [
+            {"id": "safe-text", "type": "fix", "summary": "Cải thiện `tool`\n# heading [link]", "source": "owned change #42"},
+            {"id": "safe-url", "type": "fix", "summary": "Safe source link.", "source": "https://example.invalid/a) bad"},
+        ]
+        notes = notes_renderer.render_release_notes(release)
+        self.assertIn("Cải thiện \\`tool\\` \\# heading \\[link\\]", notes)
+        self.assertNotIn("\n# heading", notes)
+        self.assertIn("` owned change #42 `", notes)
+        self.assertIn("https://example.invalid/a%29%20bad", notes)
+        self.assertNotIn("## Features", notes)
+
+    def test_notes_preserve_list_markers_entities_and_strikethrough_as_text(self) -> None:
+        release = deepcopy(read_json(ROOT / "release.json"))
+        release["changes"] = [{
+            "id": "literal-metadata", "type": "fix",
+            "summary": "1. Preserve literal &copy; and ~~removed~~ labels.",
+            "source": "owned &copy; ~~reference~~ #42",
+        }]
+        notes = notes_renderer.render_release_notes(release)
+        self.assertIn(r"- 1\. Preserve literal \&copy\; and \~\~removed\~\~ labels\.", notes)
+        self.assertIn("(` owned &copy; ~~reference~~ #42 `)", notes)
+        for marker in ("-", "+", "*"):
+            release["changes"][0]["summary"] = marker + " Preserve the literal bullet marker"
+            with self.subTest(marker=marker):
+                self.assertIn("- \\" + marker + " Preserve", notes_renderer.render_release_notes(release))
+
+    def test_owned_references_with_backticks_stay_inside_one_code_span(self) -> None:
+        release = deepcopy(read_json(ROOT / "release.json"))
+        release["changes"] = [{"id": "literal-reference", "type": "fix", "summary": "Keep the source literal", "source": "`owned` ``reference`` #42"}]
+        self.assertIn("(``` `owned` ``reference`` #42 ```)", notes_renderer.render_release_notes(release))
+
+    def test_notes_check_rejects_stale_missing_and_noncanonical_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            target = Path(directory) / "notes.md"
+            self.assertEqual(0, notes_renderer.main(["--output", str(target)]))
+            expected = target.read_bytes()
+            self.assertEqual(0, notes_renderer.main(["--check", str(target)]))
+            for invalid in (b"stale\n", expected.replace(b"\n", b"\r\n"), b"\xef\xbb\xbf" + expected):
+                target.write_bytes(invalid)
+                with self.subTest(invalid=invalid[:16]), self.assertRaisesRegex(ProcessError, "stale"):
+                    notes_renderer.main(["--check", str(target)])
+            target.unlink()
+            with self.assertRaises(OSError):
+                notes_renderer.main(["--check", str(target)])
+
+    def test_notes_validate_the_manifest_before_overwriting_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "schemas").mkdir()
+            shutil.copyfile(ROOT / "schemas/release.schema.json", root / "schemas/release.schema.json")
+            release = deepcopy(read_json(ROOT / "release.json"))
+            release["changes"][0]["type"] = "unknown"
+            (root / "release.json").write_text(json.dumps(release), encoding="utf-8")
+            target = root / "notes.md"
+            target.write_bytes(b"preserved\n")
+            with patch.object(notes_renderer, "PROJECT_ROOT", root), self.assertRaises(ProcessError):
+                notes_renderer.main(["--output", str(target)])
+            self.assertEqual(b"preserved\n", target.read_bytes())
+
     def test_release_replacement_writes_explicit_lf_on_every_host(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "version.txt"
@@ -65,6 +151,7 @@ class ReleaseTests(unittest.TestCase):
         result = validate_release(ROOT, ROOT, tag=f"v{release['version']}")
         self.assertEqual(release["version"], result["version"])
         self.assertEqual(len(release["changes"]), result["changeCount"])
+        self.assertEqual(notes_renderer.render_release_notes(release).encode("utf-8"), (ROOT / "RELEASE_NOTES.md").read_bytes())
 
     def test_semver_is_derived_from_change_classification(self) -> None:
         self.assertEqual("0.9.1", derive_next_version("0.9.0", ["fix"]))
@@ -129,6 +216,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(expected, prepared["version"])
             self.assertEqual(current["version"], prepared["previousVersion"])
             self.assertEqual([], list((target / "release-changes").glob("*.json")))
+            self.assertEqual(notes_renderer.render_release_notes(prepared).encode("utf-8"), (target / "RELEASE_NOTES.md").read_bytes())
             self.assertIn(
                 f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )

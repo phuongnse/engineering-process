@@ -79,6 +79,11 @@ jobs:
           python-version: "3.14.7"
       - run: python -m pip install -r engineering_process/requirements-runtime.txt --editable .
       - run: python processctl.py release validate --tag "${{ steps.release.outputs.tag }}"
+      - name: Validate reviewed release contents before publishing
+        run: |
+          if [ -f verification/render_release_notes.py ]; then
+            python verification/render_release_notes.py --check RELEASE_NOTES.md
+          fi
 
   publish:
     name: Publish immutable release
@@ -203,11 +208,15 @@ jobs:
               -f sha="${{ needs.metadata.outputs.source_sha }}"
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            notes=(--generate-notes)
+            if [ -f verification/render_release_notes.py ]; then
+              notes=(--notes-file RELEASE_NOTES.md)
+            fi
             gh release create "$RELEASE_TAG" \
               --draft \
               --verify-tag \
               --title "$RELEASE_TAG" \
-              --generate-notes
+              "${notes[@]}"
           fi
           release_is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
           mkdir "$RUNNER_TEMP/existing-release"
@@ -255,6 +264,19 @@ jobs:
           if actual != expected:
               raise RuntimeError(f"GitHub release assets differ: expected {expected}, got {actual}")
           PY
+          if [ -f verification/render_release_notes.py ]; then
+            gh release view "$RELEASE_TAG" --json body > "$RUNNER_TEMP/release-body.json"
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          body = json.loads((Path(os.environ["RUNNER_TEMP"]) / "release-body.json").read_text(encoding="utf-8"))["body"]
+          expected = Path("RELEASE_NOTES.md").read_text(encoding="utf-8")
+          if body.rstrip("\r\n") != expected.rstrip("\r\n"):
+              raise RuntimeError("GitHub release contents differ from the reviewed notes")
+          PY
+          fi
           gh release edit "$RELEASE_TAG" --draft=false
 
   dispatch-adoption:

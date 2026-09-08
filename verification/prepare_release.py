@@ -19,6 +19,7 @@ from engineering_process.contracts import (  # noqa: E402
 )
 from engineering_process.distribution import schemas_root  # noqa: E402
 from engineering_process.release import derive_next_version  # noqa: E402
+from verification.render_release_notes import render_release_notes  # noqa: E402
 
 
 def _replace_once(path: Path, old: str, new: str) -> None:
@@ -62,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         ],
     }
     validate_document(release, "release", schema_root=schema_root, source="next release")
+    notes = render_release_notes(release).encode("utf-8")
     _replace_once(
         PROJECT_ROOT / "pyproject.toml",
         f'version = "{current["version"]}"',
@@ -73,6 +75,9 @@ def main(argv: list[str] | None = None) -> int:
         f'VERSION = "{expected}"',
     )
     write_json_atomic(PROJECT_ROOT / "release.json", release)
+    notes_path = PROJECT_ROOT / ".RELEASE_NOTES.md.release.tmp"
+    notes_path.write_bytes(notes)
+    notes_path.replace(PROJECT_ROOT / "RELEASE_NOTES.md")
     for path in fragment_paths:
         path.unlink()
     print(expected)

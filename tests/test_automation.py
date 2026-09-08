@@ -235,6 +235,13 @@ class AutomationTests(unittest.TestCase):
         self.assertLess(trusted_checkout, preflight)
         self.assertLess(preflight, source_checkout)
         self.assertLess(source_checkout, editable_install)
+        notes_check = workflow.index("python verification/render_release_notes.py --check RELEASE_NOTES.md")
+        self.assertLess(notes_check, workflow.index("name: Publish immutable files to PyPI"))
+        self.assertIn("notes=(--notes-file RELEASE_NOTES.md)", publish_job)
+        self.assertIn("notes=(--generate-notes)", publish_job)
+        self.assertIn('"${notes[@]}"', publish_job)
+        self.assertLess(publish_job.index("GitHub release contents differ from the reviewed notes"), publish_job.index('gh release edit "$RELEASE_TAG" --draft=false'))
+        self.assertNotIn("gh release edit \"$RELEASE_TAG\" --notes", publish_job)
 
     def test_release_pull_request_starts_and_refreshes_as_canonical_draft(self) -> None:
         body_path = ROOT / ".github" / "release-pr-body.md"
@@ -263,6 +270,8 @@ class AutomationTests(unittest.TestCase):
         create = workflow.split("            gh pr create \\\n", maxsplit=1)[1]
         self.assertIn("              --draft \\\n", create)
         self.assertNotIn("--body \"Generated from", workflow)
+        self.assertIn("release.json release-changes RELEASE_NOTES.md", workflow)
+        self.assertIn("RELEASE_NOTES.md", body)
 
     def test_ci_checks_the_adopted_hash_locked_distribution_separately(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

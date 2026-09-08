@@ -51,7 +51,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add engineering_process/__init__.py pyproject.toml release.json release-changes
+          git add engineering_process/__init__.py pyproject.toml release.json release-changes RELEASE_NOTES.md
           git commit -m "chore(release): prepare v$RELEASE_VERSION"
           existing_pr="$(gh pr list --head "$branch" --state open --limit 1 --json number,isDraft)"
           pr_number="$(jq -r '.[0].number // empty' <<<"$existing_pr")"

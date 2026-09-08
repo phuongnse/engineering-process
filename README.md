@@ -496,6 +496,11 @@ At any point:
 
 ## Release to consumer PR
 
+Each release includes [reviewed release contents](RELEASE_NOTES.md) generated from
+the canonical manifest: shipped features/fixes, their source issues or changes, and
+upgrade guidance. The release PR reviews this file; the GitHub Release publishes the
+same contents. See [the release procedure](RELEASING.md) for authoring and checks.
+
 This producer's release identity inputs and text assets declared by
 `tool.setuptools.data-files` use UTF-8 without BOM and LF, matching `.gitattributes`.
 Writers select that representation explicitly; JSON writers use

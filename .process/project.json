@@ -22,6 +22,16 @@
     ],
     "review": [
       {
+        "id": "release-contents",
+        "run": [
+          "python",
+          "verification/render_release_notes.py",
+          "--check",
+          "RELEASE_NOTES.md"
+        ],
+        "timeoutSeconds": 60
+      },
+      {
         "id": "publication-branch",
         "run": [
           "python",
