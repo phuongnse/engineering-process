@@ -158,6 +158,25 @@ runtime/license delivery, Linux advisory resolution, real-host workspace securit
 updater, incident recovery, and independent security review remain planned.
 Consumers without readiness remain compatible during that evidence-backed rollout.
 
+### Design quality
+
+Changes that materially alter logic, state, or collaboration boundaries carry
+consumer design standards in their existing acceptance criteria. The shared
+[design quality guidance](process_assets/skills/production-engineering/SKILL.md#design-quality)
+requires understandable responsibilities, data and state, ownership, and contracts.
+Agents actively introduce or refine cohesive abstractions when current requirements
+justify them, weighing comprehension and change locality against indirection.
+Consumer architecture and language choices remain authoritative.
+
+Start defines scoped design outcomes; the plan explains material choices in its
+existing approach and work items; implementation revisits the affected flow before
+verification. Independent review traces behavior and a concrete maintenance scenario
+against the actual code. Demonstrated violations of accepted criteria can block
+completion despite passing tests. Routine edits stay proportional, and a clear
+direct implementation remains valid. The existing lifecycle enforces criterion-bound
+findings and evidence freshness; contextual design quality remains the reviewer's
+judgment, without another gate, artifact, or canonical invariant.
+
 ### Production engineering invariants
 
 Every new plan and independent review applies one small, versioned invariant floor:

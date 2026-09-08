@@ -44,6 +44,16 @@ the contract are proposals, not blocking findings. approved may contain non-bloc
 observations but no blocking finding; changes-requested requires at least one blocking
 finding.
 
+Assess accepted design criteria separately from passing checks. Use
+**production-engineering** design guidance to trace a significant behavior and a
+concrete maintenance scenario grounded in current requirements through the affected
+code, callers, and dependencies. Evaluate both the effort to understand the flow and
+the reach of a change. A design finding must identify the violated criterion, source
+location, and concrete correctness, comprehension, or maintenance consequence.
+Apply the existing blocking rules to demonstrated violations even when tests pass;
+preference for a pattern, shorter code, or a different valid structure is insufficient.
+Do not retrofit new design criteria into the frozen contract.
+
 Read **production-engineering** and independently reassess every canonical invariant.
 Use the report's `productionEngineering` entries to record `satisfied`,
 `not-applicable`, or `violated`; cite concrete snapshot evidence for each satisfied
