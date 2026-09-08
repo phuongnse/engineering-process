@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import re
+import string
 import sys
 from urllib.parse import quote
 
@@ -20,7 +21,7 @@ REPOSITORY = "https://github.com/phuongnse/engineering-process"
 
 
 def _text(value: str) -> str:
-    return re.sub(r"[\\`*_{}\[\]<>#|]", lambda match: "\\" + match.group(), " ".join(value.split()))
+    return "".join("\\" + character if character in string.punctuation else character for character in " ".join(value.split()))
 
 
 def render_release_notes(release: dict) -> str:
@@ -38,7 +39,10 @@ def render_release_notes(release: dict) -> str:
                 label = f"#{issue.group(1)}" if issue else "Source"
                 reference = f"[{label}]({quote(source, safe=':/?#&=%@+~')})"
             else:
-                reference = _text(source)
+                # Code spans keep GitHub from inventing issue, mention or commit links.
+                source = " ".join(source.split())
+                fence = "`" * (1 + max((len(run) for run in re.findall(r"`+", source)), default=0))
+                reference = f"{fence} {source} {fence}"
             lines.append(f"- {_text(change['summary'])} ({reference})")
         lines.append("")
     lines.extend([

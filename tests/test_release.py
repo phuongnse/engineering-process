@@ -30,7 +30,7 @@ class ReleaseTests(unittest.TestCase):
         release = {
             "schemaVersion": 5, "version": "3.0.0", "previousVersion": "2.1.0",
             "changes": [
-                {"id": kind, "type": kind, "summary": f"Observable {kind} behavior.", "source": f"https://github.com/phuongnse/engineering-process/issues/{number}"}
+                {"id": kind, "type": kind, "summary": f"Observable {kind} behavior", "source": f"https://github.com/phuongnse/engineering-process/issues/{number}"}
                 for number, kind in enumerate(("fix", "capability", "breaking"), 1)
             ],
         }
@@ -54,9 +54,29 @@ class ReleaseTests(unittest.TestCase):
         notes = notes_renderer.render_release_notes(release)
         self.assertIn("Cải thiện \\`tool\\` \\# heading \\[link\\]", notes)
         self.assertNotIn("\n# heading", notes)
-        self.assertIn("owned change \\#42", notes)
+        self.assertIn("` owned change #42 `", notes)
         self.assertIn("https://example.invalid/a%29%20bad", notes)
         self.assertNotIn("## Features", notes)
+
+    def test_notes_preserve_list_markers_entities_and_strikethrough_as_text(self) -> None:
+        release = deepcopy(read_json(ROOT / "release.json"))
+        release["changes"] = [{
+            "id": "literal-metadata", "type": "fix",
+            "summary": "1. Preserve literal &copy; and ~~removed~~ labels.",
+            "source": "owned &copy; ~~reference~~ #42",
+        }]
+        notes = notes_renderer.render_release_notes(release)
+        self.assertIn(r"- 1\. Preserve literal \&copy\; and \~\~removed\~\~ labels\.", notes)
+        self.assertIn("(` owned &copy; ~~reference~~ #42 `)", notes)
+        for marker in ("-", "+", "*"):
+            release["changes"][0]["summary"] = marker + " Preserve the literal bullet marker"
+            with self.subTest(marker=marker):
+                self.assertIn("- \\" + marker + " Preserve", notes_renderer.render_release_notes(release))
+
+    def test_owned_references_with_backticks_stay_inside_one_code_span(self) -> None:
+        release = deepcopy(read_json(ROOT / "release.json"))
+        release["changes"] = [{"id": "literal-reference", "type": "fix", "summary": "Keep the source literal", "source": "`owned` ``reference`` #42"}]
+        self.assertIn("(``` `owned` ``reference`` #42 ```)", notes_renderer.render_release_notes(release))
 
     def test_notes_check_rejects_stale_missing_and_noncanonical_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):

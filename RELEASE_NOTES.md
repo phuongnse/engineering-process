@@ -4,13 +4,13 @@ Changes since v2.0.2.
 
 ## Features
 
-- Pin comparison refs in new lifecycle runs, require explicit blocker closure, and wire the producer's actual publication metadata into required verification while retaining older run readers. ([#169](https://github.com/phuongnse/engineering-process/issues/169))
+- Pin comparison refs in new lifecycle runs\, require explicit blocker closure\, and wire the producer\'s actual publication metadata into required verification while retaining older run readers\. ([#169](https://github.com/phuongnse/engineering-process/issues/169))
 
 ## Fixes
 
-- Carry consumer design quality through accepted criteria, planning, implementation, and independent review, with proactive cohesive abstractions and evidence-based maintenance judgment. ([#119](https://github.com/phuongnse/engineering-process/issues/119))
-- Clarify real independent reviewer dispatch, neutral context and reviewer-owned report handoff using the existing runner. ([#166](https://github.com/phuongnse/engineering-process/issues/166))
-- Publish reviewed release contents with grouped changes, source issues and upgrade guidance generated from the canonical release manifest. ([#171](https://github.com/phuongnse/engineering-process/issues/171))
+- Carry consumer design quality through accepted criteria\, planning\, implementation\, and independent review\, with proactive cohesive abstractions and evidence\-based maintenance judgment\. ([#119](https://github.com/phuongnse/engineering-process/issues/119))
+- Clarify real independent reviewer dispatch\, neutral context and reviewer\-owned report handoff using the existing runner\. ([#166](https://github.com/phuongnse/engineering-process/issues/166))
+- Publish reviewed release contents with grouped changes\, source issues and upgrade guidance generated from the canonical release manifest\. ([#171](https://github.com/phuongnse/engineering-process/issues/171))
 
 ## Upgrade and compatibility
 
