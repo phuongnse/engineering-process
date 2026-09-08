@@ -6,7 +6,23 @@ description: Review the exact verified snapshot from an independent actor and co
 # Review a change
 
 The reviewer must not share either actor identity or execution context with an
-implementer in the current cycle. Read `processctl change status --change-id ID`.
+implementer in the current cycle. An implementer must hand off this phase to an
+actual reviewer, not perform it under another identity.
+
+For a new agent review, spawn a fresh agent/session without the implementation
+conversation. Supply the accepted contract and plan, comparison base, candidate
+path/checkpoint, and verification evidence. Request an independent assessment of
+the complete diff and relevant code/tests without suggesting a verdict. The same
+model, provider, or account may be used. If the environment cannot run or reach an
+independent reviewer, leave the change awaiting review and report that missing
+handoff.
+
+Use the runner's returned reviewer handle to continue the real reviewer. Record its
+actor/context in the existing assignment and retain the native task/session
+interaction and returned result for inspection. Distinct identity strings alone do
+not demonstrate that a review ran.
+
+Read `processctl change status --change-id ID`.
 When the phase is `verified`, start the assignment:
 
     processctl change review start --change-id ID --actor REVIEWER --context REVIEW_CONTEXT
@@ -60,7 +76,10 @@ For a planned-to-enforced transition, require the explicit readiness diff and cu
 consumer-owned evidence; reject promotion by prose, stale evidence, or renamed gap.
 Do not block the change merely because unrelated planned capabilities still exist.
 
-Validate and submit the report:
+The reviewer authors the verdict, findings, and assessments, then validates and
+submits its report. If only the coordinator can submit, it transports the reviewer's
+returned report unchanged. Report errors go back to the assigned reviewer for
+correction; the coordinator must not fill in or rewrite the review content.
 
     processctl contract validate --kind review REPORT_PATH
     processctl change review submit --change-id ID --review REPORT_PATH

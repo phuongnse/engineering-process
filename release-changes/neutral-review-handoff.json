@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "neutral-review-handoff",
+  "type": "fix",
+  "summary": "Clarify real independent reviewer dispatch, neutral context and reviewer-owned report handoff using the existing runner.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/166"
+}

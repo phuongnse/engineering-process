@@ -45,6 +45,14 @@ may have implemented the current cycle. There is no attestation hierarchy,
 recommendation chain, authority-transition protocol, remote-evidence federation, or
 second handwritten validator.
 
+The coordinator hands review to an actual reviewer. A new agent review starts in a
+fresh context with the accepted source artifacts and no suggested verdict; the same
+reviewer continues corrections. The reviewer inspects the change and authors its
+own report. The runner's existing task/session interaction and returned result make
+that work inspectable. Sharing a model, provider, or account is allowed; this is a
+workflow for independent judgment, not authenticated identity or merge enforcement.
+See [change-review](process_assets/skills/change-review/SKILL.md) for the handoff.
+
 Runtime architecture is enforced by semantic fitness functions, not module or source-
 line quotas. Every module has an explicit dependency layer, imports point toward lower
 layers, the internal graph remains acyclic, and lifecycle.py alone owns state
