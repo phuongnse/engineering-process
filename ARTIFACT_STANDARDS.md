@@ -1,4 +1,4 @@
-# Consumer document standards
+# Consumer artifact standards
 
 The process supplies versioned defaults. Consumers select the document requirements;
 generation and verification resolve the same definition. Document checks do not grant
@@ -8,6 +8,7 @@ lifecycle approval, merge permission or release authority.
 | --- | --- | --- |
 | `pull-request@1` | `pr-description` | Ordered sections, fields and checkboxes; structural validation, or exact rendering from supplied data |
 | `release-notes@1` | `release-notes` | Consumer change/source records and upgrade text; exact rendered-byte comparison |
+| `automation-name@1` | `automation-name` | Ordered owner/role components by default; exact name comparison |
 
 The selected package supplies these immutable defaults. A future standard version
 gets another file and explicit selection; an existing version is not edited after
@@ -142,6 +143,44 @@ Artifact bodies are bounded to 1 MB; JSON inputs use the existing 2 MB process l
 
 This producer's existing release wrapper maps `release.json` and its upgrade guidance
 to that input. Published release bodies remain immutable.
+
+## Automation names
+
+The default convention is a lowercase owner identifier followed by a clear automation
+role, separated by a hyphen. Consumers supply the actual owner and role; the process
+does not embed a particular account name or judge a role's meaning from keywords.
+
+```json
+{
+  "schemaVersion": 1,
+  "components": {"owner": "Acme", "role": "Dependency-Updates"}
+}
+```
+
+    processctl artifact render --artifact automation-name --data-file automation-name.json --json
+    processctl artifact render --artifact automation-name --data-file automation-name.json --output automation-name.txt
+    processctl artifact validate --artifact automation-name --data-file automation-name.json --body-file automation-name.txt
+
+Render without `--output` returns the UTF-8/LF value in the JSON result's `content`
+field, alongside the same standard/data/artifact digests. A consumer bootstrap can
+compare the actual provider field plus LF to this content before side effects.
+Do not reconstruct the pattern in another validator. Recheck the provider-returned
+name before storing credentials or applying configuration, since registration UIs
+may allow the proposed name to be edited.
+
+An `automation-name` override can choose ordered component IDs, a `-`, `_` or `.`
+separator, `lower` or `preserve` case, and a maximum length. Components are bounded
+alphanumeric words with optional internal hyphens; every declared component must be
+provided and extra components fail. Naming requires complete data in both draft and
+ready states, so this adapter has no placeholder vocabulary. Entirely different name
+formats remain consumer-owned validators.
+
+The consumer also enforces provider constraints and existing identity bindings.
+Naming conformance does not establish ownership, permission, uniqueness, or trust.
+Keep an already conforming name unless a rename is explicitly accepted; a rename may
+require migration of provider slugs, event sender checks and credential bindings.
+For example, renovate-ops owns GitHub-specific checks and where the shared naming
+result is applied during App bootstrap; this distribution owns the default convention.
 
 ## Verification and extension boundary
 

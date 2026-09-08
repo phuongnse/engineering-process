@@ -42,6 +42,7 @@ class ContractTests(unittest.TestCase):
         expected = {
             "artifact-selection",
             "artifact-standard",
+            "automation-name-data",
             "change",
             "plan",
             "process-graph",

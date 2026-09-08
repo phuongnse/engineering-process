@@ -1,4 +1,4 @@
-"""Resolve one versioned document contract for both generation and verification."""
+"""Resolve one versioned artifact contract for both generation and verification."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class ArtifactStandard:
     def unresolved(self, value: str) -> bool:
         # These are reserved values in an owned protocol, not prose classification.
         return value.strip().casefold() in {
-            item.strip().casefold() for item in self.document["pendingValues"]
+            item.strip().casefold() for item in self.document.get("pendingValues", [])
         }
 
 
@@ -71,7 +71,7 @@ def _unique(values: list[str], description: str) -> None:
 
 
 def _validate_relations(document: dict[str, Any]) -> None:
-    _unique([value.strip().casefold() for value in document["pendingValues"]], "pending values")
+    _unique([value.strip().casefold() for value in document.get("pendingValues", [])], "pending values")
     rules = document["rules"]
     if document["adapter"] == "pr-description":
         sections = rules["sections"]
@@ -80,7 +80,7 @@ def _validate_relations(document: dict[str, Any]) -> None:
             entries = [entry for section in sections for entry in section[kind]]
             _unique([entry["id"] for entry in entries], f"{kind} ids")
             _unique([entry["label"] for entry in entries], f"{kind} labels")
-    else:
+    elif document["adapter"] == "release-notes":
         _unique([group["type"] for group in rules["groups"]], "change types")
         _unique([section["id"] for section in rules["sections"]], "release section ids")
         _unique([item["heading"] for item in rules["groups"] + rules["sections"]], "release headings")

@@ -19,6 +19,7 @@ MAX_JSON_BYTES = 2_000_000
 CONTRACT_KINDS = (
     "artifact-selection",
     "artifact-standard",
+    "automation-name-data",
     "change",
     "plan",
     "process-graph",

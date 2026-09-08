@@ -141,7 +141,7 @@ def main() -> int:
         installed_standard_root = environment / "share" / "engineering-process" / "process_assets" / "standards"
         if {path.name: path.read_bytes() for path in installed_standard_root.glob("*.json")} != source_standards:
             raise RuntimeError("installed wheel standards differ from the canonical source")
-        for artifact in ("pull-request", "release-notes"):
+        for artifact in ("pull-request", "release-notes", "automation-name"):
             run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
         run([str(python), "-I", "-c", """
 from pathlib import Path
@@ -150,6 +150,7 @@ from engineering_process.artifact_standards import resolve_standard
 from engineering_process.contracts import write_json_atomic
 from engineering_process.distribution import distribution_root
 from engineering_process.pr_description import body_issues, render_description
+from engineering_process.automation_name import render_name
 consumer = Path.cwd() / 'consumer'
 consumer.mkdir()
 subprocess.run(['git', 'init', '-q', str(consumer)], check=True, capture_output=True, timeout=30)
@@ -165,6 +166,8 @@ body = render_description(standard).replace('- [ ]', '- [x]')
 assert '## Installed consumer changes' in body
 assert body_issues(body, 'draft', standard) == []
 assert any('unresolved value' in issue for issue in body_issues(body, 'ready', standard))
+name_standard = resolve_standard(consumer, assets, 'automation-name')
+assert render_name(name_standard, {'schemaVersion': 1, 'components': {'owner': 'Acme', 'role': 'Dependency-Updates'}}) == 'acme-dependency-updates\\n'
 print('Installed consumer standard and draft/ready checks: PASSED')
 """], cwd=root, timeout=30)
         run([str(processctl), "skills", "validate", "--json"], cwd=root, timeout=30)

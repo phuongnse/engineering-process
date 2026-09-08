@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 from engineering_process.artifact_standards import resolve_standard
+from engineering_process.automation_name import render_name
 from engineering_process.cli import main
 from engineering_process.contracts import ProcessError, formatted_json_bytes
 from engineering_process.pr_description import body_issues, render_description, render_renovate_preset, render_template
@@ -175,11 +176,49 @@ class ArtifactStandardsTests(unittest.TestCase):
         data = self.write("invalid.json", None)
         output = self.root / "document.md"
         output.write_bytes(b"keep me\n")
-        for kind in ("pull-request", "release-notes"):
+        for kind in ("pull-request", "release-notes", "automation-name"):
             with self.subTest(kind=kind):
                 code, result = self.cli("render", "--artifact", kind, "--data-file", str(data), "--output", str(output))
                 self.assertEqual(2, code, result)
                 self.assertEqual(b"keep me\n", output.read_bytes())
+
+    def test_automation_name_default_override_and_exact_verification(self) -> None:
+        data = {"schemaVersion": 1, "components": {"owner": "Acme", "role": "Dependency-Updates"}}
+        source = self.write("name.json", data)
+        code, result = self.cli("render", "--artifact", "automation-name", "--data-file", str(source))
+        self.assertEqual(0, code, result)
+        self.assertEqual("acme-dependency-updates\n", result["content"])
+        document = deepcopy(resolve_standard(None, ROOT, "automation-name").document)
+        document.update(id="consumer.automation-name", version=2)
+        document["rules"].update(components=["role", "owner"], separator=".", case="preserve", maxLength=40)
+        self.select(document)
+        name = self.root / "app-name.txt"
+        code, rendered = self.cli("render", "--artifact", "automation-name", "--data-file", str(source), "--output", str(name))
+        self.assertEqual(0, code, rendered)
+        self.assertEqual(b"Dependency-Updates.Acme\n", name.read_bytes())
+        code, checked = self.cli("validate", "--artifact", "automation-name", "--data-file", str(source), "--body-file", str(name))
+        self.assertEqual(0, code, checked)
+        self.assertEqual(rendered["standard"], checked["standard"])
+        name.write_bytes(b"unselected-name\n")
+        self.assertEqual(1, self.cli("validate", "--artifact", "automation-name", "--data-file", str(source), "--body-file", str(name))[0])
+        document["rules"]["maxLength"] = 5
+        with self.assertRaisesRegex(ProcessError, "length limit"):
+            render_name(self.select(document), data)
+
+    def test_automation_name_rejects_undeclared_or_invalid_components_and_rules(self) -> None:
+        standard = resolve_standard(None, ROOT, "automation-name")
+        for components in ({"owner": "acme"}, {"owner": "acme", "role": "bot", "extra": "unused"}, {"owner": "acme\n", "role": "bot"}, {"owner": "acme", "role": ""}, {"owner": "acme", "role": "a" * 65}):
+            with self.subTest(components=components), self.assertRaises(ProcessError):
+                render_name(standard, {"schemaVersion": 1, "components": components})
+        for key, value in (("components", ["owner", "owner"]), ("separator", "/"), ("case", "guess"), ("maxLength", 0)):
+            document = deepcopy(standard.document)
+            document["rules"][key] = value
+            with self.subTest(rule=key), self.assertRaises(ProcessError):
+                self.select(document)
+        document = deepcopy(standard.document)
+        document["pendingValues"] = ["pending"]
+        with self.assertRaises(ProcessError):
+            self.select(document)
 
     def test_release_ready_requires_resolved_values_and_known_change_types(self) -> None:
         standard = resolve_standard(None, ROOT, "release-notes")
