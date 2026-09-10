@@ -195,7 +195,7 @@ class PosixProcessSupervisor:
         if not command or "\x00" in command:
             raise OSError("command executable is invalid")
         supplied = Path(command)
-        if supplied.is_absolute() or supplied.parent != Path("."):
+        if supplied.is_absolute() or os.path.dirname(command):
             candidate = supplied if supplied.is_absolute() else working_directory / supplied
             try:
                 resolved = candidate.resolve(strict=True)

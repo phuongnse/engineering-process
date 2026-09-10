@@ -556,6 +556,8 @@ def finish_change(
         publication = validate_current_source(
             project_root, comparison_base
         )
+        if publication["range"] != f"{comparison_base}..{checkpoint['head']}":
+            raise ProcessError("publication validation does not match the reviewed HEAD")
         after_publication = repository_snapshot(project_root)
         if (not same_checkpoint(checkpoint, after_publication)
                 or current_branch(project_root) != publication["branch"]):

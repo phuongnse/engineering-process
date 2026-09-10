@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 from pathlib import Path
 import subprocess
@@ -99,7 +100,7 @@ def resolve_windows_application(
         raise OSError("command executable is invalid")
     separator = os.pathsep if path_separator is None else path_separator
     supplied = Path(command)
-    explicit_path = supplied.is_absolute() or supplied.parent != Path(".")
+    explicit_path = supplied.is_absolute() or bool(ntpath.dirname(command))
     suffix = supplied.suffix.casefold()
     if suffix in _UNSUPPORTED_SHELL_SUFFIXES:
         raise OSError(

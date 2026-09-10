@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 
 from engineering_process.commands import _child_environment, run_check, run_profile
 from engineering_process.contracts import ProcessError
-from engineering_process.supervision import CleanupOutcome
+from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
 def windows_process_is_running(process_id: int) -> bool:
@@ -117,6 +117,31 @@ class CommandTests(unittest.TestCase):
             observed = json.loads(result.stdout)
             self.assertEqual("passed", observed["report"]["status"], observed)
             self.assertEqual("python", observed["argv0"])
+
+    def test_runtime_path_preserves_explicit_dot_relative_commands(self) -> None:
+        name = "python.exe" if os.name == "nt" else "python"
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "project"
+            runtime = Path(directory) / "runtime"
+            for location in (project, runtime):
+                location.mkdir()
+                executable = location / name
+                executable.write_bytes(b"native executable fixture")
+                executable.chmod(0o755)
+            before = {"PATH": str(project)}
+            with patch.dict(os.environ, before), patch("engineering_process.commands.sys.executable", str(runtime / name)):
+                after = _child_environment()
+            supervisor = process_supervisor()
+            commands = [name, "./" + name, str(project / name)]
+            if os.name == "nt":
+                commands.append(".\\" + name)
+            for command in commands:
+                with self.subTest(command=command):
+                    previous = supervisor.resolve_application(command, working_directory=project, environment=before)
+                    current = supervisor.resolve_application(command, working_directory=project, environment=after)
+                    self.assertEqual((project / name).resolve(), previous.resolve())
+                    expected = runtime if command == name else project
+                    self.assertEqual((expected / name).resolve(), current.resolve())
 
     def test_output_budget_terminates_noisy_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

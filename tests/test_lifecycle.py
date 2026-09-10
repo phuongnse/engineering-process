@@ -415,6 +415,31 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("approved", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
         self.assertFalse((self.root / ".process/receipts/sample-change.json").exists())
 
+    def test_publication_finish_rejects_transient_different_head(self) -> None:
+        base = self.approve_publication_candidate()
+        original = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True, timeout=30).strip()
+        tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=self.root, text=True, timeout=30).strip()
+        transient = subprocess.check_output(
+            ["git", "commit-tree", tree, "-p", original, "-m", "fix: transient source"],
+            cwd=self.root, text=True, timeout=30,
+        ).strip()
+
+        def validate_other_head(root: Path, comparison: str) -> dict:
+            git(root, "update-ref", "HEAD", transient)
+            try:
+                return validate_current_source(root, comparison)
+            finally:
+                git(root, "update-ref", "HEAD", original)
+
+        with patch("engineering_process.lifecycle.validate_current_source", side_effect=validate_other_head):
+            with self.assertRaisesRegex(ProcessError, "does not match the reviewed HEAD"):
+                finish_change(self.root, PROCESS_ROOT, "sample-change",
+                              actor_id="coordinator", context_id="finish-context", kind="agent")
+        self.assertEqual(original, repository_snapshot(self.root)["head"])
+        self.assertEqual([], validate_current_source(self.root, base)["issues"])
+        self.assertEqual("approved", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+        self.assertFalse((self.root / ".process/receipts/sample-change.json").exists())
+
     def test_failed_profile_persists_only_safe_diagnostic_metadata(self) -> None:
         self.begin()
         secret = "TOPSECRET-LIFECYCLE-VALUE"
