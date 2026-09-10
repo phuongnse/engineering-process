@@ -131,4 +131,3 @@ def validate_current_source(
         "range": range_spec,
         "issues": issues,
     }
-

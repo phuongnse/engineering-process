@@ -7,6 +7,7 @@ import ctypes
 import os
 from pathlib import Path
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -35,9 +36,13 @@ def _enable_subreaper() -> None:
 
 
 def _ps_process_table() -> tuple[dict[int, int], str | None]:
+    # Supervision must not depend on the consumer's PATH.
+    application = shutil.which("ps", path=os.defpath)
+    if application is None:
+        return {}, "process table snapshot could not start"
     try:
         result = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="],
+            [application, "-axo", "pid=,ppid="],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=PROCESS_TABLE_TIMEOUT_SECONDS, check=False, text=True,
         )
@@ -198,7 +203,8 @@ class PosixProcessSupervisor:
                 raise OSError(f"executable is unavailable: {command}") from error
             if not resolved.is_file() or not os.access(resolved, os.X_OK):
                 raise OSError(f"executable is unavailable: {command}")
-            return resolved
+            # The symlink path may select a virtual environment.
+            return candidate.absolute()
         for raw_directory in environment.get("PATH", "").split(os.pathsep):
             directory = Path(raw_directory or ".")
             if not directory.is_absolute():
@@ -209,7 +215,7 @@ class PosixProcessSupervisor:
             except OSError:
                 continue
             if resolved.is_file() and os.access(resolved, os.X_OK):
-                return resolved
+                return candidate.absolute()
         raise OSError(f"executable is unavailable: {command}")
 
     def spawn(
