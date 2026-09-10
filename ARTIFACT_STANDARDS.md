@@ -9,6 +9,7 @@ lifecycle approval, merge permission or release authority.
 | `pull-request@1` | `pr-description` | Ordered sections, fields and checkboxes; structural validation, or exact rendering from supplied data |
 | `release-notes@1` | `release-notes` | Consumer change/source records and upgrade text; exact rendered-byte comparison |
 | `automation-name@1` | `automation-name` | Ordered owner/role components by default; exact name comparison |
+| `issue@1` | `issue` | Open request and closed resolution records; exact rendered-byte comparison |
 
 The selected package supplies these immutable defaults. A future standard version
 gets another file and explicit selection; an existing version is not edited after
@@ -54,6 +55,47 @@ definitions when adoption only needs to render a PR template.
 Adoption preserves those files and renders the managed PR-template block from the
 selected PR standard. Do not hand-edit that generated block. Changing the definition
 requires regenerating the template and collecting fresh verification evidence.
+
+## Issues
+
+The default issue record covers the accepted request while open and adds resolution,
+implementation, verification, release/adoption/consumer confirmation, remaining risk,
+and follow-up evidence when closed. The record is portable Markdown: its first line is
+the title and the remaining sections are the body. Tracker creation, updates, closure,
+labels, priority, assignment, and product taxonomy remain consumer-owned actions.
+
+Supply values under stable field IDs and render the selected state:
+
+```json
+{
+  "schemaVersion": 1,
+  "title": "Preserve bounded issue evidence",
+  "fields": {
+    "context": "Consumer issues are durable lifecycle sources.",
+    "expected-outcome": "Use one selected issue standard.",
+    "evidence": "The current consumer template varies by author.",
+    "scope": "Issue records only; no tracker API.",
+    "acceptance-criteria": "The generated open record validates exactly.",
+    "references": "https://example.com/issues/12"
+  },
+  "checks": {}
+}
+```
+
+    processctl artifact render --artifact issue --state open --data-file issue-data.json --output issue.md
+    processctl artifact validate --artifact issue --state open --data-file issue-data.json --body-file issue.md
+    processctl artifact render --artifact issue --state closed --data-file closure-data.json --output closure.md
+    processctl artifact validate --artifact issue --state closed --data-file closure-data.json --body-file closure.md
+
+Open and closed records reject missing or reserved pending values. Closed data includes
+the open fields plus every selected closure field. `record-url` requires one HTTPS URL;
+`record-references` accepts `none` or comma-separated HTTPS URLs. These are declared
+protocol checks, not judgments about prose truth or whether an external tracker changed.
+
+Consumers can override title prefix/length, headings, field order and labels, add or
+remove fields/checks, and select reference formats. Keep stable IDs used by consumer
+data. A process-improvement repository can therefore select a stricter stable title
+prefix without imposing it on product issues.
 
 ## PR descriptions and Renovate
 

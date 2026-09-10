@@ -20,6 +20,7 @@ CONTRACT_KINDS = (
     "artifact-selection",
     "artifact-standard",
     "automation-name-data",
+    "issue-data",
     "change",
     "plan",
     "process-graph",

@@ -143,7 +143,7 @@ def main() -> int:
         installed_standard_root = environment / "share" / "engineering-process" / "process_assets" / "standards"
         if {path.name: path.read_bytes() for path in installed_standard_root.glob("*.json")} != source_standards:
             raise RuntimeError("installed wheel standards differ from the canonical source")
-        for artifact in ("pull-request", "release-notes", "automation-name"):
+        for artifact in ("pull-request", "release-notes", "automation-name", "issue"):
             run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
         run([str(python), "-I", "-c", """
 from pathlib import Path
@@ -181,8 +181,18 @@ print('Installed consumer standard and draft/ready checks: PASSED')
             "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "fixture-change"}],
             "sections": {"upgrade": "No migration required."},
         }), encoding="utf-8")
+        issue_data = consumer / "issue-data.json"
+        issue_data.write_text(json.dumps({
+            "schemaVersion": 1, "title": "Installed issue standard",
+            "fields": {
+                "context": "Installed consumer context.", "expected-outcome": "Render one issue record.",
+                "evidence": "Installed package fixture.", "scope": "Issue adapter only.",
+                "acceptance-criteria": "Exact validation passes.", "references": "none",
+            },
+            "checks": {},
+        }), encoding="utf-8")
         installed_root = environment / "share" / "engineering-process"
-        for artifact, data in (("automation-name", name_data), ("release-notes", release_data)):
+        for artifact, data in (("automation-name", name_data), ("release-notes", release_data), ("issue", issue_data)):
             body = consumer / f"{artifact}.txt"
             run([str(processctl), "artifact", "render", "--artifact", artifact, "--data-file", str(data), "--output", str(body), "--json"], cwd=consumer, timeout=30)
             run([str(processctl), "artifact", "validate", "--artifact", artifact, "--data-file", str(data), "--body-file", str(body), "--process-root", str(installed_root), "--json"], cwd=consumer, timeout=30)
