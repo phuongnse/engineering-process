@@ -20,6 +20,7 @@ LAYERS = {
     "project": 2,
     "artifact_standards": 2,
     "automation_name": 3,
+    "issue": 3,
     "production_engineering": 2,
     "publication_compat": 4,
     "pr_description": 3,
