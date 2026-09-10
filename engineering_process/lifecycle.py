@@ -37,6 +37,11 @@ from .production_engineering import (
 )
 from .source_publication import branch_issues, current_branch, validate_current_source
 from .repository import repository_snapshot, resolve_commit, same_checkpoint
+from .review_contexts import (
+    recorded_context_conflict,
+    require_unreused_context,
+    history_transaction,
+)
 
 
 NEXT_COMMAND = {
@@ -134,6 +139,7 @@ def _require_phase(state: dict[str, Any], *phases: str) -> None:
         )
 
 
+@history_transaction
 def start_change(
     project_root: Path,
     process_root: Path,
@@ -215,6 +221,7 @@ def start_change(
     return state
 
 
+@history_transaction
 def register_plan(
     project_root: Path,
     process_root: Path,
@@ -251,6 +258,7 @@ def register_plan(
     return state
 
 
+@history_transaction
 def begin_implementation(
     project_root: Path,
     process_root: Path,
@@ -322,13 +330,34 @@ def verify_change(
         raise ProcessError(f"profile {profile} is not required by change {change_id}")
 
     before = repository_snapshot(project_root)
+    report = run_profile(project_root, project, profile)
+    return _record_verification(
+        project_root, process_root, change_id, state["cycle"], before, report
+    )
+
+
+@history_transaction
+def _record_verification(
+    project_root: Path,
+    process_root: Path,
+    change_id: str,
+    cycle: int,
+    before: dict[str, Any],
+    report: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    # Profiles run outside the lock. Reload so their publication cannot erase
+    # participants or evidence recorded by another command while they ran.
+    state = _load_state(project_root, process_root, change_id)
+    _require_phase(state, "implementing")
+    if state["cycle"] != cycle:
+        raise ProcessError("implementation cycle changed while verification was running")
     state["verification"] = {
         name: report
         for name, report in state["verification"].items()
         if same_checkpoint(report["checkpoint"], before)
     }
-    report = run_profile(project_root, project, profile)
     after = repository_snapshot(project_root)
+    profile = report["profile"]
     report["checkpoint"] = after
     report["recordedAt"] = _now()
     if not same_checkpoint(before, after):
@@ -356,6 +385,7 @@ def verify_change(
     return state, report
 
 
+@history_transaction
 def start_review(
     project_root: Path,
     process_root: Path,
@@ -364,9 +394,29 @@ def start_review(
     actor_id: str,
     context_id: str,
     kind: str,
+    replace_reused: bool = False,
 ) -> dict[str, Any]:
     state = _load_state(project_root, process_root, change_id)
-    _require_phase(state, "verified")
+    previous_assignment = conflict = None
+    if replace_reused:
+        _require_phase(state, "review-pending")
+        if (state["reviewAssignment"] is None or state["review"] is not None
+                or state["reviewHistory"]
+                or any(event["event"] == "review-submitted" for event in state["history"])):
+            raise ProcessError("only an unsubmitted initial review assignment can be replaced")
+        previous_assignment = deepcopy(state["reviewAssignment"])
+        if previous_assignment["reviewer"]["kind"] != "agent":
+            raise ProcessError("replace-reused requires a recorded reused agent context")
+        report_path = _run_path(project_root, change_id).with_name(f"review-{state['cycle']}.json")
+        if report_path.exists() or report_path.is_symlink():
+            raise ProcessError("a review report already exists; assignment replacement would discard it")
+        conflict = recorded_context_conflict(
+            project_root, process_root, state, previous_assignment["reviewer"]["contextId"]
+        )
+        if conflict is None:
+            raise ProcessError("the pending reviewer context has no recorded cross-change reuse")
+    else:
+        _require_phase(state, "verified")
     reviewer = _actor(actor_id, context_id, kind)
     if state["reviewHistory"]:
         original_reviewer = state["reviewHistory"][0]["document"]["reviewer"]
@@ -383,6 +433,7 @@ def start_review(
         raise ProcessError("reviewer actor must be independent from implementation")
     if any(item["contextId"] == reviewer["contextId"] for item in implementers):
         raise ProcessError("reviewer context must be independent from implementation")
+    require_unreused_context(project_root, process_root, state, reviewer)
 
     checkpoint = repository_snapshot(project_root)
     required = state["contract"]["document"]["requiredProfiles"]
@@ -393,6 +444,10 @@ def start_review(
         for name in required
     ):
         raise ProcessError("verification evidence is stale or incomplete")
+    if previous_assignment is not None and not same_checkpoint(
+        previous_assignment["checkpoint"], checkpoint
+    ):
+        raise ProcessError("repository changed after the reused review assignment")
     state["reviewAssignment"] = {
         "reviewer": reviewer,
         "checkpoint": checkpoint,
@@ -403,11 +458,21 @@ def start_review(
         ),
     }
     state["phase"] = "review-pending"
-    _event(state, "review-started", reviewer)
+    if previous_assignment is None:
+        _event(state, "review-started", reviewer)
+    else:
+        _event(
+            state, "review-assignment-replaced", reviewer,
+            reason="cross-change-context-reuse",
+            previousAssignment=previous_assignment,
+            replacementAssignment=deepcopy(state["reviewAssignment"]),
+            conflict=conflict,
+        )
     _save_state(project_root, process_root, state)
     return state
 
 
+@history_transaction
 def submit_review(
     project_root: Path,
     process_root: Path,
@@ -428,6 +493,7 @@ def submit_review(
         raise ProcessError("review changeId does not match lifecycle state")
     if review["reviewer"] != assignment["reviewer"]:
         raise ProcessError("reviewer does not match the assigned independent identity")
+    require_unreused_context(project_root, process_root, state, assignment["reviewer"])
     if not same_checkpoint(review["checkpoint"], assignment["checkpoint"]):
         raise ProcessError("review checkpoint does not match the assignment")
     current = repository_snapshot(project_root)
@@ -535,6 +601,7 @@ def submit_review(
     return state
 
 
+@history_transaction
 def finish_change(
     project_root: Path,
     process_root: Path,
@@ -546,6 +613,9 @@ def finish_change(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = _load_state(project_root, process_root, change_id)
     _require_phase(state, "approved")
+    require_unreused_context(
+        project_root, process_root, state, state["reviewAssignment"]["reviewer"]
+    )
     actor = _actor(actor_id, context_id, kind)
     project = load_project(project_root, process_root)
     checkpoint = repository_snapshot(project_root)
