@@ -1,19 +1,31 @@
 {
   "changes": [
     {
-      "id": "artifact-standards",
-      "source": "https://github.com/phuongnse/engineering-process/issues/174",
-      "summary": "Generate and verify PR descriptions and release notes from versioned standards with consumer-owned overrides preserved by adoption. Matching template and validator definitions reject unresolved default PR placeholders in ready state; custom formats retain consumer-owned validation profiles.",
+      "id": "issue-artifact-standard",
+      "source": "https://github.com/phuongnse/engineering-process/issues/182",
+      "summary": "Generate and verify open and closed issue records from a versioned default or consumer-owned override while keeping tracker actions and product workflow consumer-owned.",
       "type": "capability"
     },
     {
-      "id": "automation-naming",
-      "source": "https://github.com/phuongnse/engineering-process/issues/176",
-      "summary": "Generate and verify automation names from a default owner-role convention or a consumer-owned override. Bootstrap integrations can consume structured CLI output and check actual provider names before side effects; provider limits and authenticated identity remain consumer-owned.",
+      "id": "preserve-agent-settings",
+      "source": "https://github.com/phuongnse/engineering-process/issues/182",
+      "summary": "Require delegated agents and reviewers to preserve the active user-selected model and reasoning effort, with native runtime confirmation on spawn and resume and no autonomous model changes.",
+      "type": "fix"
+    },
+    {
+      "id": "publication-gate",
+      "source": "https://github.com/phuongnse/engineering-process/issues/180",
+      "summary": "Opt into publication checks at lifecycle start and completion, with pinned source metadata in version 2 receipts and exact PR head/body checks before readiness; existing consumers and version 1 receipts remain supported.",
       "type": "capability"
+    },
+    {
+      "id": "session-runtime-installability-220",
+      "source": "https://github.com/phuongnse/engineering-process/issues/181",
+      "summary": "Resolve bare child commands through the invoking Python environment in fresh sessions, preserving installed dependencies, declared argument arrays, explicit executables and environment filtering.",
+      "type": "fix"
     }
   ],
-  "previousVersion": "2.1.0",
+  "previousVersion": "2.2.0",
   "schemaVersion": 5,
-  "version": "2.2.0"
+  "version": "2.3.0"
 }

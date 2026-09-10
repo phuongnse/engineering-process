@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "issue-artifact-standard",
-  "type": "capability",
-  "summary": "Generate and verify open and closed issue records from a versioned default or consumer-owned override while keeping tracker actions and product workflow consumer-owned.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/182"
-}

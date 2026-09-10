@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "session-runtime-installability-220",
-  "type": "fix",
-  "summary": "Resolve bare child commands through the invoking Python environment in fresh sessions, preserving installed dependencies, declared argument arrays, explicit executables and environment filtering.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/181"
-}

@@ -1,11 +1,16 @@
-# Engineering Process v2.2.0
+# Engineering Process v2.3.0
 
-Changes since v2.1.0.
+Changes since v2.2.0.
 
 ## Features
 
-- Generate and verify PR descriptions and release notes from versioned standards with consumer\-owned overrides preserved by adoption\. Matching template and validator definitions reject unresolved default PR placeholders in ready state\; custom formats retain consumer\-owned validation profiles\. ([#174](https://github.com/phuongnse/engineering-process/issues/174))
-- Generate and verify automation names from a default owner\-role convention or a consumer\-owned override\. Bootstrap integrations can consume structured CLI output and check actual provider names before side effects\; provider limits and authenticated identity remain consumer\-owned\. ([#176](https://github.com/phuongnse/engineering-process/issues/176))
+- Generate and verify open and closed issue records from a versioned default or consumer\-owned override while keeping tracker actions and product workflow consumer\-owned\. ([#182](https://github.com/phuongnse/engineering-process/issues/182))
+- Opt into publication checks at lifecycle start and completion\, with pinned source metadata in version 2 receipts and exact PR head\/body checks before readiness\; existing consumers and version 1 receipts remain supported\. ([#180](https://github.com/phuongnse/engineering-process/issues/180))
+
+## Fixes
+
+- Require delegated agents and reviewers to preserve the active user\-selected model and reasoning effort\, with native runtime confirmation on spawn and resume and no autonomous model changes\. ([#182](https://github.com/phuongnse/engineering-process/issues/182))
+- Resolve bare child commands through the invoking Python environment in fresh sessions\, preserving installed dependencies\, declared argument arrays\, explicit executables and environment filtering\. ([#181](https://github.com/phuongnse/engineering-process/issues/181))
 
 ## Upgrade and compatibility
 
@@ -13,6 +18,6 @@ Merge the complete hash-locked package/adoption PR, update the local and CI envi
 
 Consumer CI, naming conventions and branch-protection settings remain consumer-owned; adoption does not configure them automatically.
 
-See [versioning and compatibility](https://github.com/phuongnse/engineering-process/blob/v2.2.0/VERSIONING.md) and [adoption guidance](https://github.com/phuongnse/engineering-process/blob/v2.2.0/SELF_HOSTING.md).
+See [versioning and compatibility](https://github.com/phuongnse/engineering-process/blob/v2.3.0/VERSIONING.md) and [adoption guidance](https://github.com/phuongnse/engineering-process/blob/v2.3.0/SELF_HOSTING.md).
 
-[Full change comparison](https://github.com/phuongnse/engineering-process/compare/v2.1.0...v2.2.0)
+[Full change comparison](https://github.com/phuongnse/engineering-process/compare/v2.2.0...v2.3.0)
