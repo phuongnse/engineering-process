@@ -61,6 +61,12 @@ The event carries the package, version, tag, publisher repository, and aggregate
 distribution digest. renovate-ops accepts only the configured GitHub App sender and
 then runs one repository-scoped Renovate job per explicitly enabled consumer.
 
+The publisher checks actual JSON and Simple API filenames and hashes within its
+bounded visibility loop. It does not infer consumer readiness from an elapsed cache
+TTL. Consumers refresh process metadata at pip-compile and hash-locked installation
+boundaries as described in README.md. A missing release or a hash mismatch remains
+a failed installation; no delay or retry permits a different version or artifact.
+
 Retries are identity-preserving. PyPI upload uses skip-existing only to resume; the
 following exact hash comparison still fails on partial or conflicting content. A
 draft GitHub Release can add only missing assets whose existing bytes already match;

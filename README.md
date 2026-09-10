@@ -577,6 +577,16 @@ package rule keeps the adoption pull request in draft and runs exactly:
 
     python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt
 
+The bootstrap refreshes `engineering-process` index metadata using pip's
+`--refresh-package` option, with `--no-cache-dir` for older pip. Exact pins, hashes,
+isolated installation and bounded failures still apply. Consumer CI that installs
+the lock directly must also request fresh metadata: use
+`--refresh-package engineering-process` with pip 26.2 or newer, or the portable
+`--no-cache-dir` option. Keep this setting on the process installation command;
+other dependency caches do not need to be disabled. For non-isolated pip-compile,
+the equivalent `PIP_REFRESH_PACKAGE=engineering-process` environment setting keeps
+fresh release lookup compatible with older pip, which revalidated by default.
+
 postUpgradeTasks.fileFilters includes the managed paths, so Renovate commits the new
 hash lock and the fully materialized process in the same pull request. A self-hosted
 Renovate administrator must allow only this anchored command and must keep shell
