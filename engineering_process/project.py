@@ -172,6 +172,11 @@ def require_consumer_evidence(project: dict[str, Any]) -> bool:
     return bool(policy.get("requireConsumerEvidence", False))
 
 
+def publication_required(project: dict[str, Any]) -> bool:
+    policy = project["lifecycle"].get("publication", {})
+    return bool(policy.get("required", False))
+
+
 def accepted_issue_url_prefix(project: dict[str, Any]) -> str | None:
     return project["lifecycle"].get("processChanges", {}).get(
         "acceptedIssueUrlPrefix"

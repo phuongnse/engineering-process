@@ -15,6 +15,7 @@ from engineering_process.commands import run_check
 
 class PosixSupervisorTests(unittest.TestCase):
     def test_ps_snapshot_failures_are_sanitized_and_bounded(self) -> None:
+        self.enterContext(patch.object(posix.shutil, "which", return_value="/system/ps"))
         cases = (
             (
                 subprocess.TimeoutExpired(["ps"], posix.PROCESS_TABLE_TIMEOUT_SECONDS),
@@ -54,6 +55,40 @@ class PosixSupervisorTests(unittest.TestCase):
             table, error = posix._ps_process_table()
         self.assertEqual({}, table)
         self.assertEqual("process table snapshot was malformed", error)
+
+    def test_ps_uses_the_platform_path_and_fails_when_unavailable(self) -> None:
+        result = SimpleNamespace(returncode=0, stdout=f"{os.getpid()} 1\n")
+        with patch.dict(os.environ, {"PATH": ""}), patch.object(
+            posix.shutil, "which", return_value="/system/ps"
+        ) as which, patch.object(posix.subprocess, "run", return_value=result) as run:
+            table, error = posix._ps_process_table()
+        self.assertIsNone(error)
+        self.assertIn(os.getpid(), table)
+        which.assert_called_once_with("ps", path=os.defpath)
+        self.assertEqual("/system/ps", run.call_args.args[0][0])
+        with patch.object(posix.shutil, "which", return_value=None), patch.object(posix.subprocess, "run") as run:
+            table, error = posix._ps_process_table()
+        self.assertEqual({}, table)
+        self.assertEqual("process table snapshot could not start", error)
+        run.assert_not_called()
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable symlink semantics")
+    def test_executable_resolution_preserves_selected_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "actual-python"
+            target.write_text("fixture executable\n", encoding="utf-8")
+            target.chmod(0o755)
+            selected = root / "environment" / "python"
+            selected.parent.mkdir()
+            selected.symlink_to(target)
+            supervisor = posix.PosixProcessSupervisor()
+            for command in ("python", str(selected), "environment/python"):
+                with self.subTest(command=command):
+                    actual = supervisor.resolve_application(command, working_directory=root,
+                                                            environment={"PATH": str(selected.parent)})
+                    self.assertEqual(selected.absolute(), actual)
+                    self.assertNotEqual(target.resolve(), actual)
 
     def test_routine_observation_is_throttled_but_boundaries_are_forced(self) -> None:
         supervisor = posix.PosixProcessSupervisor()

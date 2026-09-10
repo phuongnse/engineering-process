@@ -3,6 +3,17 @@
 This repository owns a small, agent-neutral engineering process. Keep guidance in
 portable skills and deterministic behavior in processctl plus JSON Schema.
 
+## Fresh-session runtime
+
+Use the repository virtual environment explicitly at the start of a new session:
+
+- Windows: `.venv\Scripts\python.exe`
+- POSIX: `.venv/bin/python`
+
+Install the declared dependencies with that interpreter before running profiles. Run
+`processctl` through the same interpreter; the bounded runner aligns child `PATH` to
+it, while consumer-owned dependency and setup commands remain authoritative.
+
 ## Rules
 
 - The lifecycle is exactly start, plan, implement, verify, independent review, and
@@ -29,10 +40,19 @@ portable skills and deterministic behavior in processctl plus JSON Schema.
 
 Run:
 
-    python verification/run_test_suite.py
-    python processctl.py skills validate --root process_assets/skills
-    python processctl.py release validate
-    python verification/verify_distribution.py
+Windows:
+
+    .venv\Scripts\python.exe verification/run_test_suite.py
+    .venv\Scripts\python.exe processctl.py skills validate --root process_assets/skills
+    .venv\Scripts\python.exe processctl.py release validate
+    .venv\Scripts\python.exe verification/verify_distribution.py
+
+POSIX:
+
+    .venv/bin/python verification/run_test_suite.py
+    .venv/bin/python processctl.py skills validate --root process_assets/skills
+    .venv/bin/python processctl.py release validate
+    .venv/bin/python verification/verify_distribution.py
 
 <!-- engineering-process:start -->
 ## Engineering process

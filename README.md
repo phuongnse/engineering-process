@@ -59,6 +59,21 @@ It covers fresh agents and resumed sessions, requires native runtime confirmatio
 and permits no autonomous upgrade or downgrade. The portable guidance does not make
 processctl a provider runtime or a model-quality evaluator.
 
+Consumers using the packaged publication compatibility policy can enable
+`lifecycle.publication.required: true` in `.process/project.json` after adopting a
+version that supports it. Start then rejects an invalid branch before creating a
+run. Finish checks the current branch, head subject, and pinned comparison-base-to-head
+range, and writes publication metadata in a version 2 receipt. Version 1 receipts and
+consumers without the opt-in remain supported. Missing pinned bases and mutations
+during the check fail completion.
+
+PR readiness additionally requires the selected ready-state body/title and exact
+head/range checks. Follow the [completion preflight](process_assets/skills/change-complete/SKILL.md)
+and repeat those checks in required CI. This repository's existing
+`verification/verify_publication.py --pull-request` uses the actual PR metadata and
+selected consumer standard; local lifecycle completion alone does not establish
+external PR readiness. Integration-branch pushes remain consumer-owned operations.
+
 Runtime architecture is enforced by semantic fitness functions, not module or source-
 line quotas. Every module has an explicit dependency layer, imports point toward lower
 layers, the internal graph remains acyclic, and lifecycle.py alone owns state
@@ -103,6 +118,20 @@ Python 3.11 or newer and Git are required. A consumer owns .process/project.json
 Commands are argument arrays, never shell strings. Each command has a finite timeout.
 Output has a hard aggregate budget; evidence stores byte counts and hashes, never raw
 stdout or stderr that could contain secrets.
+
+For a fresh checkout of this repository, create a virtual environment with a supported
+Python and install `engineering_process/requirements-runtime.txt`,
+`engineering_process/requirements-dev.txt`, and
+`engineering_process/requirements-build.txt` through that interpreter. Use
+`.venv/Scripts/python.exe` on Windows or `.venv/bin/python` on POSIX to invoke the
+source CLI and verification scripts. Other consumers own their runtime paths and
+setup commands; installed consumers can use their environment's `processctl` entry
+point without a source checkout.
+
+The bounded runner prepends the invoking Python executable's directory to child
+`PATH`. Bare commands therefore search that environment before the inherited path,
+while declared argument arrays, explicit executable paths, secret filtering and
+remaining path entries are preserved. This alignment does not install dependencies.
 
 A failed profile also reports a safe `diagnostic` descriptor containing only its
 validated profile identifier, check identifier, canonical one-based profile position,

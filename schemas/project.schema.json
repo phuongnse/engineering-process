@@ -33,6 +33,14 @@
               "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[1-9][0-9]{0,4})?/(?:[A-Za-z0-9._~-]+/)+(?![\\s\\S])"
             }
           }
+        },
+        "publication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required"],
+          "properties": {
+            "required": {"type": "boolean"}
+          }
         }
       }
     },

@@ -24,6 +24,8 @@ from .contracts import (
 from .distribution import schemas_root
 from .project import (
     accepted_issue_url_prefix,
+    load_project,
+    publication_required,
     require_consumer_evidence,
     required_profiles,
 )
@@ -33,6 +35,7 @@ from .production_engineering import (
     validate_plan_assessments,
     validate_review_assessments,
 )
+from .source_publication import branch_issues, current_branch, validate_current_source
 from .repository import repository_snapshot, resolve_commit, same_checkpoint
 
 
@@ -180,6 +183,12 @@ def start_change(
             )
     if project["project"] not in contract["affectedProjects"]:
         raise ProcessError("change affectedProjects must include the current project")
+    if publication_required(project):
+        issues = branch_issues(current_branch(project_root))
+        if issues:
+            raise ProcessError(
+                "publication branch validation failed: " + "; ".join(issues)
+            )
 
     actor = _actor(actor_id, context_id, kind)
     comparison_base = resolve_commit(project_root, contract["comparisonBase"])
@@ -538,7 +547,27 @@ def finish_change(
     state = _load_state(project_root, process_root, change_id)
     _require_phase(state, "approved")
     actor = _actor(actor_id, context_id, kind)
+    project = load_project(project_root, process_root)
     checkpoint = repository_snapshot(project_root)
+    publication = None
+    if publication_required(project):
+        if not (comparison_base := state.get("comparisonBaseCommit")):
+            raise ProcessError("publication completion requires a pinned comparison base")
+        publication = validate_current_source(
+            project_root, comparison_base
+        )
+        if publication["range"] != f"{comparison_base}..{checkpoint['head']}":
+            raise ProcessError("publication validation does not match the reviewed HEAD")
+        after_publication = repository_snapshot(project_root)
+        if (not same_checkpoint(checkpoint, after_publication)
+                or current_branch(project_root) != publication["branch"]):
+            raise ProcessError("repository changed while publication validation was running")
+        if publication["issues"]:
+            raise ProcessError(
+                "publication compatibility checks failed: "
+                + "; ".join(publication["issues"])
+            )
+        checkpoint = after_publication
     if not same_checkpoint(checkpoint, state["reviewAssignment"]["checkpoint"]):
         raise ProcessError("repository changed after approval")
 
@@ -573,6 +602,13 @@ def finish_change(
             "verdict": state["review"]["document"]["verdict"],
         },
     }
+    if publication is not None:
+        receipt["schemaVersion"] = 2
+        receipt["publication"] = {
+            "branch": publication["branch"],
+            "subject": publication["subject"],
+            "range": publication["range"],
+        }
     validate_document(
         receipt,
         "receipt",

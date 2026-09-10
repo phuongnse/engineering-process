@@ -44,3 +44,9 @@ contract:
     processctl change start --actor ACTOR --context CONTEXT --contract change.json
 
 Do not edit implementation before the lifecycle reports specified.
+
+If `.process/project.json` opts in with `lifecycle.publication.required: true`, start
+also runs the existing read-only publication branch validator against the current
+checkout branch before creating `.process/runs/ID`. A rejected branch leaves no new
+run state. The branch convention remains consumer-owned; the opt-in only makes the
+consumer's existing publication compatibility rule a lifecycle preflight.

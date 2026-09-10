@@ -23,6 +23,7 @@ LAYERS = {
     "issue": 3,
     "production_engineering": 2,
     "publication_compat": 4,
+    "source_publication": 2,
     "pr_description": 3,
     "release_notes": 3,
     "release": 2,

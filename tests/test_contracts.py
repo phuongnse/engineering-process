@@ -93,6 +93,75 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(project, "project", schema_root=SCHEMAS)
 
+    def test_publication_opt_in_and_receipt_metadata_are_schema_valid(self) -> None:
+        project = read_json(ROOT / ".process" / "project.json")
+        project["lifecycle"]["publication"] = {"required": True}
+        validate_document(
+            normalize_project(project, ROOT), "project", schema_root=SCHEMAS
+        )
+        project["lifecycle"].pop("publication")
+        validate_document(
+            normalize_project(project, ROOT), "project", schema_root=SCHEMAS
+        )
+
+        checkpoint = {
+            "head": "0" * 40,
+            "fingerprint": f"sha256:{'0' * 64}",
+            "fileCount": 0,
+            "byteCount": 0,
+        }
+        receipt = {
+            "schemaVersion": 2,
+            "changeId": "publication-gate",
+            "cycle": 1,
+            "completedAt": "2026-09-10T00:00:00+00:00",
+            "checkpoint": checkpoint,
+            "contractDigest": f"sha256:{'1' * 64}",
+            "planDigest": f"sha256:{'2' * 64}",
+            "verification": {
+                "development": {
+                    "status": "passed",
+                    "checkpoint": checkpoint,
+                    "checks": [
+                        {
+                            "id": "unit",
+                            "status": "passed",
+                            "exitCode": 0,
+                            "stdoutSha256": f"sha256:{'0' * 64}",
+                            "stderrSha256": f"sha256:{'0' * 64}",
+                        }
+                    ],
+                }
+            },
+            "review": {
+                "reviewer": {
+                    "actorId": "reviewer",
+                    "contextId": "review-context",
+                    "kind": "agent",
+                },
+                "digest": f"sha256:{'3' * 64}",
+                "verdict": "approved",
+            },
+            "publication": {
+                "branch": "fix/sample_change",
+                "subject": "fix: wire publication gate",
+                "range": "0" * 40 + "..HEAD",
+            },
+        }
+        validate_document(receipt, "receipt", schema_root=SCHEMAS)
+        legacy = deepcopy(receipt)
+        legacy["schemaVersion"] = 1
+        legacy.pop("publication")
+        validate_document(legacy, "receipt", schema_root=SCHEMAS)
+        with self.assertRaises(ProcessError):
+            validate_document({**legacy, "schemaVersion": 2}, "receipt", schema_root=SCHEMAS)
+        with self.assertRaises(ProcessError):
+            validate_document({**receipt, "schemaVersion": 1}, "receipt", schema_root=SCHEMAS)
+        invalid = deepcopy(receipt)
+        invalid["publication"]["commit"] = "0" * 40
+        with self.assertRaisesRegex(ProcessError, "Additional properties"):
+            validate_document(invalid, "receipt", schema_root=SCHEMAS)
+
     def test_run_schema_accepts_legacy_and_safe_diagnostic_reports(self) -> None:
         schema = read_json(SCHEMAS / "run.schema.json")
         validator = Draft202012Validator(schema).evolve(

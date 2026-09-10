@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import ctypes
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import unittest
+import venv
 from unittest.mock import Mock, patch
 
-from engineering_process.commands import run_check, run_profile
+from engineering_process.commands import _child_environment, run_check, run_profile
 from engineering_process.contracts import ProcessError
-from engineering_process.supervision import CleanupOutcome
+from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
 def windows_process_is_running(process_id: int) -> bool:
@@ -45,6 +48,101 @@ def windows_process_is_running(process_id: int) -> bool:
 
 
 class CommandTests(unittest.TestCase):
+    def test_child_path_prefers_the_process_runtime_and_preserves_caller_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / ("python.exe" if os.name == "nt" else "python")
+            inherited = os.pathsep.join(("caller-one", "caller-two"))
+            with patch.dict(
+                os.environ,
+                {
+                    "PATH": inherited,
+                    "PYTHONHOME": "blocked-home",
+                    "PYTHONPATH": "blocked-path",
+                    "SERVICE_TOKEN": "blocked-secret",
+                },
+                clear=True,
+            ), patch(
+                "engineering_process.commands.sys.executable", str(executable)
+            ):
+                environment = _child_environment()
+
+        self.assertEqual(
+            [str(executable.absolute().parent), "caller-one", "caller-two"],
+            environment["PATH"].split(os.pathsep),
+        )
+        self.assertNotIn("PYTHONHOME", environment)
+        self.assertNotIn("PYTHONPATH", environment)
+        self.assertNotIn("SERVICE_TOKEN", environment)
+
+    def test_child_path_omits_an_empty_inherited_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"PATH": ""}, clear=True
+        ), patch(
+            "engineering_process.commands.sys.executable",
+            str(Path(directory) / "python"),
+        ):
+            environment = _child_environment()
+
+        self.assertNotIn("", environment["PATH"].split(os.pathsep))
+
+    def test_bare_runtime_command_uses_the_process_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = Path(directory) / "runtime"
+            venv.EnvBuilder(with_pip=False, symlinks=os.name != "nt").create(environment)
+            python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            purelib = subprocess.run(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                capture_output=True, text=True, check=True, timeout=30,
+            ).stdout.strip()
+            (Path(purelib) / "process_runtime_fixture.py").write_text("VALUE = 'environment-only'\n", encoding="utf-8")
+            child = (
+                "from pathlib import Path; import sys, process_runtime_fixture as fixture; "
+                f"assert Path(sys.prefix).resolve() == Path({str(environment)!r}).resolve(); "
+                "assert fixture.VALUE == 'environment-only'; "
+                "assert Path(fixture.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())"
+            )
+            driver = (
+                "import json, os, site, sys; from pathlib import Path; "
+                f"site.addsitedir({sysconfig.get_path('purelib')!r}); "
+                f"sys.path.insert(0, {str(Path(__file__).resolve().parent.parent)!r}); "
+                "from engineering_process.commands import run_check; os.environ['PATH'] = ''; "
+                f"check = {{'id': 'runtime', 'run': ['python', '-c', {child!r}], 'timeoutSeconds': 10}}; "
+                f"report = run_check(Path({directory!r}), check); "
+                "print(json.dumps({'report': report, 'argv0': check['run'][0]}))"
+            )
+            result = subprocess.run(
+                [str(python), "-c", driver], capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            observed = json.loads(result.stdout)
+            self.assertEqual("passed", observed["report"]["status"], observed)
+            self.assertEqual("python", observed["argv0"])
+
+    def test_runtime_path_preserves_explicit_dot_relative_commands(self) -> None:
+        name = "python.exe" if os.name == "nt" else "python"
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "project"
+            runtime = Path(directory) / "runtime"
+            for location in (project, runtime):
+                location.mkdir()
+                executable = location / name
+                executable.write_bytes(b"native executable fixture")
+                executable.chmod(0o755)
+            before = {"PATH": str(project)}
+            with patch.dict(os.environ, before), patch("engineering_process.commands.sys.executable", str(runtime / name)):
+                after = _child_environment()
+            supervisor = process_supervisor()
+            commands = [name, "./" + name, str(project / name)]
+            if os.name == "nt":
+                commands.append(".\\" + name)
+            for command in commands:
+                with self.subTest(command=command):
+                    previous = supervisor.resolve_application(command, working_directory=project, environment=before)
+                    current = supervisor.resolve_application(command, working_directory=project, environment=after)
+                    self.assertEqual((project / name).resolve(), previous.resolve())
+                    expected = runtime if command == name else project
+                    self.assertEqual((expected / name).resolve(), current.resolve())
+
     def test_output_budget_terminates_noisy_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             report = run_check(

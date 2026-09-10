@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from engineering_process.contracts import ProcessError
-from engineering_process.publication_compat import branch_issues, validate_pull_request, validate_range
+from engineering_process.publication_compat import branch_issues, commit_issues, validate_pull_request, validate_range
 
 
 def verify_publication(root: Path, *, pull_request: bool) -> list[str]:
@@ -42,9 +42,16 @@ def verify_publication(root: Path, *, pull_request: bool) -> list[str]:
         result = validate_pull_request(
             title=context["TITLE"], branch=context["BRANCH"],
             state="draft" if context["DRAFT"] == "true" else "ready", body_path=body,
+            project_root=root,
         )
+    head = subprocess.run(
+        ["git", "log", "-1", "--format=%s", "--end-of-options", context["HEAD"]],
+        cwd=root, capture_output=True, text=True, timeout=30,
+    )
+    if head.returncode:
+        raise ProcessError("cannot read the exact PR head commit subject")
     commit_result = validate_range(root, context["BRANCH"], f"{context['BASE']}..{context['HEAD']}")
-    return result["issues"] + commit_result["issues"]
+    return result["issues"] + commit_issues(head.stdout.rstrip("\r\n")) + commit_result["issues"]
 
 
 def main() -> int:
