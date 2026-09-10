@@ -147,8 +147,11 @@ def main() -> int:
             run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
         run([str(python), "-I", "-c", """
 from pathlib import Path
+import os
 import subprocess
+import sys
 from engineering_process.artifact_standards import resolve_standard
+from engineering_process.commands import run_check
 from engineering_process.contracts import write_json_atomic
 from engineering_process.distribution import distribution_root
 from engineering_process.pr_description import body_issues, render_description
@@ -170,6 +173,10 @@ assert body_issues(body, 'draft', standard) == []
 assert any('unresolved value' in issue for issue in body_issues(body, 'ready', standard))
 name_standard = resolve_standard(consumer, assets, 'automation-name')
 assert render_name(name_standard, {'schemaVersion': 1, 'components': {'owner': 'Acme', 'role': 'Dependency-Updates'}}) == 'acme-dependency-updates\\n'
+os.environ['PATH'] = ''
+runtime_probe = 'import sys, engineering_process; assert sys.prefix == ' + repr(sys.prefix)
+report = run_check(consumer, {'id': 'installed-runtime', 'run': ['python', '-c', runtime_probe], 'timeoutSeconds': 10})
+assert report['status'] == 'passed', report
 print('Installed consumer standard and draft/ready checks: PASSED')
 """], cwd=root, timeout=30)
         consumer = root / "consumer"

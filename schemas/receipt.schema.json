@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "changeId", "cycle", "completedAt", "checkpoint", "contractDigest", "planDigest", "verification", "review"],
   "properties": {
-    "schemaVersion": {"const": 1},
+    "schemaVersion": {"enum": [1, 2]},
     "changeId": {"$ref": "#/$defs/id"},
     "cycle": {"type": "integer", "minimum": 1},
     "completedAt": {"type": "string", "format": "date-time"},
@@ -53,8 +53,16 @@
         "digest": {"$ref": "#/$defs/digest"},
         "verdict": {"const": "approved"}
       }
-    }
+    },
+    "publication": {"$ref": "#/$defs/publication"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"schemaVersion": {"const": 2}}},
+      "then": {"required": ["publication"]},
+      "else": {"not": {"required": ["publication"]}}
+    }
+  ],
   "$defs": {
     "id": {
       "type": "string",
@@ -82,6 +90,16 @@
         "fingerprint": {"$ref": "#/$defs/digest"},
         "fileCount": {"type": "integer", "minimum": 0},
         "byteCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "subject", "range"],
+      "properties": {
+        "branch": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "subject": {"type": "string", "minLength": 1, "maxLength": 1000000},
+        "range": {"type": "string", "minLength": 1, "maxLength": 512}
       }
     }
   }

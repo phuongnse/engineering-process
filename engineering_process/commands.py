@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any, BinaryIO
@@ -28,6 +29,11 @@ def _child_environment() -> dict[str, str]:
         if any(marker in upper for marker in SECRET_MARKERS):
             continue
         environment[name] = value
+    runtime_directory = str(Path(sys.executable).absolute().parent)
+    inherited_path = environment.get("PATH", "")
+    environment["PATH"] = os.pathsep.join(
+        entry for entry in (runtime_directory, inherited_path) if entry
+    )
     environment["PYTHONUNBUFFERED"] = "1"
     return environment
 

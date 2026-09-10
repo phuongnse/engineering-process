@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+
+from engineering_process.artifact_standards import resolve_standard
+from verification.verify_publication import verify_publication
 
 from engineering_process.publication_compat import (
     branch_issues,
     commit_issues,
+    current_branch,
+    current_commit_subject,
     validate_pull_request,
+    validate_current_source,
     validate_range,
 )
 
@@ -358,6 +367,98 @@ class PublicationCompatibilityTests(unittest.TestCase):
             result = validate_range(root, "fix/update", f"{base}..HEAD")
         self.assertEqual([], result["issues"])
         self.assertEqual(1, len(result["commits"]))
+
+    def test_current_source_checks_the_branch_head_and_comparison_range(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True, timeout=30)
+            subprocess.run(
+                ["git", "config", "user.email", "tests@example.invalid"],
+                cwd=root,
+                check=True, capture_output=True, timeout=30,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Tests"], cwd=root, check=True
+            )
+            (root / "file.txt").write_text("one\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True, timeout=30)
+            subprocess.run(
+                ["git", "commit", "-qm", "chore: initial"], cwd=root, check=True
+            )
+            base = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=30
+            ).strip()
+            (root / "file.txt").write_text("two\n", encoding="utf-8")
+            subprocess.run(["git", "commit", "-qam", "fix(core): update"], cwd=root, check=True, capture_output=True, timeout=30)
+            subprocess.run(
+                ["git", "branch", "-M", "fix/source_gate"], cwd=root, check=True
+            )
+            observed_branch = current_branch(root)
+            observed_subject = current_commit_subject(root)
+            result = validate_current_source(root, base)
+            invalid_range = validate_current_source(root, "0" * 40)
+            subprocess.run(
+                ["git", "commit", "--amend", "-qm", " fix: leading-space"],
+                cwd=root,
+                check=True, capture_output=True, timeout=30,
+            )
+            invalid = validate_current_source(root, base)
+            invalid_subject = current_commit_subject(root)
+
+        self.assertEqual([], result["issues"])
+        self.assertEqual("fix/source_gate", result["branch"])
+        self.assertEqual("fix(core): update", result["subject"])
+        self.assertTrue(result["range"].startswith(f"{base}.."))
+        self.assertRegex(result["range"].split("..", 1)[1], r"^[0-9a-f]{40}$")
+        self.assertEqual("fix/source_gate", observed_branch)
+        self.assertEqual("fix(core): update", observed_subject)
+        self.assertTrue(
+            any(
+                issue.startswith("git cannot resolve commit range:")
+                for issue in invalid_range["issues"]
+            )
+        )
+        self.assertEqual(" fix: leading-space", invalid_subject)
+        self.assertIn(
+            "commit subject must use Conventional Commit style", invalid["issues"]
+        )
+
+    def test_pr_ci_uses_selected_body_and_exact_head_instead_of_checkout_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args: str) -> str:
+                return subprocess.run(["git", *args], cwd=root, check=True,
+                                      capture_output=True, text=True, timeout=30).stdout.strip()
+
+            git("init", "-q")
+            git("config", "user.email", "tests@example.invalid")
+            git("config", "user.name", "Tests")
+            standard = resolve_standard(None, Path(__file__).resolve().parent.parent, "pull-request").document
+            standard["id"] = "consumer.pr"
+            standard["rules"]["sections"][0]["fields"][0]["label"] = "Result"
+            (root / ".process").mkdir()
+            (root / ".process/pr.json").write_text(json.dumps(standard), encoding="utf-8")
+            (root / ".process/standards.json").write_text(json.dumps({
+                "schemaVersion": 1, "artifacts": {"pull-request": {"path": ".process/pr.json"}},
+            }), encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "chore: initial")
+            base = git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "-qm", "fix: reviewed change")
+            head = git("rev-parse", "HEAD")
+            git("commit", "--allow-empty", "-qm", "unstructured checkout commit")
+            checkout = git("rev-parse", "HEAD")
+            context = {"PUBLICATION_BRANCH": "fix/metadata", "PUBLICATION_TITLE": "fix: reviewed change",
+                       "PUBLICATION_BODY": CANONICAL_BODY.replace("- Outcome:", "- Result:"),
+                       "PUBLICATION_DRAFT": "false", "PUBLICATION_BASE": base, "PUBLICATION_HEAD": head}
+            with patch.dict(os.environ, context):
+                self.assertEqual([], verify_publication(root, pull_request=True))
+            with patch.dict(os.environ, {**context, "PUBLICATION_BODY": CANONICAL_BODY}):
+                self.assertTrue(verify_publication(root, pull_request=True))
+            with patch.dict(os.environ, {**context, "PUBLICATION_BASE": checkout, "PUBLICATION_HEAD": checkout}):
+                self.assertIn("commit subject must use Conventional Commit style",
+                              verify_publication(root, pull_request=True))
 
 
 if __name__ == "__main__":

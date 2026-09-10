@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError, digest_json
 from engineering_process.artifact_standards import resolve_standard
@@ -24,6 +25,7 @@ from engineering_process.lifecycle import (
 from engineering_process.project import normalize_project
 from engineering_process.production_engineering import load_invariant_floor
 from engineering_process.repository import repository_snapshot
+from engineering_process.source_publication import validate_current_source
 
 
 PROCESS_ROOT = Path(__file__).resolve().parent.parent
@@ -35,7 +37,7 @@ def write_json(path: Path, value: object) -> None:
 
 
 def git(root: Path, *arguments: str) -> None:
-    subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True, timeout=30)
 
 
 class LifecycleTests(unittest.TestCase):
@@ -144,6 +146,48 @@ class LifecycleTests(unittest.TestCase):
             context_id="implementation-context",
             kind="agent",
         )
+
+    def prepare_publication_candidate(self, branch: str = "fix/sample_change") -> str:
+        base = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.root, text=True, timeout=30
+        ).strip()
+        self.project["lifecycle"]["publication"] = {"required": True}
+        self.contract["comparisonBase"] = base
+        self.plan["contractDigest"] = digest_json(self.contract)
+        write_json(self.root / ".process" / "project.json", self.project)
+        write_json(self.contract_path, self.contract)
+        write_json(self.plan_path, self.plan)
+        (self.root / "product.txt").write_text("publication candidate\n", encoding="utf-8")
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-qm", "fix: wire publication gate")
+        git(self.root, "branch", "-M", branch)
+        return base
+
+    def approve_publication_candidate(self, *, moving_base: bool = False) -> str:
+        base = self.prepare_publication_candidate()
+        if moving_base:
+            git(self.root, "branch", "publication-base", base)
+            self.contract["comparisonBase"] = "publication-base"
+            self.plan["contractDigest"] = digest_json(self.contract)
+            write_json(self.contract_path, self.contract)
+            write_json(self.plan_path, self.plan)
+            git(self.root, "add", ".")
+            git(self.root, "commit", "-qm", "fix: select comparison ref")
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        self.assertEqual("approved", state["phase"])
+        return base
 
     def verify_all(self) -> None:
         verify_change(
@@ -283,10 +327,93 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual("completed", state["phase"])
         self.assertEqual("approved", receipt["review"]["verdict"])
+        self.assertNotIn("publication", receipt)
         self.assertTrue(
             (self.root / ".process" / "receipts" / "sample-change.json").is_file()
         )
         self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
+
+    def test_publication_opt_in_rejects_invalid_start_without_run(self) -> None:
+        self.project["lifecycle"]["publication"] = {"required": True}
+        with self.assertRaisesRegex(ProcessError, "publication branch validation failed"):
+            start_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                self.contract_path,
+                actor_id="author",
+                context_id="author-context",
+                kind="agent",
+            )
+        self.assertFalse((self.root / ".process" / "runs" / "sample-change").exists())
+
+    def test_publication_finish_rejects_invalid_source_and_keeps_approval(self) -> None:
+        self.approve_publication_candidate()
+        git(self.root, "branch", "-M", "codex/invalid")
+        with self.assertRaisesRegex(ProcessError, "publication compatibility checks failed"):
+            finish_change(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="coordinator",
+                context_id="finish-context",
+                kind="agent",
+            )
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual("approved", state["phase"])
+        self.assertFalse(
+            (self.root / ".process" / "receipts" / "sample-change.json").exists()
+        )
+
+    def test_publication_finish_records_validated_source_metadata(self) -> None:
+        base = self.approve_publication_candidate(moving_base=True)
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True, timeout=30).strip()
+        git(self.root, "update-ref", "refs/heads/publication-base", head)
+        state, receipt = finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="coordinator",
+            context_id="finish-context",
+            kind="agent",
+        )
+        self.assertEqual("completed", state["phase"])
+        self.assertEqual(2, receipt["schemaVersion"])
+        self.assertEqual(
+            {
+                "branch": "fix/sample_change",
+                "subject": "fix: select comparison ref",
+                "range": f"{base}..{head}",
+            },
+            receipt["publication"],
+        )
+
+    def test_publication_finish_rejects_branch_mutation_during_preflight(self) -> None:
+        self.approve_publication_candidate()
+
+        def change_branch(root: Path, base: str) -> dict:
+            result = validate_current_source(root, base)
+            git(root, "branch", "-M", "codex/changed-during-check")
+            return result
+
+        with patch("engineering_process.lifecycle.validate_current_source", side_effect=change_branch):
+            with self.assertRaisesRegex(ProcessError, "repository changed while publication"):
+                finish_change(self.root, PROCESS_ROOT, "sample-change",
+                              actor_id="coordinator", context_id="finish-context", kind="agent")
+        self.assertEqual("approved", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+        self.assertFalse((self.root / ".process/receipts/sample-change.json").exists())
+
+    def test_publication_finish_requires_a_pinned_base(self) -> None:
+        self.approve_publication_candidate()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.pop("comparisonBaseCommit")
+        write_json(state_path, state)
+        with self.assertRaisesRegex(ProcessError, "requires a pinned comparison base"):
+            finish_change(self.root, PROCESS_ROOT, "sample-change",
+                          actor_id="coordinator", context_id="finish-context", kind="agent")
+        self.assertEqual("approved", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+        self.assertFalse((self.root / ".process/receipts/sample-change.json").exists())
 
     def test_failed_profile_persists_only_safe_diagnostic_metadata(self) -> None:
         self.begin()

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "publication-gate",
+  "type": "capability",
+  "summary": "Opt into publication checks at lifecycle start and completion, with pinned source metadata in version 2 receipts and exact PR head/body checks before readiness; existing consumers and version 1 receipts remain supported.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/180"
+}
