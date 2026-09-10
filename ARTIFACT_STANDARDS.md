@@ -92,6 +92,12 @@ the open fields plus every selected closure field. `record-url` requires one HTT
 `record-references` accepts `none` or comma-separated HTTPS URLs. These are declared
 protocol checks, not judgments about prose truth or whether an external tracker changed.
 
+References reject raw control characters and whitespace, credentials, malformed URI
+authorities, and invalid or out-of-range ports. Registered names use the RFC 3986
+authority grammar; IPv6 literals are supported. Use IDNA or percent-encoding for
+international host names. Paths, queries, and fragments remain part of the reference.
+A configured title prefix cannot replace the required nonblank title value.
+
 Consumers can override title prefix/length, headings, field order and labels, add or
 remove fields/checks, and select reference formats. Keep stable IDs used by consumer
 data. A process-improvement repository can therefore select a stricter stable title

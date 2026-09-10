@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -11,15 +12,26 @@ from .contracts import ProcessError, validate_document
 from .distribution import distribution_root, schemas_root
 
 
+_HTTPS_AUTHORITY = re.compile(
+    r"(?:\[[^\[\]]+\]|(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})+)"
+    r"(?::[0-9]*)?"
+)
+
+
 def _record_url(value: str) -> bool:
+    if any(character.isspace() or ord(character) < 32 or 127 <= ord(character) <= 159
+           for character in value):
+        return False
     try:
         parsed = urlsplit(value)
+        # urlsplit defers port validation until this attribute is read.
+        parsed.port
         return (
             parsed.scheme == "https"
             and parsed.hostname is not None
             and parsed.username is None
             and parsed.password is None
-            and not any(character.isspace() for character in value)
+            and _HTTPS_AUTHORITY.fullmatch(parsed.netloc) is not None
         )
     except ValueError:
         return False
@@ -63,7 +75,7 @@ def render_issue(
         if not title.startswith(prefix):
             raise ProcessError(f"issue title must start with {prefix}")
     title_value = title[len(prefix):] if prefix else title
-    if standard.unresolved(title_value):
+    if not title_value.strip() or standard.unresolved(title_value):
         raise ProcessError(f"{state} issue has unresolved title")
 
     sections = standard.rules["states"][state]["sections"]

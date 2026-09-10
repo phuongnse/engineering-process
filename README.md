@@ -49,9 +49,15 @@ The coordinator hands review to an actual reviewer. A new agent review starts in
 fresh context with the accepted source artifacts and no suggested verdict; the same
 reviewer continues corrections. The reviewer inspects the change and authors its
 own report. The runner's existing task/session interaction and returned result make
-that work inspectable. Sharing a model, provider, or account is allowed; this is a
+that work inspectable. Sharing a provider or account is allowed; this is a
 workflow for independent judgment, not authenticated identity or merge enforcement.
 See [change-review](process_assets/skills/change-review/SKILL.md) for the handoff.
+
+Every delegated agent and reviewer follows the active user-selected model and
+reasoning effort under [deliver-change's settings rule](process_assets/skills/deliver-change/SKILL.md#preserve-agent-execution-settings).
+It covers fresh agents and resumed sessions, requires native runtime confirmation,
+and permits no autonomous upgrade or downgrade. The portable guidance does not make
+processctl a provider runtime or a model-quality evaluator.
 
 Runtime architecture is enforced by semantic fitness functions, not module or source-
 line quotas. Every module has an explicit dependency layer, imports point toward lower

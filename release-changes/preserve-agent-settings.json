@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "preserve-agent-settings",
+  "type": "fix",
+  "summary": "Require delegated agents and reviewers to preserve the active user-selected model and reasoning effort, with native runtime confirmation on spawn and resume and no autonomous model changes.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/182"
+}
