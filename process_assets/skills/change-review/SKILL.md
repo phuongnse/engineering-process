@@ -12,8 +12,11 @@ actual reviewer, not perform it under another identity.
 For a new agent review, spawn a fresh agent/session without the implementation
 conversation. Supply the accepted contract and plan, recorded `comparisonBaseCommit`, candidate
 path/checkpoint, and verification evidence. Request an independent assessment of
-the complete diff and relevant code/tests without suggesting a verdict. The same
-model, provider, or account may be used. If the environment cannot run or reach an
+the complete diff and relevant code/tests without suggesting a verdict. Follow
+**deliver-change**'s agent execution settings rule for the spawn and verify the
+native runtime's effective settings before accepting the review. The provider or
+account may be shared; actor and execution context must remain independent.
+If the environment cannot run or reach an
 independent reviewer, leave the change awaiting review and report that missing
 handoff.
 
@@ -40,6 +43,10 @@ When the phase is `review-pending`, resume the existing assignment; do not run
 existing report path, `.process/runs/ID/review-CYCLE.json`. If that reviewer is
 unavailable, report the pending assignment as a blocker; never impersonate its
 identity or create a replacement assignment from another context.
+
+Apply the same **deliver-change** settings rule when resuming this reviewer. An
+existing session handle does not establish that its current model and effort still
+match the active user-selected task.
 
 Review the accepted contract, plan, complete diff, focused tests, and verification
 evidence. The first pass is comprehensive within that frozen contract. Every finding

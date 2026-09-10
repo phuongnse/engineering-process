@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/issue-data.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "title", "fields", "checks"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "\\S",
+      "not": {"pattern": "[\\r\\n\\v\\f\\u0085\\u2028\\u2029]"}
+    },
+    "fields": {
+      "type": "object",
+      "maxProperties": 512,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20000,
+        "pattern": "\\S",
+        "not": {"pattern": "[\\r\\v\\f\\u0085\\u2028\\u2029]"}
+      }
+    },
+    "checks": {
+      "type": "object",
+      "maxProperties": 512,
+      "propertyNames": {"$ref": "#/$defs/id"},
+      "additionalProperties": {"type": "boolean"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
+      "not": {"pattern": "[\\r\\n]"}
+    }
+  }
+}

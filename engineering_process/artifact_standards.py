@@ -84,6 +84,14 @@ def _validate_relations(document: dict[str, Any]) -> None:
         _unique([group["type"] for group in rules["groups"]], "change types")
         _unique([section["id"] for section in rules["sections"]], "release section ids")
         _unique([item["heading"] for item in rules["groups"] + rules["sections"]], "release headings")
+    elif document["adapter"] == "issue":
+        for state, definition in rules["states"].items():
+            sections = definition["sections"]
+            _unique([section["heading"] for section in sections], f"{state} issue section headings")
+            for kind in ("fields", "checks"):
+                entries = [entry for section in sections for entry in section[kind]]
+                _unique([entry["id"] for entry in entries], f"{state} issue {kind} ids")
+                _unique([entry["label"] for entry in entries], f"{state} issue {kind} labels")
 
 
 def read_document(path: Path) -> bytes:

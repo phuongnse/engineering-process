@@ -143,7 +143,7 @@ def main() -> int:
         installed_standard_root = environment / "share" / "engineering-process" / "process_assets" / "standards"
         if {path.name: path.read_bytes() for path in installed_standard_root.glob("*.json")} != source_standards:
             raise RuntimeError("installed wheel standards differ from the canonical source")
-        for artifact in ("pull-request", "release-notes", "automation-name"):
+        for artifact in ("pull-request", "release-notes", "automation-name", "issue"):
             run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
         run([str(python), "-I", "-c", """
 from pathlib import Path
@@ -181,11 +181,92 @@ print('Installed consumer standard and draft/ready checks: PASSED')
             "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "fixture-change"}],
             "sections": {"upgrade": "No migration required."},
         }), encoding="utf-8")
+        issue_data = consumer / "issue-data.json"
+        issue_data.write_text(json.dumps({
+            "schemaVersion": 1, "title": "Installed issue standard",
+            "fields": {
+                "context": "Installed consumer context.", "expected-outcome": "Render one issue record.",
+                "evidence": "Installed package fixture.", "scope": "Issue adapter only.",
+                "acceptance-criteria": "Exact validation passes.", "references": "none",
+            },
+            "checks": {},
+        }), encoding="utf-8")
         installed_root = environment / "share" / "engineering-process"
-        for artifact, data in (("automation-name", name_data), ("release-notes", release_data)):
+        for artifact, data in (("automation-name", name_data), ("release-notes", release_data), ("issue", issue_data)):
             body = consumer / f"{artifact}.txt"
             run([str(processctl), "artifact", "render", "--artifact", artifact, "--data-file", str(data), "--output", str(body), "--json"], cwd=consumer, timeout=30)
             run([str(processctl), "artifact", "validate", "--artifact", artifact, "--data-file", str(data), "--body-file", str(body), "--process-root", str(installed_root), "--json"], cwd=consumer, timeout=30)
+        run([str(python), "-I", "-c", """
+import contextlib
+from copy import deepcopy
+import io
+import json
+from pathlib import Path
+from engineering_process.artifact_standards import resolve_standard
+from engineering_process.cli import main
+from engineering_process.contracts import write_json_atomic
+from engineering_process.distribution import distribution_root
+
+consumer = Path.cwd()
+assets = distribution_root()
+source = consumer / 'issue-data.json'
+body = consumer / 'issue.txt'
+open_data = json.loads(source.read_text(encoding='utf-8'))
+
+def invoke(operation, state, data, expected=0):
+    write_json_atomic(source, data)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main(['artifact', operation, '--artifact', 'issue', '--state', state,
+                     '--data-file', str(source), '--output' if operation == 'render' else '--body-file',
+                     str(body), '--json'])
+    result = json.loads(output.getvalue())
+    assert code == expected, result
+    return result
+
+for override in (False, True):
+    if override:
+        document = resolve_standard(None, assets, 'issue').document
+        document['id'] = 'installed.consumer-issue'
+        document['rules']['title']['prefix'] = '[consumer] '
+        document['rules']['states']['closed']['sections'][-1]['heading'] = '## Consumer resolution'
+        write_json_atomic(consumer / '.process' / 'issue.json', document)
+        selections = json.loads((consumer / '.process' / 'standards.json').read_text(encoding='utf-8'))
+        selections['artifacts']['issue'] = {'path': '.process/issue.json'}
+        write_json_atomic(consumer / '.process' / 'standards.json', selections)
+    for state in ('open', 'closed'):
+        data = deepcopy(open_data)
+        if override:
+            data['title'] = '[consumer] Installed issue standard'
+        if state == 'closed':
+            data['fields'].update({
+                'resolution': 'Installed fixture completed.',
+                'implementing-change': 'https://[2001:db8::1]:8443/change/12?view=full#result',
+                'verification': 'Installed renderer and validator agree.',
+                'release': 'none', 'adoption': 'none', 'consumer-confirmation': 'none',
+                'remaining-risks': 'none', 'follow-ups': 'none',
+            })
+        rendered = invoke('render', state, data)
+        checked = invoke('validate', state, data)
+        assert rendered['standard'] == checked['standard']
+        assert rendered['artifactDigest'] == checked['artifactDigest']
+        assert rendered['dataDigest'] == checked['dataDigest']
+        expected_id = 'installed.consumer-issue' if override else 'process.issue'
+        assert rendered['standard']['id'] == expected_id
+        if override and state == 'closed':
+            assert b'## Consumer resolution' in body.read_bytes()
+        for value in ('https://example.com:invalid/change', chr(0) + 'https://example.com/change'):
+            invalid = deepcopy(data)
+            invalid['fields']['implementing-change' if state == 'closed' else 'references'] = value
+            invoke('render', state, invalid, 2)
+            invoke('validate', state, invalid, 2)
+        if override:
+            invalid = deepcopy(data)
+            invalid['title'] = '[consumer] '
+            invoke('render', state, invalid, 2)
+            invoke('validate', state, invalid, 2)
+print('Installed issue default/override open/closed and regression checks: PASSED')
+"""], cwd=consumer, timeout=60)
         template = consumer / "template.md"
         run([str(processctl), "artifact", "template", "--artifact", "pull-request", "--output", str(template)], cwd=consumer, timeout=30)
         run([str(processctl), "artifact", "validate", "--artifact", "pull-request", "--state", "draft", "--body-file", str(template)], cwd=consumer, timeout=30)

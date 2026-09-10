@@ -13,6 +13,7 @@ from engineering_process.artifact_standards import resolve_standard
 from engineering_process.automation_name import render_name
 from engineering_process.cli import main
 from engineering_process.contracts import ProcessError, formatted_json_bytes
+from engineering_process.issue import render_issue
 from engineering_process.pr_description import body_issues, render_description, render_renovate_preset, render_template
 from engineering_process.publication_compat import validate_pull_request
 from engineering_process.release_notes import render_notes
@@ -20,6 +21,34 @@ from engineering_process.repository import repository_snapshot
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def issue_data(state: str) -> dict:
+    data = {
+        "schemaVersion": 1,
+        "title": "Provide bounded issue evidence",
+        "fields": {
+            "context": "Consumer issues are lifecycle sources.",
+            "expected-outcome": "Use one selected issue standard.",
+            "evidence": "The current catalog has no issue artifact.",
+            "scope": "Issue records only; no tracker API.",
+            "acceptance-criteria": "Open and closed records validate.",
+            "references": "https://example.com/issues/12",
+        },
+        "checks": {},
+    }
+    if state == "closed":
+        data["fields"].update({
+            "resolution": "The selected standard now owns issue records.",
+            "implementing-change": "https://example.com/pull/13",
+            "verification": "Development and review profiles passed.",
+            "release": "none",
+            "adoption": "none",
+            "consumer-confirmation": "none",
+            "remaining-risks": "None.",
+            "follow-ups": "https://example.com/issues/14, https://example.com/issues/15",
+        })
+    return data
 
 
 class ArtifactStandardsTests(unittest.TestCase):
@@ -176,11 +205,136 @@ class ArtifactStandardsTests(unittest.TestCase):
         data = self.write("invalid.json", None)
         output = self.root / "document.md"
         output.write_bytes(b"keep me\n")
-        for kind in ("pull-request", "release-notes", "automation-name"):
+        for kind in ("pull-request", "release-notes", "automation-name", "issue"):
             with self.subTest(kind=kind):
                 code, result = self.cli("render", "--artifact", kind, "--data-file", str(data), "--output", str(output))
                 self.assertEqual(2, code, result)
                 self.assertEqual(b"keep me\n", output.read_bytes())
+
+    def test_issue_default_renders_open_and_closed_records_with_exact_validation(self) -> None:
+        open_data = issue_data("open")
+        source = self.write("issue.json", open_data)
+        body = self.root / "issue.md"
+        code, rendered = self.cli("render", "--artifact", "issue", "--state", "open", "--data-file", str(source), "--output", str(body))
+        self.assertEqual(0, code, rendered)
+        self.assertTrue(body.read_bytes().startswith(b"# Provide bounded issue evidence\n\n## Request\n"))
+        code, checked = self.cli("validate", "--artifact", "issue", "--state", "open", "--data-file", str(source), "--body-file", str(body))
+        self.assertEqual(0, code, checked)
+        self.assertEqual(rendered["standard"], checked["standard"])
+        self.assertEqual(rendered["artifactDigest"], checked["artifactDigest"])
+
+        closed = issue_data("closed")
+        closed_source = self.write("closed.json", closed)
+        self.assertEqual(0, self.cli("render", "--artifact", "issue", "--state", "closed", "--data-file", str(closed_source), "--output", str(body))[0])
+        self.assertIn(b"## Closure evidence", body.read_bytes())
+        self.assertEqual(0, self.cli("validate", "--artifact", "issue", "--state", "closed", "--data-file", str(closed_source), "--body-file", str(body))[0])
+
+    def test_issue_reference_grammar_is_checked_before_render_and_validation(self) -> None:
+        valid = (
+            "https://Example.com:443/issues/12?view=full#comment-2",
+            "https://[2001:db8::1]:8443/change/12?next=%2Fdocs#result",
+            "https://127.0.0.1:65535/record",
+            "https://service_name.example:0/record",
+            "https://xn--bcher-kva.example/record",
+            "https://%65xample.com/record",
+        )
+        invalid = (
+            "https://example.com:invalid/record",
+            "https://example.com:65536/record",
+            "https://example.com:-1/record",
+            "https://example.com:４４３/record",
+            "https:///record",
+            "https://:443/record",
+            "https://[::1]suffix/record",
+            "https://[invalid]/record",
+            "https://bad<host>/record",
+            "https://%ZZ.example/record",
+            "https://user:password@example.com/record",
+            "https://example.com/a b",
+            "\x00https://example.com/record",
+            "https://example.com/rec\x01ord",
+            "https://example.com/record\x7f",
+            "https://example.com/record\x80",
+        )
+        body = self.root / "issue.md"
+        for state, field in (("open", "references"), ("closed", "references"), ("closed", "implementing-change")):
+            for value in valid + invalid:
+                with self.subTest(state=state, field=field, value=value):
+                    data = issue_data(state)
+                    data["fields"][field] = value if field == "implementing-change" else "https://example.com/first, " + value
+                    source = self.write("issue.json", data)
+                    body.write_bytes(b"preserve existing output\n")
+                    arguments = ("--artifact", "issue", "--state", state, "--data-file", str(source))
+                    rendered_code, rendered = self.cli("render", *arguments, "--output", str(body))
+                    checked_code, checked = self.cli("validate", *arguments, "--body-file", str(body))
+                    expected = 0 if value in valid else 2
+                    self.assertEqual(expected, rendered_code, rendered)
+                    self.assertEqual(expected, checked_code, checked)
+                    if expected:
+                        self.assertEqual(b"preserve existing output\n", body.read_bytes())
+                    else:
+                        self.assertEqual(rendered["artifactDigest"], checked["artifactDigest"])
+
+    def test_issue_prefix_cannot_replace_title_in_either_state(self) -> None:
+        document = deepcopy(resolve_standard(None, ROOT, "issue").document)
+        document.update(id="consumer.issue", version=2)
+        document["rules"]["title"]["prefix"] = "[work] "
+        self.select(document)
+        body = self.root / "issue.md"
+        for state in ("open", "closed"):
+            for title in ("[work] ", "[work]    ", "[work] \t", "[work] pending", "[work] PENDING…", "[work] Concrete outcome"):
+                with self.subTest(state=state, title=title):
+                    data = issue_data(state)
+                    data["title"] = title
+                    source = self.write("issue.json", data)
+                    body.write_bytes(b"preserve existing output\n")
+                    arguments = ("--artifact", "issue", "--state", state, "--data-file", str(source))
+                    expected = 0 if title == "[work] Concrete outcome" else 2
+                    self.assertEqual(expected, self.cli("render", *arguments, "--output", str(body))[0])
+                    self.assertEqual(expected, self.cli("validate", *arguments, "--body-file", str(body))[0])
+                    if expected:
+                        self.assertEqual(b"preserve existing output\n", body.read_bytes())
+
+    def test_issue_override_title_state_and_reference_rules_share_one_authority(self) -> None:
+        document = deepcopy(resolve_standard(None, ROOT, "issue").document)
+        document.update(id="consumer.issue", version=2)
+        document["rules"]["title"]["prefix"] = "[work] "
+        document["rules"]["states"]["open"]["sections"][0]["heading"] = "## Consumer request"
+        document["rules"]["states"]["open"]["sections"][0]["fields"].reverse()
+        standard = self.select(document)
+        data = {
+            "schemaVersion": 1,
+            "title": "[work] Standardize issue records",
+            "fields": {
+                "context": "Consumer-owned context.",
+                "expected-outcome": "Selected rules control output.",
+                "evidence": "A real consumer request.",
+                "scope": "One artifact adapter.",
+                "acceptance-criteria": "Override renders and validates.",
+                "references": "none",
+            },
+            "checks": {},
+        }
+        rendered = render_issue(standard, data)
+        self.assertIn("## Consumer request", rendered)
+        self.assertLess(rendered.index("### Expected outcome"), rendered.index("### Context"))
+        invalid = deepcopy(data); invalid["title"] = "Missing prefix"
+        with self.assertRaisesRegex(ProcessError, "must start"):
+            render_issue(standard, invalid)
+        for title in ("[work] pending", "[work] PENDING…"):
+            invalid = deepcopy(data); invalid["title"] = title
+            with self.subTest(title=title), self.assertRaisesRegex(ProcessError, "unresolved title"):
+                render_issue(standard, invalid)
+        invalid = deepcopy(data); invalid["fields"]["references"] = "http://example.com/issues/1"
+        with self.assertRaisesRegex(ProcessError, "durable HTTPS"):
+            render_issue(standard, invalid)
+        invalid = deepcopy(data); invalid["fields"]["scope"] = "pending"
+        with self.assertRaisesRegex(ProcessError, "unresolved"):
+            render_issue(standard, invalid)
+        source = self.write("issue-state.json", data)
+        self.assertEqual(2, self.cli("render", "--artifact", "issue", "--state", "ready", "--data-file", str(source), "--output", str(self.root / "issue.md"))[0])
+        name = self.write("name-state.json", {"schemaVersion": 1, "components": {"owner": "acme", "role": "bot"}})
+        self.assertEqual(2, self.cli("render", "--artifact", "automation-name", "--state", "open", "--data-file", str(name), "--output", str(self.root / "name.txt"))[0])
 
     def test_automation_name_default_override_and_exact_verification(self) -> None:
         data = {"schemaVersion": 1, "components": {"owner": "Acme", "role": "Dependency-Updates"}}

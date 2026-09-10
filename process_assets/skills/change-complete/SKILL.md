@@ -40,6 +40,11 @@ behavior may use `Closes ISSUE, closes ISSUE.` after the completed public checkl
 Repeat the full keyword and local or `OWNER/REPOSITORY#NUMBER` reference for every
 issue; never close source issues merely because the producer release merged.
 
+When the consumer selects an issue artifact standard, render and validate its closed
+record from actual resolution, implementation, verification, and applicable
+release/adoption/consumer-confirmation evidence before the external tracker is closed.
+The artifact result does not itself change provider state or prove arbitrary prose.
+
 Report the readiness capabilities protected or advanced and the remaining planned
 gaps after completion. Carry the owner and stable record URL for every accepted-risk
 or tracked-follow-up disposition into the durable handoff. Finish never edits

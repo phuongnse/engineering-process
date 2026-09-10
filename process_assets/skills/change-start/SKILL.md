@@ -10,7 +10,7 @@ behavior. Write a change contract containing the source request, comparison base
 risk, affected projects, observable acceptance criteria, and required verification
 profiles. Do not decide unresolved product behavior silently.
 
-When the work produces a PR description, release notes or an automation name, inspect the consumer's
+When the work produces an issue record, PR description, release notes or an automation name, inspect the consumer's
 selected artifact standard and existing publication checks. The consumer may override
 the packaged defaults. Keep document-format choices separate from lifecycle approval.
 

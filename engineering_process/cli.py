@@ -40,6 +40,7 @@ from .lifecycle import (
     submit_review,
     verify_change,
 )
+from .issue import render_issue
 from .project import load_project, readiness_summary
 from .production_engineering import (
     validate_plan_assessments,
@@ -420,17 +421,29 @@ def command_artifact(args: argparse.Namespace) -> Result:
     elif operation == "renovate-preset":
         payload = formatted_json_bytes(render_renovate_preset(standard, process_root=process_root))
     else:
+        state = args.state or ("open" if standard.document["adapter"] == "issue" else "ready")
+        allowed_states = {
+            "pr-description": {"draft", "ready"},
+            "release-notes": {"draft", "ready"},
+            "automation-name": {"draft", "ready"},
+            "issue": {"open", "closed"},
+        }[standard.document["adapter"]]
+        if state not in allowed_states:
+            raise ProcessError(
+                f"{standard.document['adapter']} state must be "
+                + " or ".join(sorted(allowed_states))
+            )
         data = load_and_validate(args.data_file, standard.document["adapter"] + "-data", schema_root=schemas_root(process_root)) if args.data_file is not None else None
         if data is not None:
-            renderer = {"pr-description": render_description, "release-notes": render_notes, "automation-name": render_name}[standard.document["adapter"]]
-            payload = renderer(standard, data, state=args.state, process_root=process_root).encode("utf-8")
+            renderer = {"pr-description": render_description, "release-notes": render_notes, "automation-name": render_name, "issue": render_issue}[standard.document["adapter"]]
+            payload = renderer(standard, data, state=state, process_root=process_root).encode("utf-8")
             details["dataDigest"] = digest_json(data)
         elif operation == "render" or standard.document["adapter"] != "pr-description":
             raise ProcessError("this artifact operation requires --data-file")
         if operation == "validate":
             actual = read_document(args.body_file)
             if data is None:
-                issues = body_issues(actual.decode("utf-8"), args.state, standard)
+                issues = body_issues(actual.decode("utf-8"), state, standard)
             elif actual != payload:
                 issues.append("artifact bytes differ from the selected standard and input data")
             payload = actual
@@ -551,7 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
         leaf = _leaf(artifact_commands, name, command_artifact)
         leaf.add_argument("--artifact", required=True)
         if name in {"render", "validate"}:
-            leaf.add_argument("--state", choices=("draft", "ready"), default="ready")
+            leaf.add_argument("--state", choices=("draft", "ready", "open", "closed"))
             leaf.add_argument("--data-file", type=Path, required=name == "render")
         if name == "validate":
             leaf.add_argument("--body-file", type=Path, required=True)

@@ -182,14 +182,23 @@ class AdoptionTests(unittest.TestCase):
         definition = self.root / ".process" / "consumer-pr.json"
         selector = self.root / ".process" / "standards.json"
         write_json(definition, document)
-        write_json(selector, {"schemaVersion": 1, "artifacts": {"pull-request": {"path": ".process/consumer-pr.json"}}})
-        owned = {path: path.read_bytes() for path in (definition, selector)}
+        issue = resolve_standard(None, PROCESS_ROOT, "issue").document
+        issue["id"] = "consumer.issue"
+        issue["rules"]["title"]["prefix"] = "[consumer] "
+        issue_definition = self.root / ".process" / "consumer-issue.json"
+        write_json(issue_definition, issue)
+        write_json(selector, {"schemaVersion": 1, "artifacts": {
+            "pull-request": {"path": ".process/consumer-pr.json"},
+            "issue": {"path": ".process/consumer-issue.json"},
+        }})
+        owned = {path: path.read_bytes() for path in (definition, issue_definition, selector)}
         self.assertEqual("applied", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
         self.assertIn("## Consumer changes", (self.root / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8"))
         for path, content in owned.items():
             self.assertEqual(content, path.read_bytes())
         lock = read_json(self.root / ".process" / "process.lock")
         self.assertNotIn(".process/consumer-pr.json", lock["managedFiles"])
+        self.assertNotIn(".process/consumer-issue.json", lock["managedFiles"])
         self.assertNotIn(".process/standards.json", lock["managedFiles"])
         self.assertEqual("passed", check_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
         self.assertEqual("unchanged", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "process.issue",
+  "version": 1,
+  "artifact": "issue",
+  "adapter": "issue",
+  "pendingValues": [
+    "pending",
+    "pending...",
+    "pending…"
+  ],
+  "rules": {
+    "title": {
+      "maxLength": 160
+    },
+    "states": {
+      "open": {
+        "sections": [
+          {
+            "heading": "## Request",
+            "fields": [
+              {"id": "context", "label": "Context", "description": "Bounded consumer context or observed problem."},
+              {"id": "expected-outcome", "label": "Expected outcome", "description": "Observable result without prescribing speculative implementation."}
+            ],
+            "checks": []
+          },
+          {
+            "heading": "## Evidence and scope",
+            "fields": [
+              {"id": "evidence", "label": "Evidence", "description": "Reproduction, check, finding, digest, or other publishable evidence."},
+              {"id": "scope", "label": "Scope", "description": "In-scope and out-of-scope boundaries."},
+              {"id": "acceptance-criteria", "label": "Acceptance criteria", "description": "Observable conditions that satisfy the request."},
+              {"id": "references", "label": "References", "description": "Durable HTTPS records, or none.", "format": "record-references"}
+            ],
+            "checks": []
+          }
+        ]
+      },
+      "closed": {
+        "sections": [
+          {
+            "heading": "## Request",
+            "fields": [
+              {"id": "context", "label": "Context", "description": "Bounded consumer context or observed problem."},
+              {"id": "expected-outcome", "label": "Expected outcome", "description": "Observable result without prescribing speculative implementation."}
+            ],
+            "checks": []
+          },
+          {
+            "heading": "## Evidence and scope",
+            "fields": [
+              {"id": "evidence", "label": "Evidence", "description": "Reproduction, check, finding, digest, or other publishable evidence."},
+              {"id": "scope", "label": "Scope", "description": "In-scope and out-of-scope boundaries."},
+              {"id": "acceptance-criteria", "label": "Acceptance criteria", "description": "Observable conditions that satisfy the request."},
+              {"id": "references", "label": "References", "description": "Durable HTTPS records, or none.", "format": "record-references"}
+            ],
+            "checks": []
+          },
+          {
+            "heading": "## Closure evidence",
+            "fields": [
+              {"id": "resolution", "label": "Resolution", "description": "Observable resolution delivered."},
+              {"id": "implementing-change", "label": "Implementing change", "description": "Durable HTTPS pull-request or change URL.", "format": "record-url"},
+              {"id": "verification", "label": "Verification", "description": "Exact verification result or evidence reference."},
+              {"id": "release", "label": "Release", "description": "Durable release records, or none.", "format": "record-references"},
+              {"id": "adoption", "label": "Adoption", "description": "Durable consumer adoption records, or none.", "format": "record-references"},
+              {"id": "consumer-confirmation", "label": "Consumer confirmation", "description": "Durable validation records, or none.", "format": "record-references"},
+              {"id": "remaining-risks", "label": "Remaining risks", "description": "Residual risk and disposition, or none."},
+              {"id": "follow-ups", "label": "Follow-ups", "description": "Durable follow-up records, or none.", "format": "record-references"}
+            ],
+            "checks": []
+          }
+        ]
+      }
+    },
+    "guidance": "Use the open record for a bounded accepted request. Close only with actual resolution and verification evidence. Release, adoption, and consumer confirmation are required when the accepted outcome depends on them; use the literal value none only when a category does not apply. Tracker state, labels, priority, assignment, and prose truth remain consumer-owned."
+  }
+}
