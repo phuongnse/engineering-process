@@ -62,6 +62,9 @@ def render_issue(
     if prefix := title_rules.get("prefix"):
         if not title.startswith(prefix):
             raise ProcessError(f"issue title must start with {prefix}")
+    title_value = title[len(prefix):] if prefix else title
+    if standard.unresolved(title_value):
+        raise ProcessError(f"{state} issue has unresolved title")
 
     sections = standard.rules["states"][state]["sections"]
     fields = [field for section in sections for field in section["fields"]]

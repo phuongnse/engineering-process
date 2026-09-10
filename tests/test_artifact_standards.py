@@ -249,6 +249,10 @@ class ArtifactStandardsTests(unittest.TestCase):
         invalid = deepcopy(data); invalid["title"] = "Missing prefix"
         with self.assertRaisesRegex(ProcessError, "must start"):
             render_issue(standard, invalid)
+        for title in ("[work] pending", "[work] PENDING…"):
+            invalid = deepcopy(data); invalid["title"] = title
+            with self.subTest(title=title), self.assertRaisesRegex(ProcessError, "unresolved title"):
+                render_issue(standard, invalid)
         invalid = deepcopy(data); invalid["fields"]["references"] = "http://example.com/issues/1"
         with self.assertRaisesRegex(ProcessError, "durable HTTPS"):
             render_issue(standard, invalid)
