@@ -35,6 +35,7 @@ jobs:
           --isolated
           --disable-pip-version-check
           --no-input
+          --refresh-package engineering-process
           --require-hashes
           --only-binary :all:
           -r requirements/process.txt

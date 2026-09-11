@@ -151,28 +151,16 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("needs: [metadata, publish]", workflow)
         dispatch_job = workflow.split("\n  dispatch-adoption:\n", maxsplit=1)[1]
         self.assertIn("    timeout-minutes: 20\n", dispatch_job)
-        cache_wait = dispatch_job.split(
-            "      - name: Wait for consumer Simple caches to expire\n", maxsplit=1
-        )[1].split(
-            "      - name: Create short-lived Renovate event token\n", maxsplit=1
-        )[0]
-        self.assertIn(
-            "python verification/wait_for_pypi_cache_horizon.py",
-            cache_wait,
-        )
-        self.assertIn("${{ steps.release.outputs.published_at }}", cache_wait)
+        self.assertNotIn("wait_for_pypi_cache_horizon", dispatch_job)
+        self.assertNotIn("published_at", dispatch_job)
         self.assertIn(
             "ref: ${{ github.sha }}",
             dispatch_job,
         )
         self.assertNotIn("ref: ${{ needs.metadata.outputs.source_sha }}", dispatch_job)
-        self.assertIn(
-            'published_at=$(gh release view "$RELEASE_TAG"',
-            dispatch_job,
-        )
         self.assertLess(
             dispatch_job.index("      - name: Bind the published distribution\n"),
-            dispatch_job.index("      - name: Wait for consumer Simple caches to expire\n"),
+            dispatch_job.index("      - name: Create short-lived Renovate event token\n"),
         )
         self.assertIn("Verify PyPI exposes the exact built hashes", workflow)
         visibility = workflow.split(
@@ -180,6 +168,7 @@ class AutomationTests(unittest.TestCase):
         )[1].split("      - name: Create short-lived release token\n", maxsplit=1)[0]
         self.assertIn("for attempt in range(12)", visibility)
         self.assertIn('"Accept": "application/vnd.pypi.simple.v1+json"', visibility)
+        self.assertIn('"Cache-Control": "max-age=0"', visibility)
         self.assertIn(
             "if actual == expected and simple_actual == expected:", visibility
         )
@@ -313,6 +302,7 @@ class AutomationTests(unittest.TestCase):
             "\n  test:\n", maxsplit=1
         )[0]
         self.assertIn("--require-hashes", adopted_job)
+        self.assertIn("--refresh-package engineering-process", adopted_job)
         self.assertIn("Install exact producer dependencies for doctor", adopted_job)
         for requirements in (
             "engineering_process/requirements-runtime.txt",
