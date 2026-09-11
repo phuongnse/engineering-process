@@ -7,7 +7,10 @@
     "requiredProfiles": [
       "development",
       "review"
-    ]
+    ],
+    "publication": {
+      "required": true
+    }
   },
   "profiles": {
     "development": [
