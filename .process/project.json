@@ -4,13 +4,13 @@
       "acceptedIssueUrlPrefix": "https://github.com/phuongnse/engineering-process/issues/",
       "requireConsumerEvidence": true
     },
+    "publication": {
+      "required": true
+    },
     "requiredProfiles": [
       "development",
       "review"
-    ],
-    "publication": {
-      "required": true
-    }
+    ]
   },
   "profiles": {
     "development": [
