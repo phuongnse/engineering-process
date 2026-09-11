@@ -51,6 +51,9 @@ model's perceived cost or capability. This rule compares settings for equality a
 does not assign named models to roles.
 
 Before spawning or resuming an agent, read the active task's effective settings.
+Each new change's independent review starts in a new session without inherited
+implementation or other-change review history. Resume a reviewer only within that
+same accepted change; preserving settings never requires preserving an old context.
 Use inheritance when it preserves both settings; otherwise pass that exact pair
 through the native runtime's supported controls. Resuming a child may retain its
 old settings, so check it again even when its reviewer identity is unchanged.

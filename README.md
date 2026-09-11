@@ -40,18 +40,34 @@ under .process/receipts. Both paths are ignored by Git. Verification evidence is
 to HEAD plus a fingerprint of tracked and non-ignored untracked files. Any relevant
 mutation invalidates it.
 
-Independent review is one direct rule: neither the reviewer actor nor reviewer context
-may have implemented the current cycle. There is no attestation hierarchy,
+Neither the reviewer actor nor reviewer context may have implemented the current
+cycle. An agent reviewer context also cannot be recorded in another accepted change
+in this repository or its registered worktrees. There is no attestation hierarchy,
 recommendation chain, authority-transition protocol, remote-evidence federation, or
 second handwritten validator.
 
-The coordinator hands review to an actual reviewer. A new agent review starts in a
-fresh context with the accepted source artifacts and no suggested verdict; the same
-reviewer continues corrections. The reviewer inspects the change and authors its
+The coordinator hands each new change to a newly spawned reviewer, with the accepted
+source artifacts and no inherited implementation or other-change review conversation.
+The same reviewer continues only that change's corrections. The reviewer inspects the change and authors its
 own report. The runner's existing task/session interaction and returned result make
 that work inspectable. Sharing a provider or account is allowed; this is a
 workflow for independent judgment, not authenticated identity or merge enforcement.
 See [change-review](process_assets/skills/change-review/SKILL.md) for the handoff.
+
+Start, submission and finish check schema-valid canonical run history with bounded
+worktree/file reads. A short OS lock in common Git metadata serializes canonical
+history writes and review checks; profiles run outside it and reload current state
+before recording results. The lock stores no identity registry. The check rejects known context reuse,
+but cannot establish native conversation freshness or inspect removed history,
+other clones or other repositories. Keep native creation, non-inherited dispatch
+and effective settings evidence in the existing handoff.
+
+`processctl change review replace-reused` repairs only an initial pending assignment
+proven to reuse another change's agent context, before a submitted review or normal
+report file exists. It validates a fresh replacement and current verification,
+preserves the prior assignment and conflict in canonical history, and leaves cycle
+and evidence unchanged. Valid assignments and reviewed correction cycles cannot use
+this operation. It does not provide an unrestricted reviewer reset.
 
 Every delegated agent and reviewer follows the active user-selected model and
 reasoning effort under [deliver-change's settings rule](process_assets/skills/deliver-change/SKILL.md#preserve-agent-execution-settings).

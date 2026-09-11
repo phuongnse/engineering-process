@@ -51,9 +51,20 @@ def read_json(path: Path, *, maximum_bytes: int = MAX_JSON_BYTES) -> Any:
     if size > maximum_bytes:
         raise ProcessError(f"{path} exceeds {maximum_bytes} bytes")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ProcessError(f"{path} is not valid UTF-8 JSON: {error}") from error
+        with path.open("rb") as stream:
+            content = stream.read(maximum_bytes + 1)
+    except OSError as error:
+        raise ProcessError(f"cannot read {path}: {error}") from error
+    if len(content) > maximum_bytes:
+        raise ProcessError(f"{path} exceeds {maximum_bytes} bytes")
+    return parse_json_bytes(content, source=str(path))
+
+
+def parse_json_bytes(content: bytes, *, source: str) -> Any:
+    try:
+        return json.loads(content.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ProcessError(f"{source} is not valid UTF-8 JSON: {error}") from error
 
 
 def canonical_bytes(value: Any) -> bytes:

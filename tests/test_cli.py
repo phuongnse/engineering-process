@@ -161,6 +161,7 @@ class CliTests(unittest.TestCase):
             actor="reviewer",
             context="review-context",
             actor_kind="agent",
+            review_command="start",
         )
         with patch("engineering_process.cli.start_review", return_value=state):
             result, code = command_change_review_start(args)

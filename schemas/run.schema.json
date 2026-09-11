@@ -69,7 +69,13 @@
           "at": {"type": "string", "format": "date-time"},
           "actor": {"$ref": "#/$defs/actor"},
           "details": {"type": "object"}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"event": {"const": "review-assignment-replaced"}}},
+            "then": {"properties": {"details": {"$ref": "#/$defs/reviewReplacement"}}}
+          }
+        ]
       }
     }
   },
@@ -210,6 +216,27 @@
         "checkpoint": {"$ref": "#/$defs/checkpoint"},
         "recordedAt": {"type": "string", "format": "date-time"},
         "reason": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    },
+    "reviewReplacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "previousAssignment", "replacementAssignment", "conflict"],
+      "properties": {
+        "reason": {"const": "cross-change-context-reuse"},
+        "previousAssignment": {"$ref": "#/$defs/reviewAssignment"},
+        "replacementAssignment": {"$ref": "#/$defs/reviewAssignment"},
+        "conflict": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["changeId", "contractDigest", "runPath", "runDigest"],
+          "properties": {
+            "changeId": {"$ref": "#/$defs/id"},
+            "contractDigest": {"$ref": "#/$defs/digest"},
+            "runPath": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "runDigest": {"$ref": "#/$defs/digest"}
+          }
+        }
       }
     },
     "reviewAssignment": {

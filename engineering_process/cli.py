@@ -330,9 +330,10 @@ def command_change_review_start(args: argparse.Namespace) -> Result:
         actor_id=args.actor,
         context_id=args.context,
         kind=args.actor_kind,
+        replace_reused=args.review_command == "replace-reused",
     )
     return _state_result(
-        "change review start",
+        f"change review {args.review_command}",
         state,
         assignment=state["reviewAssignment"],
         processSignals=process_improvement_signals(state),
@@ -542,6 +543,9 @@ def build_parser() -> argparse.ArgumentParser:
     review_start = _leaf(review_commands, "start", command_change_review_start)
     _add_actor(review_start)
     review_start.add_argument("--change-id", required=True)
+    review_replace = _leaf(review_commands, "replace-reused", command_change_review_start)
+    _add_actor(review_replace)
+    review_replace.add_argument("--change-id", required=True)
     review_submit = _leaf(review_commands, "submit", command_change_review_submit)
     review_submit.add_argument("--change-id", required=True)
     review_submit.add_argument("--review", type=Path, required=True)
