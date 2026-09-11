@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "reviewer-context-ownership",
-  "type": "fix",
-  "summary": "Reject recorded agent reviewer-context reuse across changes in the same repository and its worktrees. Preserve same-change correction reviews, and provide an audited replacement only for a reused initial assignment with no submitted review. Native fresh-session and unchanged model/effort evidence remain required from the host.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/182"
-}
