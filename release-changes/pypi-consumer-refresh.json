@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "pypi-consumer-refresh",
-  "type": "fix",
-  "summary": "Refresh package metadata when installing the hash-locked process so newly published releases remain visible through warm pip caches; remove the publication-time cache expiry wait. Consumer CI using pip 26.2 or newer should pass --refresh-package engineering-process, or use --no-cache-dir with older pip.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/134"
-}
