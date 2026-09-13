@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "publication-boundary",
-  "type": "fix",
-  "summary": "Publication-required changes must commit the complete candidate and pass the existing branch, subject and nonempty pinned-range checks before final verification and review. This avoids a late commit forcing a repeated verification/review cycle; exact-snapshot and finish checks remain enforced.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/191"
-}
