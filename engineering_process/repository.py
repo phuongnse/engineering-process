@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import tempfile
 from typing import Any
 
 from .contracts import ProcessError
@@ -18,11 +19,15 @@ MAX_TOTAL_BYTES = 1_000_000_000
 STATE_PREFIXES = (b".process/runs/", b".process/receipts/")
 
 
-def _git(root: Path, arguments: list[str], *, check: bool = True) -> bytes:
+def _git(
+    root: Path, arguments: list[str], *, check: bool = True,
+    env: dict[str, str] | None = None,
+) -> bytes:
     try:
         result = subprocess.run(
             ["git", "-c", "core.quotepath=false", *arguments],
             cwd=root,
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -57,10 +62,26 @@ def resolve_commit(root: Path, reference: str) -> str:
 
 
 def require_committed_candidate(root: Path) -> None:
-    records = _git(root, [
-        "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
-    ]).split(b"\0")
-    if any(record and not record[3:].startswith(STATE_PREFIXES) for record in records):
+    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    paths = _git(root, [
+        "diff", "--cached", "--name-only", "-z", "--no-ext-diff",
+        "--ignore-submodules=none", "HEAD",
+    ], env=environment).split(b"\0")
+    # A fresh HEAD index cannot hide worktree changes behind visibility flags or
+    # cached stat data. Keep the consumer's real index and its flags untouched.
+    with tempfile.TemporaryDirectory(prefix="process-candidate-") as directory:
+        environment["GIT_INDEX_FILE"] = str(Path(directory) / "index")
+        inspection = [
+            "-c", "core.fsmonitor=false", "-c", "core.ignoreStat=false",
+            "-c", "core.sparseCheckout=false", "-c", "core.splitIndex=false",
+        ]
+        _git(root, [*inspection, "read-tree", "HEAD"], env=environment)
+        records = _git(root, [
+            *inspection, "status", "--porcelain=v1", "-z", "--untracked-files=all",
+            "--no-renames", "--ignore-submodules=none",
+        ], env=environment).split(b"\0")
+        paths.extend(record[3:] for record in records if record)
+    if any(path and not path.startswith(STATE_PREFIXES) for path in paths):
         raise ProcessError(
             "publication requires committed candidate changes; commit or remove "
             "uncommitted changes before change verify"

@@ -422,6 +422,23 @@ class LifecycleTests(unittest.TestCase):
                          actor_id="reviewer", context_id="review-context", kind="agent")
         self.assertEqual(before, state_path.read_bytes())
 
+    def test_publication_verify_rejects_changes_hidden_by_index_flags(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+        for flag in ("--assume-unchanged", "--skip-worktree"):
+            with self.subTest(flag=flag):
+                git(self.root, "update-index", flag, "product.txt")
+                (self.root / "product.txt").write_text("hidden change\n", encoding="utf-8")
+                with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+                    with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                        verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
+                    runner.assert_not_called()
+                self.assertEqual(before, state_path.read_bytes())
+                git(self.root, "update-index", "--no-assume-unchanged", "product.txt")
+                git(self.root, "update-index", "--no-skip-worktree", "product.txt")
+
     def test_publication_verify_rejects_head_mutation_during_preflight(self) -> None:
         self.prepare_publication_candidate()
         self.begin()

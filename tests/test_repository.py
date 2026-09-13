@@ -99,6 +99,21 @@ class RepositorySnapshotTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProcessError, "committed candidate changes.*before change verify"):
                     require_committed_candidate(root)
 
+    def test_committed_candidate_inspects_hidden_files_without_changing_index_flags(self) -> None:
+        for flag in ("--assume-unchanged", "--skip-worktree"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_repository(root)
+                git(root, "update-index", flag, "tracked.txt")
+                index = root / ".git/index"
+                before = index.read_bytes()
+                require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+                (root / "tracked.txt").write_text("two\n", encoding="utf-8")
+                with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                    require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()
