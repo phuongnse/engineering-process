@@ -1,19 +1,25 @@
 {
   "changes": [
     {
-      "id": "pypi-consumer-refresh",
-      "source": "https://github.com/phuongnse/engineering-process/issues/134",
-      "summary": "Refresh package metadata when installing the hash-locked process so newly published releases remain visible through warm pip caches; remove the publication-time cache expiry wait. Consumer CI using pip 26.2 or newer should pass --refresh-package engineering-process, or use --no-cache-dir with older pip.",
+      "id": "publication-boundary",
+      "source": "https://github.com/phuongnse/engineering-process/issues/191",
+      "summary": "Publication-required changes must commit the complete candidate and pass the existing branch, subject and nonempty pinned-range checks before final verification and review. This avoids a late commit forcing a repeated verification/review cycle; exact-snapshot and finish checks remain enforced.",
       "type": "fix"
     },
     {
-      "id": "reviewer-context-ownership",
-      "source": "https://github.com/phuongnse/engineering-process/issues/182",
-      "summary": "Reject recorded agent reviewer-context reuse across changes in the same repository and its worktrees. Preserve same-change correction reviews, and provide an audited replacement only for a reused initial assignment with no submitted review. Native fresh-session and unchanged model/effort evidence remain required from the host.",
-      "type": "fix"
+      "id": "project-knowledge",
+      "source": "https://github.com/phuongnse/engineering-process/issues/192",
+      "summary": "Lifecycle guidance helps consumers find authoritative current project knowledge, maintain only information affected by accepted work or necessary gaps, and review explanations and useful connections in context. Existing consumer organization remains valid; no documentation taxonomy or migration is required.",
+      "type": "capability"
+    },
+    {
+      "id": "change-adequacy",
+      "source": "https://github.com/phuongnse/engineering-process/issues/193",
+      "summary": "Planning, implementation and review connect tests and other evidence to accepted behavior and concrete risks, including regression sensitivity and fitting evidence boundaries. Consumer-required profiles and testing policies remain authoritative; no universal test-first ritual or new test per change is imposed.",
+      "type": "capability"
     }
   ],
-  "previousVersion": "2.3.0",
+  "previousVersion": "2.3.1",
   "schemaVersion": 5,
-  "version": "2.3.1"
+  "version": "2.4.0"
 }

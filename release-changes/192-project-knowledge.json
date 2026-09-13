@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "project-knowledge",
-  "type": "capability",
-  "summary": "Lifecycle guidance helps consumers find authoritative current project knowledge, maintain only information affected by accepted work or necessary gaps, and review explanations and useful connections in context. Existing consumer organization remains valid; no documentation taxonomy or migration is required.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/192"
-}
