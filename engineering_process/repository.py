@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import tempfile
 from typing import Any
 
 from .contracts import ProcessError
@@ -18,11 +19,15 @@ MAX_TOTAL_BYTES = 1_000_000_000
 STATE_PREFIXES = (b".process/runs/", b".process/receipts/")
 
 
-def _git(root: Path, arguments: list[str], *, check: bool = True) -> bytes:
+def _git(
+    root: Path, arguments: list[str], *, check: bool = True,
+    env: dict[str, str] | None = None,
+) -> bytes:
     try:
         result = subprocess.run(
             ["git", "-c", "core.quotepath=false", *arguments],
             cwd=root,
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -54,6 +59,49 @@ def resolve_commit(root: Path, reference: str) -> str:
     return _git(
         root, ["rev-parse", "--verify", "--end-of-options", f"{reference}^{{commit}}"]
     ).decode("ascii").strip()
+
+
+def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
+    root = root.resolve()
+    head = resolve_commit(root, head)
+    environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    paths = _git(root, [
+        "diff", "--cached", "--name-only", "-z", "--no-ext-diff",
+        "--ignore-submodules=none", head,
+    ], env=environment).split(b"\0")
+    # Git's skip-worktree contract permits absence, not changed materialized content.
+    omitted = {
+        record[2:]
+        for record in _git(root, ["ls-files", "-t", "-z"], env=environment).split(b"\0")
+        if record.startswith(b"S ") and not os.path.lexists(root / os.fsdecode(record[2:]))
+    }
+    # A fresh HEAD index cannot hide worktree changes behind visibility flags or
+    # cached stat data. Keep the consumer's real index and its flags untouched.
+    # Git metadata stays outside snapshots even when TMPDIR is inside the checkout.
+    git_directory = os.fsdecode(_git(root, ["rev-parse", "--absolute-git-dir"]).rstrip(b"\r\n"))
+    with tempfile.TemporaryDirectory(prefix="process-candidate-", dir=git_directory) as directory:
+        environment["GIT_INDEX_FILE"] = str(Path(directory) / "index")
+        inspection = [
+            "-c", "core.fsmonitor=false", "-c", "core.ignoreStat=false",
+            "-c", "core.sparseCheckout=false", "-c", "core.splitIndex=false",
+        ]
+        _git(root, [*inspection, "read-tree", head], env=environment)
+        records = _git(root, [
+            *inspection, "status", "--porcelain=v1", "-z", "--untracked-files=all",
+            "--no-renames", "--ignore-submodules=none",
+        ], env=environment).split(b"\0")
+        for record in records:
+            if not record:
+                continue
+            path = record[3:]
+            if record.startswith(b" D ") and path in omitted:
+                continue
+            paths.append(path)
+    if any(path and not path.startswith(STATE_PREFIXES) for path in paths):
+        raise ProcessError(
+            "publication requires committed candidate changes; commit or remove "
+            "uncommitted changes before change verify"
+        )
 
 
 def repository_snapshot(root: Path) -> dict[str, Any]:

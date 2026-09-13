@@ -78,10 +78,14 @@ processctl a provider runtime or a model-quality evaluator.
 Consumers using the packaged publication compatibility policy can enable
 `lifecycle.publication.required: true` in `.process/project.json` after adopting a
 version that supports it. Start then rejects an invalid branch before creating a
-run. Finish checks the current branch, head subject, and pinned comparison-base-to-head
-range, and writes publication metadata in a version 2 receipt. Version 1 receipts and
-consumers without the opt-in remain supported. Missing pinned bases and mutations
-during the check fail completion.
+run. Before final profiles run and before review assignment, the lifecycle checks
+the current branch, head subject, and nonempty pinned comparison-base-to-head range,
+and requires all candidate changes to be committed. Commit before `change verify`;
+a later commit changes the checkpoint even when its source content is identical.
+Local lifecycle run/receipt files and Git-ignored files are excluded. Finish repeats
+the same checks and writes publication metadata in a version 2 receipt. Version 1
+receipts and consumers without the opt-in remain supported. Missing pinned bases and
+mutations during the check fail without advancing the lifecycle.
 
 PR readiness additionally requires the selected ready-state body/title and exact
 head/range checks. Follow the [completion preflight](process_assets/skills/change-complete/SKILL.md)

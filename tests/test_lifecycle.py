@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from engineering_process.commands import run_profile
 from engineering_process.contracts import ProcessError, digest_json
 from engineering_process.artifact_standards import resolve_standard
 from engineering_process.lifecycle import (
@@ -365,6 +366,122 @@ class LifecycleTests(unittest.TestCase):
             (self.root / ".process" / "receipts" / "sample-change.json").exists()
         )
 
+    def test_publication_rejects_empty_range_before_profiles_then_committed_candidate_finishes(self) -> None:
+        self.prepare_publication_candidate()
+        self.contract["comparisonBase"] = "HEAD"
+        self.plan["contractDigest"] = digest_json(self.contract)
+        write_json(self.contract_path, self.contract)
+        write_json(self.plan_path, self.plan)
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-qm", "fix: select initial boundary")
+        self.begin()
+        (self.root / "product.txt").write_text("corrected\n", encoding="utf-8")
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+        with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+            with self.assertRaisesRegex(ProcessError, "at least one commit.*before change verify"):
+                verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
+            runner.assert_not_called()
+        self.assertEqual(before, state_path.read_bytes())
+
+        git(self.root, "add", "product.txt")
+        git(self.root, "commit", "-qm", "fix: commit corrected candidate")
+        self.verify_all()
+        start_review(self.root, PROCESS_ROOT, "sample-change",
+                     actor_id="reviewer", context_id="review-context", kind="agent")
+        review_path = self.root / ".process/runs/review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        state, receipt = finish_change(self.root, PROCESS_ROOT, "sample-change",
+                                      actor_id="coordinator", context_id="finish-context", kind="agent")
+        self.assertEqual(1, state["cycle"])
+        self.assertEqual("completed", state["phase"])
+        self.assertEqual("fix: commit corrected candidate", receipt["publication"]["subject"])
+
+    def test_publication_verify_rejects_dirty_candidate_before_profiles(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        (self.root / "product.txt").write_text("not committed\n", encoding="utf-8")
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+        with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+            with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
+            runner.assert_not_called()
+        self.assertEqual(before, state_path.read_bytes())
+
+    def test_publication_review_rechecks_branch_without_assigning_reviewer(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        self.verify_all()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+        git(self.root, "branch", "-M", "codex/invalid")
+        with self.assertRaisesRegex(ProcessError, "publication compatibility checks failed"):
+            start_review(self.root, PROCESS_ROOT, "sample-change",
+                         actor_id="reviewer", context_id="review-context", kind="agent")
+        self.assertEqual(before, state_path.read_bytes())
+
+    def test_publication_verify_rejects_changes_hidden_by_index_flags(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+        for flag in ("--assume-unchanged", "--skip-worktree"):
+            with self.subTest(flag=flag):
+                git(self.root, "update-index", flag, "product.txt")
+                (self.root / "product.txt").write_text("hidden change\n", encoding="utf-8")
+                with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+                    with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                        verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
+                    runner.assert_not_called()
+                self.assertEqual(before, state_path.read_bytes())
+                git(self.root, "update-index", "--no-assume-unchanged", "product.txt")
+                git(self.root, "update-index", "--no-skip-worktree", "product.txt")
+
+    def test_publication_verify_rejects_head_mutation_during_preflight(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+
+        def change_head(root: Path, base: str) -> dict:
+            result = validate_current_source(root, base)
+            git(root, "commit", "--allow-empty", "-qm", "fix: concurrent commit")
+            return result
+
+        with patch("engineering_process.lifecycle.validate_current_source", side_effect=change_head):
+            with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+                with self.assertRaisesRegex(ProcessError, "repository changed while publication"):
+                    verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
+                runner.assert_not_called()
+        self.assertEqual(before, state_path.read_bytes())
+
+    def test_publication_review_rejects_legacy_dirty_verification(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        (self.root / "product.txt").write_text("legacy uncommitted candidate\n", encoding="utf-8")
+        # Reproduce evidence recorded by a process without the early preflight.
+        with patch("engineering_process.lifecycle._publication_preflight"):
+            self.verify_all()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        before = state_path.read_bytes()
+        with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+            start_review(self.root, PROCESS_ROOT, "sample-change",
+                         actor_id="reviewer", context_id="review-context", kind="agent")
+        self.assertEqual(before, state_path.read_bytes())
+
+    def test_metadata_only_commit_still_invalidates_verification(self) -> None:
+        self.prepare_publication_candidate()
+        self.begin()
+        self.verify_all()
+        before = repository_snapshot(self.root)
+        git(self.root, "commit", "--allow-empty", "-qm", "fix: metadata-only change")
+        self.assertEqual(before["fingerprint"], repository_snapshot(self.root)["fingerprint"])
+        with self.assertRaisesRegex(ProcessError, "verification evidence is stale or incomplete"):
+            start_review(self.root, PROCESS_ROOT, "sample-change",
+                         actor_id="reviewer", context_id="review-context", kind="agent")
+
     def test_publication_finish_records_validated_source_metadata(self) -> None:
         base = self.approve_publication_candidate(moving_base=True)
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True, timeout=30).strip()
@@ -432,7 +549,7 @@ class LifecycleTests(unittest.TestCase):
                 git(root, "update-ref", "HEAD", original)
 
         with patch("engineering_process.lifecycle.validate_current_source", side_effect=validate_other_head):
-            with self.assertRaisesRegex(ProcessError, "does not match the reviewed HEAD"):
+            with self.assertRaisesRegex(ProcessError, "does not match the candidate HEAD"):
                 finish_change(self.root, PROCESS_ROOT, "sample-change",
                               actor_id="coordinator", context_id="finish-context", kind="agent")
         self.assertEqual(original, repository_snapshot(self.root)["head"])

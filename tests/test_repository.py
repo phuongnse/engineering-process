@@ -4,8 +4,13 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from engineering_process.repository import repository_snapshot, resolve_commit, same_checkpoint
+from engineering_process.contracts import ProcessError
+from engineering_process import repository
+from engineering_process.repository import (
+    repository_snapshot, require_committed_candidate, resolve_commit, same_checkpoint,
+)
 
 
 def git(root: Path, *arguments: str) -> None:
@@ -57,6 +62,141 @@ class RepositorySnapshotTests(unittest.TestCase):
             receipt.parent.mkdir(parents=True)
             receipt.write_text("{}\n", encoding="utf-8")
             self.assertTrue(same_checkpoint(initial, repository_snapshot(root)))
+
+    def test_committed_candidate_ignores_only_lifecycle_state_and_ignored_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            # State remains excluded even in consumers without matching ignore rules.
+            (root / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+            git(root, "add", ".gitignore")
+            git(root, "commit", "-qm", "fix: consumer ignore rules")
+            for relative in (".process/runs/sample/run.json", ".process/receipts/sample.json", "ignored.txt"):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("local\n", encoding="utf-8")
+            require_committed_candidate(root)
+            (root / ".process/project.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                require_committed_candidate(root)
+
+    def test_committed_candidate_rejects_worktree_index_and_untracked_changes(self) -> None:
+        for change in ("unstaged", "staged", "index-only", "untracked", "deleted", "renamed"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_repository(root)
+                tracked = root / "tracked.txt"
+                if change == "untracked":
+                    (root / "new name-é.txt").write_text("new\n", encoding="utf-8")
+                elif change == "deleted":
+                    tracked.unlink()
+                elif change == "renamed":
+                    git(root, "mv", "tracked.txt", "renamed.txt")
+                else:
+                    tracked.write_text("two\n", encoding="utf-8")
+                    if change in ("staged", "index-only"):
+                        git(root, "add", "tracked.txt")
+                    if change == "index-only":
+                        tracked.write_text("one\n", encoding="utf-8")
+                with self.assertRaisesRegex(ProcessError, "committed candidate changes.*before change verify"):
+                    require_committed_candidate(root)
+
+    def test_committed_candidate_inspects_hidden_files_without_changing_index_flags(self) -> None:
+        for flag in ("--assume-unchanged", "--skip-worktree"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_repository(root)
+                git(root, "update-index", flag, "tracked.txt")
+                index = root / ".git/index"
+                before = index.read_bytes()
+                require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+                (root / "tracked.txt").write_text("two\n", encoding="utf-8")
+                with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                    require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+
+    def test_committed_candidate_does_not_follow_a_transient_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            original = resolve_commit(root, "HEAD")
+            (root / "tracked.txt").write_text("two\n", encoding="utf-8")
+            git(root, "add", "tracked.txt")
+            git(root, "commit", "-qm", "fix: alternate content")
+            transient = resolve_commit(root, "HEAD")
+            git(root, "reset", "--mixed", original)
+            before = repository_snapshot(root)
+            inspect = repository._git
+
+            def change_head(path: Path, arguments: list[str], **options) -> bytes:
+                if "read-tree" in arguments:
+                    git(root, "update-ref", "HEAD", transient)
+                try:
+                    return inspect(path, arguments, **options)
+                finally:
+                    if "status" in arguments:
+                        git(root, "update-ref", "HEAD", original)
+
+            try:
+                with patch("engineering_process.repository._git", side_effect=change_head):
+                    with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                        require_committed_candidate(root)
+            finally:
+                git(root, "update-ref", "HEAD", original)
+            self.assertTrue(same_checkpoint(before, repository_snapshot(root)))
+
+    def test_committed_candidate_preserves_sparse_omissions_but_inspects_present_files(self) -> None:
+        for mode in ("--no-sparse-index", "--sparse-index"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_repository(root)
+                for relative in ("selected/kept.txt", "omitted/absent.txt"):
+                    path = root / relative
+                    path.parent.mkdir(parents=True)
+                    path.write_text("committed\n", encoding="utf-8")
+                git(root, "add", ".")
+                git(root, "commit", "-qm", "fix: sparse fixture")
+                git(root, "sparse-checkout", "init", "--cone", mode)
+                git(root, "sparse-checkout", "set", "selected")
+                absent = root / "omitted/absent.txt"
+                self.assertFalse(absent.exists())
+                index = root / ".git/index"
+                before = index.read_bytes()
+                require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+                absent.parent.mkdir(exist_ok=True)
+                absent.write_text("uncommitted\n", encoding="utf-8")
+                with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                    require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+
+    def test_repository_local_temporary_root_does_not_join_the_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            before = repository_snapshot(root)
+            index = (root / ".git/index").read_bytes()
+            with patch("engineering_process.repository.tempfile.tempdir", str(root)):
+                require_committed_candidate(root)
+            self.assertTrue(same_checkpoint(before, repository_snapshot(root)))
+            self.assertEqual(index, (root / ".git/index").read_bytes())
+            self.assertEqual([], list((root / ".git").glob("process-candidate-*")))
+
+    def test_committed_candidate_supports_linked_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            root.mkdir()
+            self.make_repository(root)
+            linked = Path(directory) / "linked"
+            git(root, "worktree", "add", "--detach", str(linked), "HEAD")
+            before = repository_snapshot(linked)
+            with patch("engineering_process.repository.tempfile.tempdir", str(linked)):
+                require_committed_candidate(linked)
+            self.assertTrue(same_checkpoint(before, repository_snapshot(linked)))
+            (linked / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
+            with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                require_committed_candidate(linked)
 
 
 if __name__ == "__main__":
