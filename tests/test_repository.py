@@ -4,8 +4,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError
+from engineering_process import repository
 from engineering_process.repository import (
     repository_snapshot, require_committed_candidate, resolve_commit, same_checkpoint,
 )
@@ -113,6 +115,36 @@ class RepositorySnapshotTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
                     require_committed_candidate(root)
                 self.assertEqual(before, index.read_bytes())
+
+    def test_committed_candidate_does_not_follow_a_transient_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            original = resolve_commit(root, "HEAD")
+            (root / "tracked.txt").write_text("two\n", encoding="utf-8")
+            git(root, "add", "tracked.txt")
+            git(root, "commit", "-qm", "fix: alternate content")
+            transient = resolve_commit(root, "HEAD")
+            git(root, "reset", "--mixed", original)
+            before = repository_snapshot(root)
+            inspect = repository._git
+
+            def change_head(path: Path, arguments: list[str], **options) -> bytes:
+                if "read-tree" in arguments:
+                    git(root, "update-ref", "HEAD", transient)
+                try:
+                    return inspect(path, arguments, **options)
+                finally:
+                    if "status" in arguments:
+                        git(root, "update-ref", "HEAD", original)
+
+            try:
+                with patch("engineering_process.repository._git", side_effect=change_head):
+                    with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                        require_committed_candidate(root)
+            finally:
+                git(root, "update-ref", "HEAD", original)
+            self.assertTrue(same_checkpoint(before, repository_snapshot(root)))
 
 
 if __name__ == "__main__":

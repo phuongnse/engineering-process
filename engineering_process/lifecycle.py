@@ -338,7 +338,7 @@ def _publication_preflight(
             + "; ".join(publication["issues"])
             + "; commit the candidate on a valid publication branch before change verify"
         )
-    require_committed_candidate(project_root)
+    require_committed_candidate(project_root, checkpoint["head"])
     after = repository_snapshot(project_root)
     if (not same_checkpoint(checkpoint, after)
             or current_branch(project_root) != publication["branch"]):

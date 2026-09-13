@@ -61,11 +61,12 @@ def resolve_commit(root: Path, reference: str) -> str:
     ).decode("ascii").strip()
 
 
-def require_committed_candidate(root: Path) -> None:
+def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
+    head = resolve_commit(root, head)
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     paths = _git(root, [
         "diff", "--cached", "--name-only", "-z", "--no-ext-diff",
-        "--ignore-submodules=none", "HEAD",
+        "--ignore-submodules=none", head,
     ], env=environment).split(b"\0")
     # A fresh HEAD index cannot hide worktree changes behind visibility flags or
     # cached stat data. Keep the consumer's real index and its flags untouched.
@@ -75,7 +76,7 @@ def require_committed_candidate(root: Path) -> None:
             "-c", "core.fsmonitor=false", "-c", "core.ignoreStat=false",
             "-c", "core.sparseCheckout=false", "-c", "core.splitIndex=false",
         ]
-        _git(root, [*inspection, "read-tree", "HEAD"], env=environment)
+        _git(root, [*inspection, "read-tree", head], env=environment)
         records = _git(root, [
             *inspection, "status", "--porcelain=v1", "-z", "--untracked-files=all",
             "--no-renames", "--ignore-submodules=none",
