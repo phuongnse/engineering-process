@@ -146,6 +146,58 @@ class RepositorySnapshotTests(unittest.TestCase):
                 git(root, "update-ref", "HEAD", original)
             self.assertTrue(same_checkpoint(before, repository_snapshot(root)))
 
+    def test_committed_candidate_preserves_sparse_omissions_but_inspects_present_files(self) -> None:
+        for mode in ("--no-sparse-index", "--sparse-index"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_repository(root)
+                for relative in ("selected/kept.txt", "omitted/absent.txt"):
+                    path = root / relative
+                    path.parent.mkdir(parents=True)
+                    path.write_text("committed\n", encoding="utf-8")
+                git(root, "add", ".")
+                git(root, "commit", "-qm", "fix: sparse fixture")
+                git(root, "sparse-checkout", "init", "--cone", mode)
+                git(root, "sparse-checkout", "set", "selected")
+                absent = root / "omitted/absent.txt"
+                self.assertFalse(absent.exists())
+                index = root / ".git/index"
+                before = index.read_bytes()
+                require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+                absent.parent.mkdir(exist_ok=True)
+                absent.write_text("uncommitted\n", encoding="utf-8")
+                with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                    require_committed_candidate(root)
+                self.assertEqual(before, index.read_bytes())
+
+    def test_repository_local_temporary_root_does_not_join_the_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            before = repository_snapshot(root)
+            index = (root / ".git/index").read_bytes()
+            with patch("engineering_process.repository.tempfile.tempdir", str(root)):
+                require_committed_candidate(root)
+            self.assertTrue(same_checkpoint(before, repository_snapshot(root)))
+            self.assertEqual(index, (root / ".git/index").read_bytes())
+            self.assertEqual([], list((root / ".git").glob("process-candidate-*")))
+
+    def test_committed_candidate_supports_linked_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            root.mkdir()
+            self.make_repository(root)
+            linked = Path(directory) / "linked"
+            git(root, "worktree", "add", "--detach", str(linked), "HEAD")
+            before = repository_snapshot(linked)
+            with patch("engineering_process.repository.tempfile.tempdir", str(linked)):
+                require_committed_candidate(linked)
+            self.assertTrue(same_checkpoint(before, repository_snapshot(linked)))
+            (linked / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
+            with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
+                require_committed_candidate(linked)
+
 
 if __name__ == "__main__":
     unittest.main()

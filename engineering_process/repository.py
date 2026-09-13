@@ -62,15 +62,24 @@ def resolve_commit(root: Path, reference: str) -> str:
 
 
 def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
+    root = root.resolve()
     head = resolve_commit(root, head)
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
     paths = _git(root, [
         "diff", "--cached", "--name-only", "-z", "--no-ext-diff",
         "--ignore-submodules=none", head,
     ], env=environment).split(b"\0")
+    # Git's skip-worktree contract permits absence, not changed materialized content.
+    omitted = {
+        record[2:]
+        for record in _git(root, ["ls-files", "-t", "-z"], env=environment).split(b"\0")
+        if record.startswith(b"S ") and not os.path.lexists(root / os.fsdecode(record[2:]))
+    }
     # A fresh HEAD index cannot hide worktree changes behind visibility flags or
     # cached stat data. Keep the consumer's real index and its flags untouched.
-    with tempfile.TemporaryDirectory(prefix="process-candidate-") as directory:
+    # Git metadata stays outside snapshots even when TMPDIR is inside the checkout.
+    git_directory = os.fsdecode(_git(root, ["rev-parse", "--absolute-git-dir"]).rstrip(b"\r\n"))
+    with tempfile.TemporaryDirectory(prefix="process-candidate-", dir=git_directory) as directory:
         environment["GIT_INDEX_FILE"] = str(Path(directory) / "index")
         inspection = [
             "-c", "core.fsmonitor=false", "-c", "core.ignoreStat=false",
@@ -81,7 +90,13 @@ def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
             *inspection, "status", "--porcelain=v1", "-z", "--untracked-files=all",
             "--no-renames", "--ignore-submodules=none",
         ], env=environment).split(b"\0")
-        paths.extend(record[3:] for record in records if record)
+        for record in records:
+            if not record:
+                continue
+            path = record[3:]
+            if record.startswith(b" D ") and path in omitted:
+                continue
+            paths.append(path)
     if any(path and not path.startswith(STATE_PREFIXES) for path in paths):
         raise ProcessError(
             "publication requires committed candidate changes; commit or remove "
