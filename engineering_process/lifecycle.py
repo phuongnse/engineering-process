@@ -36,7 +36,9 @@ from .production_engineering import (
     validate_review_assessments,
 )
 from .source_publication import branch_issues, current_branch, validate_current_source
-from .repository import repository_snapshot, resolve_commit, same_checkpoint
+from .repository import (
+    repository_snapshot, require_committed_candidate, resolve_commit, same_checkpoint,
+)
 from .review_contexts import (
     recorded_context_conflict,
     require_unreused_context,
@@ -317,6 +319,33 @@ def begin_implementation(
     return state
 
 
+def _publication_preflight(
+    project_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    checkpoint: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not publication_required(project):
+        return None
+    if not (comparison_base := state.get("comparisonBaseCommit")):
+        raise ProcessError("publication requires a pinned comparison base")
+    publication = validate_current_source(project_root, comparison_base)
+    if publication["range"] != f"{comparison_base}..{checkpoint['head']}":
+        raise ProcessError("publication validation does not match the candidate HEAD")
+    if publication["issues"]:
+        raise ProcessError(
+            "publication compatibility checks failed: "
+            + "; ".join(publication["issues"])
+            + "; commit the candidate on a valid publication branch before change verify"
+        )
+    require_committed_candidate(project_root)
+    after = repository_snapshot(project_root)
+    if (not same_checkpoint(checkpoint, after)
+            or current_branch(project_root) != publication["branch"]):
+        raise ProcessError("repository changed while publication validation was running")
+    return publication
+
+
 def verify_change(
     project_root: Path,
     process_root: Path,
@@ -330,6 +359,7 @@ def verify_change(
         raise ProcessError(f"profile {profile} is not required by change {change_id}")
 
     before = repository_snapshot(project_root)
+    _publication_preflight(project_root, project, state, before)
     report = run_profile(project_root, project, profile)
     return _record_verification(
         project_root, process_root, change_id, state["cycle"], before, report
@@ -448,6 +478,9 @@ def start_review(
         previous_assignment["checkpoint"], checkpoint
     ):
         raise ProcessError("repository changed after the reused review assignment")
+    _publication_preflight(
+        project_root, load_project(project_root, process_root), state, checkpoint
+    )
     state["reviewAssignment"] = {
         "reviewer": reviewer,
         "checkpoint": checkpoint,
@@ -619,25 +652,7 @@ def finish_change(
     actor = _actor(actor_id, context_id, kind)
     project = load_project(project_root, process_root)
     checkpoint = repository_snapshot(project_root)
-    publication = None
-    if publication_required(project):
-        if not (comparison_base := state.get("comparisonBaseCommit")):
-            raise ProcessError("publication completion requires a pinned comparison base")
-        publication = validate_current_source(
-            project_root, comparison_base
-        )
-        if publication["range"] != f"{comparison_base}..{checkpoint['head']}":
-            raise ProcessError("publication validation does not match the reviewed HEAD")
-        after_publication = repository_snapshot(project_root)
-        if (not same_checkpoint(checkpoint, after_publication)
-                or current_branch(project_root) != publication["branch"]):
-            raise ProcessError("repository changed while publication validation was running")
-        if publication["issues"]:
-            raise ProcessError(
-                "publication compatibility checks failed: "
-                + "; ".join(publication["issues"])
-            )
-        checkpoint = after_publication
+    publication = _publication_preflight(project_root, project, state, checkpoint)
     if not same_checkpoint(checkpoint, state["reviewAssignment"]["checkpoint"]):
         raise ProcessError("repository changed after approval")
 

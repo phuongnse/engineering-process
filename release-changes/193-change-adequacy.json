@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "change-adequacy",
+  "type": "capability",
+  "summary": "Planning, implementation and review connect tests and other evidence to accepted behavior and concrete risks, including regression sensitivity and fitting evidence boundaries. Consumer-required profiles and testing policies remain authoritative; no universal test-first ritual or new test per change is imposed.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/193"
+}

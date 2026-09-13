@@ -56,6 +56,17 @@ def resolve_commit(root: Path, reference: str) -> str:
     ).decode("ascii").strip()
 
 
+def require_committed_candidate(root: Path) -> None:
+    records = _git(root, [
+        "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames",
+    ]).split(b"\0")
+    if any(record and not record[3:].startswith(STATE_PREFIXES) for record in records):
+        raise ProcessError(
+            "publication requires committed candidate changes; commit or remove "
+            "uncommitted changes before change verify"
+        )
+
+
 def repository_snapshot(root: Path) -> dict[str, Any]:
     root = root.resolve()
     if not (root / ".git").exists():
