@@ -78,6 +78,28 @@ class CommandTests(unittest.TestCase):
             with verification_lock(path):
                 pass
 
+    def test_verification_lock_is_reentrant_and_ignores_profile_file_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.lock"
+            with verification_lock(path):
+                with verification_lock(path):
+                    pass
+                path.unlink(missing_ok=True)
+                result: list[BaseException] = []
+
+                def contender() -> None:
+                    try:
+                        with verification_lock(path):
+                            pass
+                    except BaseException as error:  # noqa: BLE001 - assert the bounded race result
+                        result.append(error)
+
+                thread = threading.Thread(target=contender)
+                thread.start()
+                thread.join(5)
+                self.assertEqual(1, len(result))
+                self.assertIsInstance(result[0], ProcessError)
+
     def test_child_path_prefers_the_process_runtime_and_preserves_caller_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / ("python.exe" if os.name == "nt" else "python")

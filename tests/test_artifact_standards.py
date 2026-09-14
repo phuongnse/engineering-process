@@ -617,6 +617,15 @@ class ArtifactStandardsTests(unittest.TestCase):
         self.assertTrue(data["checks"]["independent-review"])
         self.assertTrue(data["checks"]["finding-dispositions"])
 
+        receipt_path = self.root / ".process" / "receipts" / "sample-change.json"
+        original_receipt = receipt_path.read_bytes()
+        tampered_receipt = json.loads(original_receipt)
+        tampered_receipt["changeId"] = "other-change"
+        receipt_path.write_bytes(formatted_json_bytes(tampered_receipt))
+        tampered_data = build_pr_description_data(self.root, ROOT, "sample-change")
+        self.assertEqual("pending", tampered_data["fields"]["completion-receipt"])
+        receipt_path.write_bytes(original_receipt)
+
         # AC4: No reviewer actor/context ID, local run path, or secret enters public fields
         for field_id, value in data["fields"].items():
             self.assertNotIn("reviewer", value, f"reviewer actor leaked in {field_id}")
@@ -630,6 +639,8 @@ class ArtifactStandardsTests(unittest.TestCase):
                 "outcome": "Deliver bounded sample change.",
                 "scope": "product.txt file only.",
                 "verdict": "forged-verdict",  # Lifecycle-derived fact cannot be overwritten
+                "source": "forged-source",
+                "risk": "high",
             },
             "checks": {
                 "accepted-scope": True,
@@ -641,8 +652,50 @@ class ArtifactStandardsTests(unittest.TestCase):
         self.assertEqual("Deliver bounded sample change.", data_with_overrides["fields"]["outcome"])
         self.assertEqual("product.txt file only.", data_with_overrides["fields"]["scope"])
         self.assertEqual("approved", data_with_overrides["fields"]["verdict"])
+        self.assertEqual("https://example.com/issues/100", data_with_overrides["fields"]["source"])
+        self.assertEqual("low", data_with_overrides["fields"]["risk"])
         self.assertTrue(data_with_overrides["checks"]["accepted-scope"])
         self.assertEqual("Refs #100.", data_with_overrides["issueReference"])
+
+        custom_standard = deepcopy(resolve_standard(None, ROOT, "pull-request"))
+        custom_standard.document["rules"]["sections"] = [
+            {
+                "heading": "## Summary",
+                "fields": [
+                    {
+                        "id": "outcome",
+                        "label": "Result",
+                        "description": "Consumer result.",
+                    },
+                    {
+                        "id": "source-reference",
+                        "label": "Source reference",
+                        "description": "Consumer source reference.",
+                    },
+                ],
+                "checks": [],
+            }
+        ]
+        custom_data = build_pr_description_data(
+            self.root,
+            ROOT,
+            "sample-change",
+            standard=custom_standard,
+            overrides={
+                "schemaVersion": 1,
+                "fields": {"outcome": "Custom result.", "source-reference": "Provided explicitly."},
+                "checks": {},
+            },
+        )
+        self.assertEqual(
+            {"outcome", "source-reference"},
+            set(custom_data["fields"]),
+        )
+        self.assertEqual([], body_issues(
+            render_description(custom_standard, custom_data, state="draft"),
+            "draft",
+            custom_standard,
+        ))
 
         # AC2: Render and exact-byte validation with prepared data
         standard = resolve_standard(self.root, ROOT, "pull-request")
@@ -679,4 +732,3 @@ class ArtifactStandardsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

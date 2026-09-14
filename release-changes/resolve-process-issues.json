@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "resolve-process-issues",
+  "type": "capability",
+  "summary": "Add safe continuation verification and canonical lifecycle facts for pull-request evidence, with clearer adoption, feedback, reviewer-recovery, and standards guidance.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/205"
+}

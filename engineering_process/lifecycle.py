@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 import platform
 from pathlib import Path
 import sys
-import time
 from typing import Any
 
 from . import VERSION
@@ -207,6 +206,11 @@ def _verification_selection(
 
     for profile in required:
         previous = state["verification"].get(profile)
+        current_input_digest = (
+            _verification_input_digest(project_root, process_root, project, state, profile)
+            if profile in configured
+            else None
+        )
         if profile not in configured:
             status, action, reason = (
                 "blocked",
@@ -220,8 +224,9 @@ def _verification_selection(
             and previous["status"] == "passed"
             and previous.get("scope", {"kind": "profile"}) == {"kind": "profile"}
             and same_checkpoint(previous["checkpoint"], current)
-            and previous.get("inputDigest")
-            == _verification_input_digest(project_root, process_root, project, state, profile)
+            and previous.get("inputDigest") is not None
+            and current_input_digest is not None
+            and previous["inputDigest"] == current_input_digest
         ):
             status, action, reason = (
                 "satisfied",
@@ -533,9 +538,9 @@ def verify_change(
     change_id: str,
     profile: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    lock_path = _run_path(project_root, change_id).with_name(
-        f".verification-{profile}.lock"
-    )
+    initial = _load_state(project_root, process_root, change_id)
+    _require_phase(initial, "implementing")
+    lock_path = _run_path(project_root, initial["changeId"])
     with verification_lock(lock_path):
         state = _load_state(project_root, process_root, change_id)
         _require_phase(state, "implementing")
@@ -594,45 +599,35 @@ def verify_remaining(
     change_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Execute only unresolved work and retain valid prior profile evidence."""
-    state = _load_state(project_root, process_root, change_id)
-    _require_phase(state, "implementing")
-    selection = _verification_selection(project_root, process_root, project, state)
-    if selection["status"] == "blocked":
-        raise ProcessError(
-            "verification selection is blocked: "
-            + ", ".join(selection["blockedProfiles"])
-        )
-    for requirement in selection["requirements"]:
-        profile = requirement["profile"]
-        if profile in selection["inapplicableProfiles"]:
-            continue
-        latest = _verification_selection(
-            project_root,
-            process_root,
-            project,
-            _load_state(project_root, process_root, change_id),
-        )
-        if latest["status"] == "blocked":
+    initial = _load_state(project_root, process_root, change_id)
+    _require_phase(initial, "implementing")
+    lock_path = _run_path(project_root, initial["changeId"])
+    with verification_lock(lock_path):
+        state = _load_state(project_root, process_root, change_id)
+        _require_phase(state, "implementing")
+        selection = _verification_selection(project_root, process_root, project, state)
+        if selection["status"] == "blocked":
             raise ProcessError(
                 "verification selection is blocked: "
-                + ", ".join(latest["blockedProfiles"])
+                + ", ".join(selection["blockedProfiles"])
             )
-        current = next(
-            item for item in latest["requirements"] if item["profile"] == profile
-        )
-        if current["action"] == "reuse":
-            state = reuse_verification(
-                project_root, process_root, project, change_id, profile
-            )
-        elif current["action"] == "execute":
-            state, report = verify_change(
-                project_root, process_root, project, change_id, profile
-            )
-            if report["status"] != "passed":
-                break
-        elif current["action"] == "blocked":
-            raise ProcessError(f"profile {profile} is blocked: {current['reason']}")
-    return state, selection
+        for requirement in selection["requirements"]:
+            profile = requirement["profile"]
+            if profile in selection["inapplicableProfiles"]:
+                continue
+            if requirement["action"] == "reuse":
+                state = reuse_verification(
+                    project_root, process_root, project, change_id, profile
+                )
+            elif requirement["action"] == "execute":
+                state, report = verify_change(
+                    project_root, process_root, project, change_id, profile
+                )
+                if report["status"] != "passed":
+                    break
+            elif requirement["action"] == "blocked":
+                raise ProcessError(f"profile {profile} is blocked: {requirement['reason']}")
+        return state, selection
 
 
 @history_transaction

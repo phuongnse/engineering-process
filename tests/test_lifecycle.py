@@ -1362,6 +1362,48 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("unknown", requirement["status"])
         self.assertEqual("execute", requirement["action"])
 
+    def test_selection_refuses_reuse_when_runtime_identity_is_unknown(self) -> None:
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        path = self.root / ".process/runs/sample-change/run.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        del state["verification"]["development"]["inputDigest"]
+        write_json(path, state)
+        unknown = {
+            "executable": "python",
+            "python": "3.14",
+            "platform": "test",
+            "environment": {},
+            "dependencies": {"known": False},
+        }
+        with patch(
+            "engineering_process.lifecycle.execution_identity",
+            return_value=unknown,
+        ):
+            selection = resolve_verification_work(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+        requirement = next(
+            item
+            for item in selection["requirements"]
+            if item["profile"] == "development"
+        )
+        self.assertEqual("unknown", requirement["status"])
+        self.assertEqual("execute", requirement["action"])
+
+    def test_invalid_change_id_does_not_create_verification_directory(self) -> None:
+        with self.assertRaises(ProcessError):
+            verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                str(Path("..") / "outside"),
+                "development",
+            )
+        self.assertFalse((self.root / ".process" / "outside").exists())
+
     def test_selection_reports_optional_profiles_as_inapplicable(self) -> None:
         self.project["profiles"]["optional"] = [
             {

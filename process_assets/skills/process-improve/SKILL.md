@@ -34,7 +34,7 @@ when authorized readers can access it.
 Use a stable title key such as
 `[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT]`. Search before creating:
 
-    gh issue list --repo phuongnse/engineering-process --state open \
+    gh issue list --repo phuongnse/engineering-process --state all \
       --search 'STABLE-KEY in:title'
 
 If an issue already owns the invariant, link it in the consumer report; add a

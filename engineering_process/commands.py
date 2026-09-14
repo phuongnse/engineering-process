@@ -72,8 +72,13 @@ _LOCK_OWNERS = threading.local()
 
 @contextmanager
 def verification_lock(path: Path) -> Iterator[None]:
-    """Prevent concurrent lifecycle requests from dispatching one profile twice."""
-    resolved = path.resolve()
+    """Prevent concurrent lifecycle requests from dispatching verification twice."""
+    lock_path = (
+        path.parent / ".verification.lock"
+        if os.name == "nt"
+        else path.parent
+    )
+    resolved = lock_path.resolve()
     holders = getattr(_LOCK_OWNERS, "holders", None)
     if holders is None:
         holders = _LOCK_OWNERS.holders = {}
@@ -88,16 +93,25 @@ def verification_lock(path: Path) -> Iterator[None]:
                 del holders[resolved]
         return
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
+    if os.name == "nt":
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    else:
+        # Lock the run directory itself so replacing a profile lock entry cannot
+        # create a second lock inode while this operation is active.
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:
-        descriptor = os.open(path, flags, 0o600)
+        descriptor = os.open(lock_path, flags, 0o600)
     except OSError as error:
         raise ProcessError(f"cannot open verification lock: {error}") from error
     locked = False
     try:
         if os.name == "nt":
+            opened = os.fstat(descriptor)
+            current = os.stat(lock_path)
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise ProcessError("verification lock was replaced while opening")
             import msvcrt
             if os.fstat(descriptor).st_size == 0:
                 os.write(descriptor, b"0")
@@ -107,9 +121,16 @@ def verification_lock(path: Path) -> Iterator[None]:
             import fcntl
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         locked = True
+        if os.name == "nt":
+            current = os.stat(lock_path)
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise ProcessError("verification lock was replaced while acquiring")
     except OSError as error:
         os.close(descriptor)
         raise ProcessError("verification for this profile is already running") from error
+    except ProcessError:
+        os.close(descriptor)
+        raise
     holders[resolved] = 1
     try:
         yield

@@ -17,6 +17,17 @@ ISSUE_TARGET = r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*"
 ISSUE_REFERENCE = re.compile(
     rf"^(?:Refs {ISSUE_TARGET}|Closes {ISSUE_TARGET}(?:, closes {ISSUE_TARGET})*)\.$"
 )
+CANONICAL_PR_FIELDS = frozenset({
+    "source",
+    "risk",
+    "profiles",
+    "snapshot",
+    "completion-receipt",
+    "verdict",
+    "cycles",
+    "blocking-findings",
+    "non-blocking-dispositions",
+})
 
 
 def _without_html_comments(body: str) -> tuple[str, list[str]]:
@@ -294,6 +305,7 @@ def build_pr_description_data(
     change_id: str,
     *,
     overrides: dict[str, Any] | None = None,
+    standard: ArtifactStandard | None = None,
 ) -> dict[str, Any]:
     from .contracts import digest_json, load_and_validate, read_json
     from .repository import repository_snapshot, same_checkpoint
@@ -377,16 +389,33 @@ def build_pr_description_data(
 
     receipt_path = project_root / ".process" / "receipts" / f"{change_id}.json"
     receipt_val = "pending"
-    receipt_matched = False
     if state.get("phase") == "completed" and receipt_path.exists():
         try:
             receipt = read_json(receipt_path)
             validate_document(
                 receipt, "receipt", schema_root=schemas_root(dist_root)
             )
-            if same_checkpoint(receipt.get("checkpoint", {}), current_checkpoint):
-                receipt_val = f"`{digest_json(receipt)}`"
-                receipt_matched = True
+            expected = state.get("receipt")
+            expected_path = str(receipt_path.relative_to(project_root)).replace("\\", "/")
+            actual_path = (
+                str(expected.get("path", "")).replace("\\", "/")
+                if isinstance(expected, dict)
+                else ""
+            )
+            if (
+                isinstance(expected, dict)
+                and actual_path == expected_path
+                and expected.get("digest") == digest_json(receipt)
+                and receipt.get("changeId") == change_id
+                and receipt.get("cycle") == state.get("cycle")
+                and receipt.get("contractDigest") == state.get("contract", {}).get("digest")
+                and receipt.get("planDigest") == state.get("plan", {}).get("digest")
+                and same_checkpoint(receipt.get("checkpoint", {}), current_checkpoint)
+                and receipt.get("review", {}).get("digest")
+                == state.get("review", {}).get("digest")
+                and receipt.get("review", {}).get("verdict") == "approved"
+            ):
+                receipt_val = f"`{expected['digest']}`"
         except Exception:
             receipt_val = "pending"
 
@@ -434,15 +463,7 @@ def build_pr_description_data(
     if overrides is not None:
         if "fields" in overrides:
             for k, v in overrides["fields"].items():
-                if k in {
-                    "completion-receipt",
-                    "snapshot",
-                    "profiles",
-                    "verdict",
-                    "cycles",
-                    "blocking-findings",
-                    "non-blocking-dispositions",
-                }:
+                if k in CANONICAL_PR_FIELDS:
                     continue
                 fields[k] = v
         if "checks" in overrides:
@@ -457,6 +478,24 @@ def build_pr_description_data(
                 checks[k] = bool(v)
         if "issueReference" in overrides:
             data["issueReference"] = overrides["issueReference"]
+
+    if standard is not None:
+        expected_fields = {
+            field["id"]
+            for section in standard.rules["sections"]
+            for field in section["fields"]
+        }
+        expected_checks = {
+            check["id"]
+            for section in standard.rules["sections"]
+            for check in section["checks"]
+        }
+        data["fields"] = {
+            key: value for key, value in fields.items() if key in expected_fields
+        }
+        data["checks"] = {
+            key: value for key, value in checks.items() if key in expected_checks
+        }
 
     validate_document(data, "pr-description-data", schema_root=schemas_root(dist_root))
     return data

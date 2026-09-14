@@ -39,7 +39,7 @@ token write access to this repository.
 
 Both CLI and manual submission use the same non-sensitive
 `[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT]` title key. Without `gh`,
-open the GitHub issue search for that complete key before the form, reuse an existing
+search all open and closed issues for that complete key before the form, reuse an existing
 issue when present, and replace every title placeholder before submitting. If no issue
 URL is available yet, a pending review remains `review-pending` awaiting owner creation;
 draft files or search queries cannot serve as the required `recordUrl`.

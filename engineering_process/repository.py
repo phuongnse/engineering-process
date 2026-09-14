@@ -104,7 +104,7 @@ def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
         )
 
 
-_FILE_DIGEST_CACHE: dict[tuple[str, int, int, int, int, int], bytes] = {}
+_FILE_DIGEST_CACHE: dict[tuple[str, int, int, int, int, int, int], bytes] = {}
 
 
 def repository_snapshot(root: Path) -> dict[str, Any]:
@@ -160,8 +160,16 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
                     mode,
                     size,
                     info.st_mtime_ns,
+                    info.st_ctime_ns,
                 )
-                data_digest = _FILE_DIGEST_CACHE.get(cache_key)
+                # Windows exposes creation time as st_ctime, so stat identity is
+                # not a reliable mutation signal there; preserve exactness by
+                # bypassing the cache on that platform.
+                data_digest = (
+                    None
+                    if os.name == "nt"
+                    else _FILE_DIGEST_CACHE.get(cache_key)
+                )
                 if data_digest is None:
                     file_digest = hashlib.sha256()
                     try:
@@ -171,7 +179,7 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
                     except OSError as error:
                         raise ProcessError(f"cannot read {relative}: {error}") from error
                     data_digest = file_digest.digest()
-                    if len(_FILE_DIGEST_CACHE) < MAX_FILES * 2:
+                    if os.name != "nt" and len(_FILE_DIGEST_CACHE) < MAX_FILES * 2:
                         _FILE_DIGEST_CACHE[cache_key] = data_digest
             elif stat.S_ISDIR(info.st_mode):
                 kind = b"directory"

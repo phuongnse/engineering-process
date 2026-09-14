@@ -503,7 +503,11 @@ def command_artifact(args: argparse.Namespace) -> Result:
                 else None
             )
             data = build_pr_description_data(
-                args.project_root, process_root, args.change_id, overrides=overrides
+                args.project_root,
+                process_root,
+                args.change_id,
+                overrides=overrides,
+                standard=standard,
             )
         elif args.data_file is not None:
             data = load_and_validate(
