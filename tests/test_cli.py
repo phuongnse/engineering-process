@@ -95,6 +95,63 @@ class CliTests(unittest.TestCase):
         self.assertEqual("failed", result["status"])
         self.assertEqual(["development"], result["failures"])
 
+    def test_remaining_command_fails_when_lifecycle_is_still_incomplete(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+            "verification": {},
+        }
+        selection = {
+            "executeProfiles": [],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=True,
+            profile=None,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_remaining",
+            return_value=(state, selection),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
+
+    def test_remaining_command_requires_every_required_profile_in_verified_state(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "verified",
+            "cycle": 1,
+            "contract": {"document": {"requiredProfiles": ["development", "review"]}},
+            "verification": {
+                "development": {"status": "passed", "checks": []},
+            },
+        }
+        selection = {
+            "executeProfiles": [],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=True,
+            profile=None,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_remaining",
+            return_value=(state, selection),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
+
     def test_skills_validate_emits_machine_readable_result(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

@@ -16,6 +16,7 @@ LAYERS = {
     "_supervisor_posix": 1,
     "_supervisor_windows": 1,
     "distribution": 1,
+    "evidence": 2,
     "repository": 1,
     "project": 2,
     "artifact_standards": 2,

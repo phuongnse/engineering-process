@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
-from importlib import metadata
 import os
-import platform
 from pathlib import Path
 import sys
 import threading
@@ -14,60 +12,22 @@ import time
 from typing import Any, BinaryIO, Iterator
 
 from .contracts import ProcessError
+from .evidence import child_environment, execution_identity as _execution_identity
 from .supervision import process_supervisor
 
 
 DEFAULT_OUTPUT_BYTES = 1_000_000
 TERMINATION_SECONDS = 2
-SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "PRIVATE_KEY")
 _EXECUTION_LOCK = threading.Lock()
 
 
 def _child_environment() -> dict[str, str]:
-    environment: dict[str, str] = {}
-    for name, value in os.environ.items():
-        upper = name.upper()
-        if name in {"PYTHONHOME", "PYTHONPATH"}:
-            continue
-        if any(marker in upper for marker in SECRET_MARKERS):
-            continue
-        environment[name] = value
-    runtime_directory = str(Path(sys.executable).absolute().parent)
-    inherited_path = environment.get("PATH", "")
-    environment["PATH"] = os.pathsep.join(
-        entry for entry in (runtime_directory, inherited_path) if entry
-    )
-    environment["PYTHONUNBUFFERED"] = "1"
-    return environment
+    return child_environment(executable=sys.executable)
 
 
 def execution_identity() -> dict[str, Any]:
     """Return the bounded runtime inputs used to launch consumer checks."""
-    child_environment = _child_environment()
-    try:
-        dependencies = sorted({
-            f"{distribution.name}=={distribution.version}"
-            for distribution in metadata.distributions()
-        })
-    except Exception:
-        dependency_identity: dict[str, Any] = {"known": False}
-    else:
-        dependency_identity = {
-            "known": True,
-            "count": len(dependencies),
-            "digest": "sha256:" + hashlib.sha256(
-                "\n".join(dependencies).encode("utf-8")
-            ).hexdigest(),
-        }
-    return {
-        "executable": str(Path(sys.executable).resolve()),
-        "python": sys.version,
-        "platform": platform.platform(),
-        "environment": {
-            name: value for name, value in child_environment.items() if value
-        },
-        "dependencies": dependency_identity,
-    }
+    return _execution_identity(executable=sys.executable)
 
 
 _LOCK_OWNERS = threading.local()

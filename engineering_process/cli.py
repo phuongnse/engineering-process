@@ -336,6 +336,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
         for profile in selection["executeProfiles"]:
             report = state["verification"].get(profile)
             if report is None:
+                failures.append(profile)
                 continue
             if report["status"] != "passed":
                 failures.append(profile)
@@ -352,15 +353,28 @@ def command_change_verify(args: argparse.Namespace) -> Result:
                     ),
                 }
             )
+        contract = state.get("contract", {})
+        required_profiles = (
+            contract.get("document", {}).get("requiredProfiles", [])
+            if isinstance(contract, dict)
+            else []
+        )
+        verification = state.get("verification", {})
+        required_profiles_passed = bool(required_profiles) and all(
+            isinstance(verification.get(profile), dict)
+            and verification[profile].get("status") == "passed"
+            for profile in required_profiles
+        )
+        complete = state["phase"] == "verified" and required_profiles_passed
         return _state_result(
             "change verify",
             state,
-            status="failed" if failures else "passed",
+            status="passed" if complete and not failures else "failed",
             selection=selection,
             execution="remaining",
             executions=executions,
             failures=failures,
-        ), (1 if failures else 0)
+        ), (0 if complete and not failures else 1)
     state, report = verify_change(
         args.project_root, process_root, project, args.change_id, args.profile
     )

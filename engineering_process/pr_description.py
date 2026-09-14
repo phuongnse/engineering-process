@@ -9,6 +9,8 @@ from typing import Any
 from .artifact_standards import ArtifactStandard, MAX_DOCUMENT_BYTES
 from .contracts import ProcessError, validate_document
 from .distribution import distribution_root, schemas_root
+from .evidence import execution_identity, verification_report_matches_inputs
+from .project import load_project
 
 
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -316,6 +318,8 @@ def build_pr_description_data(
     if state.get("changeId") != change_id:
         raise ProcessError(f"{run_path}: change identity mismatch")
     current_checkpoint = repository_snapshot(project_root)
+    project = load_project(project_root, dist_root)
+    runtime = execution_identity()
 
     contract = state.get("contract", {}).get("document", {})
     source = contract.get("source", "pending")
@@ -326,12 +330,18 @@ def build_pr_description_data(
     passed_profiles = [
         profile
         for profile in required_profiles
-        if verification.get(profile, {}).get("status") == "passed"
-        and verification.get(profile, {}).get("scope", {"kind": "profile"})
-        == {"kind": "profile"}
-        and verification.get(profile, {}).get("inputDigest") is not None
-        and same_checkpoint(
-            verification.get(profile, {}).get("checkpoint", {}), current_checkpoint
+        if profile in project["profiles"]
+        and verification_report_matches_inputs(
+            project_root,
+            dist_root,
+            project,
+            state,
+            profile,
+            verification.get(profile, {}),
+            current_checkpoint,
+            require_input=True,
+            require_explicit_scope=True,
+            runtime=runtime,
         )
     ]
     passed_profiles.sort()

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engineering_process.artifact_standards import resolve_standard
 from engineering_process.automation_name import render_name
@@ -637,6 +638,28 @@ class ArtifactStandardsTests(unittest.TestCase):
         run_path.write_bytes(formatted_json_bytes(diagnostic_state))
         diagnostic_data = build_pr_description_data(self.root, ROOT, "sample-change")
         self.assertFalse(diagnostic_data["checks"]["required-profiles"])
+
+        legacy_state = json.loads(original_run)
+        legacy_state["verification"]["development"].pop("scope")
+        run_path.write_bytes(formatted_json_bytes(legacy_state))
+        legacy_data = build_pr_description_data(self.root, ROOT, "sample-change")
+        self.assertFalse(legacy_data["checks"]["required-profiles"])
+        run_path.write_bytes(original_run)
+
+        unknown_runtime = {
+            "executable": "python",
+            "python": "unknown",
+            "platform": "test",
+            "environment": {},
+            "dependencies": {"known": False},
+        }
+        with patch(
+            "engineering_process.pr_description.execution_identity",
+            return_value=unknown_runtime,
+        ):
+            unknown_data = build_pr_description_data(self.root, ROOT, "sample-change")
+        self.assertEqual("pending", unknown_data["fields"]["profiles"])
+        self.assertFalse(unknown_data["checks"]["required-profiles"])
         run_path.write_bytes(original_run)
 
         # AC4: No reviewer actor/context ID, local run path, or secret enters public fields

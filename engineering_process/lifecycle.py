@@ -9,13 +9,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
-import platform
 from pathlib import Path
-import sys
 from typing import Any
 
-from . import VERSION
-from .commands import execution_identity, run_profile, verification_lock
+from .commands import run_profile, verification_lock
 from .contracts import (
     ProcessError,
     digest_json,
@@ -24,7 +21,12 @@ from .contracts import (
     validate_document,
     write_json_atomic,
 )
-from .distribution import distribution_digest, schemas_root
+from .distribution import schemas_root
+from .evidence import (
+    execution_identity,
+    verification_input_digest,
+    verification_report_matches_inputs,
+)
 from .project import (
     accepted_issue_url_prefix,
     load_project,
@@ -150,26 +152,18 @@ def _verification_input_digest(
     project: dict[str, Any],
     state: dict[str, Any],
     profile: str,
+    *,
+    runtime: dict[str, Any] | None = None,
 ) -> str | None:
     """Bind reusable evidence to every input controlled by this process."""
-    runtime = execution_identity()
-    if not runtime["dependencies"].get("known", False):
-        return None
-    return digest_json({
-        "authority": {
-            "version": VERSION,
-            "distribution": distribution_digest(process_root),
-        },
-        "project": project,
-        "contractDigest": state["contract"]["digest"],
-        "planDigest": state["plan"]["digest"] if state.get("plan") else None,
-        "comparisonBaseCommit": state.get("comparisonBaseCommit"),
-        "profile": profile,
-        "projectRoot": str(project_root.resolve()),
-        "runtime": runtime,
-        "host": platform.node(),
-        "pythonImplementation": sys.implementation.name,
-    })
+    return verification_input_digest(
+        project_root,
+        process_root,
+        project,
+        state,
+        profile,
+        runtime=runtime if runtime is not None else execution_identity(),
+    )
 
 
 def _current_baseline_gap(project: dict[str, Any], state: dict[str, Any]) -> list[str]:
@@ -197,21 +191,19 @@ def _verification_report_matches_inputs(
     checkpoint: dict[str, Any],
     *,
     require_input: bool,
+    runtime: dict[str, Any] | None = None,
 ) -> bool:
-    if (
-        report.get("profile") != profile
-        or report.get("status") != "passed"
-        or report.get("scope", {"kind": "profile"}) != {"kind": "profile"}
-        or not same_checkpoint(report.get("checkpoint", {}), checkpoint)
-    ):
-        return False
-    recorded = report.get("inputDigest")
-    if recorded is None:
-        return not require_input
-    current = _verification_input_digest(
-        project_root, process_root, project, state, profile
+    return verification_report_matches_inputs(
+        project_root,
+        process_root,
+        project,
+        state,
+        profile,
+        report,
+        checkpoint,
+        require_input=require_input,
+        runtime=runtime if runtime is not None else execution_identity(),
     )
-    return current is not None and recorded == current
 
 
 def _required_verification_matches_inputs(
@@ -223,6 +215,7 @@ def _required_verification_matches_inputs(
     *,
     require_input: bool,
 ) -> bool:
+    runtime = execution_identity()
     return all(
         profile in state["verification"]
         and _verification_report_matches_inputs(
@@ -234,6 +227,7 @@ def _required_verification_matches_inputs(
             state["verification"][profile],
             checkpoint,
             require_input=require_input,
+            runtime=runtime,
         )
         for profile in state["contract"]["document"]["requiredProfiles"]
     )
@@ -252,17 +246,13 @@ def _verification_selection(
     execute: list[str] = []
     reuse: list[str] = []
     blocked: list[str] = []
+    runtime = execution_identity()
 
     newly_required = _current_baseline_gap(project, state)
     blocked.extend(newly_required)
 
     for profile in required:
         previous = state["verification"].get(profile)
-        current_input_digest = (
-            _verification_input_digest(project_root, process_root, project, state, profile)
-            if profile in configured
-            else None
-        )
         if profile not in configured:
             status, action, reason = (
                 "blocked",
@@ -270,15 +260,16 @@ def _verification_selection(
                 "the accepted profile is not present in the current project policy",
             )
             blocked.append(profile)
-        elif (
-            previous is not None
-            and previous["profile"] == profile
-            and previous["status"] == "passed"
-            and previous.get("scope", {"kind": "profile"}) == {"kind": "profile"}
-            and same_checkpoint(previous["checkpoint"], current)
-            and previous.get("inputDigest") is not None
-            and current_input_digest is not None
-            and previous["inputDigest"] == current_input_digest
+        elif previous is not None and _verification_report_matches_inputs(
+            project_root,
+            process_root,
+            project,
+            state,
+            profile,
+            previous,
+            current,
+            require_input=True,
+            runtime=runtime,
         ):
             status, action, reason = (
                 "satisfied",
@@ -660,30 +651,70 @@ def verify_remaining(
     with verification_lock(lock_path):
         state = _load_state(project_root, process_root, change_id)
         _require_phase(state, "implementing")
-        project = load_project(project_root, process_root)
-        selection = _verification_selection(project_root, process_root, project, state)
-        if selection["status"] == "blocked":
-            raise ProcessError(
-                "verification selection is blocked: "
-                + ", ".join(selection["blockedProfiles"])
+        executed: list[str] = []
+        reused: list[str] = []
+        completed: set[str] = set()
+        while True:
+            state = _load_state(project_root, process_root, change_id)
+            if state["phase"] == "verified":
+                break
+            _require_phase(state, "implementing")
+            project = load_project(project_root, process_root)
+            selection = _verification_selection(project_root, process_root, project, state)
+            if selection["status"] == "blocked":
+                raise ProcessError(
+                    "verification selection is blocked: "
+                    + ", ".join(selection["blockedProfiles"])
+                )
+            requirement = next(
+                (
+                    item
+                    for item in selection["requirements"]
+                    if item["action"] in {"execute", "reuse"}
+                    and item["profile"] not in completed
+                ),
+                None,
             )
-        for requirement in selection["requirements"]:
+            if requirement is None:
+                break
             profile = requirement["profile"]
-            if profile in selection["inapplicableProfiles"]:
-                continue
             if requirement["action"] == "reuse":
                 state = reuse_verification(
                     project_root, process_root, project, change_id, profile
                 )
-            elif requirement["action"] == "execute":
+                reused.append(profile)
+                completed.add(profile)
+            else:
                 state, report = verify_change(
                     project_root, process_root, project, change_id, profile
                 )
+                executed.append(profile)
                 if report["status"] != "passed":
                     break
-            elif requirement["action"] == "blocked":
-                raise ProcessError(f"profile {profile} is blocked: {requirement['reason']}")
-        return state, selection
+                completed.add(profile)
+
+        state = _load_state(project_root, process_root, change_id)
+        project = load_project(project_root, process_root)
+        final_selection = _verification_selection(
+            project_root,
+            process_root,
+            project,
+            state,
+        )
+        if final_selection["status"] == "blocked":
+            raise ProcessError(
+                "verification selection is blocked: "
+                + ", ".join(final_selection["blockedProfiles"])
+            )
+        final_selection["executeProfiles"] = executed
+        final_selection["reuseProfiles"] = reused
+        final_selection = validate_document(
+            final_selection,
+            "verification-selection",
+            schema_root=schemas_root(process_root),
+            source="verification selection",
+        )
+        return state, final_selection
 
 
 @history_transaction
@@ -702,9 +733,10 @@ def _record_verification(
     if state["cycle"] != cycle:
         raise ProcessError("implementation cycle changed while verification was running")
     project = load_project(project_root, process_root)
+    runtime = execution_identity()
     input_digests = {
         name: _verification_input_digest(
-            project_root, process_root, project, state, name
+            project_root, process_root, project, state, name, runtime=runtime
         )
         for name in {*state["verification"], report["profile"]}
     }
@@ -720,6 +752,7 @@ def _record_verification(
             previous,
             before,
             require_input=True,
+            runtime=runtime,
         )
     }
     after = repository_snapshot(project_root)
@@ -748,6 +781,7 @@ def _record_verification(
             state["verification"][name],
             after,
             require_input=True,
+            runtime=runtime,
         )
         for name in required
     )

@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 from engineering_process.commands import (
     _child_environment,
+    execution_identity,
     run_check,
     run_profile,
     verification_lock,
@@ -126,9 +127,9 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", environment)
         self.assertNotIn("SERVICE_TOKEN", environment)
 
-    def test_child_path_omits_an_empty_inherited_entry(self) -> None:
+    def test_child_path_does_not_reintroduce_an_empty_inherited_entry(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(
-            os.environ, {"PATH": ""}, clear=True
+            os.environ, {"PATH": "", "EMPTY_BINDING": ""}, clear=True
         ), patch(
             "engineering_process.commands.sys.executable",
             str(Path(directory) / "python"),
@@ -136,6 +137,26 @@ class CommandTests(unittest.TestCase):
             environment = _child_environment()
 
         self.assertNotIn("", environment["PATH"].split(os.pathsep))
+        self.assertIn("EMPTY_BINDING", environment)
+        self.assertEqual("", environment["EMPTY_BINDING"])
+
+    def test_runtime_identity_preserves_duplicate_dependencies(self) -> None:
+        class Distribution:
+            name = "duplicate-fixture"
+            version = "1.0"
+
+            def locate_file(self, _relative: str) -> Path:
+                return Path("fixture-site")
+
+        with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False), patch(
+            "engineering_process.evidence.metadata.distributions",
+            return_value=[Distribution(), Distribution()],
+        ):
+            identity = execution_identity()
+
+        self.assertEqual(2, identity["dependencies"]["count"])
+        self.assertIn("EMPTY_BINDING", identity["environment"])
+        self.assertEqual("", identity["environment"]["EMPTY_BINDING"])
 
     def test_bare_runtime_command_uses_the_process_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

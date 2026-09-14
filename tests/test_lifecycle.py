@@ -1328,6 +1328,34 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("failed", state["verification"]["development"]["status"])
         self.assertNotIn("review", state["verification"])
 
+    def test_remaining_verification_re_resolves_after_candidate_mutation(self) -> None:
+        self.begin()
+        calls: list[str] = []
+        original_verify = verify_change
+
+        def verify_and_mutate(*args, **kwargs):
+            result = original_verify(*args, **kwargs)
+            calls.append(args[-1])
+            if len(calls) == 1:
+                (self.root / "product.txt").write_text(
+                    "mutated between profiles\n", encoding="utf-8"
+                )
+            return result
+
+        with patch(
+            "engineering_process.lifecycle.verify_change",
+            side_effect=verify_and_mutate,
+        ):
+            state, selection = verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+
+        self.assertEqual(["development", "review"], calls)
+        self.assertEqual("implementing", state["phase"])
+        self.assertEqual(["development", "review"], selection["executeProfiles"])
+        self.assertEqual([], selection["reuseProfiles"])
+        self.assertNotIn("development", state["verification"])
+
     def test_selection_invalidates_evidence_when_comparison_base_changes(self) -> None:
         self.begin()
         verify_change(
