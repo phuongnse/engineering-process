@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -197,6 +198,23 @@ class RepositorySnapshotTests(unittest.TestCase):
             (linked / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
             with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
                 require_committed_candidate(linked)
+
+    def test_file_digest_cache_reuses_clean_reads_and_invalidates_on_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            first = repository_snapshot(root)
+            second = repository_snapshot(root)
+            self.assertTrue(same_checkpoint(first, second))
+            self.assertEqual(first["fingerprint"], second["fingerprint"])
+
+            # Mutate tracked file
+            tracked = root / "tracked.txt"
+            time.sleep(0.01)
+            tracked.write_text("modified content\n", encoding="utf-8")
+            third = repository_snapshot(root)
+            self.assertFalse(same_checkpoint(first, third))
+            self.assertNotEqual(first["fingerprint"], third["fingerprint"])
 
 
 if __name__ == "__main__":
