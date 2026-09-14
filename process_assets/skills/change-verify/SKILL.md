@@ -61,7 +61,7 @@ approval. Entirely custom formats use consumer-owned template and validator comm
 The contract must already include conditional profiles required by affected enforced
 capabilities. `--remaining` may select only the accepted contract's requiredProfiles;
 it does not infer impact from branch names, labels, paths, filenames, commands or
-diagnostics. Do not run every planned production gate for an unrelated change, and do
+diagnostics; do not run every planned production gate for an unrelated change, and do
 not treat a passing baseline profile as evidence for a planned capability whose gap
 remains open. A readiness promotion is valid only when all evidence named by that
 capability passes on this same snapshot.

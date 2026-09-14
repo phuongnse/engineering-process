@@ -59,6 +59,7 @@ class ContractTests(unittest.TestCase):
             "renovate-preset",
             "review",
             "run",
+            "verification-selection",
         }
         actual = {path.name.removesuffix(".schema.json") for path in SCHEMAS.glob("*.json")}
         self.assertEqual(expected, actual)
