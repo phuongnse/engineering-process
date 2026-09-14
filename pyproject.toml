@@ -72,6 +72,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
   "schemas/renovate-preset.schema.json",
   "schemas/review.schema.json",
   "schemas/run.schema.json",
+  "schemas/verification-selection.schema.json",
 ]
 "share/engineering-process/skills/change-complete" = ["process_assets/skills/change-complete/SKILL.md"]
 "share/engineering-process/skills/change-implement" = ["process_assets/skills/change-implement/SKILL.md"]

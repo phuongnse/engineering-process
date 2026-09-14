@@ -14,7 +14,12 @@ import unittest
 import venv
 from unittest.mock import Mock, patch
 
-from engineering_process.commands import _child_environment, run_check, run_profile
+from engineering_process.commands import (
+    _child_environment,
+    run_check,
+    run_profile,
+    verification_lock,
+)
 from engineering_process.contracts import ProcessError
 from engineering_process.supervision import CleanupOutcome, process_supervisor
 
@@ -48,6 +53,16 @@ def windows_process_is_running(process_id: int) -> bool:
 
 
 class CommandTests(unittest.TestCase):
+    def test_verification_lock_rejects_concurrent_holder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "verification.lock"
+            with verification_lock(path):
+                with self.assertRaisesRegex(ProcessError, "already running"):
+                    with verification_lock(path):
+                        pass
+            with verification_lock(path):
+                pass
+
     def test_child_path_prefers_the_process_runtime_and_preserves_caller_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / ("python.exe" if os.name == "nt" else "python")

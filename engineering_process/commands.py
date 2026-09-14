@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
+from importlib import metadata
 import os
 import platform
 from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Iterator
 
 from .contracts import ProcessError
 from .supervision import process_supervisor
@@ -39,14 +41,69 @@ def _child_environment() -> dict[str, str]:
     return environment
 
 
-def execution_identity() -> dict[str, str | dict[str, str]]:
+def execution_identity() -> dict[str, Any]:
     """Return the bounded runtime inputs used to launch consumer checks."""
+    try:
+        dependencies = sorted(
+            f"{distribution.name}=={distribution.version}"
+            for distribution in metadata.distributions()
+        )
+    except Exception:
+        dependency_identity: dict[str, Any] = {"known": False}
+    else:
+        dependency_identity = {
+            "known": True,
+            "count": len(dependencies),
+            "digest": "sha256:" + hashlib.sha256(
+                "\n".join(dependencies).encode("utf-8")
+            ).hexdigest(),
+        }
     return {
         "executable": str(Path(sys.executable).resolve()),
         "python": sys.version,
         "platform": platform.platform(),
         "environment": _child_environment(),
+        "dependencies": dependency_identity,
     }
+
+
+@contextmanager
+def verification_lock(path: Path) -> Iterator[None]:
+    """Prevent concurrent lifecycle requests from dispatching one profile twice."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as error:
+        raise ProcessError(f"cannot open verification lock: {error}") from error
+    locked = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+            if os.fstat(descriptor).st_size == 0:
+                os.write(descriptor, b"0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        locked = True
+    except OSError as error:
+        os.close(descriptor)
+        raise ProcessError("verification for this profile is already running") from error
+    try:
+        yield
+    finally:
+        if locked:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 class _OutputBudget:
@@ -232,6 +289,7 @@ def run_profile(
             )
         checks = [configured_checks[check_position - 1]]
         positions = [check_position]
+    started = time.monotonic()
     reports: list[dict[str, Any]] = []
     failed_position: int | None = None
     for position, check in zip(positions, checks, strict=True):
@@ -245,6 +303,7 @@ def run_profile(
         "status": "passed" if len(reports) == len(checks) and all(
             report["status"] == "passed" for report in reports
         ) else "failed",
+        "durationMs": 0,
         "scope": (
             {"kind": "profile"}
             if check_position is None
@@ -256,6 +315,7 @@ def run_profile(
         ),
         "checks": reports,
     }
+    result["durationMs"] = int((time.monotonic() - started) * 1000)
     failed = next((report for report in reports if report["status"] == "failed"), None)
     if failed is not None:
         assert failed_position is not None

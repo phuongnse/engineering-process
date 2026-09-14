@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -1187,6 +1188,128 @@ class LifecycleTests(unittest.TestCase):
             2,
             sum(event["event"] == "profile-reused" for event in state["history"]),
         )
+
+    def test_remaining_verification_fails_fast_and_propagates_failure(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(9)",
+        ]
+        self.begin()
+        with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+            state, _selection = verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+        self.assertEqual("implementing", state["phase"])
+        self.assertEqual(1, runner.call_count)
+        self.assertEqual("failed", state["verification"]["development"]["status"])
+        self.assertNotIn("review", state["verification"])
+
+    def test_selection_invalidates_evidence_when_comparison_base_changes(self) -> None:
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state["comparisonBaseCommit"] = "0" * 40
+        write_json(path, state)
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        requirement = next(
+            item for item in selection["requirements"] if item["profile"] == "development"
+        )
+        self.assertEqual("remaining", requirement["status"])
+        self.assertEqual("execute", requirement["action"])
+
+    def test_selection_invalidates_evidence_when_dependency_identity_changes(self) -> None:
+        self.begin()
+        identity = {
+            "executable": "python",
+            "python": "3.12",
+            "platform": "test",
+            "environment": {},
+            "dependencies": {"known": True, "count": 1, "digest": "sha256:" + "1" * 64},
+        }
+        with patch("engineering_process.lifecycle.execution_identity", return_value=identity):
+            verify_change(
+                self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+            )
+        changed = deepcopy(identity)
+        changed["dependencies"] = {
+            "known": True,
+            "count": 1,
+            "digest": "sha256:" + "2" * 64,
+        }
+        with patch("engineering_process.lifecycle.execution_identity", return_value=changed):
+            selection = resolve_verification_work(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+        requirement = next(
+            item for item in selection["requirements"] if item["profile"] == "development"
+        )
+        self.assertEqual("remaining", requirement["status"])
+
+    def test_new_mandatory_profile_blocks_remaining_selection(self) -> None:
+        self.begin()
+        self.project["profiles"]["security"] = [
+            {
+                "id": "security-check",
+                "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                "timeoutSeconds": 10,
+            }
+        ]
+        self.project["lifecycle"]["requiredProfiles"].append("security")
+        write_json(self.root / ".process" / "project.json", self.project)
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        self.assertEqual("blocked", selection["status"])
+        self.assertEqual(["security"], selection["blockedProfiles"])
+        security = next(
+            item for item in selection["requirements"] if item["profile"] == "security"
+        )
+        self.assertEqual("blocked", security["status"])
+        self.assertEqual("blocked", security["action"])
+        with self.assertRaisesRegex(ProcessError, "selection is blocked"):
+            verify_remaining(self.root, PROCESS_ROOT, self.project, "sample-change")
+
+    def test_concurrent_remaining_requests_do_not_dispatch_one_profile_twice(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(0.2)",
+        ]
+        self.begin()
+        started = threading.Event()
+        release = threading.Event()
+        original = run_profile
+
+        def slow_profile(*args, **kwargs):
+            started.set()
+            self.assertTrue(release.wait(5))
+            return original(*args, **kwargs)
+
+        results: list[object] = []
+
+        def invoke() -> None:
+            try:
+                results.append(verify_remaining(self.root, PROCESS_ROOT, self.project, "sample-change"))
+            except Exception as error:  # noqa: BLE001 - test captures the bounded race result
+                results.append(error)
+
+        with patch("engineering_process.lifecycle.run_profile", side_effect=slow_profile):
+            first = threading.Thread(target=invoke)
+            second = threading.Thread(target=invoke)
+            first.start()
+            self.assertTrue(started.wait(5))
+            second.start()
+            second.join(5)
+            release.set()
+            first.join(5)
+        self.assertEqual(2, len(results))
+        self.assertEqual(1, sum(isinstance(item, ProcessError) for item in results))
 
     def test_explicit_profile_verification_remains_a_refresh(self) -> None:
         self.begin()

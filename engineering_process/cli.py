@@ -89,9 +89,16 @@ def _result(command: str, status: str = "passed", **details: Any) -> dict[str, A
     return {"command": command, "status": status, **details}
 
 
-def _state_result(command: str, state: dict[str, Any], **details: Any) -> dict[str, Any]:
+def _state_result(
+    command: str,
+    state: dict[str, Any],
+    *,
+    status: str = "passed",
+    **details: Any,
+) -> dict[str, Any]:
     return _result(
         command,
+        status=status,
         changeId=state["changeId"],
         phase=state["phase"],
         cycle=state["cycle"],
@@ -318,12 +325,36 @@ def command_change_verify(args: argparse.Namespace) -> Result:
         state, selection = verify_remaining(
             args.project_root, process_root, project, args.change_id
         )
+        executions = []
+        failures = []
+        for profile in selection["executeProfiles"]:
+            report = state["verification"].get(profile)
+            if report is None:
+                continue
+            if report["status"] != "passed":
+                failures.append(profile)
+            check_duration = sum(check["durationMs"] for check in report["checks"])
+            executions.append(
+                {
+                    "profile": profile,
+                    "status": report["status"],
+                    "launchCount": len(report["checks"]),
+                    "durationMs": report.get("durationMs", check_duration),
+                    "checkDurationMs": check_duration,
+                    "processOverheadMs": max(
+                        0, report.get("durationMs", check_duration) - check_duration
+                    ),
+                }
+            )
         return _state_result(
             "change verify",
             state,
+            status="failed" if failures else "passed",
             selection=selection,
             execution="remaining",
-        ), 0
+            executions=executions,
+            failures=failures,
+        ), (1 if failures else 0)
     state, report = verify_change(
         args.project_root, process_root, project, args.change_id, args.profile
     )
