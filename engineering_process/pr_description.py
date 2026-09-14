@@ -286,3 +286,175 @@ def render_renovate_preset(standard: ArtifactStandard, *, process_root: Path | N
     }
     validate_document(preset, "renovate-preset", schema_root=schemas_root(distribution_root(process_root)))
     return preset
+
+
+def build_pr_description_data(
+    project_root: Path,
+    process_root: Path | None,
+    change_id: str,
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from .contracts import digest_json, read_json
+    from .lifecycle import _load_state, _receipt_path
+    from .repository import repository_snapshot, same_checkpoint
+
+    dist_root = distribution_root(process_root)
+    state = _load_state(project_root, dist_root, change_id)
+    current_checkpoint = repository_snapshot(project_root)
+
+    contract = state.get("contract", {}).get("document", {})
+    source = contract.get("source", "pending")
+    risk = contract.get("risk", "pending")
+
+    required_profiles = contract.get("requiredProfiles", [])
+    verification = state.get("verification", {})
+    passed_profiles = [
+        profile
+        for profile in required_profiles
+        if verification.get(profile, {}).get("status") == "passed"
+        and same_checkpoint(
+            verification.get(profile, {}).get("checkpoint", {}), current_checkpoint
+        )
+    ]
+    passed_profiles.sort()
+    profiles_val = (
+        ", ".join(f"`{profile}`" for profile in passed_profiles)
+        if passed_profiles
+        else "pending"
+    )
+
+    review = state.get("review", {}).get("document")
+    review_history = state.get("reviewHistory", [])
+    review_cycles = len(review_history)
+
+    snapshot_val = "pending"
+    verdict_val = "pending"
+    cycles_val = "pending"
+    blocking_val = "pending"
+    dispositions_val = "pending"
+
+    review_matched = False
+    blocking_count = 0
+    non_blocking_count = 0
+    all_dispositions_recorded = True
+
+    if review is not None:
+        reviewed_checkpoint = review.get("checkpoint", {})
+        if same_checkpoint(current_checkpoint, reviewed_checkpoint):
+            review_matched = True
+            snapshot_val = f"`{reviewed_checkpoint.get('fingerprint', '')}`"
+            verdict_val = review.get("verdict", "pending")
+            cycles_val = str(review_cycles) if review_cycles > 0 else "1"
+            findings = review.get("findings", [])
+            blocking = [f for f in findings if f.get("severity") == "blocking"]
+            blocking_count = len(blocking)
+            blocking_val = f"{blocking_count} open"
+
+            non_blocking = [f for f in findings if f.get("severity") == "non-blocking"]
+            non_blocking_count = len(non_blocking)
+            if not non_blocking:
+                dispositions_val = "none"
+            else:
+                items = []
+                for f in non_blocking:
+                    disp = f.get("disposition")
+                    if not disp or not disp.get("status"):
+                        all_dispositions_recorded = False
+                        items.append(f"{f['id']}: unrecorded")
+                    elif disp["status"] == "resolved":
+                        items.append(f"{f['id']}: resolved")
+                    else:
+                        owner = disp.get("owner")
+                        url = disp.get("recordUrl")
+                        if owner and url:
+                            items.append(f"{f['id']}: {disp['status']} ({owner}, {url})")
+                        else:
+                            items.append(f"{f['id']}: {disp['status']}")
+                dispositions_val = "; ".join(items)
+
+    receipt_path = _receipt_path(project_root, change_id)
+    receipt_val = "pending"
+    receipt_matched = False
+    if state.get("phase") == "completed" and receipt_path.exists():
+        try:
+            receipt = read_json(receipt_path)
+            validate_document(
+                receipt, "receipt", schema_root=schemas_root(dist_root)
+            )
+            if same_checkpoint(receipt.get("checkpoint", {}), current_checkpoint):
+                receipt_val = f"`{digest_json(receipt)}`"
+                receipt_matched = True
+        except Exception:
+            receipt_val = "pending"
+
+    req_profiles_passed = bool(
+        len(passed_profiles) == len(required_profiles)
+        and required_profiles
+        and review_matched
+    )
+    independent_review_ok = bool(
+        review_matched and verdict_val == "approved" and blocking_count == 0
+    )
+    dispositions_ok = bool(
+        review_matched and (non_blocking_count == 0 or all_dispositions_recorded)
+    )
+
+    fields: dict[str, Any] = {
+        "outcome": "pending",
+        "scope": "pending",
+        "source": source,
+        "risk": risk,
+        "compatibility": "none",
+        "stack": "none",
+        "profiles": profiles_val,
+        "snapshot": snapshot_val,
+        "completion-receipt": receipt_val,
+        "verdict": verdict_val,
+        "cycles": cycles_val,
+        "blocking-findings": blocking_val,
+        "non-blocking-dispositions": dispositions_val,
+    }
+
+    checks: dict[str, Any] = {
+        "accepted-scope": False,
+        "required-profiles": req_profiles_passed,
+        "independent-review": independent_review_ok,
+        "finding-dispositions": dispositions_ok,
+    }
+
+    data: dict[str, Any] = {
+        "schemaVersion": 1,
+        "fields": fields,
+        "checks": checks,
+    }
+
+    if overrides is not None:
+        if "fields" in overrides:
+            for k, v in overrides["fields"].items():
+                if k in {
+                    "completion-receipt",
+                    "snapshot",
+                    "profiles",
+                    "verdict",
+                    "cycles",
+                    "blocking-findings",
+                    "non-blocking-dispositions",
+                }:
+                    continue
+                fields[k] = v
+        if "checks" in overrides:
+            for k, v in overrides["checks"].items():
+                if k in {"required-profiles", "independent-review", "finding-dispositions"}:
+                    if not review_matched or (k == "required-profiles" and not req_profiles_passed):
+                        continue
+                    if k == "independent-review" and not independent_review_ok:
+                        continue
+                    if k == "finding-dispositions" and not dispositions_ok:
+                        continue
+                checks[k] = bool(v)
+        if "issueReference" in overrides:
+            data["issueReference"] = overrides["issueReference"]
+
+    validate_document(data, "pr-description-data", schema_root=schemas_root(dist_root))
+    return data

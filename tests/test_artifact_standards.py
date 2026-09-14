@@ -6,15 +6,32 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 from engineering_process.artifact_standards import resolve_standard
 from engineering_process.automation_name import render_name
 from engineering_process.cli import main
-from engineering_process.contracts import ProcessError, formatted_json_bytes
+from engineering_process.contracts import ProcessError, digest_json, formatted_json_bytes
 from engineering_process.issue import render_issue
-from engineering_process.pr_description import body_issues, render_description, render_renovate_preset, render_template
+from engineering_process.lifecycle import (
+    begin_implementation,
+    finish_change,
+    register_plan,
+    start_change,
+    start_review,
+    submit_review,
+    verify_change,
+)
+from engineering_process.pr_description import (
+    body_issues,
+    build_pr_description_data,
+    render_description,
+    render_renovate_preset,
+    render_template,
+)
+from engineering_process.production_engineering import load_invariant_floor
 from engineering_process.publication_compat import validate_pull_request
 from engineering_process.release_notes import render_notes
 from engineering_process.repository import repository_snapshot
@@ -409,5 +426,257 @@ class ArtifactStandardsTests(unittest.TestCase):
                             self.select(document)
 
 
+    def test_pr_evidence_authoring_reuses_canonical_facts_and_enforces_boundaries(self) -> None:
+        subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.name", "Tests"], cwd=self.root, check=True)
+
+        project = {
+            "schemaVersion": 5,
+            "project": "sample",
+            "lifecycle": {"requiredProfiles": ["development", "review"]},
+            "profiles": {
+                "development": [
+                    {
+                        "id": "unit",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    }
+                ],
+                "review": [
+                    {
+                        "id": "contract",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                    }
+                ],
+            },
+        }
+        self.write(".process/project.json", project)
+        (self.root / "product.txt").write_text("accepted\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "initial"], cwd=self.root, check=True)
+
+        contract = {
+            "schemaVersion": 5,
+            "id": "sample-change",
+            "summary": "Make one sample change",
+            "source": "https://example.com/issues/100",
+            "comparisonBase": "HEAD",
+            "risk": "low",
+            "affectedProjects": ["sample"],
+            "acceptanceCriteria": [
+                {"id": "works", "outcome": "The accepted behavior works"}
+            ],
+            "requiredProfiles": ["development", "review"],
+        }
+        contract_path = self.write("change.json", contract)
+
+        invariant_ids = [
+            item["id"] for item in load_invariant_floor(ROOT)["invariants"]
+        ]
+        plan = {
+            "schemaVersion": 5,
+            "changeId": "sample-change",
+            "contractDigest": digest_json(contract),
+            "approach": "Make and verify the bounded change.",
+            "workItems": [
+                {
+                    "id": "implementation",
+                    "outcome": "Implement accepted behavior",
+                    "affectedPaths": ["product.txt"],
+                }
+            ],
+            "risks": [],
+            "productionEngineering": [
+                {
+                    "id": invariant_id,
+                    "applicability": "applicable",
+                    "rationale": "The sample exercises this production boundary.",
+                    "evidenceWorkItems": ["implementation"],
+                }
+                for invariant_id in invariant_ids
+            ],
+        }
+        plan_path = self.write("plan.json", plan)
+
+        # Round 1: start, plan, implement, verify, review with changes-requested
+        start_change(self.root, ROOT, project, contract_path, actor_id="author", context_id="author-context", kind="agent")
+        register_plan(self.root, ROOT, "sample-change", plan_path, actor_id="author", context_id="author-context", kind="agent")
+        begin_implementation(self.root, ROOT, "sample-change", actor_id="implementer", context_id="impl-context", kind="agent")
+        verify_change(self.root, ROOT, project, "sample-change", "development")
+        verify_change(self.root, ROOT, project, "sample-change", "review")
+
+        start_review(self.root, ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        review_doc_1 = {
+            "schemaVersion": 7,
+            "changeId": "sample-change",
+            "reviewer": {"actorId": "reviewer", "contextId": "review-context", "kind": "agent"},
+            "checkpoint": repository_snapshot(self.root),
+            "verdict": "changes-requested",
+            "summary": "First review requested changes.",
+            "findings": [
+                {
+                    "id": "bug",
+                    "severity": "blocking",
+                    "priority": "P1",
+                    "criterionId": "works",
+                    "origin": "contract",
+                    "summary": "Sample blocker.",
+                }
+            ],
+            "productionEngineering": [
+                {
+                    "id": inv,
+                    "status": "satisfied",
+                    "rationale": "ok",
+                    "evidence": ["test"],
+                }
+                for inv in invariant_ids
+            ],
+            "processImprovement": {"status": "none", "rationale": "none"},
+        }
+        r1_path = self.write(".process/runs/review-1.json", review_doc_1)
+        submit_review(self.root, ROOT, "sample-change", r1_path)
+
+        # Cycle 2 / Round 2: address finding, verify, approve, finish
+        begin_implementation(self.root, ROOT, "sample-change", actor_id="implementer", context_id="impl-context", kind="agent")
+        verify_change(self.root, ROOT, project, "sample-change", "development")
+        verify_change(self.root, ROOT, project, "sample-change", "review")
+
+        start_review(self.root, ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
+        review_doc_2 = {
+            "schemaVersion": 7,
+            "changeId": "sample-change",
+            "reviewer": {"actorId": "reviewer", "contextId": "review-context", "kind": "agent"},
+            "checkpoint": repository_snapshot(self.root),
+            "verdict": "approved",
+            "summary": "Second review approved.",
+            "findings": [
+                {
+                    "id": "bug",
+                    "severity": "non-blocking",
+                    "priority": "P1",
+                    "criterionId": "works",
+                    "origin": "contract",
+                    "summary": "Sample blocker resolved.",
+                    "disposition": {"status": "resolved", "rationale": "Resolved in cycle 2."},
+                },
+                {
+                    "id": "risk",
+                    "severity": "non-blocking",
+                    "priority": "P2",
+                    "criterionId": "works",
+                    "origin": "contract",
+                    "summary": "Sample accepted risk.",
+                    "disposition": {
+                        "status": "accepted-risk",
+                        "rationale": "Risk accepted.",
+                        "owner": "lead",
+                        "recordUrl": "https://example.com/risk/1",
+                    },
+                },
+            ],
+            "productionEngineering": [
+                {
+                    "id": inv,
+                    "status": "satisfied",
+                    "rationale": "ok",
+                    "evidence": ["test"],
+                }
+                for inv in invariant_ids
+            ],
+            "processImprovement": {"status": "none", "rationale": "none"},
+        }
+        r2_path = self.write(".process/runs/review-2.json", review_doc_2)
+        submit_review(self.root, ROOT, "sample-change", r2_path)
+
+        state, receipt = finish_change(self.root, ROOT, "sample-change", actor_id="coordinator", context_id="finish-context", kind="agent")
+        checkpoint = repository_snapshot(self.root)
+
+        # AC1 & AC2: Factual field derivation from canonical run & receipt records
+        data = build_pr_description_data(self.root, ROOT, "sample-change")
+        self.assertEqual("https://example.com/issues/100", data["fields"]["source"])
+        self.assertEqual("low", data["fields"]["risk"])
+        self.assertEqual("`development`, `review`", data["fields"]["profiles"])
+        self.assertEqual(f"`{checkpoint['fingerprint']}`", data["fields"]["snapshot"])
+        self.assertEqual(f"`{digest_json(receipt)}`", data["fields"]["completion-receipt"])
+        self.assertEqual("approved", data["fields"]["verdict"])
+        # AC6: review rounds distinguished (2 review rounds recorded)
+        self.assertEqual("2", data["fields"]["cycles"])
+        self.assertEqual("0 open", data["fields"]["blocking-findings"])
+        # AC6: carried/resolved finding and accepted risk with owner/recordUrl
+        self.assertEqual(
+            "bug: resolved; risk: accepted-risk (lead, https://example.com/risk/1)",
+            data["fields"]["non-blocking-dispositions"],
+        )
+        self.assertEqual("pending", data["fields"]["outcome"])
+        self.assertEqual("pending", data["fields"]["scope"])
+        # AC6: contextual accepted-scope is not auto-approved
+        self.assertFalse(data["checks"]["accepted-scope"])
+        self.assertTrue(data["checks"]["required-profiles"])
+        self.assertTrue(data["checks"]["independent-review"])
+        self.assertTrue(data["checks"]["finding-dispositions"])
+
+        # AC4: No reviewer actor/context ID, local run path, or secret enters public fields
+        for field_id, value in data["fields"].items():
+            self.assertNotIn("reviewer", value, f"reviewer actor leaked in {field_id}")
+            self.assertNotIn("review-context", value, f"reviewer context leaked in {field_id}")
+            self.assertNotIn(str(self.root), value, f"local path leaked in {field_id}")
+
+        # AC5: Author overrides combined with canonical facts
+        overrides = {
+            "schemaVersion": 1,
+            "fields": {
+                "outcome": "Deliver bounded sample change.",
+                "scope": "product.txt file only.",
+                "verdict": "forged-verdict",  # Lifecycle-derived fact cannot be overwritten
+            },
+            "checks": {
+                "accepted-scope": True,
+            },
+            "issueReference": "Refs #100.",
+        }
+        overrides_path = self.write(".process/runs/overrides.json", overrides)
+        data_with_overrides = build_pr_description_data(self.root, ROOT, "sample-change", overrides=overrides)
+        self.assertEqual("Deliver bounded sample change.", data_with_overrides["fields"]["outcome"])
+        self.assertEqual("product.txt file only.", data_with_overrides["fields"]["scope"])
+        self.assertEqual("approved", data_with_overrides["fields"]["verdict"])
+        self.assertTrue(data_with_overrides["checks"]["accepted-scope"])
+        self.assertEqual("Refs #100.", data_with_overrides["issueReference"])
+
+        # AC2: Render and exact-byte validation with prepared data
+        standard = resolve_standard(self.root, ROOT, "pull-request")
+        body = render_description(standard, data_with_overrides, state="ready")
+        self.assertEqual([], body_issues(body, "ready", standard))
+        pr_path = self.root / ".process" / "runs" / "pr.md"
+        pr_path.write_bytes(body.encode("utf-8"))
+
+        # CLI prepare-pr-data
+        prep_out = self.root / ".process" / "runs" / "prepared-pr.json"
+        code, res = self.cli("prepare-pr-data", "--change-id", "sample-change", "--data-file", str(overrides_path), "--output", str(prep_out))
+        self.assertEqual(0, code, res)
+        self.assertTrue(prep_out.is_file())
+
+        # CLI render with --change-id
+        code, rendered_cli = self.cli("render", "--artifact", "pull-request", "--change-id", "sample-change", "--data-file", str(overrides_path))
+        self.assertEqual(0, code, rendered_cli)
+        self.assertEqual(body, rendered_cli["content"])
+
+        # CLI validate with --change-id
+        code, validated_cli = self.cli("validate", "--artifact", "pull-request", "--change-id", "sample-change", "--data-file", str(overrides_path), "--body-file", str(pr_path))
+        self.assertEqual(0, code, validated_cli)
+
+        # AC3: Stale candidate (mismatched checkpoint) cannot yield completed evidence claims
+        (self.root / "product.txt").write_text("mutated\n", encoding="utf-8")
+        stale_data = build_pr_description_data(self.root, ROOT, "sample-change", overrides=overrides)
+        self.assertEqual("pending", stale_data["fields"]["snapshot"])
+        self.assertEqual("pending", stale_data["fields"]["verdict"])
+        self.assertEqual("pending", stale_data["fields"]["completion-receipt"])
+        self.assertFalse(stale_data["checks"]["required-profiles"])
+        self.assertFalse(stale_data["checks"]["independent-review"])
+        self.assertFalse(stale_data["checks"]["finding-dispositions"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
