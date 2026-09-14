@@ -327,6 +327,9 @@ def build_pr_description_data(
         profile
         for profile in required_profiles
         if verification.get(profile, {}).get("status") == "passed"
+        and verification.get(profile, {}).get("scope", {"kind": "profile"})
+        == {"kind": "profile"}
+        and verification.get(profile, {}).get("inputDigest") is not None
         and same_checkpoint(
             verification.get(profile, {}).get("checkpoint", {}), current_checkpoint
         )

@@ -60,7 +60,8 @@ newly owner-authorized issue's stable HTTPS URL to that review. It remains
 3. **Missing authorization or access (Awaiting URL)**: Without authorized `gh` access
    or an existing issue, return the prepared draft body, the open-issue search URL containing the complete stable key, and then the
    `Consumer process improvement` issue-form URL. The review remains `review-pending`
-   awaiting owner creation. Draft files, search URLs, or form links must never be
+   awaiting owner creation. The search URL must include all issue states. Draft files,
+   search URLs, or form links must never be
    submitted as `recordUrl`. Missing GitHub tooling does not waive the schema
    requirement; report truthfully that the change is waiting for owner issue creation
    while other work may proceed.

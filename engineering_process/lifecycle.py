@@ -187,6 +187,58 @@ def _require_current_baseline(project: dict[str, Any], state: dict[str, Any]) ->
         )
 
 
+def _verification_report_matches_inputs(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    profile: str,
+    report: dict[str, Any],
+    checkpoint: dict[str, Any],
+    *,
+    require_input: bool,
+) -> bool:
+    if (
+        report.get("profile") != profile
+        or report.get("status") != "passed"
+        or report.get("scope", {"kind": "profile"}) != {"kind": "profile"}
+        or not same_checkpoint(report.get("checkpoint", {}), checkpoint)
+    ):
+        return False
+    recorded = report.get("inputDigest")
+    if recorded is None:
+        return not require_input
+    current = _verification_input_digest(
+        project_root, process_root, project, state, profile
+    )
+    return current is not None and recorded == current
+
+
+def _required_verification_matches_inputs(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    checkpoint: dict[str, Any],
+    *,
+    require_input: bool,
+) -> bool:
+    return all(
+        profile in state["verification"]
+        and _verification_report_matches_inputs(
+            project_root,
+            process_root,
+            project,
+            state,
+            profile,
+            state["verification"][profile],
+            checkpoint,
+            require_input=require_input,
+        )
+        for profile in state["contract"]["document"]["requiredProfiles"]
+    )
+
+
 def _verification_selection(
     project_root: Path,
     process_root: Path,
@@ -323,6 +375,7 @@ def resolve_verification_work(
 ) -> dict[str, Any]:
     """Explain the current required work without executing consumer commands."""
     state = _load_state(project_root, process_root, change_id)
+    project = load_project(project_root, process_root)
     return _verification_selection(project_root, process_root, project, state)
 
 
@@ -544,6 +597,7 @@ def verify_change(
     with verification_lock(lock_path):
         state = _load_state(project_root, process_root, change_id)
         _require_phase(state, "implementing")
+        project = load_project(project_root, process_root)
         _require_current_baseline(project, state)
         if profile not in state["contract"]["document"]["requiredProfiles"]:
             raise ProcessError(f"profile {profile} is not required by change {change_id}")
@@ -567,6 +621,7 @@ def reuse_verification(
     """Record reuse of valid prior evidence without faking a new execution."""
     state = _load_state(project_root, process_root, change_id)
     _require_phase(state, "implementing")
+    project = load_project(project_root, process_root)
     selection = _verification_selection(project_root, process_root, project, state)
     requirement = next(
         (item for item in selection["requirements"] if item["profile"] == profile),
@@ -605,6 +660,7 @@ def verify_remaining(
     with verification_lock(lock_path):
         state = _load_state(project_root, process_root, change_id)
         _require_phase(state, "implementing")
+        project = load_project(project_root, process_root)
         selection = _verification_selection(project_root, process_root, project, state)
         if selection["status"] == "blocked":
             raise ProcessError(
@@ -645,22 +701,32 @@ def _record_verification(
     _require_phase(state, "implementing")
     if state["cycle"] != cycle:
         raise ProcessError("implementation cycle changed while verification was running")
+    project = load_project(project_root, process_root)
+    input_digests = {
+        name: _verification_input_digest(
+            project_root, process_root, project, state, name
+        )
+        for name in {*state["verification"], report["profile"]}
+    }
     state["verification"] = {
-        name: report
-        for name, report in state["verification"].items()
-        if same_checkpoint(report["checkpoint"], before)
+        name: previous
+        for name, previous in state["verification"].items()
+        if _verification_report_matches_inputs(
+            project_root,
+            process_root,
+            project,
+            state,
+            name,
+            previous,
+            before,
+            require_input=True,
+        )
     }
     after = repository_snapshot(project_root)
     profile = report["profile"]
     report["checkpoint"] = after
     report["recordedAt"] = _now()
-    input_digest = _verification_input_digest(
-        project_root,
-        process_root,
-        load_project(project_root, process_root),
-        state,
-        profile,
-    )
+    input_digest = input_digests[profile]
     if input_digest is not None:
         report["inputDigest"] = input_digest
     else:
@@ -673,8 +739,16 @@ def _record_verification(
     required = state["contract"]["document"]["requiredProfiles"]
     all_passed = all(
         name in state["verification"]
-        and state["verification"][name]["status"] == "passed"
-        and same_checkpoint(state["verification"][name]["checkpoint"], after)
+        and _verification_report_matches_inputs(
+            project_root,
+            process_root,
+            project,
+            state,
+            name,
+            state["verification"][name],
+            after,
+            require_input=True,
+        )
         for name in required
     )
     if all_passed:
@@ -743,12 +817,16 @@ def start_review(
     require_unreused_context(project_root, process_root, state, reviewer)
 
     checkpoint = repository_snapshot(project_root)
-    required = state["contract"]["document"]["requiredProfiles"]
-    if not all(
-        name in state["verification"]
-        and state["verification"][name]["status"] == "passed"
-        and same_checkpoint(state["verification"][name]["checkpoint"], checkpoint)
-        for name in required
+    require_input = (
+        state.get("requiredReviewSchemaVersion") == REVIEW_SCHEMA_VERSION
+    )
+    if not _required_verification_matches_inputs(
+        project_root,
+        process_root,
+        project,
+        state,
+        checkpoint,
+        require_input=require_input,
     ):
         raise ProcessError("verification evidence is stale or incomplete")
     if previous_assignment is not None and not same_checkpoint(
@@ -933,6 +1011,18 @@ def finish_change(
     publication = _publication_preflight(project_root, project, state, checkpoint)
     if not same_checkpoint(checkpoint, state["reviewAssignment"]["checkpoint"]):
         raise ProcessError("repository changed after approval")
+    require_input = (
+        state.get("requiredReviewSchemaVersion") == REVIEW_SCHEMA_VERSION
+    )
+    if not _required_verification_matches_inputs(
+        project_root,
+        process_root,
+        project,
+        state,
+        checkpoint,
+        require_input=require_input,
+    ):
+        raise ProcessError("verification evidence is stale or incomplete")
 
     evidence: dict[str, Any] = {}
     for name, report in sorted(state["verification"].items()):

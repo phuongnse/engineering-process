@@ -601,6 +601,7 @@ class LifecycleTests(unittest.TestCase):
                 "timeoutSeconds": 10,
             },
         ]
+        write_json(self.root / ".process" / "project.json", self.project)
         state, report = verify_change(
             self.root, PROCESS_ROOT, self.project, "sample-change", "development"
         )
@@ -1166,6 +1167,7 @@ class LifecycleTests(unittest.TestCase):
             "-c",
             "raise SystemExit(9)",
         ]
+        write_json(self.root / ".process" / "project.json", self.project)
         self.begin()
         state, report = verify_change(
             self.root, PROCESS_ROOT, self.project, "sample-change", "development"
@@ -1173,6 +1175,104 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("failed", report["status"])
         self.assertEqual("implementing", state["phase"])
         self.assertEqual(["profile-failed"], process_improvement_signals(state))
+
+    def test_verification_uses_the_current_project_policy(self) -> None:
+        self.begin()
+        current = deepcopy(self.project)
+        current["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(9)",
+        ]
+        write_json(self.root / ".process" / "project.json", current)
+        state, report = verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        self.assertEqual("failed", report["status"])
+        self.assertEqual("implementing", state["phase"])
+
+    def test_verification_drops_diagnostic_scope_from_carried_evidence(self) -> None:
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        path = self.root / ".process/runs/sample-change/run.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state["verification"]["development"]["scope"] = {
+            "kind": "check",
+            "check": "unit",
+            "position": 1,
+        }
+        write_json(path, state)
+        state, report = verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "review"
+        )
+        self.assertEqual("passed", report["status"])
+        self.assertEqual("implementing", state["phase"])
+        self.assertNotIn("development", state["verification"])
+
+    def test_review_rejects_runtime_drift_after_verification(self) -> None:
+        self.begin()
+        self.verify_all()
+        unknown = {
+            "executable": "python",
+            "python": "3.14",
+            "platform": "test",
+            "environment": {},
+            "dependencies": {"known": False},
+        }
+        with patch(
+            "engineering_process.lifecycle.execution_identity",
+            return_value=unknown,
+        ):
+            with self.assertRaisesRegex(ProcessError, "verification evidence is stale"):
+                start_review(
+                    self.root,
+                    PROCESS_ROOT,
+                    "sample-change",
+                    actor_id="reviewer",
+                    context_id="review-context",
+                    kind="agent",
+                )
+
+    def test_finish_rejects_runtime_drift_after_approval(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process/runs/review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        unknown = {
+            "executable": "python",
+            "python": "3.14",
+            "platform": "test",
+            "environment": {},
+            "dependencies": {"known": False},
+        }
+        with patch(
+            "engineering_process.lifecycle.execution_identity",
+            return_value=unknown,
+        ):
+            with self.assertRaisesRegex(ProcessError, "verification evidence is stale"):
+                finish_change(
+                    self.root,
+                    PROCESS_ROOT,
+                    "sample-change",
+                    actor_id="coordinator",
+                    context_id="finish-context",
+                    kind="agent",
+                )
+        self.assertEqual(
+            "approved",
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
+        )
 
     def test_remaining_verification_reuses_only_valid_prior_profiles(self) -> None:
         self.project["profiles"]["review"][0]["run"] = [
@@ -1217,6 +1317,7 @@ class LifecycleTests(unittest.TestCase):
             "-c",
             "raise SystemExit(9)",
         ]
+        write_json(self.root / ".process" / "project.json", self.project)
         self.begin()
         with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
             state, _selection = verify_remaining(
@@ -1303,6 +1404,7 @@ class LifecycleTests(unittest.TestCase):
             "-c",
             "import time; time.sleep(0.2)",
         ]
+        write_json(self.root / ".process" / "project.json", self.project)
         self.begin()
         started = threading.Event()
         release = threading.Event()

@@ -626,6 +626,19 @@ class ArtifactStandardsTests(unittest.TestCase):
         self.assertEqual("pending", tampered_data["fields"]["completion-receipt"])
         receipt_path.write_bytes(original_receipt)
 
+        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        original_run = run_path.read_bytes()
+        diagnostic_state = json.loads(original_run)
+        diagnostic_state["verification"]["development"]["scope"] = {
+            "kind": "check",
+            "check": "unit",
+            "position": 1,
+        }
+        run_path.write_bytes(formatted_json_bytes(diagnostic_state))
+        diagnostic_data = build_pr_description_data(self.root, ROOT, "sample-change")
+        self.assertFalse(diagnostic_data["checks"]["required-profiles"])
+        run_path.write_bytes(original_run)
+
         # AC4: No reviewer actor/context ID, local run path, or secret enters public fields
         for field_id, value in data["fields"].items():
             self.assertNotIn("reviewer", value, f"reviewer actor leaked in {field_id}")
@@ -728,6 +741,31 @@ class ArtifactStandardsTests(unittest.TestCase):
         self.assertFalse(stale_data["checks"]["required-profiles"])
         self.assertFalse(stale_data["checks"]["independent-review"])
         self.assertFalse(stale_data["checks"]["finding-dispositions"])
+
+        custom_overrides_path = self.write(
+            ".process/runs/custom-overrides.json",
+            {
+                "schemaVersion": 1,
+                "fields": {
+                    "outcome": "Custom result.",
+                    "source-reference": "Provided explicitly.",
+                },
+                "checks": {},
+            },
+        )
+        self.select(custom_standard.document)
+        code, prepared = self.cli(
+            "prepare-pr-data",
+            "--change-id",
+            "sample-change",
+            "--data-file",
+            str(custom_overrides_path),
+        )
+        self.assertEqual(0, code, prepared)
+        self.assertEqual(
+            {"outcome", "source-reference"},
+            set(prepared["data"]["fields"]),
+        )
 
 
 if __name__ == "__main__":

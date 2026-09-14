@@ -544,6 +544,7 @@ def command_artifact(args: argparse.Namespace) -> Result:
 
 def command_artifact_prepare_pr_data(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
+    standard = resolve_standard(args.project_root, process_root, "pull-request")
     overrides = (
         load_and_validate(
             args.data_file,
@@ -554,7 +555,11 @@ def command_artifact_prepare_pr_data(args: argparse.Namespace) -> Result:
         else None
     )
     data = build_pr_description_data(
-        args.project_root, process_root, args.change_id, overrides=overrides
+        args.project_root,
+        process_root,
+        args.change_id,
+        overrides=overrides,
+        standard=standard,
     )
     payload = formatted_json_bytes(data)
     details: dict[str, Any] = {
