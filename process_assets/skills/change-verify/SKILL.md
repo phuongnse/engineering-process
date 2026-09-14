@@ -30,6 +30,14 @@ runs again. Optional configured profiles not selected by the accepted contract a
 reported as inapplicable; a required profile missing from the current policy is
 blocked. This path never deduplicates check positions or equal check IDs.
 
+For process adoption changes, use `--remaining` with `processctl change explain` to
+satisfy required profiles proportionally. First verify adoption integrity
+(`processctl adoption check`, hash lock, doctor). When consumer product sources are
+unchanged and prior passing profile reports match the current candidate and environment,
+`--remaining` reuses valid reports without rerunning unaffected checks, and executes
+any unsatisfied profiles. Extra or unexplained file changes, altered consumer verification
+or security policies, or unknown impact require running the full profiles unconditionally.
+
 Commands are exact argument arrays with timeouts. Do not substitute a different tool
 or narrower check when a required command fails. A command failure, timeout, output
 or stream failure, failed descendant cleanup, or tracked repository mutation is a

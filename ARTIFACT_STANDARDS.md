@@ -154,6 +154,17 @@ PR body standard. `--project-root` selects the consumer explicitly; existing cal
 default to the current directory. For data-generated descriptions, add `--data-file`
 to `artifact validate` to require exact UTF-8/LF output from those records as well.
 
+To prepare PR data automatically from canonical lifecycle run and receipt records:
+
+    processctl artifact prepare-pr-data --change-id CHANGE_ID --data-file overrides.json --output pr-data.json
+
+Authors supply narrative fields (`outcome`, `scope`, `compatibility`, `stack`, `issueReference`, and `accepted-scope` check) in `overrides.json`. Canonical facts (`source`, `risk`, `profiles`, `snapshot`, `completion-receipt`, `verdict`, `cycles`, `blocking-findings`, `non-blocking-dispositions`) derive directly from verified run and receipt records without leaking private actor/context IDs or local paths.
+
+`artifact render` and `artifact validate` can also take `--change-id` directly:
+
+    processctl artifact render --artifact pull-request --change-id CHANGE_ID --data-file overrides.json --output pr-body.md
+    processctl artifact validate --artifact pull-request --change-id CHANGE_ID --data-file overrides.json --body-file pr-body.md
+
 ## Release notes
 
 The consumer maps its release records to the packaged `release-notes-data` schema.
