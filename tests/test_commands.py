@@ -158,6 +158,25 @@ class CommandTests(unittest.TestCase):
         self.assertIn("EMPTY_BINDING", identity["environment"])
         self.assertEqual("", identity["environment"]["EMPTY_BINDING"])
 
+    def test_runtime_identity_matches_bounded_child(self) -> None:
+        with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False):
+            parent = execution_identity()
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import json; from engineering_process.commands import execution_identity; "
+                    "print(json.dumps(execution_identity(), sort_keys=True))",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+                env=_child_environment(),
+            )
+
+        self.assertEqual(parent, json.loads(child.stdout))
+
     def test_bare_runtime_command_uses_the_process_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             environment = Path(directory) / "runtime"
