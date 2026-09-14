@@ -9,6 +9,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import threading
 import time
 import unittest
 import venv
@@ -56,10 +57,24 @@ class CommandTests(unittest.TestCase):
     def test_verification_lock_rejects_concurrent_holder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "verification.lock"
-            with verification_lock(path):
+            started = threading.Event()
+            release = threading.Event()
+
+            def holder() -> None:
+                with verification_lock(path):
+                    started.set()
+                    release.wait(5)
+
+            thread = threading.Thread(target=holder)
+            thread.start()
+            self.assertTrue(started.wait(5))
+            try:
                 with self.assertRaisesRegex(ProcessError, "already running"):
                     with verification_lock(path):
                         pass
+            finally:
+                release.set()
+                thread.join(5)
             with verification_lock(path):
                 pass
 

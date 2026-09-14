@@ -67,9 +67,27 @@ def execution_identity() -> dict[str, Any]:
     }
 
 
+_LOCK_OWNERS = threading.local()
+
+
 @contextmanager
 def verification_lock(path: Path) -> Iterator[None]:
     """Prevent concurrent lifecycle requests from dispatching one profile twice."""
+    resolved = path.resolve()
+    holders = getattr(_LOCK_OWNERS, "holders", None)
+    if holders is None:
+        holders = _LOCK_OWNERS.holders = {}
+
+    if resolved in holders:
+        holders[resolved] += 1
+        try:
+            yield
+        finally:
+            holders[resolved] -= 1
+            if holders[resolved] == 0:
+                del holders[resolved]
+        return
+
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -92,18 +110,22 @@ def verification_lock(path: Path) -> Iterator[None]:
     except OSError as error:
         os.close(descriptor)
         raise ProcessError("verification for this profile is already running") from error
+    holders[resolved] = 1
     try:
         yield
     finally:
+        del holders[resolved]
         if locked:
-            if os.name == "nt":
-                import msvcrt
-                os.lseek(descriptor, 0, os.SEEK_SET)
-                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
 
 class _OutputBudget:
