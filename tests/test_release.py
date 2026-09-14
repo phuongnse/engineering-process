@@ -186,7 +186,7 @@ class ReleaseTests(unittest.TestCase):
                 ROOT,
                 target,
                 ignore=shutil.ignore_patterns(
-                    ".git", ".venv", "build", "*.egg-info", "__pycache__"
+                    ".git", ".venv", ".process", "build", "*.egg-info", "__pycache__"
                 ),
             )
             for path in (target / "release-changes").glob("*.json"):
@@ -238,7 +238,7 @@ class ReleaseTests(unittest.TestCase):
                     ROOT,
                     source,
                     ignore=shutil.ignore_patterns(
-                        ".git", ".venv", "build", "dist", "*.egg-info", "__pycache__"
+                        ".git", ".venv", ".process", "build", "dist", "*.egg-info", "__pycache__"
                     ),
                 )
                 for path in source.rglob("*"):
