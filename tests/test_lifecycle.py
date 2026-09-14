@@ -88,9 +88,11 @@ class LifecycleTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         if cls._template_directory is not None:
             cls._template_directory.cleanup()
+            cls._template_directory = None
+            cls._template_path = None
 
     def setUp(self) -> None:
-        if self._template_path is None:
+        if self._template_path is None or not self._template_path.exists():
             self.setUpClass()
         self.temporary = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temporary.name)
