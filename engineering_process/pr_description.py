@@ -295,12 +295,14 @@ def build_pr_description_data(
     *,
     overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from .contracts import digest_json, read_json
-    from .lifecycle import _load_state, _receipt_path
+    from .contracts import digest_json, load_and_validate, read_json
     from .repository import repository_snapshot, same_checkpoint
 
     dist_root = distribution_root(process_root)
-    state = _load_state(project_root, dist_root, change_id)
+    run_path = project_root / ".process" / "runs" / change_id / "run.json"
+    state = load_and_validate(run_path, "run", schema_root=schemas_root(dist_root))
+    if state.get("changeId") != change_id:
+        raise ProcessError(f"{run_path}: change identity mismatch")
     current_checkpoint = repository_snapshot(project_root)
 
     contract = state.get("contract", {}).get("document", {})
@@ -373,7 +375,7 @@ def build_pr_description_data(
                             items.append(f"{f['id']}: {disp['status']}")
                 dispositions_val = "; ".join(items)
 
-    receipt_path = _receipt_path(project_root, change_id)
+    receipt_path = project_root / ".process" / "receipts" / f"{change_id}.json"
     receipt_val = "pending"
     receipt_matched = False
     if state.get("phase") == "completed" and receipt_path.exists():
