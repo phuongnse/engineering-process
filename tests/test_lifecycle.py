@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,13 +46,19 @@ def git(root: Path, *arguments: str) -> None:
 
 
 class LifecycleTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
-        git(self.root, "init", "-q")
-        git(self.root, "config", "user.email", "tests@example.invalid")
-        git(self.root, "config", "user.name", "Tests")
-        self.project = {
+    _template_directory: tempfile.TemporaryDirectory | None = None
+    _template_path: Path | None = None
+    _template_project: dict[str, Any] = {}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._template_directory = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        cls._template_path = Path(cls._template_directory.name) / "template"
+        cls._template_path.mkdir(parents=True)
+        git(cls._template_path, "init", "-q")
+        git(cls._template_path, "config", "user.email", "tests@example.invalid")
+        git(cls._template_path, "config", "user.name", "Tests")
+        cls._template_project = {
             "schemaVersion": 5,
             "project": "sample",
             "lifecycle": {"requiredProfiles": ["development", "review"]},
@@ -72,10 +79,23 @@ class LifecycleTests(unittest.TestCase):
                 ],
             },
         }
-        write_json(self.root / ".process" / "project.json", self.project)
-        (self.root / "product.txt").write_text("accepted\n", encoding="utf-8")
-        git(self.root, "add", ".")
-        git(self.root, "commit", "-qm", "initial")
+        write_json(cls._template_path / ".process" / "project.json", cls._template_project)
+        (cls._template_path / "product.txt").write_text("accepted\n", encoding="utf-8")
+        git(cls._template_path, "add", ".")
+        git(cls._template_path, "commit", "-qm", "initial")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._template_directory is not None:
+            cls._template_directory.cleanup()
+
+    def setUp(self) -> None:
+        if self._template_path is None:
+            self.setUpClass()
+        self.temporary = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temporary.name)
+        shutil.copytree(self._template_path, self.root, dirs_exist_ok=True)
+        self.project = deepcopy(self._template_project)
         self.contract = {
             "schemaVersion": 5,
             "id": "sample-change",
