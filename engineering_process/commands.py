@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform
 from pathlib import Path
 import sys
 import threading
@@ -36,6 +37,16 @@ def _child_environment() -> dict[str, str]:
     )
     environment["PYTHONUNBUFFERED"] = "1"
     return environment
+
+
+def execution_identity() -> dict[str, str | dict[str, str]]:
+    """Return the bounded runtime inputs used to launch consumer checks."""
+    return {
+        "executable": str(Path(sys.executable).resolve()),
+        "python": sys.version,
+        "platform": platform.platform(),
+        "environment": _child_environment(),
+    }
 
 
 class _OutputBudget:

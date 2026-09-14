@@ -46,6 +46,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual("rust", args.profile)
         self.assertEqual(2, args.check_position)
 
+    def test_change_verify_supports_remaining_and_explain_commands(self) -> None:
+        remaining = build_parser().parse_args(
+            ["change", "verify", "--change-id", "sample-change", "--remaining"]
+        )
+        self.assertTrue(remaining.remaining)
+        self.assertIsNone(remaining.profile)
+        explain = build_parser().parse_args(
+            ["change", "explain", "--change-id", "sample-change"]
+        )
+        self.assertEqual("sample-change", explain.change_id)
+
     def test_skills_validate_emits_machine_readable_result(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

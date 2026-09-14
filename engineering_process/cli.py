@@ -38,6 +38,8 @@ from .lifecycle import (
     start_change,
     start_review,
     submit_review,
+    resolve_verification_work,
+    verify_remaining,
     verify_change,
 )
 from .issue import render_issue
@@ -312,6 +314,16 @@ def command_change_implement(args: argparse.Namespace) -> Result:
 def command_change_verify(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
+    if args.remaining:
+        state, selection = verify_remaining(
+            args.project_root, process_root, project, args.change_id
+        )
+        return _state_result(
+            "change verify",
+            state,
+            selection=selection,
+            execution="remaining",
+        ), 0
     state, report = verify_change(
         args.project_root, process_root, project, args.change_id, args.profile
     )
@@ -319,6 +331,15 @@ def command_change_verify(args: argparse.Namespace) -> Result:
     return _state_result(
         "change verify", state, profile=args.profile, profileStatus=report["status"]
     ), code
+
+
+def command_change_explain(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    project = load_project(args.project_root, process_root)
+    selection = resolve_verification_work(
+        args.project_root, process_root, project, args.change_id
+    )
+    return _result("change explain", selection=selection), 0
 
 
 def command_change_review_start(args: argparse.Namespace) -> Result:
@@ -536,7 +557,12 @@ def build_parser() -> argparse.ArgumentParser:
     change_implement.add_argument("--change-id", required=True)
     change_verify = _leaf(change_commands, "verify", command_change_verify)
     change_verify.add_argument("--change-id", required=True)
-    change_verify.add_argument("--profile", required=True)
+    verify_scope = change_verify.add_mutually_exclusive_group(required=True)
+    verify_scope.add_argument("--profile")
+    verify_scope.add_argument("--remaining", action="store_true")
+
+    change_explain = _leaf(change_commands, "explain", command_change_explain)
+    change_explain.add_argument("--change-id", required=True)
 
     review = change_commands.add_parser("review")
     review_commands = review.add_subparsers(dest="review_command", required=True)

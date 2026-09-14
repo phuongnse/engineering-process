@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+import platform
 from pathlib import Path
+import sys
 from typing import Any
 
-from .commands import run_profile
+from . import VERSION
+from .commands import execution_identity, run_profile
 from .contracts import (
     ProcessError,
     digest_json,
@@ -21,7 +24,7 @@ from .contracts import (
     validate_document,
     write_json_atomic,
 )
-from .distribution import schemas_root
+from .distribution import distribution_digest, schemas_root
 from .project import (
     accepted_issue_url_prefix,
     load_project,
@@ -139,6 +142,149 @@ def _require_phase(state: dict[str, Any], *phases: str) -> None:
         raise ProcessError(
             f"change {state['changeId']} is {state['phase']}; expected {expected}"
         )
+
+
+def _verification_input_digest(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    profile: str,
+) -> str:
+    """Bind reusable evidence to every input controlled by this process."""
+    return digest_json(
+        {
+            "authority": {
+                "version": VERSION,
+                "distribution": distribution_digest(process_root),
+            },
+            "project": project,
+            "contractDigest": state["contract"]["digest"],
+            "planDigest": state["plan"]["digest"] if state.get("plan") else None,
+            "profile": profile,
+            "projectRoot": str(project_root.resolve()),
+            "runtime": execution_identity(),
+            "host": platform.node(),
+            "pythonImplementation": sys.implementation.name,
+        }
+    )
+
+
+def _verification_selection(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    current = repository_snapshot(project_root)
+    required = tuple(state["contract"]["document"]["requiredProfiles"])
+    configured = project["profiles"]
+    requirements: list[dict[str, Any]] = []
+    execute: list[str] = []
+    reuse: list[str] = []
+    blocked: list[str] = []
+
+    for profile in required:
+        previous = state["verification"].get(profile)
+        if profile not in configured:
+            status, action, reason = (
+                "blocked",
+                "blocked",
+                "the accepted profile is not present in the current project policy",
+            )
+            blocked.append(profile)
+        elif (
+            previous is not None
+            and previous["profile"] == profile
+            and previous["status"] == "passed"
+            and previous.get("scope", {"kind": "profile"}) == {"kind": "profile"}
+            and same_checkpoint(previous["checkpoint"], current)
+            and previous.get("inputDigest")
+            == _verification_input_digest(project_root, process_root, project, state, profile)
+        ):
+            status, action, reason = (
+                "satisfied",
+                "reuse",
+                "valid whole-profile evidence already covers this exact candidate and input identity",
+            )
+            reuse.append(profile)
+        elif previous is not None and previous["status"] == "passed" and same_checkpoint(
+            previous["checkpoint"], current
+        ) and not previous.get("inputDigest"):
+            status, action, reason = (
+                "unknown",
+                "execute",
+                "recorded evidence has no reusable input identity",
+            )
+            execute.append(profile)
+        else:
+            status, action, reason = (
+                "remaining",
+                "execute",
+                "no valid reusable whole-profile evidence covers the current inputs",
+            )
+            execute.append(profile)
+
+        item: dict[str, Any] = {
+            "id": profile,
+            "profile": profile,
+            "status": status,
+            "action": action,
+            "reason": reason,
+        }
+        if previous is not None and previous["status"] == "passed":
+            item["evidence"] = {
+                "checkpoint": previous["checkpoint"],
+                "recordedAt": previous["recordedAt"],
+                **(
+                    {"inputDigest": previous["inputDigest"]}
+                    if previous.get("inputDigest")
+                    else {}
+                ),
+            }
+        requirements.append(item)
+
+    inapplicable = sorted(set(configured) - set(required))
+    for profile in inapplicable:
+        requirements.append(
+            {
+                "id": profile,
+                "profile": profile,
+                "status": "inapplicable",
+                "action": "skip",
+                "reason": "the accepted change contract does not select this optional project profile",
+            }
+        )
+
+    selection = {
+        "schemaVersion": 1,
+        "changeId": state["changeId"],
+        "phase": state["phase"],
+        "status": "blocked" if blocked else "ready",
+        "checkpoint": current,
+        "requirements": requirements,
+        "executeProfiles": execute,
+        "reuseProfiles": reuse,
+        "inapplicableProfiles": inapplicable,
+        "blockedProfiles": blocked,
+    }
+    return validate_document(
+        selection,
+        "verification-selection",
+        schema_root=schemas_root(process_root),
+        source="verification selection",
+    )
+
+
+def resolve_verification_work(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+) -> dict[str, Any]:
+    """Explain the current required work without executing consumer commands."""
+    state = _load_state(project_root, process_root, change_id)
+    return _verification_selection(project_root, process_root, project, state)
 
 
 @history_transaction
@@ -367,6 +513,66 @@ def verify_change(
 
 
 @history_transaction
+def reuse_verification(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+    profile: str,
+) -> dict[str, Any]:
+    """Record reuse of valid prior evidence without faking a new execution."""
+    state = _load_state(project_root, process_root, change_id)
+    _require_phase(state, "implementing")
+    selection = _verification_selection(project_root, process_root, project, state)
+    requirement = next(
+        (item for item in selection["requirements"] if item["profile"] == profile),
+        None,
+    )
+    if requirement is None:
+        raise ProcessError(f"profile {profile} is not part of the accepted verification selection")
+    if requirement["action"] != "reuse":
+        raise ProcessError(
+            f"profile {profile} is not reusable: {requirement['reason']}"
+        )
+    evidence = state["verification"][profile]
+    _event(
+        state,
+        "profile-reused",
+        state["currentImplementation"]["actor"],
+        profile=profile,
+        reason=requirement["reason"],
+        evidenceRecordedAt=evidence["recordedAt"],
+        inputDigest=evidence["inputDigest"],
+    )
+    _save_state(project_root, process_root, state)
+    return state
+
+
+def verify_remaining(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Execute only unresolved work and retain valid prior profile evidence."""
+    state = _load_state(project_root, process_root, change_id)
+    _require_phase(state, "implementing")
+    selection = _verification_selection(project_root, process_root, project, state)
+    if selection["status"] == "blocked":
+        raise ProcessError(
+            "verification selection is blocked: "
+            + ", ".join(selection["blockedProfiles"])
+        )
+    for profile in selection["reuseProfiles"]:
+        reuse_verification(project_root, process_root, project, change_id, profile)
+    for profile in selection["executeProfiles"]:
+        state, _report = verify_change(
+            project_root, process_root, project, change_id, profile
+        )
+    return state, selection
+
+
+@history_transaction
 def _record_verification(
     project_root: Path,
     process_root: Path,
@@ -390,6 +596,13 @@ def _record_verification(
     profile = report["profile"]
     report["checkpoint"] = after
     report["recordedAt"] = _now()
+    report["inputDigest"] = _verification_input_digest(
+        project_root,
+        process_root,
+        load_project(project_root, process_root),
+        state,
+        profile,
+    )
     if not same_checkpoint(before, after):
         report["status"] = "failed"
         report["reason"] = "repository changed while verification was running"

@@ -21,6 +21,8 @@ from engineering_process.lifecycle import (
     start_change,
     start_review,
     submit_review,
+    resolve_verification_work,
+    verify_remaining,
     verify_change,
 )
 from engineering_process.project import normalize_project
@@ -1148,6 +1150,91 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("failed", report["status"])
         self.assertEqual("implementing", state["phase"])
         self.assertEqual(["profile-failed"], process_improvement_signals(state))
+
+    def test_remaining_verification_reuses_only_valid_prior_profiles(self) -> None:
+        self.project["profiles"]["review"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(9)",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+            state, report = verify_change(
+                self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+            )
+            self.assertEqual("passed", report["status"])
+            selection = resolve_verification_work(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+            self.assertEqual(["development"], selection["reuseProfiles"])
+            self.assertEqual(["review"], selection["executeProfiles"])
+
+            state, _selection = verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+            self.assertEqual("implementing", state["phase"])
+            self.assertEqual(2, runner.call_count)
+
+            state, selection = verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+            self.assertEqual("implementing", state["phase"])
+            self.assertEqual(["development"], selection["reuseProfiles"])
+            self.assertEqual(["review"], selection["executeProfiles"])
+            self.assertEqual(3, runner.call_count)
+        self.assertEqual(
+            2,
+            sum(event["event"] == "profile-reused" for event in state["history"]),
+        )
+
+    def test_explicit_profile_verification_remains_a_refresh(self) -> None:
+        self.begin()
+        with patch("engineering_process.lifecycle.run_profile", wraps=run_profile) as runner:
+            verify_change(
+                self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+            )
+            verify_change(
+                self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+            )
+        self.assertEqual(2, runner.call_count)
+
+    def test_selection_reports_legacy_passing_evidence_as_unknown(self) -> None:
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        del state["verification"]["development"]["inputDigest"]
+        write_json(path, state)
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        requirement = next(
+            item for item in selection["requirements"] if item["profile"] == "development"
+        )
+        self.assertEqual("unknown", requirement["status"])
+        self.assertEqual("execute", requirement["action"])
+
+    def test_selection_reports_optional_profiles_as_inapplicable(self) -> None:
+        self.project["profiles"]["optional"] = [
+            {
+                "id": "extra",
+                "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                "timeoutSeconds": 10,
+            }
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        requirement = next(
+            item for item in selection["requirements"] if item["profile"] == "optional"
+        )
+        self.assertEqual("inapplicable", requirement["status"])
+        self.assertEqual("skip", requirement["action"])
 
     def test_process_change_policy_requires_consumer_evidence(self) -> None:
         self.project["lifecycle"]["processChanges"] = {

@@ -36,6 +36,7 @@ CONTRACT_KINDS = (
     "renovate-preset",
     "review",
     "run",
+    "verification-selection",
 )
 
 
