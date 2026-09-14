@@ -43,11 +43,12 @@ def _child_environment() -> dict[str, str]:
 
 def execution_identity() -> dict[str, Any]:
     """Return the bounded runtime inputs used to launch consumer checks."""
+    child_environment = _child_environment()
     try:
-        dependencies = sorted(
+        dependencies = sorted({
             f"{distribution.name}=={distribution.version}"
             for distribution in metadata.distributions()
-        )
+        })
     except Exception:
         dependency_identity: dict[str, Any] = {"known": False}
     else:
@@ -62,7 +63,9 @@ def execution_identity() -> dict[str, Any]:
         "executable": str(Path(sys.executable).resolve()),
         "python": sys.version,
         "platform": platform.platform(),
-        "environment": _child_environment(),
+        "environment": {
+            name: value for name, value in child_environment.items() if value
+        },
         "dependencies": dependency_identity,
     }
 
