@@ -28,6 +28,12 @@ pin a built-in version or select a complete consumer-owned override; unsupported
 explicit selections fail without fallback. Existing project, run and review schemas
 are unchanged. See [consumer document standards](ARTIFACT_STANDARDS.md).
 
+Release fragments use schema 2 for new releases. Their structured detail fields are
+carried into release manifest schema 6 and rendered into the published notes. Manifest
+schema 5 and release-note data without details remain readable, so this is an additive
+release-authoring capability rather than a consumer runtime break. New preparation
+rejects incomplete or mixed fragment versions before changing release files.
+
 Existing publication command arguments remain valid. The updated PR adapter resolves
 the current consumer's selected standard and repairs the ready-placeholder gap; the
 default completed body structure is unchanged. Older runtimes do not apply these new

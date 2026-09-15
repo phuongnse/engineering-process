@@ -62,7 +62,8 @@
             "minLength": 1,
             "maxLength": 20000,
             "pattern": "\\S"
-          }
+          },
+          "details": {"$ref": "#/$defs/details"}
         }
       }
     },
@@ -98,6 +99,48 @@
       "not": {
         "pattern": "[\\r\\n]"
       }
+    }
+  },
+  "$defs": {
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "problem",
+        "changes",
+        "affectedPaths",
+        "apply",
+        "compatibility",
+        "notes"
+      ],
+      "properties": {
+        "problem": {"$ref": "#/$defs/text"},
+        "changes": {"$ref": "#/$defs/text"},
+        "affectedPaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/pathText"}
+        },
+        "apply": {"$ref": "#/$defs/text"},
+        "compatibility": {"$ref": "#/$defs/text"},
+        "notes": {"$ref": "#/$defs/text"}
+      }
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S",
+      "not": {"pattern": "[\\r\\n\\v\\f\\u0085\\u2028\\u2029]"}
+    },
+    "pathText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "\\S",
+      "not": {"pattern": "[\\r\\n\\v\\f\\u0085\\u2028\\u2029]"}
     }
   }
 }

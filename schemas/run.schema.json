@@ -208,6 +208,8 @@
         "status": {"enum": ["passed", "failed"]},
         "durationMs": {"type": "integer", "minimum": 0},
         "inputDigest": {"$ref": "#/$defs/digest"},
+        "executionMode": {"enum": ["full", "impact-assurance"]},
+        "selectionDigest": {"$ref": "#/$defs/digest"},
         "scope": {"$ref": "#/$defs/verificationScope"},
         "diagnostic": {"$ref": "#/$defs/diagnostic"},
         "checks": {

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 import re
-import string
 from typing import Any
 from urllib.parse import quote
 
@@ -14,7 +14,18 @@ from .distribution import distribution_root, schemas_root
 
 
 def _text(value: str) -> str:
-    return "".join("\\" + character if character in string.punctuation else character for character in " ".join(value.split()))
+    """Render record text as a safe, readable Markdown inline value."""
+    value = " ".join(value.split())
+    # Details are metadata, not consumer-authored Markdown. Escape only syntax
+    # that can change the inline meaning, while leaving ordinary punctuation
+    # readable. HTML-sensitive text is entity-escaped so `&copy;` stays literal.
+    value = html.escape(value, quote=False)
+    value = value.replace("\\", "\\\\")
+    for character in ("`", "*", "_", "[", "]", "~"):
+        value = value.replace(character, "\\" + character)
+    if value.startswith(("-", "+", "#")):
+        value = "\\" + value
+    return value
 
 
 def _reference(source: str, repository: str | None) -> str:
@@ -26,6 +37,8 @@ def _reference(source: str, repository: str | None) -> str:
     # Code spans suppress invented GitHub issue, mention and commit links.
     source = " ".join(source.split())
     fence = "`" * (1 + max((len(run) for run in re.findall(r"`+", source)), default=0))
+    if len(fence) == 1:
+        return f"{fence}{source}{fence}"
     return f"{fence} {source} {fence}"
 
 
@@ -50,6 +63,13 @@ def render_notes(
         raise ProcessError("release contains unsupported change types: " + ", ".join(unknown_types))
     values = [data["title"], data["introduction"], *data["sections"].values()]
     values.extend(change[key] for change in data["changes"] for key in ("summary", "source"))
+    for change in data["changes"]:
+        details = change.get("details")
+        if details is not None:
+            values.extend(
+                details[field]
+                for field in ("problem", "changes", "apply", "compatibility", "notes")
+            )
     if "footer" in data:
         values.append(data["footer"])
     if state == "ready" and any(standard.unresolved(value) for value in values):
@@ -63,7 +83,21 @@ def render_notes(
         lines.extend([f"## {group['heading']}", ""])
         for change in changes:
             reference = _reference(change["source"], data.get("repositoryUrl"))
-            lines.append(f"- {_text(change['summary'])} ({reference})")
+            details = change.get("details")
+            if details is None:
+                lines.append(f"- {_text(change['summary'])} ({reference})")
+                continue
+            lines.append(f"- **{_text(change['summary'])}** ({reference})")
+            lines.extend([
+                f"  - **Problem:** {_text(details['problem'])}",
+                f"  - **What changed:** {_text(details['changes'])}",
+                "  - **Where:** " + ", ".join(
+                    _reference(path, None) for path in details["affectedPaths"]
+                ),
+                f"  - **Apply:** {_text(details['apply'])}",
+                f"  - **Compatibility:** {_text(details['compatibility'])}",
+                f"  - **Notes:** {_text(details['notes'])}",
+            ])
         lines.append("")
     for section in standard.rules["sections"]:
         lines.extend([f"## {section['heading']}", "", data["sections"][section["id"]], ""])

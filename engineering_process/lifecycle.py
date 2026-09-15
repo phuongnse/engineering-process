@@ -10,9 +10,10 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
+import time
 from typing import Any
 
-from .commands import run_profile, verification_lock
+from .commands import run_check, run_profile, verification_lock
 from .contracts import (
     ProcessError,
     digest_json,
@@ -21,14 +22,20 @@ from .contracts import (
     validate_document,
     write_json_atomic,
 )
-from .distribution import schemas_root
+from .distribution import distribution_digest, schemas_root
 from .evidence import (
     execution_identity,
     verification_input_digest,
     verification_report_matches_inputs,
 )
+from .impact import (
+    impact_unit_lookup,
+    unavailable_impact_selection,
+    resolve_impact_selection,
+)
 from .project import (
     accepted_issue_url_prefix,
+    impact_assurance_profiles,
     load_project,
     publication_required,
     require_consumer_evidence,
@@ -154,6 +161,7 @@ def _verification_input_digest(
     profile: str,
     *,
     runtime: dict[str, Any] | None = None,
+    authority_digest: str | None = None,
 ) -> str | None:
     """Bind reusable evidence to every input controlled by this process."""
     return verification_input_digest(
@@ -163,6 +171,7 @@ def _verification_input_digest(
         state,
         profile,
         runtime=runtime if runtime is not None else execution_identity(),
+        authority_digest=authority_digest,
     )
 
 
@@ -192,6 +201,7 @@ def _verification_report_matches_inputs(
     *,
     require_input: bool,
     runtime: dict[str, Any] | None = None,
+    authority_digest: str | None = None,
 ) -> bool:
     return verification_report_matches_inputs(
         project_root,
@@ -203,6 +213,7 @@ def _verification_report_matches_inputs(
         checkpoint,
         require_input=require_input,
         runtime=runtime if runtime is not None else execution_identity(),
+        authority_digest=authority_digest,
     )
 
 
@@ -216,6 +227,7 @@ def _required_verification_matches_inputs(
     require_input: bool,
 ) -> bool:
     runtime = execution_identity()
+    authority_digest = distribution_digest(process_root)
     return all(
         profile in state["verification"]
         and _verification_report_matches_inputs(
@@ -228,6 +240,7 @@ def _required_verification_matches_inputs(
             checkpoint,
             require_input=require_input,
             runtime=runtime,
+            authority_digest=authority_digest,
         )
         for profile in state["contract"]["document"]["requiredProfiles"]
     )
@@ -247,11 +260,28 @@ def _verification_selection(
     reuse: list[str] = []
     blocked: list[str] = []
     runtime = execution_identity()
+    authority_digest = distribution_digest(process_root)
+    assurance_profiles = tuple(impact_assurance_profiles(project))
+    assurance_selection: dict[str, Any] | None = None
+    assurance_requirements: dict[str, dict[str, Any]] = {}
+    if assurance_profiles:
+        assurance_selection = resolve_impact_selection(
+            project_root,
+            process_root,
+            project,
+            state,
+            profiles=assurance_profiles,
+        )
+        assurance_requirements = {
+            item["profile"]: item
+            for item in assurance_selection["requirements"]
+        }
 
     newly_required = _current_baseline_gap(project, state)
     blocked.extend(newly_required)
 
     for profile in required:
+        mode = "full"
         previous = state["verification"].get(profile)
         if profile not in configured:
             status, action, reason = (
@@ -270,29 +300,74 @@ def _verification_selection(
             current,
             require_input=True,
             runtime=runtime,
+            authority_digest=authority_digest,
         ):
             status, action, reason = (
                 "satisfied",
                 "reuse",
                 "valid whole-profile evidence already covers this exact candidate and input identity",
             )
+            mode = previous.get("executionMode", "full")
             reuse.append(profile)
         elif previous is not None and previous["status"] == "passed" and same_checkpoint(
             previous["checkpoint"], current
         ) and not previous.get("inputDigest"):
-            status, action, reason = (
-                "unknown",
-                "execute",
-                "recorded evidence has no reusable input identity",
-            )
-            execute.append(profile)
+            if profile in assurance_profiles and assurance_selection is not None:
+                assurance_requirement = assurance_requirements[profile]
+                if assurance_selection["status"] == "ready":
+                    status, action, reason = (
+                        "unknown",
+                        "execute",
+                        "recorded evidence has no reusable input identity; final impact assurance will execute",
+                    )
+                    mode = "impact-assurance"
+                else:
+                    status, action, reason = (
+                        "blocked",
+                        "blocked",
+                        assurance_requirement.get(
+                            "reason",
+                            assurance_selection["resolution"]["reason"],
+                        ),
+                    )
+                    blocked.append(profile)
+            else:
+                status, action, reason = (
+                    "unknown",
+                    "execute",
+                    "recorded evidence has no reusable input identity",
+                )
+            if action == "execute":
+                execute.append(profile)
         else:
-            status, action, reason = (
-                "remaining",
-                "execute",
-                "no valid reusable whole-profile evidence covers the current inputs",
-            )
-            execute.append(profile)
+            mode = "full"
+            if profile in assurance_profiles and assurance_selection is not None:
+                assurance_requirement = assurance_requirements[profile]
+                if assurance_selection["status"] == "ready":
+                    status, action, reason = (
+                        "remaining",
+                        "execute",
+                        "final impact assurance covers every changed path with the consumer's declared units",
+                    )
+                    mode = "impact-assurance"
+                else:
+                    status, action, reason = (
+                        "blocked",
+                        "blocked",
+                        assurance_requirement.get(
+                            "reason",
+                            assurance_selection["resolution"]["reason"],
+                        ),
+                    )
+                    blocked.append(profile)
+            else:
+                status, action, reason = (
+                    "remaining",
+                    "execute",
+                    "no valid reusable whole-profile evidence covers the current inputs",
+                )
+            if action == "execute":
+                execute.append(profile)
 
         item: dict[str, Any] = {
             "id": profile,
@@ -301,6 +376,7 @@ def _verification_selection(
             "action": action,
             "reason": reason,
         }
+        item["mode"] = mode
         if previous is not None and previous["status"] == "passed":
             item["evidence"] = {
                 "checkpoint": previous["checkpoint"],
@@ -339,7 +415,7 @@ def _verification_selection(
         )
 
     selection = {
-        "schemaVersion": 1,
+        "schemaVersion": 2 if assurance_profiles else 1,
         "changeId": state["changeId"],
         "phase": state["phase"],
         "status": "blocked" if blocked else "ready",
@@ -349,6 +425,15 @@ def _verification_selection(
         "reuseProfiles": reuse,
         "inapplicableProfiles": inapplicable,
         "blockedProfiles": blocked,
+        **(
+            {
+                "assuranceProfiles": list(assurance_profiles),
+                "assuranceSelectionDigest": digest_json(assurance_selection),
+                "assurancePolicyDigest": assurance_selection["policyDigest"],
+            }
+            if assurance_selection is not None
+            else {}
+        ),
     }
     return validate_document(
         selection,
@@ -368,6 +453,35 @@ def resolve_verification_work(
     state = _load_state(project_root, process_root, change_id)
     project = load_project(project_root, process_root)
     return _verification_selection(project_root, process_root, project, state)
+
+
+def resolve_impact_work(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+    *,
+    profiles: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Explain strict changed-path impact without executing consumer commands."""
+    state = _load_state(project_root, process_root, change_id)
+    try:
+        project = load_project(project_root, process_root)
+    except ProcessError as error:
+        return unavailable_impact_selection(
+            project_root,
+            process_root,
+            state,
+            str(error),
+            profiles=profiles,
+        )
+    return resolve_impact_selection(
+        project_root,
+        process_root,
+        project,
+        state,
+        profiles=profiles,
+    )
 
 
 @history_transaction
@@ -524,7 +638,7 @@ def begin_implementation(
         _save_state(project_root, process_root, state)
         return state
     if state["phase"] not in {"planned", "changes-requested"}:
-        if state["phase"] not in {"verified", "review-pending", "approved", "completed"}:
+        if state["phase"] not in {"verified", "review-pending", "approved"}:
             _require_phase(state, "planned", "changes-requested")
         checkpoint = (
             state["reviewAssignment"]["checkpoint"]
@@ -542,7 +656,6 @@ def begin_implementation(
     state["verification"] = {}
     state["reviewAssignment"] = None
     state["review"] = None
-    state["receipt"] = None
     state["phase"] = "implementing"
     _event(state, "implementation-started", actor, cycle=state["cycle"])
     _save_state(project_root, process_root, state)
@@ -602,6 +715,66 @@ def verify_change(
         )
 
 
+def verify_impact_change(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+    profile: str,
+    selection: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run a consumer-opted final impact assurance profile."""
+    initial = _load_state(project_root, process_root, change_id)
+    _require_phase(initial, "implementing")
+    lock_path = _run_path(project_root, initial["changeId"])
+    with verification_lock(lock_path):
+        state = _load_state(project_root, process_root, change_id)
+        _require_phase(state, "implementing")
+        project = load_project(project_root, process_root)
+        _require_current_baseline(project, state)
+        if profile not in state["contract"]["document"]["requiredProfiles"]:
+            raise ProcessError(f"profile {profile} is not required by change {change_id}")
+        if selection.get("status") != "ready":
+            raise ProcessError("final impact assurance selection is not ready")
+        if profile not in selection.get("assuranceProfiles", ()):
+            raise ProcessError(f"profile {profile} is not opted into final impact assurance")
+
+        before = repository_snapshot(project_root)
+        if not same_checkpoint(before, selection["checkpoint"]):
+            raise ProcessError("final impact assurance selection is stale")
+        if selection.get("assurancePolicyDigest") != digest_json(project.get("impactProfiles", {})):
+            raise ProcessError("final impact assurance policy changed after selection")
+        _publication_preflight(project_root, project, state, before)
+
+        impact_selection = resolve_impact_selection(
+            project_root,
+            process_root,
+            project,
+            state,
+            profiles=(profile,),
+        )
+        if impact_selection["status"] != "ready":
+            raise ProcessError("final impact assurance selection changed after selection")
+        lookup = impact_unit_lookup(project, impact_selection)
+        selected_units = [
+            lookup[(item["profile"], item["id"])]
+            for item in impact_selection["selectedUnits"]
+            if item["profile"] == profile
+        ]
+        if not selected_units:
+            raise ProcessError(f"final impact assurance selected no units for profile {profile}")
+        report = run_profile(
+            project_root,
+            {"profiles": {profile: selected_units}},
+            profile,
+        )
+        report["executionMode"] = "impact-assurance"
+        report["selectionDigest"] = digest_json(selection)
+        return _record_verification(
+            project_root, process_root, change_id, state["cycle"], before, report
+        )
+
+
 @history_transaction
 def reuse_verification(
     project_root: Path,
@@ -625,6 +798,14 @@ def reuse_verification(
         raise ProcessError(
             f"profile {profile} is not reusable: {requirement['reason']}"
         )
+    _record_reuse_event(state, profile, requirement)
+    _save_state(project_root, process_root, state)
+    return state
+
+
+def _record_reuse_event(
+    state: dict[str, Any], profile: str, requirement: dict[str, Any]
+) -> None:
     evidence = state["verification"][profile]
     _event(
         state,
@@ -635,6 +816,56 @@ def reuse_verification(
         evidenceRecordedAt=evidence["recordedAt"],
         inputDigest=evidence["inputDigest"],
     )
+
+
+@history_transaction
+def reuse_verifications(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+    profiles: tuple[str, ...],
+) -> dict[str, Any]:
+    """Record a stable batch of reusable profile evidence with one state write."""
+    if not profiles or len(set(profiles)) != len(profiles):
+        raise ProcessError("profile reuse batch must contain unique profiles")
+    state = _load_state(project_root, process_root, change_id)
+    _require_phase(state, "implementing")
+    project = load_project(project_root, process_root)
+    selection = _verification_selection(project_root, process_root, project, state)
+    if selection["status"] == "blocked":
+        raise ProcessError(
+            "verification selection is blocked: "
+            + ", ".join(selection["blockedProfiles"])
+        )
+    requirements = {
+        item["profile"]: item
+        for item in selection["requirements"]
+        if item["profile"] in profiles
+    }
+    missing = [profile for profile in profiles if profile not in requirements]
+    if missing:
+        raise ProcessError(
+            "profiles are not part of the accepted verification selection: "
+            + ", ".join(missing)
+        )
+    not_reusable = [
+        profile
+        for profile in profiles
+        if requirements[profile]["action"] != "reuse"
+    ]
+    if not_reusable:
+        reasons = "; ".join(
+            f"{profile}: {requirements[profile]['reason']}"
+            for profile in not_reusable
+        )
+        raise ProcessError(f"profiles are not reusable: {reasons}")
+
+    current = repository_snapshot(project_root)
+    if not same_checkpoint(current, selection["checkpoint"]):
+        raise ProcessError("repository changed while profile reuse was being selected")
+    for profile in profiles:
+        _record_reuse_event(state, profile, requirements[profile])
     _save_state(project_root, process_root, state)
     return state
 
@@ -680,15 +911,37 @@ def verify_remaining(
                 break
             profile = requirement["profile"]
             if requirement["action"] == "reuse":
-                state = reuse_verification(
-                    project_root, process_root, project, change_id, profile
+                batch: list[str] = []
+                for candidate in selection["requirements"]:
+                    candidate_profile = candidate["profile"]
+                    if candidate_profile in completed:
+                        continue
+                    if candidate["action"] != "reuse":
+                        break
+                    batch.append(candidate_profile)
+                state = reuse_verifications(
+                    project_root,
+                    process_root,
+                    project,
+                    change_id,
+                    tuple(batch),
                 )
-                reused.append(profile)
-                completed.add(profile)
+                reused.extend(batch)
+                completed.update(batch)
             else:
-                state, report = verify_change(
-                    project_root, process_root, project, change_id, profile
-                )
+                if requirement.get("mode") == "impact-assurance":
+                    state, report = verify_impact_change(
+                        project_root,
+                        process_root,
+                        project,
+                        change_id,
+                        profile,
+                        selection,
+                    )
+                else:
+                    state, report = verify_change(
+                        project_root, process_root, project, change_id, profile
+                    )
                 executed.append(profile)
                 if report["status"] != "passed":
                     break
@@ -715,7 +968,157 @@ def verify_remaining(
             schema_root=schemas_root(process_root),
             source="verification selection",
         )
-        return state, final_selection
+    return state, final_selection
+
+
+def verify_affected(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+    *,
+    profiles: tuple[str, ...] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """Run only resolved impact units as non-completion feedback evidence."""
+    initial = _load_state(project_root, process_root, change_id)
+    _require_phase(initial, "implementing")
+    lock_path = _run_path(project_root, initial["changeId"])
+    with verification_lock(lock_path):
+        state = _load_state(project_root, process_root, change_id)
+        _require_phase(state, "implementing")
+        try:
+            project = load_project(project_root, process_root)
+        except ProcessError as error:
+            selection = unavailable_impact_selection(
+                project_root,
+                process_root,
+                state,
+                str(error),
+                profiles=profiles,
+            )
+            state = _record_impact_event(
+                project_root,
+                process_root,
+                change_id,
+                "impact-unresolved",
+                {
+                    "selectionDigest": digest_json(selection),
+                    "changedPathCount": len(selection["changedPaths"]),
+                    "unresolvedPathCount": len(selection["unresolvedPaths"]),
+                },
+            )
+            return state, selection, []
+        _require_current_baseline(project, state)
+        selection = resolve_impact_selection(
+            project_root,
+            process_root,
+            project,
+            state,
+            profiles=profiles,
+        )
+        if selection["status"] != "ready":
+            state = _record_impact_event(
+                project_root,
+                process_root,
+                change_id,
+                "impact-unresolved",
+                {
+                    "selectionDigest": digest_json(selection),
+                    "changedPathCount": len(selection["changedPaths"]),
+                    "unresolvedPathCount": len(selection["unresolvedPaths"]),
+                },
+            )
+            return state, selection, []
+
+        before = repository_snapshot(project_root)
+        lookup = impact_unit_lookup(project, selection)
+        started = time.monotonic()
+        executions: list[dict[str, Any]] = []
+        for selected in selection["selectedUnits"]:
+            unit = lookup[(selected["profile"], selected["id"])]
+            report = run_check(project_root, unit)
+            executions.append(
+                {
+                    "profile": selected["profile"],
+                    "id": selected["id"],
+                    "matchedPaths": selected["matchedPaths"],
+                    "status": report["status"],
+                    "durationMs": report["durationMs"],
+                    "launchCount": 1,
+                }
+            )
+            if report["status"] != "passed":
+                break
+        after = repository_snapshot(project_root)
+        mutation = not same_checkpoint(before, after)
+        if mutation:
+            executions.append(
+                {
+                    "profile": "impact",
+                    "id": "repository-immutability",
+                    "matchedPaths": [],
+                    "status": "failed",
+                    "durationMs": 0,
+                    "launchCount": 0,
+                    "reason": "repository changed while affected verification was running",
+                }
+            )
+        elapsed = int((time.monotonic() - started) * 1000)
+        child_duration = sum(item["durationMs"] for item in executions)
+        status = (
+            "passed"
+            if not mutation
+            and len(executions) == len(selection["selectedUnits"])
+            and all(item["status"] == "passed" for item in executions)
+            else "failed"
+        )
+        summary = {
+            "status": status,
+            "launchCount": sum(item["launchCount"] for item in executions),
+            "durationMs": elapsed,
+            "scriptDurationMs": child_duration,
+            "processOverheadMs": max(0, elapsed - child_duration),
+            "units": executions,
+        }
+        state = _record_impact_event(
+            project_root,
+            process_root,
+            change_id,
+            "impact-verified",
+            {
+                "selectionDigest": digest_json(selection),
+                "status": status,
+                "changedPathCount": len(selection["changedPaths"]),
+                "unitCount": len(selection["selectedUnits"]),
+                "launchCount": summary["launchCount"],
+                "durationMs": elapsed,
+                "scriptDurationMs": child_duration,
+                "processOverheadMs": summary["processOverheadMs"],
+            },
+        )
+        return state, selection, [
+            summary
+        ]
+
+
+@history_transaction
+def _record_impact_event(
+    project_root: Path,
+    process_root: Path,
+    change_id: str,
+    event: str,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    state = _load_state(project_root, process_root, change_id)
+    _require_phase(state, "implementing")
+    _event(
+        state,
+        event,
+        state["currentImplementation"]["actor"],
+        **details,
+    )
+    _save_state(project_root, process_root, state)
+    return state
 
 
 @history_transaction
@@ -735,9 +1138,17 @@ def _record_verification(
         raise ProcessError("implementation cycle changed while verification was running")
     project = load_project(project_root, process_root)
     runtime = execution_identity()
+    after = repository_snapshot(project_root)
+    authority_digest = distribution_digest(process_root)
     input_digests = {
         name: _verification_input_digest(
-            project_root, process_root, project, state, name, runtime=runtime
+            project_root,
+            process_root,
+            project,
+            state,
+            name,
+            runtime=runtime,
+            authority_digest=authority_digest,
         )
         for name in {*state["verification"], report["profile"]}
     }
@@ -754,9 +1165,9 @@ def _record_verification(
             before,
             require_input=True,
             runtime=runtime,
+            authority_digest=authority_digest,
         )
     }
-    after = repository_snapshot(project_root)
     profile = report["profile"]
     report["checkpoint"] = after
     report["recordedAt"] = _now()
@@ -783,6 +1194,7 @@ def _record_verification(
             after,
             require_input=True,
             runtime=runtime,
+            authority_digest=authority_digest,
         )
         for name in required
     )
@@ -1064,6 +1476,16 @@ def finish_change(
         evidence[name] = {
             "status": report["status"],
             "checkpoint": report["checkpoint"],
+            **(
+                {"executionMode": report["executionMode"]}
+                if report.get("executionMode")
+                else {}
+            ),
+            **(
+                {"selectionDigest": report["selectionDigest"]}
+                if report.get("selectionDigest")
+                else {}
+            ),
             "checks": [
                 {
                     "id": check["id"],

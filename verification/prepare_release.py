@@ -48,17 +48,24 @@ def main(argv: list[str] | None = None) -> int:
         load_and_validate(path, "release-change", schema_root=schema_root)
         for path in fragment_paths
     ]
+    if any(fragment["schemaVersion"] != 2 for fragment in fragments):
+        raise ProcessError(
+            "new releases require schemaVersion 2 fragments with complete details"
+        )
     expected = derive_next_version(
         current["version"], (fragment["type"] for fragment in fragments)
     )
     if args.version != expected:
         raise ProcessError(f"requested {args.version}, but change types derive {expected}")
     release = {
-        "schemaVersion": 5,
+        "schemaVersion": 6,
         "version": expected,
         "previousVersion": current["version"],
         "changes": [
-            {key: fragment[key] for key in ("id", "type", "summary", "source")}
+            {
+                key: fragment[key]
+                for key in ("id", "type", "summary", "source", "details")
+            }
             for fragment in fragments
         ],
     }

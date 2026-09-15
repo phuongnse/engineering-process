@@ -45,6 +45,35 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("Consumer CI", notes)
         self.assertNotIn("\r", notes)
 
+    def test_detailed_notes_explain_each_change_and_breaking_impact(self) -> None:
+        release = {
+            "schemaVersion": 6, "version": "3.0.0", "previousVersion": "2.1.0",
+            "changes": [{
+                "id": "selection",
+                "type": "capability",
+                "summary": "Select necessary work",
+                "source": "https://github.com/phuongnse/engineering-process/issues/205",
+                "details": {
+                    "problem": "The same profile was dispatched more than once.",
+                    "changes": "Reuse valid whole-profile evidence and run only remaining work.",
+                    "affectedPaths": ["engineering_process/lifecycle.py", "schemas/run.schema.json"],
+                    "apply": "Run change explain before change verify --remaining.",
+                    "compatibility": "No breaking change; explicit profile refresh remains available.",
+                    "notes": "Unknown evidence still reruns conservatively."
+                }
+            }]
+        }
+        notes = notes_renderer.render_release_notes(release)
+        self.assertIn("**Select necessary work**", notes)
+        self.assertIn("([#205](https://github.com/phuongnse/engineering-process/issues/205))", notes)
+        for label in ("Problem", "What changed", "Where", "Apply", "Compatibility", "Notes"):
+            self.assertIn(f"**{label}:", notes)
+        self.assertIn("`engineering_process/lifecycle.py`", notes)
+        self.assertIn("No breaking changes are included.", notes)
+        release["changes"][0]["details"]["apply"] = "pending"
+        with self.assertRaisesRegex(ProcessError, "unresolved value"):
+            notes_renderer.render_release_notes(release)
+
     def test_notes_treat_metadata_as_text_and_do_not_invent_source_links(self) -> None:
         release = deepcopy(read_json(ROOT / "release.json"))
         release["changes"] = [
@@ -52,22 +81,28 @@ class ReleaseTests(unittest.TestCase):
             {"id": "safe-url", "type": "fix", "summary": "Safe source link.", "source": "https://example.invalid/a) bad"},
         ]
         notes = notes_renderer.render_release_notes(release)
-        self.assertIn("Cải thiện \\`tool\\` \\# heading \\[link\\]", notes)
+        self.assertIn("Cải thiện \\`tool\\` # heading \\[link\\]", notes)
         self.assertNotIn("\n# heading", notes)
-        self.assertIn("` owned change #42 `", notes)
+        self.assertIn("`owned change #42`", notes)
         self.assertIn("https://example.invalid/a%29%20bad", notes)
         self.assertNotIn("## Features", notes)
+        release["changes"][0]["summary"] = "### heading"
+        notes = notes_renderer.render_release_notes(release)
+        self.assertIn(r"- \### heading", notes)
+        self.assertNotIn("\n### heading", notes)
 
     def test_notes_preserve_list_markers_entities_and_strikethrough_as_text(self) -> None:
         release = deepcopy(read_json(ROOT / "release.json"))
         release["changes"] = [{
             "id": "literal-metadata", "type": "fix",
-            "summary": "1. Preserve literal &copy; and ~~removed~~ labels.",
+            "summary": "1. Preserve literal &copy; <tag> and ~~removed~~ labels.",
             "source": "owned &copy; ~~reference~~ #42",
         }]
         notes = notes_renderer.render_release_notes(release)
-        self.assertIn(r"- 1\. Preserve literal \&copy\; and \~\~removed\~\~ labels\.", notes)
-        self.assertIn("(` owned &copy; ~~reference~~ #42 `)", notes)
+        self.assertIn(r"- 1. Preserve literal &amp;copy; &lt;tag&gt; and \~\~removed\~\~ labels.", notes)
+        self.assertIn("(`owned &copy; ~~reference~~ #42`)", notes)
+        self.assertNotIn(r"\.", notes)
+        self.assertNotIn(r"\-", notes)
         for marker in ("-", "+", "*"):
             release["changes"][0]["summary"] = marker + " Preserve the literal bullet marker"
             with self.subTest(marker=marker):
@@ -153,6 +188,51 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(release["changes"]), result["changeCount"])
         self.assertEqual(notes_renderer.render_release_notes(release).encode("utf-8"), (ROOT / "RELEASE_NOTES.md").read_bytes())
 
+    def test_current_release_records_are_issue_level_and_complete(self) -> None:
+        release = read_json(ROOT / "release.json")
+        self.assertEqual(6, release["schemaVersion"])
+        self.assertTrue(all("details" in change for change in release["changes"]))
+        required_details = {
+            "problem", "changes", "affectedPaths", "apply", "compatibility", "notes"
+        }
+        self.assertTrue(
+            all(required_details == set(change["details"]) for change in release["changes"])
+        )
+        notes = notes_renderer.render_release_notes(release)
+        for change in release["changes"]:
+            self.assertIn(change["source"], notes)
+        self.assertIn("No breaking changes are included.", notes)
+        self.assertNotIn("#197-#205", notes)
+
+    def test_pending_release_records_are_issue_level_and_complete(self) -> None:
+        fragments = [
+            read_json(path)
+            for path in sorted((ROOT / "release-changes").glob("*.json"))
+        ]
+        if not fragments:
+            self.skipTest("pending release records have been consumed")
+        self.assertTrue(all(fragment["schemaVersion"] == 2 for fragment in fragments))
+        self.assertTrue(all("details" in fragment for fragment in fragments))
+        sources = {fragment["source"] for fragment in fragments}
+        self.assertEqual(len(sources), len(fragments))
+        release = {
+            "schemaVersion": 6,
+            "version": "2.5.0",
+            "previousVersion": read_json(ROOT / "release.json")["version"],
+            "changes": [
+                {
+                    key: fragment[key]
+                    for key in ("id", "type", "summary", "source", "details")
+                }
+                for fragment in fragments
+            ],
+        }
+        notes = notes_renderer.render_release_notes(release)
+        for source in sources:
+            self.assertIn(source, notes)
+        self.assertIn("No breaking changes are included.", notes)
+        self.assertNotIn("#197-#205", notes)
+
     def test_semver_is_derived_from_change_classification(self) -> None:
         self.assertEqual("0.9.1", derive_next_version("0.9.0", ["fix"]))
         self.assertEqual("0.10.0", derive_next_version("0.9.0", ["capability"]))
@@ -194,11 +274,19 @@ class ReleaseTests(unittest.TestCase):
             write_json_atomic(
                 target / "release-changes" / "test-fix.json",
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "id": "test-fix",
                     "type": "fix",
                     "summary": "Exercise release preparation against live state.",
                     "source": "release test fixture",
+                    "details": {
+                        "problem": "The fixture needs a complete release record.",
+                        "changes": "Supply the required structured release details.",
+                        "affectedPaths": ["tests/test_release.py"],
+                        "apply": "Run the normal release preparation command.",
+                        "compatibility": "No breaking change.",
+                        "notes": "This is test-only release metadata."
+                    },
                 },
             )
             result = subprocess.run(
@@ -215,12 +303,55 @@ class ReleaseTests(unittest.TestCase):
             prepared = read_json(target / "release.json")
             self.assertEqual(expected, prepared["version"])
             self.assertEqual(current["version"], prepared["previousVersion"])
+            self.assertEqual(6, prepared["schemaVersion"])
+            self.assertEqual("The fixture needs a complete release record.", prepared["changes"][0]["details"]["problem"])
             self.assertEqual([], list((target / "release-changes").glob("*.json")))
-            self.assertEqual(notes_renderer.render_release_notes(prepared).encode("utf-8"), (target / "RELEASE_NOTES.md").read_bytes())
+            generated_notes = notes_renderer.render_release_notes(prepared).encode("utf-8")
+            self.assertEqual(generated_notes, (target / "RELEASE_NOTES.md").read_bytes())
+            self.assertIn(b"**Problem:**", generated_notes)
             self.assertIn(
                 f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )
             validate_distribution_text(target)
+
+    def test_release_preparation_rejects_incomplete_legacy_fragments_before_writing(self) -> None:
+        current = read_json(ROOT / "release.json")
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "source"
+            shutil.copytree(
+                ROOT,
+                target,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".venv", ".process", "build", "*.egg-info", "__pycache__"
+                ),
+            )
+            for path in (target / "release-changes").glob("*.json"):
+                path.unlink()
+            write_json_atomic(
+                target / "release-changes" / "legacy.json",
+                {
+                    "schemaVersion": 1,
+                    "id": "legacy",
+                    "type": "fix",
+                    "summary": "Incomplete legacy record.",
+                    "source": "legacy fixture",
+                },
+            )
+            original_notes = (target / "RELEASE_NOTES.md").read_bytes()
+            result = subprocess.run(
+                [sys.executable, "verification/prepare_release.py", "2.4.1"],
+                cwd=target,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("schemaVersion 2", result.stderr)
+            self.assertEqual(current["version"], read_json(target / "release.json")["version"])
+            self.assertEqual(original_notes, (target / "RELEASE_NOTES.md").read_bytes())
 
     def test_invalid_change_type_fails(self) -> None:
         with self.assertRaises(ProcessError):

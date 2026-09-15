@@ -21,17 +21,36 @@ REPOSITORY = "https://github.com/phuongnse/engineering-process"
 
 def release_notes_data(release: dict) -> dict:
     version, previous = release["version"], release["previousVersion"]
+    changes = []
+    for change in release["changes"]:
+        record = {key: change[key] for key in ("type", "summary", "source")}
+        if "details" in change:
+            record["details"] = change["details"]
+        changes.append(record)
+
+    upgrade = [
+        "Merge the complete hash-locked package/adoption PR, update the local and CI environments to the selected version, and start a fresh agent session.",
+        "Consumer CI, naming conventions and branch-protection settings remain consumer-owned; adoption does not configure them automatically.",
+    ]
+    if release.get("schemaVersion") == 6:
+        if any(change["type"] == "breaking" for change in release["changes"]):
+            upgrade.append(
+                "Breaking changes are listed above; read each change's Compatibility and Notes entry before adopting."
+            )
+        else:
+            upgrade.append(
+                "No breaking changes are included. Read each change's Apply, Compatibility and Notes entry before adopting."
+            )
+    upgrade.append(
+        f"See [versioning and compatibility]({REPOSITORY}/blob/v{version}/VERSIONING.md) and [adoption guidance]({REPOSITORY}/blob/v{version}/SELF_HOSTING.md)."
+    )
     return {
         "schemaVersion": 1,
         "title": f"Engineering Process v{version}",
         "introduction": f"Changes since v{previous}.",
         "repositoryUrl": REPOSITORY,
-        "changes": [{key: change[key] for key in ("type", "summary", "source")} for change in release["changes"]],
-        "sections": {"upgrade": "\n\n".join([
-            "Merge the complete hash-locked package/adoption PR, update the local and CI environments to the selected version, and start a fresh agent session.",
-            "Consumer CI, naming conventions and branch-protection settings remain consumer-owned; adoption does not configure them automatically.",
-            f"See [versioning and compatibility]({REPOSITORY}/blob/v{version}/VERSIONING.md) and [adoption guidance]({REPOSITORY}/blob/v{version}/SELF_HOSTING.md).",
-        ])},
+        "changes": changes,
+        "sections": {"upgrade": "\n\n".join(upgrade)},
         "footer": f"[Full change comparison]({REPOSITORY}/compare/v{previous}...v{version})",
     }
 

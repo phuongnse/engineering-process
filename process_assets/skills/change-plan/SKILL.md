@@ -43,6 +43,18 @@ adoption boundary in the `approach`:
 Where prior passing profile evidence is valid and consumer source is unchanged, plan
 continuation verification via `processctl change verify --remaining`.
 
+When a consumer adopts the impact-selection capability, plan its versioned
+`impactProfiles` policy as consumer-owned evidence. Map every candidate path to one
+or more independently executable units, use an explicit global pattern only when
+dependency reach is intentionally cross-cutting, and define the agent action for an
+unresolved path. A schema-version 2 `finalProfiles` opt-in must name only required
+profiles and include an explicit global unit for each; the consumer owns the claim
+that the selected units are independent and complete. Do not infer final coverage
+from filenames or commands. Unresolved feedback or final assurance impact must block
+the corresponding path; an explicit full-profile refresh remains available but is
+not an automatic fallback. Consumers without the opt-in keep the normal required
+profiles as their final assurance boundary.
+
 Read **production-engineering** and add one `productionEngineering` assessment for
 each canonical invariant in its defined order. Decide applicability from the stated
 trigger, give a concrete rationale, and bind every applicable invariant to the work
