@@ -359,6 +359,44 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
 
+    def test_completed_change_reopens_after_a_new_candidate_commit(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+        finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="coordinator",
+            context_id="finish-context",
+            kind="agent",
+        )
+
+        (self.root / "product.txt").write_text("post-finish correction\n", encoding="utf-8")
+        git(self.root, "add", "product.txt")
+        git(self.root, "commit", "-qm", "fix: reopen completed candidate")
+        state = begin_implementation(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="implementer-2",
+            context_id="implementation-context-2",
+            kind="agent",
+        )
+        self.assertEqual(2, state["cycle"])
+        self.assertEqual("implementing", state["phase"])
+        self.assertIsNone(state["receipt"])
+
     def test_publication_opt_in_rejects_invalid_start_without_run(self) -> None:
         self.project["lifecycle"]["publication"] = {"required": True}
         with self.assertRaisesRegex(ProcessError, "publication branch validation failed"):
