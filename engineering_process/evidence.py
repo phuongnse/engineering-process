@@ -36,7 +36,7 @@ def child_environment(
         environment[name] = value
     runtime_executable = Path(
         sys.executable if executable is None else executable
-    ).resolve()
+    ).absolute()
     runtime_directory = str(runtime_executable.parent)
     inherited_path = environment.get("PATH", "")
     environment["PATH"] = os.pathsep.join(
@@ -72,7 +72,7 @@ def execution_identity(
         }
     runtime_executable = Path(
         sys.executable if executable is None else executable
-    ).resolve()
+    ).absolute()
     return {
         "executable": str(runtime_executable),
         "python": sys.version,
