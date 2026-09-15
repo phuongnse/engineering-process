@@ -39,14 +39,9 @@ def child_environment(
     ).absolute()
     runtime_directory = str(runtime_executable.parent)
     inherited_path = environment.get("PATH", "")
-    path_entries = [entry for entry in inherited_path.split(os.pathsep) if entry]
-    runtime_is_first = bool(path_entries) and (
-        os.path.normcase(os.path.normpath(path_entries[0]))
-        == os.path.normcase(os.path.normpath(runtime_directory))
+    environment["PATH"] = os.pathsep.join(
+        entry for entry in (runtime_directory, inherited_path) if entry
     )
-    if not runtime_is_first:
-        path_entries.insert(0, runtime_directory)
-    environment["PATH"] = os.pathsep.join(path_entries)
     environment["PYTHONUNBUFFERED"] = "1"
     return environment
 
@@ -110,6 +105,7 @@ def verification_input_digest(
     profile: str,
     *,
     runtime: dict[str, Any] | None = None,
+    authority_digest: str | None = None,
 ) -> str | None:
     """Bind reusable evidence to every input controlled by this process."""
     runtime = runtime if runtime is not None else execution_identity()
@@ -119,7 +115,11 @@ def verification_input_digest(
     return digest_json({
         "authority": {
             "version": VERSION,
-            "distribution": distribution_digest(process_root),
+            "distribution": (
+                authority_digest
+                if authority_digest is not None
+                else distribution_digest(process_root)
+            ),
         },
         "project": project,
         "contractDigest": state["contract"]["digest"],
@@ -145,6 +145,7 @@ def verification_report_matches_inputs(
     require_input: bool,
     require_explicit_scope: bool = False,
     runtime: dict[str, Any] | None = None,
+    authority_digest: str | None = None,
 ) -> bool:
     """Return whether one report is reusable for the supplied inputs."""
     scope = report.get("scope")
@@ -169,5 +170,6 @@ def verification_report_matches_inputs(
         state,
         profile,
         runtime=runtime,
+        authority_digest=authority_digest,
     )
     return current is not None and recorded == current

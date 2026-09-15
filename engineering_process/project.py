@@ -117,6 +117,7 @@ def normalize_project(value: Any, process_root: Path) -> dict[str, Any]:
         schema_root=schemas_root(process_root),
         source="normalized project configuration",
     )
+    _validate_impact_profiles(normalized)
     missing = sorted(set(required_profiles(normalized)) - set(normalized["profiles"]))
     if missing:
         raise ProcessError("project requires unknown profiles: " + ", ".join(missing))
@@ -165,6 +166,65 @@ def readiness_summary(project: dict[str, Any]) -> dict[str, Any] | None:
 
 def required_profiles(project: dict[str, Any]) -> tuple[str, ...]:
     return tuple(project["lifecycle"]["requiredProfiles"])
+
+
+def impact_profiles(project: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return the validated consumer impact profile map, or an empty map."""
+    policy = project.get("impactProfiles")
+    if policy is None:
+        return {}
+    return policy["profiles"]
+
+
+def impact_assurance_profiles(project: dict[str, Any]) -> tuple[str, ...]:
+    """Return profiles explicitly allowed to satisfy final verification."""
+    policy = project.get("impactProfiles")
+    if not isinstance(policy, dict) or policy.get("schemaVersion") != 2:
+        return ()
+    return tuple(policy.get("finalProfiles", ()))
+
+
+def _validate_impact_profiles(project: dict[str, Any]) -> None:
+    """Validate semantic references inside the consumer-owned impact policy."""
+    policy = project.get("impactProfiles")
+    if policy is None:
+        return
+    if not isinstance(policy, dict):
+        raise ProcessError("impactProfiles must be an object")
+    impact_profiles = policy.get("profiles")
+    if not isinstance(impact_profiles, dict):
+        raise ProcessError("impactProfiles.profiles must be an object")
+    configured = set(project["profiles"])
+    for profile, checks in impact_profiles.items():
+        if profile not in configured:
+            raise ProcessError(
+                f"impactProfiles references unknown project profile: {profile}"
+            )
+        identifiers = [check["id"] for check in checks]
+        if len(identifiers) != len(set(identifiers)):
+            raise ProcessError(
+                f"impact profile {profile} contains duplicate unit ids"
+            )
+    final_profiles = tuple(policy.get("finalProfiles", ()))
+    if len(final_profiles) != len(set(final_profiles)):
+        raise ProcessError("impact finalProfiles must be unique")
+    unknown_final = sorted(set(final_profiles) - set(project["lifecycle"]["requiredProfiles"]))
+    if unknown_final:
+        raise ProcessError(
+            "impact finalProfiles must be required lifecycle profiles: "
+            + ", ".join(unknown_final)
+        )
+    missing_final = sorted(set(final_profiles) - set(impact_profiles))
+    if missing_final:
+        raise ProcessError(
+            "impact finalProfiles reference profiles without impact units: "
+            + ", ".join(missing_final)
+        )
+    for profile in final_profiles:
+        if not any(unit.get("scope", "matched") == "global" for unit in impact_profiles[profile]):
+            raise ProcessError(
+                f"impact final profile {profile} requires an explicit global unit"
+            )
 
 
 def require_consumer_evidence(project: dict[str, Any]) -> bool:

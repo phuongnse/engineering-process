@@ -38,12 +38,14 @@ from .lifecycle import (
     start_change,
     start_review,
     submit_review,
+    resolve_impact_work,
     resolve_verification_work,
+    verify_affected,
     verify_remaining,
     verify_change,
 )
 from .issue import render_issue
-from .project import load_project, readiness_summary
+from .project import impact_profiles, load_project, readiness_summary
 from .production_engineering import (
     validate_plan_assessments,
     validate_review_assessments,
@@ -135,6 +137,7 @@ def command_project_validate(args: argparse.Namespace) -> Result:
         "project validate",
         project=project["project"],
         profiles=sorted(project["profiles"]),
+        impactProfiles=sorted(impact_profiles(project)),
         requiredProfiles=project["lifecycle"]["requiredProfiles"],
         readiness=readiness_summary(project),
     ), 0
@@ -326,6 +329,34 @@ def command_change_implement(args: argparse.Namespace) -> Result:
 
 def command_change_verify(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
+    if getattr(args, "affected", False):
+        selected_profiles = tuple(getattr(args, "affected_profile", []) or []) or None
+        state, selection, executions = verify_affected(
+            args.project_root,
+            process_root,
+            {},
+            args.change_id,
+            profiles=selected_profiles,
+        )
+        execution_status = executions[0]["status"] if executions else None
+        status = (
+            "passed"
+            if selection["status"] == "ready" and execution_status == "passed"
+            else selection["status"]
+            if selection["status"] != "ready"
+            else "failed"
+        )
+        return _state_result(
+            "change verify",
+            state,
+            status=status,
+            selection=selection,
+            execution="affected",
+            evidence="feedback-only; does not satisfy a required full profile",
+            executions=executions,
+        ), (0 if status == "passed" else 1)
+    if getattr(args, "affected_profile", []):
+        raise ProcessError("--affected-profile requires --affected")
     project = load_project(args.project_root, process_root)
     if args.remaining:
         state, selection = verify_remaining(
@@ -345,6 +376,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
                 {
                     "profile": profile,
                     "status": report["status"],
+                    "executionMode": report.get("executionMode", "full"),
                     "launchCount": len(report["checks"]),
                     "durationMs": report.get("durationMs", check_duration),
                     "checkDurationMs": check_duration,
@@ -386,6 +418,18 @@ def command_change_verify(args: argparse.Namespace) -> Result:
 
 def command_change_explain(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
+    if getattr(args, "impact", False):
+        profiles = (args.profile,) if args.profile else None
+        selection = resolve_impact_work(
+            args.project_root,
+            process_root,
+            {},
+            args.change_id,
+            profiles=profiles,
+        )
+        return _result("change explain", selection=selection), 0
+    if getattr(args, "profile", None):
+        raise ProcessError("--profile for change explain requires --impact")
     project = load_project(args.project_root, process_root)
     selection = resolve_verification_work(
         args.project_root, process_root, project, args.change_id
@@ -667,9 +711,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify_scope = change_verify.add_mutually_exclusive_group(required=True)
     verify_scope.add_argument("--profile")
     verify_scope.add_argument("--remaining", action="store_true")
+    verify_scope.add_argument("--affected", action="store_true")
+    change_verify.add_argument(
+        "--affected-profile",
+        action="append",
+        default=[],
+        help="limit --affected to one or more accepted profiles",
+    )
 
     change_explain = _leaf(change_commands, "explain", command_change_explain)
     change_explain.add_argument("--change-id", required=True)
+    change_explain.add_argument("--impact", action="store_true")
+    change_explain.add_argument("--profile")
 
     review = change_commands.add_parser("review")
     review_commands = review.add_subparsers(dest="review_command", required=True)

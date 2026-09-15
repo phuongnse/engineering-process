@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "id": "verification-impact-assurance",
+  "type": "capability",
+  "summary": "Select and assure verification units from explicit change impact.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/205",
+  "details": {
+    "problem": "A consumer could only choose a whole profile or reuse a whole-profile result, so a small change lacked a standard way to run related verification units. When impact was unclear, an automatic full-suite fallback could hide that dependency reach had not been resolved, while explicit coverage could not yet satisfy a final required profile.",
+    "changes": "Add versioned consumer-owned impactProfiles, deterministic changed-path resolution, change explain --impact, and change verify --affected. Every path must resolve to matching units or the command stops with an explicit re-analysis action; an explicit global pattern is the only broad selection rule. Add a schema-version 2 finalProfiles opt-in so complete explicit coverage can run selected units as final impact-assurance evidence. Policy or candidate changes, missing coverage and unresolved paths fail closed; schema-version 1 policies remain feedback-only.",
+    "affectedPaths": [
+      "schemas/project.schema.json",
+      "schemas/verification-impact-selection.schema.json",
+      "schemas/verification-selection.schema.json",
+      "schemas/run.schema.json",
+      "schemas/receipt.schema.json",
+      "engineering_process/impact.py",
+      "engineering_process/repository.py",
+      "engineering_process/lifecycle.py",
+      "engineering_process/cli.py",
+      "engineering_process/project.py",
+      "process_assets/skills/change-verify/SKILL.md",
+      "process_assets/skills/change-plan/SKILL.md",
+      "SELF_HOSTING.md",
+      "README.md",
+      "tests/test_contracts.py",
+      "tests/test_impact.py",
+      "tests/test_lifecycle.py",
+      "tests/test_skills.py"
+    ],
+    "apply": "Adopt the package release, add impactProfiles to the consumer project policy, map every changed path to one or more independently executable commands, and run change explain --impact before change verify --affected. Opt selected required profiles into schema version 2 finalProfiles only after reviewing complete path coverage and global cross-cutting units; then run change verify --remaining. Resolve every unresolved path by inspecting the diff/dependency reach and updating the consumer-owned mapping or recording an owner decision.",
+    "compatibility": "Backward-compatible opt-in. Existing project files, explicit profile verification, whole-profile reuse, required lifecycle profiles, and final review/release evidence remain supported. Consumers without impactProfiles receive a clear unavailable result, and schema-version 1 policies remain feedback-only.",
+    "notes": "Path patterns are a versioned consumer policy, not a process guess. Overlapping units all run; an explicit global unit may intentionally subsume narrower units after its trigger matches. Affected feedback does not advance the lifecycle or prove final assurance. Final assurance records execution mode and selection identity in the existing lifecycle evidence; it does not create a second lifecycle or infer coverage from filenames, labels, commands, or diagnostics."
+  }
+}

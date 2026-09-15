@@ -110,7 +110,16 @@ class SkillTests(unittest.TestCase):
                 "Approval is impossible",
                 "readiness declaration",
             ),
-            "change-verify": ("do not run every planned production gate", "same snapshot"),
+            "change-verify": (
+                "do not run every planned production gate",
+                "same snapshot",
+                "stage reuse map",
+                "operation-scoped reuse",
+                "new implementation/correction cycle clears verification",
+                "final impact assurance",
+                "finalProfiles",
+                "explicit full-profile refresh",
+            ),
             "change-review": (
                 "Do not block the change merely because unrelated planned capabilities",
                 "Priority records impact if the finding remains unresolved",

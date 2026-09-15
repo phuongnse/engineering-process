@@ -169,7 +169,10 @@ Authors supply narrative fields (`outcome`, `scope`, `compatibility`, `stack`, `
 
 The consumer maps its release records to the packaged `release-notes-data` schema.
 This input belongs to the consumer; it does not replace its versioning policy or
-become another authoritative changelog. For example:
+become another authoritative changelog. A change may include structured `details`
+with `problem`, `changes`, `affectedPaths`, `apply`, `compatibility`, and `notes` so
+the renderer can expose actionable information without relying on an issue range.
+For example:
 
 ```json
 {
@@ -177,7 +180,19 @@ become another authoritative changelog. For example:
   "title": "Example v1.2.1",
   "introduction": "Changes since v1.2.0.",
   "changes": [
-    {"type": "fix", "summary": "Preserve the requested behavior.", "source": "CHANGE-12"}
+    {
+      "type": "fix",
+      "summary": "Preserve the requested behavior.",
+      "source": "CHANGE-12",
+      "details": {
+        "problem": "The requested behavior was lost.",
+        "changes": "Restore the behavior at its owning boundary.",
+        "affectedPaths": ["src/owner.py"],
+        "apply": "Adopt the release; no extra migration is required.",
+        "compatibility": "No breaking change.",
+        "notes": "Existing callers remain supported."
+      }
+    }
   ],
   "sections": {"upgrade": "No migration required."}
 }
@@ -193,8 +208,13 @@ override can reorder/rename groups or require additional sections such as upgrad
 security impact. Update the consumer's data mapping when changing IDs or requirements.
 
 Change summaries are literal text. HTTP(S) source references become links; other
-owned references remain code spans without invented GitHub links. `repositoryUrl`
-can identify the consumer's GitHub repository for compact issue/PR link labels.
+owned references remain code spans without invented GitHub links. When `details` is
+present, the renderer adds labelled Problem, What changed, Where, Apply,
+Compatibility, and Notes lines. `repositoryUrl` can identify the consumer's GitHub
+repository for compact issue/PR link labels. The renderer escapes only Markdown or
+HTML-sensitive syntax in metadata, leaves ordinary punctuation readable, and uses
+ordinary inline-code delimiters for references that contain no backticks. Authors
+must not pre-escape these values.
 The title, introduction, section contents and optional footer are consumer-authored
 Markdown. Export is UTF-8 without BOM using LF. `--data-file` validation compares
 the exact output bytes, including the final newline.

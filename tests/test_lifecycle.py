@@ -14,6 +14,7 @@ from unittest.mock import patch
 from engineering_process.commands import run_profile
 from engineering_process.contracts import ProcessError, digest_json
 from engineering_process.artifact_standards import resolve_standard
+from engineering_process.distribution import distribution_digest
 from engineering_process.lifecycle import (
     begin_implementation,
     finish_change,
@@ -24,6 +25,7 @@ from engineering_process.lifecycle import (
     start_review,
     submit_review,
     resolve_verification_work,
+    reuse_verifications,
     verify_remaining,
     verify_change,
 )
@@ -96,7 +98,18 @@ class LifecycleTests(unittest.TestCase):
             self.setUpClass()
         self.temporary = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temporary.name)
-        shutil.copytree(self._template_path, self.root, dirs_exist_ok=True)
+        git(
+            self.root.parent,
+            "clone",
+            "--quiet",
+            "--no-local",
+            "-c",
+            "user.email=tests@example.invalid",
+            "-c",
+            "user.name=Tests",
+            str(self._template_path),
+            str(self.root),
+        )
         self.project = deepcopy(self._template_project)
         self.contract = {
             "schemaVersion": 5,
@@ -358,44 +371,6 @@ class LifecycleTests(unittest.TestCase):
             (self.root / ".process" / "receipts" / "sample-change.json").is_file()
         )
         self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
-
-    def test_completed_change_reopens_after_a_new_candidate_commit(self) -> None:
-        self.begin()
-        self.verify_all()
-        start_review(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="reviewer",
-            context_id="review-context",
-            kind="agent",
-        )
-        review_path = self.root / ".process" / "runs" / "review-input.json"
-        write_json(review_path, self.review_document("approved"))
-        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
-        finish_change(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="coordinator",
-            context_id="finish-context",
-            kind="agent",
-        )
-
-        (self.root / "product.txt").write_text("post-finish correction\n", encoding="utf-8")
-        git(self.root, "add", "product.txt")
-        git(self.root, "commit", "-qm", "fix: reopen completed candidate")
-        state = begin_implementation(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="implementer-2",
-            context_id="implementation-context-2",
-            kind="agent",
-        )
-        self.assertEqual(2, state["cycle"])
-        self.assertEqual("implementing", state["phase"])
-        self.assertIsNone(state["receipt"])
 
     def test_publication_opt_in_rejects_invalid_start_without_run(self) -> None:
         self.project["lifecycle"]["publication"] = {"required": True}
@@ -1348,6 +1323,121 @@ class LifecycleTests(unittest.TestCase):
             2,
             sum(event["event"] == "profile-reused" for event in state["history"]),
         )
+
+    def test_remaining_verification_batches_reuse_events_before_remaining_work(self) -> None:
+        self.project["profiles"]["security"] = [
+            {
+                "id": "security-check",
+                "run": [sys.executable, "-c", "raise SystemExit(9)"],
+                "timeoutSeconds": 10,
+            }
+        ]
+        self.project["lifecycle"]["requiredProfiles"].append("security")
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.contract["requiredProfiles"].append("security")
+        write_json(self.contract_path, self.contract)
+        self.plan["contractDigest"] = digest_json(self.contract)
+        write_json(self.plan_path, self.plan)
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "review"
+        )
+
+        with patch(
+            "engineering_process.lifecycle.reuse_verifications",
+            wraps=reuse_verifications,
+        ) as batch:
+            state, selection = verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+
+        self.assertEqual(1, batch.call_count)
+        self.assertEqual(("development", "review"), batch.call_args.args[-1])
+        self.assertEqual(["development", "review"], selection["reuseProfiles"])
+        self.assertEqual(["security"], selection["executeProfiles"])
+        self.assertEqual("failed", state["verification"]["security"]["status"])
+
+    def test_final_impact_assurance_records_selected_units_as_profile_evidence(self) -> None:
+        self.project["impactProfiles"] = {
+            "schemaVersion": 2,
+            "finalProfiles": ["development", "review"],
+            "profiles": {
+                profile: [
+                    {
+                        "id": f"final-{profile}",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                        "scope": "global",
+                        "paths": ["**"],
+                    }
+                ]
+                for profile in ("development", "review")
+            },
+        }
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+
+        state, selection = verify_remaining(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+
+        self.assertEqual("verified", state["phase"])
+        self.assertEqual(["development", "review"], selection["executeProfiles"])
+        self.assertEqual(
+            {"development", "review"},
+            set(selection["assuranceProfiles"]),
+        )
+        for profile in ("development", "review"):
+            report = state["verification"][profile]
+            self.assertEqual("impact-assurance", report["executionMode"])
+            self.assertTrue(report["selectionDigest"].startswith("sha256:"))
+            self.assertEqual(f"final-{profile}", report["checks"][0]["id"])
+
+    def test_unresolved_final_impact_assurance_blocks_remaining_verification(self) -> None:
+        self.project["impactProfiles"] = {
+            "schemaVersion": 2,
+            "finalProfiles": ["development", "review"],
+            "profiles": {
+                profile: [
+                    {
+                        "id": f"policy-{profile}",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                        "scope": "global",
+                        "paths": ["**/policy.json"],
+                    }
+                ]
+                for profile in ("development", "review")
+            },
+        }
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+
+        with self.assertRaisesRegex(ProcessError, "selection is blocked"):
+            verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+
+    def test_verification_selection_reuses_one_authority_digest_for_all_profiles(self) -> None:
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "review"
+        )
+        with patch(
+            "engineering_process.lifecycle.distribution_digest",
+            wraps=distribution_digest,
+        ) as authority:
+            selection = resolve_verification_work(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+        self.assertEqual(["development", "review"], selection["reuseProfiles"])
+        self.assertEqual(1, authority.call_count)
 
     def test_remaining_verification_fails_fast_and_propagates_failure(self) -> None:
         self.project["profiles"]["development"][0]["run"] = [

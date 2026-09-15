@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "id": "verification-stage-reuse",
+  "type": "fix",
+  "summary": "Batch reusable verification evidence across lifecycle stages.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/198",
+  "details": {
+    "problem": "Continuation verification could make repeated reuse decisions and authority calculations one profile at a time even when several reports already covered the same unchanged candidate.",
+    "changes": "Batch valid whole-profile reuse decisions into one canonical state write and reuse one process-authority digest across stable evidence comparisons. Preserve the selected runtime path spelling and virtual-environment symlinks across POSIX and Windows while retaining fresh candidate snapshots, runtime identity checks, explicit refresh semantics, and correction-cycle invalidation.",
+    "affectedPaths": [
+      "engineering_process/evidence.py",
+      "engineering_process/lifecycle.py",
+      "engineering_process/pr_description.py",
+      "process_assets/skills/change-verify/SKILL.md",
+      "README.md",
+      "tests/test_lifecycle.py",
+      "tests/test_skills.py"
+    ],
+    "apply": "Use change verify --remaining for continuation work. The process reuses only exact valid reports and records reuse without relaunching their child commands.",
+    "compatibility": "No breaking change. Explicit profile verification remains an unconditional refresh; stale, legacy, or mismatched evidence reruns; final review and finish still require exact-snapshot evidence.",
+    "notes": "The optimization is operation-scoped and does not add a persistent success cache or reuse evidence across a changed candidate, mutation boundary, or incompatible runtime. Runtime path normalization no longer dereferences the selected executable before constructing the bounded child PATH."
+  }
+}
