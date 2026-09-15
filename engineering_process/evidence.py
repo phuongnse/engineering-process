@@ -77,7 +77,7 @@ def execution_identity(
         }
     runtime_executable = Path(
         sys.executable if executable is None else executable
-    ).resolve()
+    ).absolute()
     return {
         "executable": str(runtime_executable),
         "python": sys.version,
