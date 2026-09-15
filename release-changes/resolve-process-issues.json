@@ -2,6 +2,6 @@
   "schemaVersion": 1,
   "id": "resolve-process-issues",
   "type": "capability",
-  "summary": "Add safe continuation verification and canonical lifecycle facts for pull-request evidence, with clearer adoption, feedback, reviewer-recovery, and standards guidance.",
+  "summary": "Resolve process issues #197-#205: durable feedback and review recovery, snapshot and test cost, guidance authority, PR evidence, adoption scope, CI repetition, and necessary verification.",
   "source": "https://github.com/phuongnse/engineering-process/issues/205"
 }
