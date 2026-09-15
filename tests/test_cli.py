@@ -9,7 +9,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engineering_process.cli import build_parser, command_change_review_start, main
+from engineering_process.cli import (
+    build_parser,
+    command_change_review_start,
+    command_change_verify,
+    main,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +50,107 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual("rust", args.profile)
         self.assertEqual(2, args.check_position)
+
+    def test_change_verify_supports_remaining_and_explain_commands(self) -> None:
+        remaining = build_parser().parse_args(
+            ["change", "verify", "--change-id", "sample-change", "--remaining"]
+        )
+        self.assertTrue(remaining.remaining)
+        self.assertIsNone(remaining.profile)
+        explain = build_parser().parse_args(
+            ["change", "explain", "--change-id", "sample-change"]
+        )
+        self.assertEqual("sample-change", explain.change_id)
+
+    def test_remaining_command_propagates_failed_execution(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+            "verification": {
+                "development": {
+                    "status": "failed",
+                    "checks": [],
+                }
+            },
+        }
+        selection = {
+            "executeProfiles": ["development"],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=True,
+            profile=None,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_remaining",
+            return_value=(state, selection),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
+        self.assertEqual(["development"], result["failures"])
+
+    def test_remaining_command_fails_when_lifecycle_is_still_incomplete(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+            "verification": {},
+        }
+        selection = {
+            "executeProfiles": [],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=True,
+            profile=None,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_remaining",
+            return_value=(state, selection),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
+
+    def test_remaining_command_requires_every_required_profile_in_verified_state(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "verified",
+            "cycle": 1,
+            "contract": {"document": {"requiredProfiles": ["development", "review"]}},
+            "verification": {
+                "development": {"status": "passed", "checks": []},
+            },
+        }
+        selection = {
+            "executeProfiles": [],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=True,
+            profile=None,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_remaining",
+            return_value=(state, selection),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
 
     def test_skills_validate_emits_machine_readable_result(self) -> None:
         output = io.StringIO()

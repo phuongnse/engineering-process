@@ -62,6 +62,16 @@ but cannot establish native conversation freshness or inspect removed history,
 other clones or other repositories. Keep native creation, non-inherited dispatch
 and effective settings evidence in the existing handoff.
 
+Verification keeps two caller intents explicit. `change verify --profile PROFILE`
+always refreshes the named profile. `change explain` is read-only; it shows the
+accepted required profiles, valid prior evidence, remaining work, inapplicable
+optional profiles, and blocked or unknown decisions. `change verify --remaining`
+executes only remaining work and reuses a complete profile report only when the
+candidate, contract/plan, project policy, process authority, runtime, and bounded
+child environment match. Legacy evidence without that identity reruns. This is
+whole-profile reuse: equal check IDs and ordered side effects are never merged, and
+the lifecycle receipt still records only actual executions.
+
 `processctl change review replace-reused` repairs only an initial pending assignment
 proven to reuse another change's agent context, before a submitted review or normal
 report file exists. It validates a fresh replacement and current verification,
@@ -477,6 +487,14 @@ Register implementation and run every required profile:
       --context change-123
     processctl change verify --change-id change-123 --profile development
     processctl change verify --change-id change-123 --profile review
+
+When continuing an incomplete verification, inspect and execute the necessary set:
+
+    processctl change explain --change-id change-123
+    processctl change verify --change-id change-123 --remaining
+
+The explicit `--profile` form remains a refresh and is never silently converted to
+reuse.
 
 Assign an independent reviewer and submit its report:
 

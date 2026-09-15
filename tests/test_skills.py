@@ -143,11 +143,13 @@ class SkillTests(unittest.TestCase):
         for fragment in (
             "fix or safely block the current consumer change",
             "gh issue list --repo phuongnse/engineering-process",
+            "--state all",
             "Search before creating",
             "only after explicit authorization",
             "gh issue create --repo phuongnse/engineering-process",
             "Do not run issue creation from consumer CI",
             "open-issue search URL containing the complete stable key",
+            "all issue states",
             "must search and reuse an\nexisting issue before manual submission",
             "use its URL as the process change `source`",
             "a `shared-process` disposition cannot submit without that\n`recordUrl`",

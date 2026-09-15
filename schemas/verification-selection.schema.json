@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://engineering-process.invalid/schemas/verification-selection.schema.json",
+  "title": "Verification selection explanation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "changeId", "phase", "status", "checkpoint", "requirements", "executeProfiles", "reuseProfiles", "inapplicableProfiles", "blockedProfiles"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "changeId": {"$ref": "#/$defs/id"},
+    "phase": {"enum": ["specified", "planned", "implementing", "verified", "review-pending", "approved", "changes-requested", "completed", "blocked"]},
+    "status": {"enum": ["ready", "blocked"]},
+    "checkpoint": {"$ref": "#/$defs/checkpoint"},
+    "requirements": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/requirement"}
+    },
+    "executeProfiles": {"$ref": "#/$defs/profileList"},
+    "reuseProfiles": {"$ref": "#/$defs/profileList"},
+    "inapplicableProfiles": {"$ref": "#/$defs/profileList"},
+    "blockedProfiles": {"$ref": "#/$defs/profileList"}
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+    },
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "fingerprint", "fileCount", "byteCount"],
+      "properties": {
+        "head": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+        "fingerprint": {"$ref": "#/$defs/digest"},
+        "fileCount": {"type": "integer", "minimum": 0},
+        "byteCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "profileList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkpoint", "recordedAt"],
+      "properties": {
+        "checkpoint": {"$ref": "#/$defs/checkpoint"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "inputDigest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "profile", "status", "action", "reason"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "profile": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["remaining", "satisfied", "inapplicable", "blocked", "unknown"]},
+        "action": {"enum": ["execute", "reuse", "skip", "blocked"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    }
+  }
+}

@@ -69,6 +69,11 @@ jobs:
 
   test:
     name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       (github.event.action != 'edited' || github.event.changes.base) &&
+       github.event.action != 'converted_to_draft')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

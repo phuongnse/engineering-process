@@ -3,39 +3,113 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Iterator
 
 from .contracts import ProcessError
+from .evidence import child_environment, execution_identity as _execution_identity
 from .supervision import process_supervisor
 
 
 DEFAULT_OUTPUT_BYTES = 1_000_000
 TERMINATION_SECONDS = 2
-SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "PRIVATE_KEY")
 _EXECUTION_LOCK = threading.Lock()
 
 
 def _child_environment() -> dict[str, str]:
-    environment: dict[str, str] = {}
-    for name, value in os.environ.items():
-        upper = name.upper()
-        if name in {"PYTHONHOME", "PYTHONPATH"}:
-            continue
-        if any(marker in upper for marker in SECRET_MARKERS):
-            continue
-        environment[name] = value
-    runtime_directory = str(Path(sys.executable).absolute().parent)
-    inherited_path = environment.get("PATH", "")
-    environment["PATH"] = os.pathsep.join(
-        entry for entry in (runtime_directory, inherited_path) if entry
+    return child_environment(executable=sys.executable)
+
+
+def execution_identity() -> dict[str, Any]:
+    """Return the bounded runtime inputs used to launch consumer checks."""
+    return _execution_identity(executable=sys.executable)
+
+
+_LOCK_OWNERS = threading.local()
+
+
+@contextmanager
+def verification_lock(path: Path) -> Iterator[None]:
+    """Prevent concurrent lifecycle requests from dispatching verification twice."""
+    lock_path = (
+        path.parent / ".verification.lock"
+        if os.name == "nt"
+        else path.parent
     )
-    environment["PYTHONUNBUFFERED"] = "1"
-    return environment
+    resolved = lock_path.resolve()
+    holders = getattr(_LOCK_OWNERS, "holders", None)
+    if holders is None:
+        holders = _LOCK_OWNERS.holders = {}
+
+    if resolved in holders:
+        holders[resolved] += 1
+        try:
+            yield
+        finally:
+            holders[resolved] -= 1
+            if holders[resolved] == 0:
+                del holders[resolved]
+        return
+
+    if os.name == "nt":
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    else:
+        # Lock the run directory itself so replacing a profile lock entry cannot
+        # create a second lock inode while this operation is active.
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as error:
+        raise ProcessError(f"cannot open verification lock: {error}") from error
+    locked = False
+    try:
+        if os.name == "nt":
+            opened = os.fstat(descriptor)
+            current = os.stat(lock_path)
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise ProcessError("verification lock was replaced while opening")
+            import msvcrt
+            if os.fstat(descriptor).st_size == 0:
+                os.write(descriptor, b"0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        locked = True
+        if os.name == "nt":
+            current = os.stat(lock_path)
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise ProcessError("verification lock was replaced while acquiring")
+    except OSError as error:
+        os.close(descriptor)
+        raise ProcessError("verification for this profile is already running") from error
+    except ProcessError:
+        os.close(descriptor)
+        raise
+    holders[resolved] = 1
+    try:
+        yield
+    finally:
+        del holders[resolved]
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
 
 class _OutputBudget:
@@ -221,6 +295,7 @@ def run_profile(
             )
         checks = [configured_checks[check_position - 1]]
         positions = [check_position]
+    started = time.monotonic()
     reports: list[dict[str, Any]] = []
     failed_position: int | None = None
     for position, check in zip(positions, checks, strict=True):
@@ -234,6 +309,7 @@ def run_profile(
         "status": "passed" if len(reports) == len(checks) and all(
             report["status"] == "passed" for report in reports
         ) else "failed",
+        "durationMs": 0,
         "scope": (
             {"kind": "profile"}
             if check_position is None
@@ -245,6 +321,7 @@ def run_profile(
         ),
         "checks": reports,
     }
+    result["durationMs"] = int((time.monotonic() - started) * 1000)
     failed = next((report for report in reports if report["status"] == "failed"), None)
     if failed is not None:
         assert failed_position is not None

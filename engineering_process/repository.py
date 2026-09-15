@@ -104,6 +104,9 @@ def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
         )
 
 
+_FILE_DIGEST_CACHE: dict[tuple[str, int, int, int, int, int, int], bytes] = {}
+
+
 def repository_snapshot(root: Path) -> dict[str, Any]:
     root = root.resolve()
     if not (root / ".git").exists():
@@ -150,14 +153,34 @@ def repository_snapshot(root: Path) -> dict[str, Any]:
                     raise ProcessError(
                         f"{relative}: snapshot file exceeds {MAX_FILE_BYTES} bytes"
                     )
-                file_digest = hashlib.sha256()
-                try:
-                    with path.open("rb") as stream:
-                        while chunk := stream.read(1024 * 1024):
-                            file_digest.update(chunk)
-                except OSError as error:
-                    raise ProcessError(f"cannot read {relative}: {error}") from error
-                data_digest = file_digest.digest()
+                cache_key = (
+                    str(path),
+                    info.st_dev,
+                    info.st_ino,
+                    mode,
+                    size,
+                    info.st_mtime_ns,
+                    info.st_ctime_ns,
+                )
+                # Windows exposes creation time as st_ctime, so stat identity is
+                # not a reliable mutation signal there; preserve exactness by
+                # bypassing the cache on that platform.
+                data_digest = (
+                    None
+                    if os.name == "nt"
+                    else _FILE_DIGEST_CACHE.get(cache_key)
+                )
+                if data_digest is None:
+                    file_digest = hashlib.sha256()
+                    try:
+                        with path.open("rb") as stream:
+                            while chunk := stream.read(1024 * 1024):
+                                file_digest.update(chunk)
+                    except OSError as error:
+                        raise ProcessError(f"cannot read {relative}: {error}") from error
+                    data_digest = file_digest.digest()
+                    if os.name != "nt" and len(_FILE_DIGEST_CACHE) < MAX_FILES * 2:
+                        _FILE_DIGEST_CACHE[cache_key] = data_digest
             elif stat.S_ISDIR(info.st_mode):
                 kind = b"directory"
                 submodule_head = _git(

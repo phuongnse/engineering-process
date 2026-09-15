@@ -47,7 +47,7 @@ PR. Removing them requires the next package major.
 
 ## Skill namespace migration
 
-The next major release renames the eight delivery/process skills together:
+Version 2.0 renamed the eight delivery/process skills together (current in 2.x):
 
 | Previous identifier | New identifier |
 | --- | --- |
@@ -60,23 +60,25 @@ The next major release renames the eight delivery/process skills together:
 | finish-change | change-complete |
 | improve-process | process-improve |
 
-`production-engineering` keeps its name. The new catalog has one delivery entrypoint,
+`production-engineering` keeps its name. The 2.x catalog has one delivery entrypoint,
 `deliver-change`, six phase skills, and two specializations. Old identifiers are not
-aliases in the new catalog. CLI commands, persisted lifecycle states and schemas,
+aliases in the 2.x catalog. CLI commands, persisted lifecycle states and schemas,
 independent-review requirements, and completion receipts are unchanged;
 `change-complete` still calls `processctl change finish`. The existing read-only
-publication and `doctor --profile` adapters remain available.
+publication and `doctor --profile` adapters remain available for pre-1.0 consumer CI
+compatibility.
 
-Adopt the released package through the normal hash-locked dependency pull request.
+Adoption of 2.x releases occurs through the normal hash-locked dependency pull request.
 Adoption replaces the old owned skill files, writes the new catalog and lock inventory,
 and updates the managed AGENTS block. It preserves consumer-owned files, including
 files inside the old directories, and rejects conflicting files at new managed paths.
-Consumers must update their own explicit skill invocations and custom references using
-the mapping above. Restart an existing agent session after adoption so its catalog
-matches the installed release. To return to the previous catalog, restore the prior
-package pin/hash lock and run that release's adoption transaction.
+Consumers update explicit skill invocations and custom references using the mapping above.
+Restart an existing agent session after adoption so its catalog matches the installed release.
+To return to a previous catalog, restore the prior package pin/hash lock and run that release's
+adoption transaction.
 
 The producer checkout retains its currently adopted `.agents/skills`, process lock,
-and managed AGENTS block until the public adoption pull request. Their old identifiers,
-the migration fixtures, and historical evidence remain intentional references to the
-previous release; next-distribution sources and documentation use the new catalog.
+and managed AGENTS block until each public adoption pull request. Their state under
+`.agents/skills` represents the currently adopted release; next-distribution sources
+under `process_assets/skills` represent the next release candidate. Historical fixtures
+and migration evidence remain intentional references to earlier releases.

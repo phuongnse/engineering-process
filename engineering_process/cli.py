@@ -38,6 +38,8 @@ from .lifecycle import (
     start_change,
     start_review,
     submit_review,
+    resolve_verification_work,
+    verify_remaining,
     verify_change,
 )
 from .issue import render_issue
@@ -53,7 +55,13 @@ from .publication_compat import (
     validate_range,
 )
 from .release import validate_release
-from .pr_description import body_issues, render_description, render_renovate_preset, render_template
+from .pr_description import (
+    body_issues,
+    build_pr_description_data,
+    render_description,
+    render_renovate_preset,
+    render_template,
+)
 from .release_notes import render_notes
 from .repository import repository_snapshot, same_checkpoint
 from .skills import validate_skills
@@ -87,9 +95,16 @@ def _result(command: str, status: str = "passed", **details: Any) -> dict[str, A
     return {"command": command, "status": status, **details}
 
 
-def _state_result(command: str, state: dict[str, Any], **details: Any) -> dict[str, Any]:
+def _state_result(
+    command: str,
+    state: dict[str, Any],
+    *,
+    status: str = "passed",
+    **details: Any,
+) -> dict[str, Any]:
     return _result(
         command,
+        status=status,
         changeId=state["changeId"],
         phase=state["phase"],
         cycle=state["cycle"],
@@ -312,6 +327,54 @@ def command_change_implement(args: argparse.Namespace) -> Result:
 def command_change_verify(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
+    if args.remaining:
+        state, selection = verify_remaining(
+            args.project_root, process_root, project, args.change_id
+        )
+        executions = []
+        failures = []
+        for profile in selection["executeProfiles"]:
+            report = state["verification"].get(profile)
+            if report is None:
+                failures.append(profile)
+                continue
+            if report["status"] != "passed":
+                failures.append(profile)
+            check_duration = sum(check["durationMs"] for check in report["checks"])
+            executions.append(
+                {
+                    "profile": profile,
+                    "status": report["status"],
+                    "launchCount": len(report["checks"]),
+                    "durationMs": report.get("durationMs", check_duration),
+                    "checkDurationMs": check_duration,
+                    "processOverheadMs": max(
+                        0, report.get("durationMs", check_duration) - check_duration
+                    ),
+                }
+            )
+        contract = state.get("contract", {})
+        required_profiles = (
+            contract.get("document", {}).get("requiredProfiles", [])
+            if isinstance(contract, dict)
+            else []
+        )
+        verification = state.get("verification", {})
+        required_profiles_passed = bool(required_profiles) and all(
+            isinstance(verification.get(profile), dict)
+            and verification[profile].get("status") == "passed"
+            for profile in required_profiles
+        )
+        complete = state["phase"] == "verified" and required_profiles_passed
+        return _state_result(
+            "change verify",
+            state,
+            status="passed" if complete and not failures else "failed",
+            selection=selection,
+            execution="remaining",
+            executions=executions,
+            failures=failures,
+        ), (0 if complete and not failures else 1)
     state, report = verify_change(
         args.project_root, process_root, project, args.change_id, args.profile
     )
@@ -319,6 +382,15 @@ def command_change_verify(args: argparse.Namespace) -> Result:
     return _state_result(
         "change verify", state, profile=args.profile, profileStatus=report["status"]
     ), code
+
+
+def command_change_explain(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    project = load_project(args.project_root, process_root)
+    selection = resolve_verification_work(
+        args.project_root, process_root, project, args.change_id
+    )
+    return _result("change explain", selection=selection), 0
 
 
 def command_change_review_start(args: argparse.Namespace) -> Result:
@@ -434,13 +506,37 @@ def command_artifact(args: argparse.Namespace) -> Result:
                 f"{standard.document['adapter']} state must be "
                 + " or ".join(sorted(allowed_states))
             )
-        data = load_and_validate(args.data_file, standard.document["adapter"] + "-data", schema_root=schemas_root(process_root)) if args.data_file is not None else None
+        if getattr(args, "change_id", None) is not None and standard.document["adapter"] == "pr-description":
+            overrides = (
+                load_and_validate(
+                    args.data_file,
+                    "pr-description-data",
+                    schema_root=schemas_root(process_root),
+                )
+                if args.data_file is not None
+                else None
+            )
+            data = build_pr_description_data(
+                args.project_root,
+                process_root,
+                args.change_id,
+                overrides=overrides,
+                standard=standard,
+            )
+        elif args.data_file is not None:
+            data = load_and_validate(
+                args.data_file,
+                standard.document["adapter"] + "-data",
+                schema_root=schemas_root(process_root),
+            )
+        else:
+            data = None
         if data is not None:
             renderer = {"pr-description": render_description, "release-notes": render_notes, "automation-name": render_name, "issue": render_issue}[standard.document["adapter"]]
             payload = renderer(standard, data, state=state, process_root=process_root).encode("utf-8")
             details["dataDigest"] = digest_json(data)
         elif operation == "render" or standard.document["adapter"] != "pr-description":
-            raise ProcessError("this artifact operation requires --data-file")
+            raise ProcessError("this artifact operation requires --data-file or --change-id")
         if operation == "validate":
             actual = read_document(args.body_file)
             if data is None:
@@ -458,6 +554,38 @@ def command_artifact(args: argparse.Namespace) -> Result:
         details["content"] = payload.decode("utf-8")
     status = "failed" if issues else "passed"
     return _result(f"artifact {operation}", status, **details, issues=issues), (1 if issues else 0)
+
+
+def command_artifact_prepare_pr_data(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    standard = resolve_standard(args.project_root, process_root, "pull-request")
+    overrides = (
+        load_and_validate(
+            args.data_file,
+            "pr-description-data",
+            schema_root=schemas_root(process_root),
+        )
+        if args.data_file is not None
+        else None
+    )
+    data = build_pr_description_data(
+        args.project_root,
+        process_root,
+        args.change_id,
+        overrides=overrides,
+        standard=standard,
+    )
+    payload = formatted_json_bytes(data)
+    details: dict[str, Any] = {
+        "changeId": args.change_id,
+        "dataDigest": digest_json(data),
+    }
+    if args.output is not None:
+        args.output.write_bytes(payload)
+        details["output"] = str(args.output)
+    else:
+        details["data"] = data
+    return _result("artifact prepare-pr-data", "passed", **details), 0
 
 
 def _add_common(parser: argparse.ArgumentParser, *, project: bool = True) -> None:
@@ -536,7 +664,12 @@ def build_parser() -> argparse.ArgumentParser:
     change_implement.add_argument("--change-id", required=True)
     change_verify = _leaf(change_commands, "verify", command_change_verify)
     change_verify.add_argument("--change-id", required=True)
-    change_verify.add_argument("--profile", required=True)
+    verify_scope = change_verify.add_mutually_exclusive_group(required=True)
+    verify_scope.add_argument("--profile")
+    verify_scope.add_argument("--remaining", action="store_true")
+
+    change_explain = _leaf(change_commands, "explain", command_change_explain)
+    change_explain.add_argument("--change-id", required=True)
 
     review = change_commands.add_parser("review")
     review_commands = review.add_subparsers(dest="review_command", required=True)
@@ -564,12 +697,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     artifact = commands.add_parser("artifact", help="Generate and verify consumer-selected artifact standards")
     artifact_commands = artifact.add_subparsers(dest="artifact_command", required=True)
+    prepare_pr_data = _leaf(artifact_commands, "prepare-pr-data", command_artifact_prepare_pr_data)
+    prepare_pr_data.add_argument("--change-id", required=True)
+    prepare_pr_data.add_argument("--data-file", type=Path)
+    prepare_pr_data.add_argument("--output", type=Path)
     for name in ("show", "template", "renovate-preset", "render", "validate"):
         leaf = _leaf(artifact_commands, name, command_artifact)
         leaf.add_argument("--artifact", required=True)
         if name in {"render", "validate"}:
             leaf.add_argument("--state", choices=("draft", "ready", "open", "closed"))
-            leaf.add_argument("--data-file", type=Path, required=name == "render")
+            leaf.add_argument("--change-id")
+            leaf.add_argument("--data-file", type=Path, required=False)
         if name == "validate":
             leaf.add_argument("--body-file", type=Path, required=True)
         else:

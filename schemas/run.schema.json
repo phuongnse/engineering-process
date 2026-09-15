@@ -206,6 +206,8 @@
       "properties": {
         "profile": {"$ref": "#/$defs/id"},
         "status": {"enum": ["passed", "failed"]},
+        "durationMs": {"type": "integer", "minimum": 0},
+        "inputDigest": {"$ref": "#/$defs/digest"},
         "scope": {"$ref": "#/$defs/verificationScope"},
         "diagnostic": {"$ref": "#/$defs/diagnostic"},
         "checks": {

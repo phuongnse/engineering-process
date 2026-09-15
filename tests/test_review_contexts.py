@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError, digest_json, read_json, validate_document
+from engineering_process.commands import _child_environment
 from engineering_process.lifecycle import (
     begin_implementation, finish_change, register_plan, start_change,
     start_review, submit_review, verify_change,
@@ -384,7 +385,8 @@ class ReviewContextTests(unittest.TestCase):
                     "--context", "one-native-context", "--json",
                 ]
                 processes.append(subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                  env=_child_environment()))
             outputs = [process.communicate(timeout=45) for process in processes]
             self.assertEqual([0, 2], sorted(process.returncode for process in processes), outputs)
             rejected = next(stdout for process, (stdout, _) in zip(processes, outputs) if process.returncode)
@@ -494,7 +496,7 @@ class ReviewContextTests(unittest.TestCase):
             [sys.executable, str(PROCESS_ROOT / "processctl.py"), "change", "review", "replace-reused",
              "--project-root", str(self.root), "--process-root", str(PROCESS_ROOT),
              "--change-id", "current", "--actor", "new-reviewer", "--context", "new-context", "--json"],
-            capture_output=True, timeout=45, check=False,
+            capture_output=True, timeout=45, check=False, env=_child_environment(),
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         output = json.loads(result.stdout)

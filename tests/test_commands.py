@@ -9,13 +9,21 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import threading
 import time
 import unittest
 import venv
 from unittest.mock import Mock, patch
 
-from engineering_process.commands import _child_environment, run_check, run_profile
+from engineering_process.commands import (
+    _child_environment,
+    execution_identity,
+    run_check,
+    run_profile,
+    verification_lock,
+)
 from engineering_process.contracts import ProcessError
+from engineering_process.evidence import execution_identity as evidence_execution_identity
 from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
@@ -48,6 +56,52 @@ def windows_process_is_running(process_id: int) -> bool:
 
 
 class CommandTests(unittest.TestCase):
+    def test_verification_lock_rejects_concurrent_holder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "verification.lock"
+            started = threading.Event()
+            release = threading.Event()
+
+            def holder() -> None:
+                with verification_lock(path):
+                    started.set()
+                    release.wait(5)
+
+            thread = threading.Thread(target=holder)
+            thread.start()
+            self.assertTrue(started.wait(5))
+            try:
+                with self.assertRaisesRegex(ProcessError, "already running"):
+                    with verification_lock(path):
+                        pass
+            finally:
+                release.set()
+                thread.join(5)
+            with verification_lock(path):
+                pass
+
+    def test_verification_lock_is_reentrant_and_ignores_profile_file_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.lock"
+            with verification_lock(path):
+                with verification_lock(path):
+                    pass
+                path.unlink(missing_ok=True)
+                result: list[BaseException] = []
+
+                def contender() -> None:
+                    try:
+                        with verification_lock(path):
+                            pass
+                    except BaseException as error:  # noqa: BLE001 - assert the bounded race result
+                        result.append(error)
+
+                thread = threading.Thread(target=contender)
+                thread.start()
+                thread.join(5)
+                self.assertEqual(1, len(result))
+                self.assertIsInstance(result[0], ProcessError)
+
     def test_child_path_prefers_the_process_runtime_and_preserves_caller_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / ("python.exe" if os.name == "nt" else "python")
@@ -74,9 +128,9 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", environment)
         self.assertNotIn("SERVICE_TOKEN", environment)
 
-    def test_child_path_omits_an_empty_inherited_entry(self) -> None:
+    def test_child_path_does_not_reintroduce_an_empty_inherited_entry(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(
-            os.environ, {"PATH": ""}, clear=True
+            os.environ, {"PATH": "", "EMPTY_BINDING": ""}, clear=True
         ), patch(
             "engineering_process.commands.sys.executable",
             str(Path(directory) / "python"),
@@ -84,6 +138,61 @@ class CommandTests(unittest.TestCase):
             environment = _child_environment()
 
         self.assertNotIn("", environment["PATH"].split(os.pathsep))
+        self.assertIn("EMPTY_BINDING", environment)
+        self.assertEqual("", environment["EMPTY_BINDING"])
+
+    def test_runtime_identity_preserves_duplicate_dependencies(self) -> None:
+        class Distribution:
+            name = "duplicate-fixture"
+            version = "1.0"
+
+            def locate_file(self, _relative: str) -> Path:
+                return Path("fixture-site")
+
+        with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False), patch(
+            "engineering_process.evidence.metadata.distributions",
+            return_value=[Distribution(), Distribution()],
+        ):
+            identity = execution_identity()
+
+        self.assertEqual(2, identity["dependencies"]["count"])
+        self.assertIn("EMPTY_BINDING", identity["environment"])
+        self.assertEqual("", identity["environment"]["EMPTY_BINDING"])
+
+    def test_runtime_identity_matches_bounded_child(self) -> None:
+        with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False):
+            parent = execution_identity()
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import json; from engineering_process.commands import execution_identity; "
+                    "print(json.dumps(execution_identity(), sort_keys=True))",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+                env=_child_environment(),
+            )
+
+        self.assertEqual(parent, json.loads(child.stdout))
+
+    def test_runtime_identity_preserves_selected_executable_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(sys.executable).absolute()
+            alias = Path(directory) / ("python.exe" if os.name == "nt" else "python")
+            try:
+                alias.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"executable symlink unavailable: {error}")
+            identity = evidence_execution_identity(executable=alias)
+
+        selected = alias.absolute()
+        self.assertEqual(str(selected), identity["executable"])
+        self.assertEqual(
+            str(selected.parent), identity["environment"]["PATH"].split(os.pathsep)[0]
+        )
 
     def test_bare_runtime_command_uses_the_process_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

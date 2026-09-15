@@ -322,7 +322,12 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", adopted_job)
         for field in ("head.ref", "title", "body", "draft", "base.sha", "head.sha"):
             self.assertIn(f"github.event.pull_request.{field}", adopted_job)
-        self.assertNotIn("github.event.action", workflow)
+        self.assertNotIn("github.event.action", adopted_job)
+
+        test_job = workflow.split("  test:\n", maxsplit=1)[1]
+        self.assertIn("github.event_name == 'push'", test_job)
+        self.assertIn("github.event.action != 'edited' || github.event.changes.base", test_job)
+        self.assertIn("github.event.action != 'converted_to_draft'", test_job)
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-pr.yml"
