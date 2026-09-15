@@ -58,8 +58,10 @@ declares independently executable units, exact argument-array commands, and norm
 path patterns for feedback. A version 2 policy may additionally name required
 `finalProfiles`; those profiles explicitly assert that their selected units are
 complete final assurance, and each must contain an explicit `scope: "global"` unit
-for cross-cutting reach. A unit with `scope: "global"` is a deliberate global rule;
-its patterns are only its trigger. The process computes paths from the pinned
+whose paths include the universal `**` pattern for cross-cutting reach. A unit with
+`scope: "global"` is a deliberate global rule only when that universal pattern is
+declared; narrower patterns never cover unrelated paths. The process computes paths
+from the pinned
 comparison base through the current candidate and selects every matching unit in
 declared order.
 

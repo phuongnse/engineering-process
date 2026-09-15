@@ -165,7 +165,22 @@
             "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"scope": {"const": "global"}},
+            "required": ["scope"]
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "contains": {"const": "**"}
+              }
+            }
+          }
+        }
+      ]
     },
     "readiness": {
       "type": "object",

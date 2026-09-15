@@ -164,7 +164,7 @@ class ImpactSelectionTests(unittest.TestCase):
             self.assertEqual([], selection["selectedUnits"])
             self.assertIn("not declared", selection["resolution"]["reason"])
 
-    def test_explicit_global_unit_subsumes_narrower_units(self) -> None:
+    def test_partial_global_unit_does_not_hide_unmapped_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             base = self.make_repository(root)
@@ -172,8 +172,12 @@ class ImpactSelectionTests(unittest.TestCase):
             (root / "config" / "policy.json").write_text("policy\n", encoding="utf-8")
             (root / "unknown.txt").write_text("unknown\n", encoding="utf-8")
             selection = resolve_impact_selection(root, ROOT, self.project(), self.state(base))
-            self.assertEqual("ready", selection["status"])
+            self.assertEqual("unresolved", selection["status"])
             self.assertEqual(["global-tests"], [item["id"] for item in selection["selectedUnits"]])
+            self.assertEqual(
+                [{"profile": "development", "path": "unknown.txt"}],
+                selection["unresolvedPaths"],
+            )
 
     def test_lookup_rejects_policy_mutation(self) -> None:
         with self.assertRaisesRegex(ProcessError, "changed while resolving"):
@@ -291,6 +295,77 @@ class ImpactSelectionTests(unittest.TestCase):
                     root, ROOT, {}, "sample-change", profiles=("development",)
                 )
             self.assertEqual(["first"], calls)
+            self.assertEqual("failed", executions[0]["status"])
+            self.assertEqual("repository-immutability", executions[0]["units"][-1]["id"])
+
+    def test_affected_selection_detects_mutation_before_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.make_repository(root)
+            state = self.lifecycle_state(base)
+            project = {"lifecycle": {"requiredProfiles": ["development"]}}
+            selection = {
+                "status": "ready",
+                "changeId": "sample-change",
+                "changedPaths": ["src/app.py"],
+                "selectedUnits": [
+                    {
+                        "profile": "development",
+                        "id": "first",
+                        "matchedPaths": ["src/app.py"],
+                    }
+                ],
+            }
+            units = {
+                ("development", "first"): {
+                    "id": "first",
+                    "run": ["python"],
+                    "timeoutSeconds": 1,
+                }
+            }
+            before = {
+                "head": base,
+                "fingerprint": "sha256:" + "1" * 64,
+                "fileCount": 1,
+                "byteCount": 1,
+            }
+            after = {
+                "head": base,
+                "fingerprint": "sha256:" + "2" * 64,
+                "fileCount": 2,
+                "byteCount": 2,
+            }
+
+            def select(*_args, **_kwargs):
+                (root / "race.txt").write_text("added during selection\n", encoding="utf-8")
+                return selection
+
+            def snapshot(_root: Path) -> dict:
+                return after if (root / "race.txt").exists() else before
+
+            with patch("engineering_process.lifecycle._load_state", return_value=state), patch(
+                "engineering_process.lifecycle.load_project", return_value=project
+            ), patch("engineering_process.lifecycle.verification_lock", return_value=nullcontext()), patch(
+                "engineering_process.lifecycle._require_current_baseline"
+            ), patch(
+                "engineering_process.lifecycle.resolve_impact_selection",
+                side_effect=select,
+            ), patch(
+                "engineering_process.lifecycle.impact_unit_lookup", return_value=units
+            ), patch(
+                "engineering_process.lifecycle.repository_snapshot",
+                side_effect=snapshot,
+            ), patch(
+                "engineering_process.lifecycle.run_check",
+                return_value={"id": "first", "status": "passed", "durationMs": 5},
+            ), patch(
+                "engineering_process.lifecycle._record_impact_event",
+                return_value=state,
+            ):
+                _state, _selection, executions = verify_affected(
+                    root, ROOT, {}, "sample-change", profiles=("development",)
+                )
+
             self.assertEqual("failed", executions[0]["status"])
             self.assertEqual("repository-immutability", executions[0]["units"][-1]["id"])
 

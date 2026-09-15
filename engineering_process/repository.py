@@ -88,7 +88,9 @@ def changed_paths(root: Path, comparison_base: str) -> tuple[str, ...]:
     for raw in records.split(b"\0") + untracked.split(b"\0"):
         if not raw:
             continue
-        relative = os.fsdecode(raw).replace("\\", "/")
+        relative = os.fsdecode(raw)
+        if os.name == "nt":
+            relative = relative.replace("\\", "/")
         if relative.startswith(tuple(os.fsdecode(prefix) for prefix in STATE_PREFIXES)):
             continue
         values.add(relative)

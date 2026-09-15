@@ -69,6 +69,10 @@ def main() -> int:
         path.name: path.read_bytes()
         for path in (PROJECT_ROOT / "process_assets" / "standards").glob("*.json")
     }
+    source_schemas = {
+        path.name: path.read_bytes()
+        for path in (PROJECT_ROOT / "schemas").glob("*.json")
+    }
     with tempfile.TemporaryDirectory(prefix="engineering-process-dist-") as directory:
         root = Path(directory)
         artifacts = root / "dist"
@@ -143,6 +147,9 @@ def main() -> int:
         installed_standard_root = environment / "share" / "engineering-process" / "process_assets" / "standards"
         if {path.name: path.read_bytes() for path in installed_standard_root.glob("*.json")} != source_standards:
             raise RuntimeError("installed wheel standards differ from the canonical source")
+        installed_schema_root = environment / "share" / "engineering-process" / "schemas"
+        if {path.name: path.read_bytes() for path in installed_schema_root.glob("*.json")} != source_schemas:
+            raise RuntimeError("installed wheel schemas differ from the canonical source")
         for artifact in ("pull-request", "release-notes", "automation-name", "issue"):
             run([str(processctl), "artifact", "show", "--artifact", artifact, "--json"], cwd=root, timeout=30)
         run([str(python), "-I", "-c", """

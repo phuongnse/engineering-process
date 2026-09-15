@@ -189,6 +189,13 @@ class ContractTests(unittest.TestCase):
             normalized["impactProfiles"]["finalProfiles"]
         ))
 
+        invalid_global = deepcopy(project)
+        invalid_global["impactProfiles"]["profiles"]["development"][0]["paths"] = [
+            "**/policy.json"
+        ]
+        with self.assertRaises(ProcessError):
+            normalize_project(invalid_global, ROOT)
+
         invalid = deepcopy(project)
         invalid["impactProfiles"]["profiles"]["development"][0].pop("scope")
         with self.assertRaisesRegex(ProcessError, "requires an explicit global unit"):

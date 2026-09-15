@@ -75,20 +75,18 @@ def resolve_impact_selection(
             for unit in matches:
                 matched[unit["id"]].add(path)
 
+        # Only an explicit universal pattern can subsume narrower units. A
+        # partial global pattern remains subject to the ordinary unresolved-
+        # path boundary.
         global_ids = {
             unit["id"]
             for unit in units
-            if unit.get("scope", "matched") == "global" and matched[unit["id"]]
+            if (
+                unit.get("scope", "matched") == "global"
+                and "**" in unit["paths"]
+                and matched[unit["id"]]
+            )
         }
-        if global_ids:
-            # A consumer can explicitly declare that one broad unit subsumes
-            # narrower units for this profile. This is not inferred from `**`.
-            missing = []
-            unresolved = [
-                item
-                for item in unresolved
-                if item["profile"] != profile
-            ]
 
         selected_for_profile = [
             {

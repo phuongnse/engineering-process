@@ -68,6 +68,15 @@ class RepositorySnapshotTests(unittest.TestCase):
                 changed_paths(root, base),
             )
 
+    @unittest.skipUnless(os.name == "posix", "POSIX filename semantics")
+    def test_changed_paths_preserves_literal_backslash_on_posix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.make_repository(root)
+            literal = root / r"src\secret.py"
+            literal.write_text("secret\n", encoding="utf-8")
+            self.assertEqual((r"src\secret.py",), changed_paths(root, base))
+
     def test_lifecycle_state_does_not_invalidate_its_own_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

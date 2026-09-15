@@ -638,7 +638,7 @@ def begin_implementation(
         _save_state(project_root, process_root, state)
         return state
     if state["phase"] not in {"planned", "changes-requested"}:
-        if state["phase"] not in {"verified", "review-pending", "approved"}:
+        if state["phase"] not in {"verified", "review-pending", "approved", "completed"}:
             _require_phase(state, "planned", "changes-requested")
         checkpoint = (
             state["reviewAssignment"]["checkpoint"]
@@ -656,6 +656,7 @@ def begin_implementation(
     state["verification"] = {}
     state["reviewAssignment"] = None
     state["review"] = None
+    state["receipt"] = None
     state["phase"] = "implementing"
     _event(state, "implementation-started", actor, cycle=state["cycle"])
     _save_state(project_root, process_root, state)
@@ -1009,6 +1010,7 @@ def verify_affected(
             )
             return state, selection, []
         _require_current_baseline(project, state)
+        before = repository_snapshot(project_root)
         selection = resolve_impact_selection(
             project_root,
             process_root,
@@ -1030,7 +1032,6 @@ def verify_affected(
             )
             return state, selection, []
 
-        before = repository_snapshot(project_root)
         lookup = impact_unit_lookup(project, selection)
         started = time.monotonic()
         executions: list[dict[str, Any]] = []

@@ -45,8 +45,9 @@ continuation verification via `processctl change verify --remaining`.
 
 When a consumer adopts the impact-selection capability, plan its versioned
 `impactProfiles` policy as consumer-owned evidence. Map every candidate path to one
-or more independently executable units, use an explicit global pattern only when
-dependency reach is intentionally cross-cutting, and define the agent action for an
+or more independently executable units, use a global unit only when its declared
+paths include the explicit universal `**` pattern and dependency reach is
+intentionally cross-cutting, and define the agent action for an
 unresolved path. A schema-version 2 `finalProfiles` opt-in must name only required
 profiles and include an explicit global unit for each; the consumer owns the claim
 that the selected units are independent and complete. Do not infer final coverage

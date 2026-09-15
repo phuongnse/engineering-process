@@ -34,7 +34,7 @@ Adoption changes follow the proportional verification model:
 1. Verify adoption integrity (`processctl adoption check`, hash lock, doctor) and integration boundaries.
 2. For fast feedback on product changes, declare consumer-owned `impactProfiles` units and use `processctl change explain --impact` followed by `processctl change verify --affected`. Every changed path must resolve; an unmapped path blocks the affected run and requires diff/dependency re-analysis, never an automatic full fallback.
 3. When consumer product sources are unchanged and prior profile evidence matches the candidate and runtime environment, use `processctl change verify --remaining` to satisfy required profiles proportionally without rerunning unaffected whole profiles.
-4. A consumer may opt selected required profiles into final impact assurance with impactProfiles schema version 2 and finalProfiles only after declaring complete path coverage and an explicit global unit for cross-cutting reach. Unresolved final coverage blocks --remaining; explicit profile refresh remains available.
+4. A consumer may opt selected required profiles into final impact assurance with impactProfiles schema version 2 and finalProfiles only after declaring complete path coverage and an explicit global unit whose paths include the universal double-star (`**`) pattern for cross-cutting reach. Unresolved final coverage blocks --remaining; explicit profile refresh remains available.
 5. Mixed adoption with consumer product code or policy modifications still requires the full normal verification matrix unless the reviewed final assurance policy explicitly covers those changes.
 6. Baseline required profiles are never omitted at change start.
 

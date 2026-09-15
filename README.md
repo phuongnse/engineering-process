@@ -82,8 +82,9 @@ independent review.
 
 Consumers that can prove complete changed-path coverage may opt selected required
 profiles into final impact assurance with `impactProfiles.schemaVersion: 2` and
-`finalProfiles`. Each opted profile must declare an explicit global unit for
-cross-cutting reach. The lifecycle then records the selected units as final
+`finalProfiles`. Each opted profile must declare an explicit global unit whose paths
+include the universal `**` pattern for cross-cutting reach. The lifecycle then
+records the selected units as final
 verification evidence; missing or unresolved coverage blocks rather than silently
 falling back. Existing version 1 policies remain feedback-only.
 
@@ -546,8 +547,9 @@ For fast feedback, consumers may declare a versioned `impactProfiles` policy in
 
 Each impact unit owns an exact command and path-pattern coverage. Matching is
 explicit and deterministic; overlapping units all run. A unit with
-`scope: "global"` may intentionally subsume narrower units after its trigger
-matches; `**` is only a pattern, not an automatic fallback. Every changed path must resolve for
+`scope: "global"` may subsume narrower units only when its declared paths include
+the universal `**` pattern; a narrower pattern never covers unrelated paths. Every
+changed path must resolve for
 each requested profile. Missing policy, unsupported policy, or an unmapped path is
 `unresolved`/`unavailable`: the process launches nothing and returns the action
 `inspect-diff-and-update-impact-policy`. The agent must inspect the diff and
@@ -558,7 +560,8 @@ Affected execution under a version 1 policy is feedback evidence only and never
 advances the lifecycle or satisfies a required profile. A consumer that can prove
 complete coverage may use schema version 2 with `finalProfiles`; `--remaining` then
 records the selected units as `impact-assurance` evidence. Each opted profile needs
-an explicit global unit for cross-cutting reach, and unresolved final coverage
+an explicit global unit with the universal `**` pattern for cross-cutting reach, and
+unresolved final coverage
 blocks rather than falling back silently. Explicit `--profile` remains the full
 refresh. Consumers that do not adopt the opt-in retain the existing final boundary;
 the affected command does not guess a policy for them.
