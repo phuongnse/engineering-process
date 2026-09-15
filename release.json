@@ -1,25 +1,13 @@
 {
   "changes": [
     {
-      "id": "publication-boundary",
-      "source": "https://github.com/phuongnse/engineering-process/issues/191",
-      "summary": "Publication-required changes must commit the complete candidate and pass the existing branch, subject and nonempty pinned-range checks before final verification and review. This avoids a late commit forcing a repeated verification/review cycle; exact-snapshot and finish checks remain enforced.",
-      "type": "fix"
-    },
-    {
-      "id": "project-knowledge",
-      "source": "https://github.com/phuongnse/engineering-process/issues/192",
-      "summary": "Lifecycle guidance helps consumers find authoritative current project knowledge, maintain only information affected by accepted work or necessary gaps, and review explanations and useful connections in context. Existing consumer organization remains valid; no documentation taxonomy or migration is required.",
-      "type": "capability"
-    },
-    {
-      "id": "change-adequacy",
-      "source": "https://github.com/phuongnse/engineering-process/issues/193",
-      "summary": "Planning, implementation and review connect tests and other evidence to accepted behavior and concrete risks, including regression sensitivity and fitting evidence boundaries. Consumer-required profiles and testing policies remain authoritative; no universal test-first ritual or new test per change is imposed.",
+      "id": "resolve-process-issues",
+      "source": "https://github.com/phuongnse/engineering-process/issues/205",
+      "summary": "Resolve process issues #197-#205: durable feedback and review recovery, snapshot and test cost, guidance authority, PR evidence, adoption scope, CI repetition, and necessary verification.",
       "type": "capability"
     }
   ],
-  "previousVersion": "2.3.1",
+  "previousVersion": "2.4.0",
   "schemaVersion": 5,
-  "version": "2.4.0"
+  "version": "2.5.0"
 }
