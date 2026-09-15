@@ -36,7 +36,7 @@ def child_environment(
         environment[name] = value
     runtime_executable = Path(
         sys.executable if executable is None else executable
-    ).resolve()
+    ).absolute()
     runtime_directory = str(runtime_executable.parent)
     inherited_path = environment.get("PATH", "")
     path_entries = [entry for entry in inherited_path.split(os.pathsep) if entry]
