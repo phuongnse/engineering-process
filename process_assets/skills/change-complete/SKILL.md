@@ -21,9 +21,9 @@ marks the run completed.
 For an opted-in project, `change finish` first runs the existing read-only publication
 validators against the current branch, HEAD commit subject, and the recorded
 `comparisonBaseCommit` through the exact current HEAD. It records the validated
-branch, subject, and pinned range in a version 2 receipt only after the repository
-and branch remain unchanged. Version 1 receipts remain supported. A failed preflight leaves
-the approved run incomplete.
+branch, subject, and pinned range in the single current version-1 receipt only after
+the repository and branch remain unchanged. A failed preflight leaves the approved
+run incomplete.
 
 Before writing the receipt, `change finish` executes the automated incident intake preflight: it inspects lifecycle history and verification evidence for closed-taxonomy incidents, deduplicates by stable title key, and records created, reused, suppressed, or failed process improvement intake events without blocking consumer completion.
 
@@ -35,7 +35,7 @@ merge, publication, deployment, and release authority remain consumer-owned.
 Before marking a PR ready, render its body from the selected standard and actual
 completion evidence. Run the consumer's publication preflight, including the current
 branch, exact head subject, pinned base-to-head range, and ready-state body. For a
-consumer using the packaged compatibility checks, all four commands must pass:
+consumer using the packaged publication checks, all four commands must pass:
 
     processctl publication validate-branch --branch BRANCH
     processctl publication validate-commit --subject HEAD_SUBJECT

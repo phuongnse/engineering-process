@@ -11,12 +11,12 @@ from unittest.mock import patch
 from engineering_process.artifact_standards import resolve_standard
 from verification.verify_publication import verify_publication
 
-from engineering_process.publication_compat import (
+from engineering_process.pr_description import validate_pull_request
+from engineering_process.source_publication import (
     branch_issues,
     commit_issues,
     current_branch,
     current_commit_subject,
-    validate_pull_request,
     validate_current_source,
     validate_range,
 )
@@ -56,7 +56,7 @@ CANONICAL_BODY = """## Summary
 """
 
 
-class PublicationCompatibilityTests(unittest.TestCase):
+class PublicationTests(unittest.TestCase):
     def test_branch_and_commit_conventions(self) -> None:
         self.assertEqual([], branch_issues("feature/small-change"))
         self.assertEqual([], branch_issues("automation/renovate/engineering-process"))
@@ -124,7 +124,7 @@ class PublicationCompatibilityTests(unittest.TestCase):
         )
 
     def test_pull_request_requires_unique_ordered_fields(self) -> None:
-        missing = CANONICAL_BODY.replace("- Compatibility:", "- Migration:", 1)
+        missing = CANONICAL_BODY.replace("- Compatibility:", "- Upgrade:", 1)
         self.assertIn(
             "pull request body is missing Compatibility in ## Contract and risk",
             self.validate_body(missing),

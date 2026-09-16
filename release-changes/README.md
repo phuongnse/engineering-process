@@ -5,7 +5,7 @@ several issues, use one fragment per issue or independently adoptable behavior; 
 not replace those records with an issue range:
 
     {
-      "schemaVersion": 2,
+      "schemaVersion": 1,
       "id": "short-change-id",
       "type": "fix",
       "summary": "Short user-facing change title.",
@@ -15,7 +15,7 @@ not replace those records with an issue range:
         "changes": "What behavior was added, fixed, or changed.",
         "affectedPaths": ["src/owner.py", "tests/test_owner.py"],
         "apply": "What the consumer must run, configure, or review.",
-        "compatibility": "Breaking or non-breaking impact and migration action.",
+        "compatibility": "Breaking or non-breaking impact and consumer action.",
         "notes": "Important limits, caveats, or retained behavior."
       }
     }
@@ -32,6 +32,7 @@ ordinary punctuation remains readable, while Markdown and HTML-sensitive syntax 
 escaped. Source URLs become links and owned references become inline code. Do not
 pre-escape values in JSON or hand-edit the generated release body.
 
-Allowed types are fix, capability, and breaking. `schemaVersion: 1` remains readable
-for historical records, but new release preparation requires `schemaVersion: 2` and
-rejects incomplete or mixed fragment sets before writing any release files.
+Allowed types are fix, capability, and breaking. The current definition requires
+`schemaVersion: 1` and complete detail fields; non-current fragments are rejected
+before writing any release files. Historical release fragments remain only in the
+commits that published them and are not read by the current preparation command.

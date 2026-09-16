@@ -9,7 +9,7 @@ from .contracts import ProcessError, read_json, validate_document
 from .distribution import schemas_root
 
 
-PROJECT_SCHEMA_VERSION = 5
+PROJECT_SCHEMA_VERSION = 1
 PACK_CAPABILITIES = {
     ("desktop-media", 1): set("application-correctness authoritative-input-integrity cross-platform-portability dependency-audit dependency-security incident-recovery independent-security-review key-custody linux-release-security media-pipeline-integrity package-security recovery-integrity recovery-mechanism-integrity release-integrity runtime-delivery-integrity update-integrity workspace-security".split()),
     ("library-cli", 1): set("adoption-integrity compatibility correctness distribution-integrity installability portability runtime-safety".split()),
@@ -35,88 +35,15 @@ def load_project(project_root: Path, process_root: Path) -> dict[str, Any]:
 
 
 def normalize_project(value: Any, process_root: Path) -> dict[str, Any]:
-    """Convert released pre-1.0 manifests to the small 1.0 contract."""
-    version = value.get("schemaVersion") if isinstance(value, dict) else None
-    if version == PROJECT_SCHEMA_VERSION:
-        validate_document(
-            value,
-            "project",
-            schema_root=schemas_root(process_root),
-            source="project configuration",
-        )
-        normalized = value
-    elif version in {1, 2, 3, 4}:
-        validate_document(
-            value,
-            "project-legacy",
-            schema_root=schemas_root(process_root),
-            source="legacy project configuration",
-        )
-        lifecycle = value["lifecycle"]
-        profiles = value["profiles"]
-        required = lifecycle["requiredProfiles"]
-        normalized_profiles: dict[str, list[dict[str, Any]]] = {}
-        for profile_name, checks in profiles.items():
-            normalized_checks: list[dict[str, Any]] = []
-            for check in checks:
-                normalized_check = {
-                    key: check[key]
-                    for key in ("id", "run", "timeoutSeconds", "maxOutputBytes", "cwd")
-                    if key in check
-                }
-                normalized_checks.append(normalized_check)
-            normalized_profiles[profile_name] = normalized_checks
-        setup_actions = value.get("environment", {}).get("setupActions", [])
-        normalized_setup: list[dict[str, Any]] = []
-        for action in setup_actions:
-            if "run" not in action:
-                if action.get("kind") == "managed-tool" and action.get("tool"):
-                    continue
-                raise ProcessError(
-                    "legacy setup action is neither a managed tool nor a command"
-                )
-            normalized_setup.append(
-                {
-                    key: action[key]
-                    for key in (
-                        "id",
-                        "run",
-                        "timeoutSeconds",
-                        "maxOutputBytes",
-                        "cwd",
-                    )
-                    if key in action
-                }
-            )
-        normalized = {
-            "schemaVersion": PROJECT_SCHEMA_VERSION,
-            "project": value["project"],
-            "lifecycle": {
-                "requiredProfiles": required,
-                **(
-                    {"processChanges": {"requireConsumerEvidence": True}}
-                    if value["project"] == "engineering-process"
-                    else {}
-                ),
-            },
-            "profiles": normalized_profiles,
-            **({"setup": normalized_setup} if normalized_setup else {}),
-        }
-    else:
-        validate_document(
-            value,
-            "project",
-            schema_root=schemas_root(process_root),
-            source="project configuration",
-        )
-        raise AssertionError("project schema accepted an unsupported version")
-
+    """Validate the single current consumer project contract."""
     validate_document(
-        normalized,
+        value,
         "project",
         schema_root=schemas_root(process_root),
-        source="normalized project configuration",
+        source="project configuration",
     )
+    normalized = value
+
     _validate_impact_profiles(normalized)
     missing = sorted(set(required_profiles(normalized)) - set(normalized["profiles"]))
     if missing:
@@ -179,7 +106,7 @@ def impact_profiles(project: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 def impact_assurance_profiles(project: dict[str, Any]) -> tuple[str, ...]:
     """Return profiles explicitly allowed to satisfy final verification."""
     policy = project.get("impactProfiles")
-    if not isinstance(policy, dict) or policy.get("schemaVersion") != 2:
+    if not isinstance(policy, dict):
         return ()
     return tuple(policy.get("finalProfiles", ()))
 

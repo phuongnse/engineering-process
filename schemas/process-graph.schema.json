@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "entrySkill", "states", "specializations"],
   "properties": {
-    "schemaVersion": {"const": 2},
+    "schemaVersion": {"const": 1},
     "entrySkill": {"$ref": "#/$defs/skill"},
     "specializations": {
       "type": "object",

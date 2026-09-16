@@ -25,17 +25,17 @@ from verification.verify_distribution import validate_distribution_text
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _schema_six_release(changes: list[dict]) -> dict:
+def _current_release(changes: list[dict]) -> dict:
     details = {
         "problem": "The release record needs a structured explanation.",
         "changes": "Render the record with the new readable release format.",
         "affectedPaths": ["tests/test_release.py"],
         "apply": "Use the generated release body.",
         "compatibility": "No breaking change.",
-        "notes": "This is a synthetic schema-six test record.",
+        "notes": "This is a synthetic current release record.",
     }
     return {
-        "schemaVersion": 6,
+         "schemaVersion": 1,
         "version": "3.0.0",
         "previousVersion": "2.1.0",
         "changes": [{**change, "details": deepcopy(details)} for change in changes],
@@ -44,10 +44,18 @@ def _schema_six_release(changes: list[dict]) -> dict:
 
 class ReleaseTests(unittest.TestCase):
     def test_notes_group_every_change_and_keep_sources_and_upgrade_context(self) -> None:
+        details = {
+            "problem": "A current release record needs a structured explanation.",
+            "changes": "Record the observable release behavior.",
+            "affectedPaths": ["engineering_process/release.py"],
+            "apply": "Adopt the released package.",
+            "compatibility": "No breaking change.",
+            "notes": "This is a synthetic current release record.",
+        }
         release = {
-            "schemaVersion": 5, "version": "3.0.0", "previousVersion": "2.1.0",
+            "schemaVersion": 1, "version": "3.0.0", "previousVersion": "2.1.0",
             "changes": [
-                {"id": kind, "type": kind, "summary": f"Observable {kind} behavior", "source": f"https://github.com/phuongnse/engineering-process/issues/{number}"}
+                {"id": kind, "type": kind, "summary": f"Observable {kind} behavior", "source": f"https://github.com/phuongnse/engineering-process/issues/{number}", "details": deepcopy(details)}
                 for number, kind in enumerate(("fix", "capability", "breaking"), 1)
             ],
         }
@@ -64,7 +72,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_detailed_notes_explain_each_change_and_breaking_impact(self) -> None:
         release = {
-            "schemaVersion": 6, "version": "3.0.0", "previousVersion": "2.1.0",
+            "schemaVersion": 1, "version": "3.0.0", "previousVersion": "2.1.0",
             "changes": [{
                 "id": "selection",
                 "type": "capability",
@@ -92,7 +100,7 @@ class ReleaseTests(unittest.TestCase):
             notes_renderer.render_release_notes(release)
 
     def test_notes_treat_metadata_as_text_and_do_not_invent_source_links(self) -> None:
-        release = _schema_six_release([
+        release = _current_release([
             {"id": "safe-text", "type": "fix", "summary": "Cải thiện `tool`\n# heading [link]", "source": "owned change #42"},
             {"id": "safe-url", "type": "fix", "summary": "Safe source link.", "source": "https://example.invalid/a) bad"},
         ])
@@ -108,7 +116,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn("\n### heading", notes)
 
     def test_notes_preserve_list_markers_entities_and_strikethrough_as_text(self) -> None:
-        release = _schema_six_release([{
+        release = _current_release([{
             "id": "literal-metadata", "type": "fix",
             "summary": "1. Preserve literal &copy; <tag> and ~~removed~~ labels.",
             "source": "owned &copy; ~~reference~~ #42",
@@ -124,7 +132,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn("- **\\" + marker + " Preserve", notes_renderer.render_release_notes(release))
 
     def test_owned_references_with_backticks_stay_inside_one_code_span(self) -> None:
-        release = _schema_six_release([{
+        release = _current_release([{
             "id": "literal-reference",
             "type": "fix",
             "summary": "Keep the source literal",
@@ -209,17 +217,14 @@ class ReleaseTests(unittest.TestCase):
 
     def test_current_release_records_are_issue_level_and_complete(self) -> None:
         release = read_json(ROOT / "release.json")
-        if release["schemaVersion"] == 6:
-            self.assertTrue(all("details" in change for change in release["changes"]))
-            required_details = {
-                "problem", "changes", "affectedPaths", "apply", "compatibility", "notes"
-            }
-            self.assertTrue(
-                all(required_details == set(change["details"]) for change in release["changes"])
-            )
-        else:
-            self.assertEqual(5, release["schemaVersion"])
-            self.assertTrue(all("details" not in change for change in release["changes"]))
+        self.assertEqual(1, release["schemaVersion"])
+        self.assertTrue(all("details" in change for change in release["changes"]))
+        required_details = {
+            "problem", "changes", "affectedPaths", "apply", "compatibility", "notes"
+        }
+        self.assertTrue(
+            all(required_details == set(change["details"]) for change in release["changes"])
+        )
         notes = notes_renderer.render_release_notes(release)
         for change in release["changes"]:
             self.assertIn(change["source"], notes)
@@ -232,12 +237,12 @@ class ReleaseTests(unittest.TestCase):
         ]
         if not fragments:
             self.skipTest("pending release records have been consumed")
-        self.assertTrue(all(fragment["schemaVersion"] == 2 for fragment in fragments))
+        self.assertTrue(all(fragment["schemaVersion"] == 1 for fragment in fragments))
         self.assertTrue(all("details" in fragment for fragment in fragments))
         sources = {fragment["source"] for fragment in fragments}
         self.assertEqual(len(sources), len(fragments))
         release = {
-            "schemaVersion": 6,
+            "schemaVersion": 1,
             "version": "2.5.0",
             "previousVersion": read_json(ROOT / "release.json")["version"],
             "changes": [
@@ -251,7 +256,7 @@ class ReleaseTests(unittest.TestCase):
         notes = notes_renderer.render_release_notes(release)
         for source in sources:
             self.assertIn(source, notes)
-        self.assertIn("No breaking changes are included.", notes)
+        self.assertIn("Breaking changes are listed above", notes)
         self.assertNotIn("#197-#205", notes)
 
     def test_semver_is_derived_from_change_classification(self) -> None:
@@ -295,7 +300,7 @@ class ReleaseTests(unittest.TestCase):
             write_json_atomic(
                 target / "release-changes" / "test-fix.json",
                 {
-                    "schemaVersion": 2,
+                    "schemaVersion": 1,
                     "id": "test-fix",
                     "type": "fix",
                     "summary": "Exercise release preparation against live state.",
@@ -324,7 +329,7 @@ class ReleaseTests(unittest.TestCase):
             prepared = read_json(target / "release.json")
             self.assertEqual(expected, prepared["version"])
             self.assertEqual(current["version"], prepared["previousVersion"])
-            self.assertEqual(6, prepared["schemaVersion"])
+            self.assertEqual(1, prepared["schemaVersion"])
             self.assertEqual("The fixture needs a complete release record.", prepared["changes"][0]["details"]["problem"])
             self.assertEqual([], list((target / "release-changes").glob("*.json")))
             generated_notes = notes_renderer.render_release_notes(prepared).encode("utf-8")
@@ -335,7 +340,7 @@ class ReleaseTests(unittest.TestCase):
             )
             validate_distribution_text(target)
 
-    def test_release_preparation_rejects_incomplete_legacy_fragments_before_writing(self) -> None:
+    def test_release_preparation_rejects_non_current_fragments_before_writing(self) -> None:
         current = read_json(ROOT / "release.json")
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "source"
@@ -349,13 +354,21 @@ class ReleaseTests(unittest.TestCase):
             for path in (target / "release-changes").glob("*.json"):
                 path.unlink()
             write_json_atomic(
-                target / "release-changes" / "legacy.json",
+                target / "release-changes" / "unsupported.json",
                 {
-                    "schemaVersion": 1,
-                    "id": "legacy",
+                    "schemaVersion": 2,
+                    "id": "unsupported",
                     "type": "fix",
-                    "summary": "Incomplete legacy record.",
-                    "source": "legacy fixture",
+                    "summary": "Unsupported record.",
+                    "source": "unsupported fixture",
+                    "details": {
+                        "problem": "The fixture uses a superseded version.",
+                        "changes": "Reject it before writing release files.",
+                        "affectedPaths": ["tests/test_release.py"],
+                        "apply": "Use the current release contract.",
+                        "compatibility": "Breaking contract boundary.",
+                        "notes": "This is test-only metadata."
+                    },
                 },
             )
             original_notes = (target / "RELEASE_NOTES.md").read_bytes()
@@ -370,7 +383,7 @@ class ReleaseTests(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("schemaVersion 2", result.stderr)
+            self.assertIn("1 was expected", result.stderr)
             self.assertEqual(current["version"], read_json(target / "release.json")["version"])
             self.assertEqual(original_notes, (target / "RELEASE_NOTES.md").read_bytes())
 

@@ -4,7 +4,7 @@
   "title": "Lifecycle run state",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "changeId", "phase", "cycle", "contract", "plan", "implementations", "currentImplementation", "verification", "reviewAssignment", "review", "reviewHistory", "receipt", "history"],
+  "required": ["schemaVersion", "changeId", "phase", "cycle", "contract", "comparisonBaseCommit", "plan", "implementations", "currentImplementation", "verification", "reviewAssignment", "review", "reviewHistory", "receipt", "requiredPlanSchemaVersion", "requiredReviewSchemaVersion", "controlPaths", "history"],
   "properties": {
     "schemaVersion": {"const": 1},
     "changeId": {"$ref": "#/$defs/id"},
@@ -55,8 +55,8 @@
         {"type": "null"}
       ]
     },
-    "requiredPlanSchemaVersion": {"const": 5},
-    "requiredReviewSchemaVersion": {"enum": [6, 7]},
+    "requiredPlanSchemaVersion": {"const": 1},
+    "requiredReviewSchemaVersion": {"const": 1},
     "controlPaths": {
       "type": "array",
       "maxItems": 32,
@@ -257,7 +257,7 @@
         "reviewer": {"$ref": "#/$defs/actor"},
         "checkpoint": {"$ref": "#/$defs/checkpoint"},
         "startedAt": {"type": "string", "format": "date-time"},
-        "reportSchemaVersion": {"enum": [5, 6, 7]}
+        "reportSchemaVersion": {"const": 1}
       }
     }
   }

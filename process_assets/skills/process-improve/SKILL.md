@@ -57,8 +57,8 @@ to the owner. Open it only after explicit authorization:
       --title 'STABLE-KEY concise summary' \
       --body-file .process/runs/CHANGE_ID/process-improvement-issue.md
 
-When this handoff comes from a pending schema-version 7 review, return the existing or
-newly owner-authorized issue's stable HTTPS URL to that review. It remains
+When this handoff comes from a pending review, return the existing or newly
+owner-authorized issue's stable HTTPS URL to that review. It remains
 `review-pending`, and a `shared-process` disposition cannot submit without that
 `recordUrl`. Resolve the issue through one of three explicit paths:
 

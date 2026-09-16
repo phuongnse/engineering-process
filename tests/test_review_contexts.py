@@ -186,8 +186,7 @@ class ReviewContextTests(unittest.TestCase):
     def historical_reuse(self) -> dict:
         self.prepare("previous")
         self.assign("previous")
-        # An old process version admitted this second assignment. Preserve real
-        # canonical transition output instead of inventing historical run shapes.
+        # A reused context must remain recorded as a conflict before reassignment.
         with patch("engineering_process.lifecycle.require_unreused_context"):
             return self.assign("current")
 
@@ -306,7 +305,7 @@ class ReviewContextTests(unittest.TestCase):
             self.assign("current", "fresh", replace=True)
         self.assertEqual(before, self.state_path("current").read_bytes())
 
-    def test_submit_and_finish_reject_legacy_reused_assignment(self) -> None:
+    def test_submit_and_finish_reject_reused_assignment(self) -> None:
         self.historical_reuse()
         report = self.report("current")
         with self.assertRaisesRegex(ProcessError, "used by another change"):

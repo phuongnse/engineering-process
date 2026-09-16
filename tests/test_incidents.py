@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import tempfile
 import unittest
 
 from engineering_process import VERSION
@@ -21,6 +22,34 @@ from engineering_process.incidents import (
 
 
 class IncidentIntakeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.project_root = Path(self.temporary.name)
+        process_dir = self.project_root / ".process"
+        process_dir.mkdir(parents=True)
+        project = {
+            "schemaVersion": 1,
+            "project": "consumer",
+            "lifecycle": {
+                "requiredProfiles": ["development"],
+                "processChanges": {
+                    "requireConsumerEvidence": True,
+                    "acceptedIssueUrlPrefix": "https://github.com/phuongnse/engineering-process/issues/",
+                },
+            },
+            "profiles": {
+                "development": [
+                    {"id": "unit", "run": ["python", "-c", "pass"], "timeoutSeconds": 10}
+                ]
+            },
+        }
+        (process_dir / "project.json").write_text(
+            json.dumps(project), encoding="utf-8"
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
     def test_closed_taxonomy_contains_canonical_kinds(self) -> None:
         expected = {
             "evidence-integrity",
@@ -194,7 +223,7 @@ class IncidentIntakeTests(unittest.TestCase):
         ]
 
         results = process_improvement_intake(
-            Path.cwd(),
+            self.project_root,
             Path.cwd(),
             state,
             actor,
@@ -231,7 +260,7 @@ class IncidentIntakeTests(unittest.TestCase):
         actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
 
         results = process_improvement_intake(
-            Path.cwd(),
+            self.project_root,
             Path.cwd(),
             state,
             actor,
@@ -266,7 +295,7 @@ class IncidentIntakeTests(unittest.TestCase):
             return url
 
         results = process_improvement_intake(
-            Path.cwd(),
+            self.project_root,
             Path.cwd(),
             state,
             actor,

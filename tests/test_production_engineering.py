@@ -23,7 +23,7 @@ class ProductionEngineeringTests(unittest.TestCase):
         self.floor = floor
         self.ids = [item["id"] for item in floor["invariants"]]
         self.plan = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "contractDigest": "sha256:" + "0" * 64,
             "approach": "Implement the accepted behavior.",
@@ -46,7 +46,7 @@ class ProductionEngineeringTests(unittest.TestCase):
             ],
         }
         self.review = {
-            "schemaVersion": 7,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "reviewer": {
                 "actorId": "reviewer",
@@ -77,7 +77,7 @@ class ProductionEngineeringTests(unittest.TestCase):
             },
         }
 
-    def test_floor_is_small_versioned_and_cross_domain(self) -> None:
+    def test_floor_is_small_current_and_cross_domain(self) -> None:
         self.assertEqual(
             [
                 "authoritative-structure",
@@ -131,16 +131,11 @@ class ProductionEngineeringTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "unknown work items"):
             validate_plan_assessments(dangling, ROOT)
 
-    def test_plan_version_four_remains_readable_without_new_assessments(self) -> None:
-        legacy = deepcopy(self.plan)
-        legacy["schemaVersion"] = 4
-        legacy.pop("productionEngineering")
-        validate_document(legacy, "plan", schema_root=SCHEMAS)
-        validate_plan_assessments(legacy, ROOT)
-
-        legacy["productionEngineering"] = self.plan["productionEngineering"]
-        with self.assertRaisesRegex(ProcessError, "should not be valid"):
-            validate_document(legacy, "plan", schema_root=SCHEMAS)
+    def test_plan_rejects_non_current_version(self) -> None:
+        invalid = deepcopy(self.plan)
+        invalid["schemaVersion"] = 2
+        with self.assertRaisesRegex(ProcessError, "1 was expected"):
+            validate_document(invalid, "plan", schema_root=SCHEMAS)
 
     def test_plan_applicability_shape_fails_closed(self) -> None:
         applicable_without_evidence = deepcopy(self.plan)

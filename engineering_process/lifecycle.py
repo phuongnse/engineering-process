@@ -45,6 +45,7 @@ from .project import (
 from .production_engineering import (
     PLAN_SCHEMA_VERSION,
     REVIEW_SCHEMA_VERSION,
+    validate_current_run_documents,
     validate_plan_assessments,
     validate_review_assessments,
 )
@@ -75,7 +76,6 @@ NEXT_COMMAND = {
     "blocked": None,
 }
 MAX_REVIEW_CORRECTION_CYCLES = 2
-PRE_INVARIANT_REVIEW_SCHEMA_VERSION = 6
 
 
 def _now() -> str:
@@ -213,6 +213,9 @@ def _load_state(
     state = load_and_validate(path, "run", schema_root=schemas_root(process_root))
     if state["changeId"] != change_id:
         raise ProcessError(f"{path}: change identity mismatch")
+    validate_current_run_documents(state, process_root)
+    if state["plan"] is not None and not _has_plan_scope_policy(state):
+        raise ProcessError("lifecycle state is missing the current plan scope binding")
     return state
 
 
@@ -529,7 +532,7 @@ def _verification_selection(
         )
 
     selection = {
-        "schemaVersion": 2 if assurance_profiles else 1,
+        "schemaVersion": 1,
         "changeId": state["changeId"],
         "phase": state["phase"],
         "status": "blocked" if blocked else "ready",
@@ -673,6 +676,7 @@ def start_change(
         "reviewHistory": [],
         "receipt": None,
         "requiredPlanSchemaVersion": PLAN_SCHEMA_VERSION,
+        "requiredReviewSchemaVersion": REVIEW_SCHEMA_VERSION,
         "controlPaths": [],
         "history": [],
     }
@@ -697,8 +701,8 @@ def register_plan(
     _require_phase(state, "specified")
     plan = load_and_validate(plan_path, "plan", schema_root=schemas_root(process_root))
     validate_plan_assessments(plan, process_root)
-    expected_schema = state.get("requiredPlanSchemaVersion")
-    if expected_schema is not None and plan["schemaVersion"] != expected_schema:
+    expected_schema = state["requiredPlanSchemaVersion"]
+    if plan["schemaVersion"] != expected_schema:
         raise ProcessError(
             f"plan schemaVersion must be {expected_schema} for this change"
         )
@@ -709,11 +713,7 @@ def register_plan(
     actor = _actor(actor_id, context_id, kind)
     _remember_control_path(state, project_root, plan_path)
     state["plan"] = {"digest": digest_json(plan), "document": plan}
-    state["requiredReviewSchemaVersion"] = (
-        REVIEW_SCHEMA_VERSION
-        if plan["schemaVersion"] == PLAN_SCHEMA_VERSION
-        else PRE_INVARIANT_REVIEW_SCHEMA_VERSION
-    )
+    state["requiredReviewSchemaVersion"] = REVIEW_SCHEMA_VERSION
     state["phase"] = "planned"
     _event(state, "planned", actor)
     _event(
@@ -802,7 +802,7 @@ def _publication_preflight(
         raise ProcessError("publication validation does not match the candidate HEAD")
     if publication["issues"]:
         raise ProcessError(
-            "publication compatibility checks failed: "
+            "publication checks failed: "
             + "; ".join(publication["issues"])
             + "; commit the candidate on a valid publication branch before change verify"
         )
@@ -1407,16 +1407,13 @@ def start_review(
     require_unreused_context(project_root, process_root, state, reviewer)
 
     checkpoint = repository_snapshot(project_root)
-    require_input = (
-        state.get("requiredReviewSchemaVersion") == REVIEW_SCHEMA_VERSION
-    )
     if not _required_verification_matches_inputs(
         project_root,
         process_root,
         project,
         state,
         checkpoint,
-        require_input=require_input,
+        require_input=True,
     ):
         raise ProcessError("verification evidence is stale or incomplete")
     if previous_assignment is not None and not same_checkpoint(
@@ -1430,10 +1427,7 @@ def start_review(
         "reviewer": reviewer,
         "checkpoint": checkpoint,
         "startedAt": _now(),
-        "reportSchemaVersion": state.get(
-            "requiredReviewSchemaVersion",
-            PRE_INVARIANT_REVIEW_SCHEMA_VERSION,
-        ),
+        "reportSchemaVersion": state["requiredReviewSchemaVersion"],
     }
     state["phase"] = "review-pending"
     if previous_assignment is None:
@@ -1463,7 +1457,7 @@ def submit_review(
         review_path, "review", schema_root=schemas_root(process_root)
     )
     assignment = state["reviewAssignment"]
-    expected_schema = assignment.get("reportSchemaVersion", 5)
+    expected_schema = assignment["reportSchemaVersion"]
     if review["schemaVersion"] != expected_schema:
         raise ProcessError(f"review schemaVersion must be {expected_schema} for this assignment")
     validate_review_assessments(review, process_root)
@@ -1508,9 +1502,7 @@ def submit_review(
             for field in ("criterionId", "origin", "priority")
         ):
             raise ProcessError("carried review finding identity fields are immutable")
-    first_pass_origins = {"contract"}
-    if review["schemaVersion"] == REVIEW_SCHEMA_VERSION:
-        first_pass_origins.add("production-invariant")
+    first_pass_origins = {"contract", "production-invariant"}
     if not state["reviewHistory"] and any(
         finding["origin"] not in first_pass_origins for finding in blocking
     ):
@@ -1602,16 +1594,13 @@ def finish_change(
     publication = _publication_preflight(project_root, project, state, checkpoint)
     if not same_checkpoint(checkpoint, state["reviewAssignment"]["checkpoint"]):
         raise ProcessError("repository changed after approval")
-    require_input = (
-        state.get("requiredReviewSchemaVersion") == REVIEW_SCHEMA_VERSION
-    )
     if not _required_verification_matches_inputs(
         project_root,
         process_root,
         project,
         state,
         checkpoint,
-        require_input=require_input,
+        require_input=True,
     ):
         raise ProcessError("verification evidence is stale or incomplete")
 
@@ -1664,7 +1653,6 @@ def finish_change(
         },
     }
     if publication is not None:
-        receipt["schemaVersion"] = 2
         receipt["publication"] = {
             "branch": publication["branch"],
             "subject": publication["subject"],

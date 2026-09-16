@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "id", "summary", "source", "comparisonBase", "risk", "affectedProjects", "acceptanceCriteria", "requiredProfiles"],
   "properties": {
-    "schemaVersion": {"const": 5},
+    "schemaVersion": {"const": 1},
     "id": {"$ref": "#/$defs/id"},
     "summary": {"type": "string", "minLength": 1, "maxLength": 500},
     "source": {"type": "string", "minLength": 1, "maxLength": 1000},

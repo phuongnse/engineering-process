@@ -1,6 +1,6 @@
 # Consumer artifact standards
 
-The process supplies versioned defaults. Consumers select the document requirements;
+The process supplies one current version-1 default per artifact. Consumers select the document requirements;
 generation and verification resolve the same definition. Document checks do not grant
 lifecycle approval, merge permission or release authority.
 
@@ -11,9 +11,9 @@ lifecycle approval, merge permission or release authority.
 | `automation-name@1` | `automation-name` | Ordered owner/role components by default; exact name comparison |
 | `issue@1` | `issue` | Open request and closed resolution records; exact rendered-byte comparison |
 
-The selected package supplies these immutable defaults. A future standard version
-gets another file and explicit selection; an existing version is not edited after
-publication. There is no remote lookup, code plugin or additional lifecycle.
+The selected package supplies these immutable current defaults. The process does not
+ship a second built-in standard generation or a remote lookup, code plugin, or
+additional lifecycle. A consumer override is a complete current version-1 definition.
 
 ## Select or override
 
@@ -23,7 +23,7 @@ Inspect or export a definition:
     processctl artifact show --artifact pull-request --json
     processctl artifact show --artifact pull-request --output .process/company-pr.json
 
-Give the exported definition a consumer-owned `id` and `version`, then edit its
+Give the exported definition a consumer-owned `id` and keep its `version` at `1`, then edit its
 headings, ordered fields/checklists or other supported rules. Keep stable field IDs
 when changing labels; generated data refers to IDs. Each declared field is required.
 Add a field to require more information, or remove it when the consumer does not want
@@ -169,7 +169,7 @@ Authors supply narrative fields (`outcome`, `scope`, `compatibility`, `stack`, `
 
 The consumer maps its release records to the packaged `release-notes-data` schema.
 This input belongs to the consumer; it does not replace its versioning policy or
-become another authoritative changelog. A change may include structured `details`
+become another authoritative changelog. A change supplies structured `details`
 with `problem`, `changes`, `affectedPaths`, `apply`, `compatibility`, and `notes` so
 the renderer can expose actionable information without relying on an issue range.
 For example:
@@ -188,13 +188,13 @@ For example:
         "problem": "The requested behavior was lost.",
         "changes": "Restore the behavior at its owning boundary.",
         "affectedPaths": ["src/owner.py"],
-        "apply": "Adopt the release; no extra migration is required.",
+        "apply": "Adopt the release; no extra process action is required.",
         "compatibility": "No breaking change.",
         "notes": "Existing callers remain supported."
       }
     }
   ],
-  "sections": {"upgrade": "No migration required."}
+  "sections": {"upgrade": "No additional process action."}
 }
 ```
 
@@ -208,8 +208,8 @@ override can reorder/rename groups or require additional sections such as upgrad
 security impact. Update the consumer's data mapping when changing IDs or requirements.
 
 Change summaries are literal text. HTTP(S) source references become links; other
-owned references remain code spans without invented GitHub links. When `details` is
-present, the renderer adds labelled Problem, What changed, Where, Apply,
+owned references remain code spans without invented GitHub links. The renderer adds
+labelled Problem, What changed, Where, Apply,
 Compatibility, and Notes lines. `repositoryUrl` can identify the consumer's GitHub
 repository for compact issue/PR link labels. The renderer escapes only Markdown or
 HTML-sensitive syntax in metadata, leaves ordinary punctuation readable, and uses
@@ -257,7 +257,7 @@ formats remain consumer-owned validators.
 The consumer also enforces provider constraints and existing identity bindings.
 Naming conformance does not establish ownership, permission, uniqueness, or trust.
 Keep an already conforming name unless a rename is explicitly accepted; a rename may
-require migration of provider slugs, event sender checks and credential bindings.
+require consumer-owned updates to provider slugs, event sender checks and credential bindings.
 For example, renovate-ops owns GitHub-specific checks and where the shared naming
 result is applied during App bootstrap; this distribution owns the default convention.
 

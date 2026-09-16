@@ -6,7 +6,7 @@ PR after CI and independent review.
 ## Prepare
 
 Every externally meaningful change adds one `release-changes/*.json` fragment with
-`schemaVersion: 2`, a direct source reference, and complete problem/change/surface/
+`schemaVersion: 1`, a direct source reference, and complete problem/change/surface/
 application/compatibility/notes details. If one pull request resolves multiple issues,
 create one fragment per issue or independently adoptable behavior. Do not use an issue
 range as the only description. The fragment type is `fix`, `capability`, or `breaking`;
@@ -20,10 +20,10 @@ Run the Prepare release PR workflow with that exact version. It executes:
 
     python verification/prepare_release.py VERSION
 
-The script validates every fragment, creates a schema-v6 `release.json` that preserves
+The script validates every fragment, creates the current schema-version-1 `release.json` that preserves
 all detail records, updates pyproject.toml, engineering_process.VERSION, and
 RELEASE_NOTES.md, removes consumed fragments, and opens automation/release/vVERSION.
-It refuses incomplete or mixed legacy fragments and a version not derived from the
+It refuses incomplete or non-current fragments and a version not derived from the
 fragments.
 
 For an owner-authorized release-tooling correction, run the same preparation command
@@ -35,8 +35,8 @@ the normal Release PR. This retains the same CI, independent review, and merge b
 `release.json` is the sole contents authority. Each record explains the problem,
 observable change, affected paths, application action, compatibility impact, and
 important notes; source identifies one issue, PR, or owned change reference. A
-breaking record names the upgrade action or points to its versioned compatibility
-guidance. Implementation identities and version-bump PR titles are not descriptions
+breaking record names the required consumer action and compatibility impact.
+Implementation identities and version-bump PR titles are not descriptions
 of shipped features.
 
 Preparation generates `RELEASE_NOTES.md`, grouped into breaking changes, features,
@@ -86,9 +86,10 @@ a published release is never repaired or replaced. A tag on an older commit make
 later main pushes a no-op. A rerun on the exact release commit revalidates publication
 and retries the idempotent adoption dispatch.
 
-Source commits predating the owned notes renderer retain the legacy generated-notes
-path. Previously published release bodies are never rewritten; a body mismatch for
-the new format fails instead of silently replacing reviewed or published text.
+Historical release records use the contract that published them and are not runtime
+inputs for the current release. Previously published release bodies are never
+rewritten; a current body mismatch fails instead of silently replacing reviewed or
+published text.
 If a published release such as v2.5.0 needs clearer explanation, preserve its tag and
 published body and make the correction through a later owner-authorized release or
 the owner's documented publication policy.

@@ -23,7 +23,9 @@ the invariant floor consulted from planning through independent review. Both are
 reachable specializations; neither advances lifecycle state. `change-complete` calls
 the existing `processctl change finish` command.
 
-For migration from the previous skill identifiers, see [Versioning](VERSIONING.md#skill-namespace-migration).
+The current skill catalog is the only supported catalog. Historical skill identifiers
+belong to the release that published them and are not runtime aliases; see
+[Versioning](VERSIONING.md#current-contract-boundary) for the adoption boundary.
 
 ## Architecture
 
@@ -68,7 +70,7 @@ accepted required profiles, valid prior evidence, remaining work, inapplicable
 optional profiles, and blocked or unknown decisions. `change verify --remaining`
 executes only remaining work and reuses a complete profile report only when the
 candidate, contract/plan, project policy, process authority, runtime, and bounded
-child environment match. Legacy evidence without that identity reruns. This is
+  child environment match. Evidence without that identity is unknown and reruns. This is
 whole-profile reuse: equal check IDs and ordered side effects are never merged, and
 the lifecycle receipt still records only actual executions.
 
@@ -81,12 +83,13 @@ documents remain derived artifacts and never replace final required profiles or
 independent review.
 
 Consumers that can prove complete changed-path coverage may opt selected required
-profiles into final impact assurance with `impactProfiles.schemaVersion: 2` and
+profiles into final impact assurance with `impactProfiles.schemaVersion: 1` and
 `finalProfiles`. Each opted profile must declare an explicit global unit whose paths
 include the universal `**` pattern for cross-cutting reach. The lifecycle then
 records the selected units as final
 verification evidence; missing or unresolved coverage blocks rather than silently
-falling back. Existing version 1 policies remain feedback-only.
+falling back. A policy without `finalProfiles` remains feedback-only; this is one
+current policy shape, not a second contract generation.
 
 `processctl change review replace-reused` repairs only an initial pending assignment
 proven to reuse another change's agent context, before a submitted review or normal
@@ -101,17 +104,16 @@ It covers fresh agents and resumed sessions, requires native runtime confirmatio
 and permits no autonomous upgrade or downgrade. The portable guidance does not make
 processctl a provider runtime or a model-quality evaluator.
 
-Consumers using the packaged publication compatibility policy can enable
-`lifecycle.publication.required: true` in `.process/project.json` after adopting a
-version that supports it. Start then rejects an invalid branch before creating a
+Consumers using the packaged publication policy can enable
+`lifecycle.publication.required: true` in `.process/project.json`. Start then rejects an invalid branch before creating a
 run. Before final profiles run and before review assignment, the lifecycle checks
 the current branch, head subject, and nonempty pinned comparison-base-to-head range,
 and requires all candidate changes to be committed. Commit before `change verify`;
 a later commit changes the checkpoint even when its source content is identical.
 Local lifecycle run/receipt files and Git-ignored files are excluded. Finish repeats
-the same checks and writes publication metadata in a version 2 receipt. Version 1
-receipts and consumers without the opt-in remain supported. Missing pinned bases and
-mutations during the check fail without advancing the lifecycle.
+the same checks and writes optional publication metadata in the single current
+version-1 receipt. Missing pinned bases and mutations during the check fail without
+advancing the lifecycle.
 
 PR readiness additionally requires the selected ready-state body/title and exact
 head/range checks. Follow the [completion preflight](process_assets/skills/change-complete/SKILL.md)
@@ -131,7 +133,7 @@ decide correctness or release eligibility.
 Python 3.11 or newer and Git are required. A consumer owns .process/project.json:
 
     {
-      "schemaVersion": 5,
+      "schemaVersion": 1,
       "project": "my-project",
       "lifecycle": {
         "requiredProfiles": ["development", "review"]
@@ -249,9 +251,9 @@ building consumer may keep planned gaps while ordinary development continues. A
 production-stage declaration fails closed if any capability remains planned.
 
 The sidecar is a deliberate self-hosting boundary. Public authority N continues to
-validate the unchanged strict `.process/project.json` while source N+1 validates and
-self-applies the new readiness contract. Adoption leaves the consumer-owned sidecar
-in place, so every later authority can repeat the same forward-compatible sequence.
+validate the adopted consumer files while source N+1 validates and self-applies the
+current readiness contract. Adoption keeps the consumer-owned sidecar in place, but
+the current runtime does not treat another release's files or evidence as interchangeable.
 Pack versions are also immutable: a process update must keep `operations@1` working
 even after `operations@2` exists. Process adoption and pack upgrades are separate
 consumer-owned changes, preventing a new standard from deadlocking authority adoption.
@@ -264,7 +266,8 @@ existing correctness, input, source-portability, audit, media, package, and reco
 mechanism evidence enforced. Stable dependency/recovery claims, signing, key custody,
 runtime/license delivery, Linux advisory resolution, real-host workspace security,
 updater, incident recovery, and independent security review remain planned.
-Consumers without readiness remain compatible during that evidence-backed rollout.
+Consumers without readiness remain at their own declared stage; readiness state does
+not create a process-contract compatibility promise.
 
 ### Design quality
 
@@ -287,12 +290,12 @@ judgment, without another gate, artifact, or canonical invariant.
 
 ### Production engineering invariants
 
-Every new plan and independent review applies one small, versioned invariant floor:
+Every new plan and independent review applies one small canonical invariant floor:
 
 - authoritative structure for open-world decisions;
 - one authoritative source for shared policy;
 - bounded, least-authority side effects;
-- explicit compatibility and migration boundaries;
+- explicit current-contract boundaries and consumer recovery actions;
 - assurance bound to current objective evidence and independent judgment.
 
 The canonical triggers, required structures, prohibited failures, and expected
@@ -302,19 +305,15 @@ closed, owner-versioned protocol may use literal state or enum tables; automatio
 must not guess open-world meaning from keywords, identifiers, filenames, diagnostic
 text, or growing exception lists.
 
-Plan schema version 5 requires a reasoned applicability decision for every invariant
-and real work-item references for each applicable entry. A change started by this
-authority records that writer requirement before planning. The public reader retains
-schema version 4 so a run started by an earlier 1.x authority can still validate and
-register its old plan; that registration is assigned review schema version 6. Review
-schema version 7 requires an independent result and evidence for each entry. A
-violation links to a blocking finding, so it cannot coexist with approval. Structural
-completeness is machine-enforced; the reviewer remains responsible for contextual
-truth. New plans also treat `workItems[].affectedPaths` as literal repository-relative
-file or directory boundaries. Before final verification, review assignment, and
-finish, the runtime rejects a candidate path outside those declared boundaries and
-ignores only the exact contract/plan input paths recorded as process control inputs.
-This proves scope alignment, not root-cause correctness or minimality.
+The current change, plan, review, receipt, selection, and run contracts all use
+schemaVersion 1. They require the latest invariant assessments, current review
+dispositions, exact snapshot/evidence identities, and literal repository-relative
+`workItems[].affectedPaths` boundaries. A document from another release is rejected;
+its version-1 marker is not evidence that it can substitute for a document from this
+release. Before final verification, review assignment, and finish, the runtime rejects
+a candidate path outside the declared boundaries and ignores only the exact
+contract/plan input paths recorded as process control inputs. This proves scope
+alignment, not root-cause correctness or minimality.
 
 The plan and implementation skills require a causal chain from observed behavior or
 risk through the violated contract, actual mechanism, smallest sufficient boundary,
@@ -346,7 +345,7 @@ mutation, or wait for a process release is required to continue consumer develop
 Pin the process in requirements/process.in:
 
     --only-binary :all:
-    engineering-process==1.0.1
+    engineering-process==2.7.0
 
 Generate requirements/process.txt with hashes, install that lock, then run:
 
@@ -361,20 +360,23 @@ The transaction writes only managed surfaces:
 - .process/adopt-process.py
 - .process/process.lock
 - the marked engineering-process block in AGENTS.md
-- a schema migration of .process/project.json
+- the current .process/project.json contract and managed configuration
 
-It removes obsolete skills named by the previous process lock and preserves
-consumer-owned skills and instructions. Applying the same version twice is a no-op.
+It materializes the current managed skill catalog and preserves consumer-owned skills
+and instructions. Applying the same current package twice is a no-op; a lock or
+configuration from another contract release is rejected and must be recreated by the
+consumer.
 Consumer-owned `.process/standards.json` selections and override definitions are also
 preserved; the managed PR template follows the effective supported standard. See
 [consumer document standards](ARTIFACT_STANDARDS.md).
 [Issue records](ARTIFACT_STANDARDS.md#issues) use the same default-and-override
 mechanism for open requests and closed evidence while tracker actions remain consumer-owned.
-[Automation naming](ARTIFACT_STANDARDS.md#automation-names) uses the same versioned
+[Automation naming](ARTIFACT_STANDARDS.md#automation-names) uses the same current
 selection and override mechanism; consumers apply it in their bootstrap and provider checks.
-The legacy managed runner can enter 1.0 directly, so consumers do not need a chain of
-per-version migration documents. The same transaction deletes the retired migration
-directory and standing automation policy; the Windows Job Object helper remains a
+The adopter does not inspect or delete superseded files or old managed
+surfaces. Consumers remove unsupported files, update the current configuration and
+integration references, regenerate current artifacts, and rerun their required
+profiles as part of adopting a release. The Windows Job Object helper remains a
 managed runtime-containment asset.
 
 The three authored lifecycle documents stay intentionally small. A change contains
@@ -382,7 +384,7 @@ source, scope, outcomes, and profiles; a plan binds its digest; a review binds t
 assigned checkpoint:
 
     {
-      "schemaVersion": 5,
+      "schemaVersion": 1,
       "id": "change-123",
       "summary": "Deliver the accepted behavior",
       "source": "issue-123",
@@ -396,7 +398,7 @@ assigned checkpoint:
     }
 
     {
-      "schemaVersion": 5,
+      "schemaVersion": 1,
       "changeId": "change-123",
       "contractDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       "approach": "Implement through the existing owner.",
@@ -443,7 +445,7 @@ assigned checkpoint:
     }
 
     {
-      "schemaVersion": 7,
+      "schemaVersion": 1,
       "changeId": "change-123",
       "reviewer": {
         "actorId": "review-agent",
@@ -497,19 +499,17 @@ assigned checkpoint:
       }
     }
 
-`change review start` returns the exact `reportSchemaVersion` for its assignment and
-bounded `processSignals` derived from existing lifecycle events. Signals are prompts
-for independent judgment, not evidence that hidden external actions occurred.
-Version 6 distinguishes priority from severity: priority records impact if unresolved,
-while severity alone controls the current lifecycle gate. Every non-blocking finding
-in versions 6 and 7 records one disposition: `resolved` with a rationale, or
-`accepted-risk` / `tracked-follow-up` with a rationale, owner, and stable HTTPS
-`recordUrl`. Version 7 adds the production-engineering resolution and requires a
+`change review start` returns the current `reportSchemaVersion: 1` for its assignment
+and bounded `processSignals` derived from existing lifecycle events. Signals are
+prompts for independent judgment, not evidence that hidden external actions occurred.
+Priority records impact if unresolved, while severity controls the current lifecycle
+gate. Every non-blocking finding records one disposition: `resolved` with a rationale,
+or `accepted-risk` / `tracked-follow-up` with a rationale, owner, and stable HTTPS
+`recordUrl`. The report also records the production-engineering assessment and a
 `processImprovement` classification of `none`, `consumer-specific`, or
 `shared-process`. A shared-process report requires an existing, owner-authorized issue
-URL; without it, the review remains pending. Earlier plan and review documents remain
-readable, and their runs remain registrable or finishable with the version selected by
-the authority that started the relevant phase.
+URL; without it, the review remains pending. Reports from another release are not
+readable or reusable, even when they carry the same version-1 marker.
 
 The [finding priority definitions](process_assets/skills/change-review/SKILL.md#finding-priority)
 are the canonical P0-P3 impact convention for this process, including examples and
@@ -550,7 +550,7 @@ When continuing an incomplete verification, inspect and execute the necessary se
 The explicit `--profile` form remains a refresh and is never silently converted to
 reuse.
 
-For fast feedback, consumers may declare a versioned `impactProfiles` policy in
+For fast feedback, consumers may declare the current `impactProfiles` policy in
 `.process/project.json` and run only units related to the candidate paths:
 
     processctl change explain --change-id change-123 --impact
@@ -567,15 +567,14 @@ each requested profile. Missing policy, unsupported policy, or an unmapped path 
 dependency reach, update the consumer-owned mapping or obtain an owner decision,
 then repeat the explanation. It must not use a full profile as a fallback.
 
-Affected execution under a version 1 policy is feedback evidence only and never
+Affected execution under the current policy is feedback evidence only and never
 advances the lifecycle or satisfies a required profile. A consumer that can prove
-complete coverage may use schema version 2 with `finalProfiles`; `--remaining` then
-records the selected units as `impact-assurance` evidence. Each opted profile needs
-an explicit global unit with the universal `**` pattern for cross-cutting reach, and
-unresolved final coverage
-blocks rather than falling back silently. Explicit `--profile` remains the full
-refresh. Consumers that do not adopt the opt-in retain the existing final boundary;
-the affected command does not guess a policy for them.
+complete coverage may add `finalProfiles` to that same version-1 policy; `--remaining`
+then records the selected units as `impact-assurance` evidence. Each opted profile
+needs an explicit global unit with the universal `**` pattern for cross-cutting reach,
+and unresolved final coverage blocks rather than falling back silently. Explicit
+`--profile` remains the full refresh. Consumers without the declaration retain the
+existing final boundary; the affected command does not guess a policy for them.
 
 Assign an independent reviewer and submit its report:
 
@@ -607,15 +606,14 @@ approved can finish only while the repository still matches the reviewed snapsho
 New runs preserve the accepted `comparisonBase` ref and contract digest, and record
 its resolved commit separately as `comparisonBaseCommit`. Start rejects missing or
 non-commit refs before writing the run. Lifecycle output supplies the recorded commit
-for review even after commits or branch movement. Older runs without this field stay
-readable; their original review boundary must be established from available history,
-not retrospectively claimed as pinned. If that boundary cannot be established, use
-an owner-selected replacement contract.
+for review even after commits or branch movement. Runs without the current pinned-base
+and scope fields are rejected; recreate them under the current contract rather than
+inferring a historical boundary.
 
 Correction reports must retain every previously open blocker until its unchanged
 identity receives an explicit `resolved` disposition. Omitting it or changing it to
-`accepted-risk` or `tracked-follow-up` cannot retire the blocker. This applies to all
-supported review schemas; ordinary legacy non-blocking observations remain readable.
+`accepted-risk` or `tracked-follow-up` cannot retire the blocker. This applies to the
+single current review contract.
 
 ### Public pull-request evidence
 
@@ -629,7 +627,7 @@ handle, or local `.process/runs` path. Those values remain in lifecycle state, w
 they enforce self-review rejection but do not pretend to be provider-authenticated
 review identities.
 
-The template and validator derive this contract from the same versioned definition.
+The template and validator derive this contract from the same current definition.
 Consumers can select a supported override through `.process/standards.json`; see
 [generation, verification and custom-format boundaries](ARTIFACT_STANDARDS.md).
 `processctl publication validate-pr` checks that selected contract deterministically.
@@ -721,12 +719,13 @@ Consumers add `github>phuongnse/engineering-process//templates/renovate#COMMIT_S
 to their existing `extends` array, replacing `COMMIT_SHA` with the full source
 commit of a verified release that contains the preset. Remove obsolete inline
 `prHeader` and `prBodyTemplate` overrides, including matching package-rule overrides.
-The default preset targets the draft grammar used by 1.2.4 and this distribution;
-it does not claim compatibility with earlier publication contracts. A future
-grammar change must preserve this adapter or ship an explicit consumer migration.
+The preset targets the current draft grammar. A consumer adopts a new release by
+refreshing the pinned package/hash and regenerating its current template and bot
+configuration; the process does not promise that a prior publication contract is
+readable by the new release.
 
 Renovate resolves presets from the protected base configuration before dependency
-updates and post-upgrade tasks. Bootstrap the compatible preset in that base before
+updates and post-upgrade tasks. Bootstrap the current preset in that base before
 relying on its generated drafts; changing the candidate configuration alone cannot
 repair the same run's body. Verify the native rendered body against both the base
 and candidate process authority during adoption. Pending fields and unchecked
@@ -744,18 +743,21 @@ These are native [shared preset](https://docs.renovatebot.com/config-presets/) a
 [review pause](https://docs.renovatebot.com/configuration-options/#stopupdatinglabel)
 boundaries; the control plane does not become a second PR publisher.
 
-## Compatibility
+## Current contract boundary
 
-Version 1.x retains a few small pre-1.0 command shapes so existing consumers can
-pass their first adoption PR:
+Every process-owned artifact, schema, and runtime contract has one current definition
+and version `1`. The latest semantics are edited in place, including breaking changes.
+The runtime rejects another version or an invalid current shape; it does not normalize
+old documents, guess fields, select a compatibility mode, or run a migration adapter.
 
-- setup runs only the consumer-owned setup arrays migrated from its old manifest;
-- doctor --profile validates the selected profile.
-- publication validate-branch, validate-commit, validate-range, and validate-pr remain
-  read-only while consumers move those conventions into their own repositories.
-
-They do not restore the removed governance machinery and can be deleted in the next
-package major after all known consumers have adopted 1.x.
+Consumer adoption is deliberately small: install the released package from the
+consumer's exact pinned and hashed requirement, update `.process/project.json` and
+integration references to the current shape, regenerate managed artifacts with the
+adoption command, recreate any active process artifacts, and rerun required profiles.
+Delete or repair unsupported consumer-owned files as part of that change. No process
+migration framework or cross-release evidence reuse is provided. Package/release
+identity, process digest, requirements hash, snapshot binding, lifecycle correctness,
+freshness, and independent review remain authoritative.
 
 ## Development
 

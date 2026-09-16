@@ -4,9 +4,9 @@
   "title": "Independent review report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "changeId", "reviewer", "checkpoint", "verdict", "summary", "findings"],
+  "required": ["schemaVersion", "changeId", "reviewer", "checkpoint", "verdict", "summary", "findings", "productionEngineering", "processImprovement"],
   "properties": {
-    "schemaVersion": {"enum": [5, 6, 7]},
+    "schemaVersion": {"const": 1},
     "changeId": {"$ref": "#/$defs/id"},
     "reviewer": {"$ref": "#/$defs/actor"},
     "checkpoint": {"$ref": "#/$defs/checkpoint"},
@@ -41,50 +41,17 @@
   },
   "allOf": [
     {
-      "if": {"properties": {"schemaVersion": {"enum": [6, 7]}}, "required": ["schemaVersion"]},
-      "then": {
-        "properties": {
-          "findings": {
-            "items": {
-              "if": {"properties": {"severity": {"const": "non-blocking"}}, "required": ["severity"]},
-              "then": {"required": ["disposition"]}
-            }
+      "properties": {
+        "findings": {
+          "items": {
+            "if": {"properties": {"severity": {"const": "non-blocking"}}, "required": ["severity"]},
+            "then": {"required": ["disposition"]}
           }
         }
       }
     },
     {
-      "if": {"properties": {"schemaVersion": {"const": 7}}, "required": ["schemaVersion"]},
-      "then": {"required": ["productionEngineering"]},
-      "else": {"not": {"required": ["productionEngineering"]}}
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"const": 7}}, "required": ["schemaVersion"]},
-      "then": {"required": ["processImprovement"]},
-      "else": {"not": {"required": ["processImprovement"]}}
-    },
-    {
-      "if": {"properties": {"schemaVersion": {"enum": [5, 6]}}, "required": ["schemaVersion"]},
-      "then": {
-        "properties": {
-          "findings": {
-            "items": {
-              "properties": {
-                "origin": {"enum": ["contract", "remediation-regression", "critical-late"]}
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "schemaVersion": {"const": 7},
-          "verdict": {"const": "approved"}
-        },
-        "required": ["schemaVersion", "verdict"]
-      },
+      "if": {"properties": {"verdict": {"const": "approved"}}, "required": ["verdict"]},
       "then": {
         "properties": {
           "productionEngineering": {

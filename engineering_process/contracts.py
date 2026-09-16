@@ -28,7 +28,6 @@ CONTRACT_KINDS = (
     "production-engineering",
     "pr-description-data",
     "project",
-    "project-legacy",
     "receipt",
     "release-change",
     "release",

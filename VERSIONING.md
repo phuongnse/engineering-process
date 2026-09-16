@@ -1,92 +1,87 @@
 # Versioning
 
-The package follows SemVer.
+The package keeps its public release identity under SemVer. A release may contain a
+breaking process change and its release record must describe the consumer action. The
+package version, Git tag, process lock pin, distribution digest, and release snapshot
+remain distinct identities and are never inferred from a contract `schemaVersion`.
 
-- patch: fixes existing behavior without adding a public capability;
-- minor: adds backward-compatible CLI, schema, skill, or managed-asset behavior;
-- major: removes or incompatibly changes any of those surfaces.
+## Current contract boundary
 
-The command tree, exit behavior, lifecycle transitions, JSON Schemas, process lock,
-managed files, skill names, and adoption protocol are public API. A release fragment
-classifies each change and verification/prepare_release.py derives the next version.
+Every artifact, schema, and serialized contract owned by engineering-process has one
+current definition with version `1`. This includes project configuration, change and
+plan documents, review reports, lifecycle runs and receipts, verification selections,
+release manifests and fragments, process locks, process graph data, and artifact
+standard definitions. The latest supported semantics are edited directly in that
+definition, including breaking changes.
 
-Serialized documents have their own integer schemaVersion. Additive optional fields
-may retain a schema version. Removing, renaming, or changing required meaning needs a
-new schemaVersion and package-major migration.
+The runtime validates the current definition directly and rejects another version or
+data that does not satisfy the current JSON Schema. It has no version dispatch, legacy
+reader/writer, compatibility adapter, migration framework, field guessing, or silent
+fallback for process-owned formats. A `schemaVersion: 1` value is not evidence that a
+document or evidence record from another package release can be reused; digest,
+authority, input, candidate, and snapshot bindings still have to match.
 
-New run writers add the optional `comparisonBaseCommit` field to run schema 1 and
-expose it in lifecycle output. The accepted contract format and digest do not change.
-The updated reader accepts older records without this field and does not invent a
-historical frozen base for them. Older installed schemas may reject newly written
-records; this is new-reader/old-record compatibility, not forward compatibility.
-Historical blockers now require explicit resolution in subsequent reports; all
-supported review schemas already permit the `resolved` disposition.
+Consumer repositories own the adoption boundary. For a release that changes a current
+contract, a consumer updates its exact package/version/hash pin, rewrites its current
+configuration and integration references, regenerates managed artifacts, recreates
+any active process artifacts, and reruns the required profiles. The process does not
+convert unsupported consumer data or promise backward compatibility between releases.
+Consumer product compatibility remains the product owner's responsibility.
 
-Artifact selection, standard definitions and renderer inputs use their own schema 1
-documents. Packaged standard versions are immutable after publication. Consumers can
-pin a built-in version or select a complete consumer-owned override; unsupported
-explicit selections fail without fallback. Existing project, run and review schema
-versions and legacy readers remain supported; this release adds the versioned
-verification-impact-selection schema and additive project/run evidence fields. See
-[consumer document standards](ARTIFACT_STANDARDS.md).
+The current skill catalog is:
 
-Release fragments use schema 2 for new releases. Their structured detail fields are
-carried into release manifest schema 6 and rendered into the published notes. Manifest
-schema 5 and release-note data without details remain readable, so this is an additive
-release-authoring capability rather than a consumer runtime break. New preparation
-rejects incomplete or mixed fragment versions before changing release files.
+- `deliver-change` as the delivery entrypoint;
+- `change-start`, `change-plan`, `change-implement`, `change-verify`,
+  `change-review`, and `change-complete` for the six lifecycle operations;
+- `process-improve` and `production-engineering` as lifecycle specializations.
 
-Existing publication command arguments remain valid. The updated PR adapter resolves
-the current consumer's selected standard and repairs the ready-placeholder gap; the
-default completed body structure is unchanged. Older runtimes do not apply these new
-selections or checks. Adopt and install the released package before enabling overrides,
-then regenerate matching consumer templates/bot configuration and collect new evidence.
+Historical skill names, schemas, runs, receipts, and release records remain in the
+commits that published them. They are historical evidence only and are not aliases or
+inputs for the current runtime. The repository does not rewrite those records to use
+the current contract.
 
-Version 1.0 is the intentional clean break from the pre-1.0 governance stack. Its
-adoption reader accepts old process locks and project manifests, then writes
-process-lock schema 2 and project schema 5. It does not require every intermediate
-package version or migration file. Legacy command setup actions are preserved;
-process-owned managed-tool installers are dropped because runtimes now belong to the
-consumer's host or pinned CI setup.
+## Release records
 
-The old setup shape, doctor --profile, and four read-only publication
-validators remain for 1.x only so pre-1.0 consumer CI can validate its first adoption
-PR. Removing them requires the next package major.
+The current release-fragment and release-manifest definitions both use
+`schemaVersion: 1` and require complete detail fields (`problem`, `changes`,
+`affectedPaths`, `apply`, `compatibility`, and `notes`). `verification/prepare_release.py`
+accepts only that current fragment shape and emits the current manifest shape. It still
+derives the package's next SemVer from the consumer-owned change classification; it
+does not change artifact or contract versions.
 
-## Skill namespace migration
+Release contents are generated from the manifest and checked byte-for-byte. Existing
+release identity, rendered notes, package metadata, and historical evidence are not
+rewritten as part of interpreting an older release. A future release owner decides
+when to publish a new package and what release record it contains.
 
-Version 2.0 renamed the eight delivery/process skills together (current in 2.x):
+## Adoption
 
-| Previous identifier | New identifier |
-| --- | --- |
-| run-change | deliver-change |
-| start-change | change-start |
-| plan-change | change-plan |
-| implement-change | change-implement |
-| verify-change | change-verify |
-| review-change | change-review |
-| finish-change | change-complete |
-| improve-process | process-improve |
+Adoption writes the current managed skill catalog, current lock, current project
+configuration, templates, and managed instructions in one transactional operation.
+It preserves consumer-owned files and verifies the selected package version, process
+distribution digest, requirements digest, and managed-file inventory. A lock or
+configuration from another contract release fails validation; consumers recreate it
+under the current definition instead of relying on process-side conversion.
 
-`production-engineering` keeps its name. The 2.x catalog has one delivery entrypoint,
-`deliver-change`, six phase skills, and two specializations. Old identifiers are not
-aliases in the 2.x catalog. CLI commands, persisted lifecycle states and schemas,
-independent-review requirements, and completion receipts are unchanged;
-`change-complete` still calls `processctl change finish`. The existing read-only
-publication and `doctor --profile` adapters remain available for pre-1.0 consumer CI
-compatibility.
+The adopter keeps the bounded command runner, rollback, collision protection, platform
+cleanup, hash locking, and snapshot checks. It does not discover or delete old
+migration directories or obsolete managed files on behalf of a consumer.
 
-Adoption of 2.x releases occurs through the normal hash-locked dependency pull request.
-Adoption replaces the old owned skill files, writes the new catalog and lock inventory,
-and updates the managed AGENTS block. It preserves consumer-owned files, including
-files inside the old directories, and rejects conflicting files at new managed paths.
-Consumers update explicit skill invocations and custom references using the mapping above.
-Restart an existing agent session after adoption so its catalog matches the installed release.
-To return to a previous catalog, restore the prior package pin/hash lock and run that release's
-adoption transaction.
+## Publication and evidence
 
-The producer checkout retains its currently adopted `.agents/skills`, process lock,
-and managed AGENTS block until each public adoption pull request. Their state under
-`.agents/skills` represents the currently adopted release; next-distribution sources
-under `process_assets/skills` represent the next release candidate. Historical fixtures
-and migration evidence remain intentional references to earlier releases.
+The current publication checks are read-only checks for the consumer's typed branch,
+commit, range, and selected PR document. `doctor` validates the current project,
+lock, digest, and adoption state; it has no historical profile adapter. Publication
+conventions remain consumer-owned and can be disabled or replaced by the consumer's
+own required profile.
+
+Lifecycle evidence remains bound to the exact unchanged candidate, accepted contract,
+plan, current process authority, runtime, dependency/environment identity, comparison
+base, and required profiles. Independent review still rejects reviewer actor/context
+reuse, and completion still requires fresh evidence, current publication state, and
+all applicable readiness/adoption guarantees.
+
+The producer checkout's `.agents/skills`, process lock, and managed instructions are
+consumer adoption state. `process_assets/skills` and the packaged schemas are the
+next distribution source. Updating a source definition does not mutate a prior
+adoption snapshot or receipt.

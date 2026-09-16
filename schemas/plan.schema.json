@@ -4,9 +4,9 @@
   "title": "Engineering implementation plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "changeId", "contractDigest", "approach", "workItems", "risks"],
+  "required": ["schemaVersion", "changeId", "contractDigest", "approach", "workItems", "risks", "productionEngineering"],
   "properties": {
-    "schemaVersion": {"enum": [4, 5]},
+    "schemaVersion": {"const": 1},
     "changeId": {"$ref": "#/$defs/id"},
     "contractDigest": {"$ref": "#/$defs/digest"},
     "approach": {"type": "string", "minLength": 1, "maxLength": 4000},
@@ -50,13 +50,6 @@
       "items": {"$ref": "#/$defs/invariantAssessment"}
     }
   },
-  "allOf": [
-    {
-      "if": {"properties": {"schemaVersion": {"const": 5}}, "required": ["schemaVersion"]},
-      "then": {"required": ["productionEngineering"]},
-      "else": {"not": {"required": ["productionEngineering"]}}
-    }
-  ],
   "$defs": {
     "id": {
       "type": "string",

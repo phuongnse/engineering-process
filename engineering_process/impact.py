@@ -123,7 +123,7 @@ def resolve_impact_selection(
     if unresolved or not paths:
         status = "unresolved" if policy else "unavailable"
     selection: dict[str, Any] = {
-        "schemaVersion": 2 if assurance_profiles else 1,
+        "schemaVersion": 1,
         "changeId": state["changeId"],
         "status": status,
         "comparisonBaseCommit": base,
@@ -140,7 +140,7 @@ def resolve_impact_selection(
         if not paths:
             reason = "the candidate has no changed path from the pinned comparison base"
         elif not policy:
-            reason = "the consumer has not declared a versioned impact policy"
+            reason = "the consumer has not declared a current impact policy"
         else:
             reason = "every requested profile must resolve every changed path before affected execution"
         selection["resolution"] = {

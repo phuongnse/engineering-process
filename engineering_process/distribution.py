@@ -33,15 +33,11 @@ def distribution_root(explicit: Path | None = None) -> Path:
     for candidate in candidates:
         if (candidate / "process_assets" / "skills").is_dir():
             return candidate.resolve()
-        # Wheels built before 1.0 placed skills directly under share/.../skills.
-        if (candidate / "skills").is_dir():
-            return candidate.resolve()
     raise ProcessError("cannot locate installed engineering-process assets")
 
 
 def skills_root(root: Path) -> Path:
-    modern = root / "process_assets" / "skills"
-    return modern if modern.is_dir() else root / "skills"
+    return root / "process_assets" / "skills"
 
 
 def schemas_root(root: Path) -> Path:

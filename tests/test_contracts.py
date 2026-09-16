@@ -16,15 +16,21 @@ from engineering_process.contracts import (
 )
 from engineering_process.distribution import schemas_root
 from engineering_process.project import (
-    load_project,
     normalize_project,
     readiness_summary,
-    require_consumer_evidence,
 )
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS = schemas_root(ROOT)
+
+
+def current_project_fixture(*, readiness: bool = False) -> dict:
+    project = read_json(ROOT / ".process" / "project.json")
+    project["schemaVersion"] = 1
+    if readiness:
+        project["readiness"] = read_json(ROOT / ".process" / "readiness.json")
+    return project
 
 
 class ContractTests(unittest.TestCase):
@@ -51,7 +57,6 @@ class ContractTests(unittest.TestCase):
             "production-engineering",
             "pr-description-data",
             "project",
-            "project-legacy",
             "receipt",
             "release-change",
             "release",
@@ -69,7 +74,6 @@ class ContractTests(unittest.TestCase):
 
     def test_live_repository_contracts_validate(self) -> None:
         cases = [
-            (ROOT / ".process" / "process.lock", "process-lock"),
             (ROOT / "process-graph.json", "process-graph"),
             (ROOT / "release.json", "release"),
             (ROOT / "templates" / "renovate.json", "renovate-preset"),
@@ -85,18 +89,20 @@ class ContractTests(unittest.TestCase):
         for path, kind in cases:
             with self.subTest(path=path):
                 validate_document(read_json(path), kind, schema_root=SCHEMAS, source=str(path))
-        normalized = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
-        validate_document(normalized, "project", schema_root=SCHEMAS)
-        self.assertTrue(require_consumer_evidence(load_project(ROOT, ROOT)))
 
     def test_schema_rejects_unknown_fields(self) -> None:
-        project = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
+        project = normalize_project(current_project_fixture(), ROOT)
         project["governanceLayer"] = True
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(project, "project", schema_root=SCHEMAS)
 
+        non_current = deepcopy(project)
+        non_current["schemaVersion"] = 2
+        with self.assertRaisesRegex(ProcessError, "1 was expected"):
+            validate_document(non_current, "project", schema_root=SCHEMAS)
+
     def test_publication_opt_in_and_receipt_metadata_are_schema_valid(self) -> None:
-        project = read_json(ROOT / ".process" / "project.json")
+        project = current_project_fixture()
         project["lifecycle"]["publication"] = {"required": True}
         validate_document(
             normalize_project(project, ROOT), "project", schema_root=SCHEMAS
@@ -113,7 +119,7 @@ class ContractTests(unittest.TestCase):
             "byteCount": 0,
         }
         receipt = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "changeId": "publication-gate",
             "cycle": 1,
             "completedAt": "2026-09-10T00:00:00+00:00",
@@ -154,23 +160,20 @@ class ContractTests(unittest.TestCase):
         receipt["verification"]["development"]["executionMode"] = "impact-assurance"
         receipt["verification"]["development"]["selectionDigest"] = f"sha256:{'4' * 64}"
         validate_document(receipt, "receipt", schema_root=SCHEMAS)
-        legacy = deepcopy(receipt)
-        legacy["schemaVersion"] = 1
-        legacy.pop("publication")
-        validate_document(legacy, "receipt", schema_root=SCHEMAS)
+        no_publication = deepcopy(receipt)
+        no_publication.pop("publication")
+        validate_document(no_publication, "receipt", schema_root=SCHEMAS)
         with self.assertRaises(ProcessError):
-            validate_document({**legacy, "schemaVersion": 2}, "receipt", schema_root=SCHEMAS)
-        with self.assertRaises(ProcessError):
-            validate_document({**receipt, "schemaVersion": 1}, "receipt", schema_root=SCHEMAS)
+            validate_document({**receipt, "schemaVersion": 2}, "receipt", schema_root=SCHEMAS)
         invalid = deepcopy(receipt)
         invalid["publication"]["commit"] = "0" * 40
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(invalid, "receipt", schema_root=SCHEMAS)
 
     def test_final_impact_policy_requires_explicit_global_coverage(self) -> None:
-        project = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
+        project = normalize_project(current_project_fixture(), ROOT)
         project["impactProfiles"] = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "finalProfiles": ["development"],
             "profiles": {
                 "development": [
@@ -202,11 +205,11 @@ class ContractTests(unittest.TestCase):
             normalize_project(invalid, ROOT)
 
         invalid_version = deepcopy(project)
-        invalid_version["impactProfiles"]["schemaVersion"] = 1
+        invalid_version["impactProfiles"]["schemaVersion"] = 2
         with self.assertRaises(ProcessError):
             normalize_project(invalid_version, ROOT)
 
-    def test_run_schema_accepts_legacy_and_safe_diagnostic_reports(self) -> None:
+    def test_run_schema_accepts_current_and_safe_diagnostic_reports(self) -> None:
         schema = read_json(SCHEMAS / "run.schema.json")
         validator = Draft202012Validator(schema).evolve(
             schema=schema["$defs"]["verificationReport"]
@@ -265,9 +268,9 @@ class ContractTests(unittest.TestCase):
         report["selectionDigest"] = f"sha256:{'4' * 64}"
         validator.validate(report)
 
-    def test_review_v6_requires_durable_non_blocking_dispositions(self) -> None:
+    def test_current_review_requires_durable_non_blocking_dispositions(self) -> None:
         review = {
-            "schemaVersion": 6,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "reviewer": {
                 "actorId": "reviewer",
@@ -292,13 +295,21 @@ class ContractTests(unittest.TestCase):
                     "summary": "A bounded follow-up remains.",
                 }
             ],
+            "productionEngineering": [
+                {
+                    "id": "authoritative-structure",
+                    "status": "not-applicable",
+                    "rationale": "The fixture has no open-world classification.",
+                    "evidence": [],
+                }
+            ],
+            "processImprovement": {
+                "status": "none",
+                "rationale": "The fixture does not expose a shared process gap.",
+            },
         }
         with self.assertRaisesRegex(ProcessError, "disposition"):
             validate_document(review, "review", schema_root=SCHEMAS)
-
-        legacy = deepcopy(review)
-        legacy["schemaVersion"] = 5
-        validate_document(legacy, "review", schema_root=SCHEMAS)
 
         resolved = deepcopy(review)
         resolved["findings"][0]["disposition"] = {
@@ -327,9 +338,14 @@ class ContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProcessError, "recordUrl"):
                     validate_document(durable, "review", schema_root=SCHEMAS)
 
-    def test_review_v7_requires_a_process_improvement_disposition(self) -> None:
+        invalid_version = deepcopy(resolved)
+        invalid_version["schemaVersion"] = 2
+        with self.assertRaises(ProcessError):
+            validate_document(invalid_version, "review", schema_root=SCHEMAS)
+
+    def test_current_review_requires_a_process_improvement_disposition(self) -> None:
         review = {
-            "schemaVersion": 7,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "reviewer": {
                 "actorId": "reviewer",
@@ -379,24 +395,13 @@ class ContractTests(unittest.TestCase):
         )
         validate_document(review, "review", schema_root=SCHEMAS)
 
-        for version in (5, 6):
-            legacy = deepcopy(review)
-            legacy["schemaVersion"] = version
-            legacy.pop("productionEngineering")
-            with self.subTest(version=version, field="forbidden"):
-                with self.assertRaisesRegex(ProcessError, "processImprovement"):
-                    validate_document(legacy, "review", schema_root=SCHEMAS)
-            legacy.pop("processImprovement")
-            with self.subTest(version=version, field="absent"):
-                validate_document(legacy, "review", schema_root=SCHEMAS)
-
-    def test_released_process_lock_schema_uri_remains_accepted(self) -> None:
-        lock = read_json(ROOT / ".process" / "process.lock")
-        lock["$schema"] = "https://engineering-process.invalid/schemas/process-lock.schema.json"
-        validate_document(lock, "process-lock", schema_root=SCHEMAS)
+        invalid_version = deepcopy(review)
+        invalid_version["schemaVersion"] = 2
+        with self.assertRaises(ProcessError):
+            validate_document(invalid_version, "review", schema_root=SCHEMAS)
 
     def test_live_readiness_resolves_library_cli_coverage(self) -> None:
-        project = load_project(ROOT, ROOT)
+        project = normalize_project(current_project_fixture(readiness=True), ROOT)
         readiness = readiness_summary(project)
         self.assertEqual([{"id": "library-cli", "version": 1}], readiness["packs"])
         self.assertEqual("production", readiness["stage"])
@@ -415,8 +420,7 @@ class ContractTests(unittest.TestCase):
         )
 
     def test_readiness_fails_closed_on_incomplete_or_ambiguous_evidence(self) -> None:
-        live = read_json(ROOT / ".process" / "project.json")
-        live["readiness"] = read_json(ROOT / ".process" / "readiness.json")
+        live = current_project_fixture(readiness=True)
         cases = []
         missing = deepcopy(live)
         missing["readiness"]["capabilities"].pop()
@@ -440,8 +444,8 @@ class ContractTests(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(ProcessError, message):
                 normalize_project(project, ROOT)
 
-    def test_readiness_remains_optional_for_existing_schema_v5_consumers(self) -> None:
-        project = read_json(ROOT / ".process" / "project.json")
+    def test_readiness_remains_optional_for_current_consumers(self) -> None:
+        project = current_project_fixture()
         self.assertIsNone(readiness_summary(normalize_project(project, ROOT)))
 
     def test_operations_pack_resolves_renovate_ops_profiles_and_fails_closed(self) -> None:
@@ -455,7 +459,7 @@ class ContractTests(unittest.TestCase):
             "target-selection-integrity": ["development"],
         }
         project = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "project": "renovate-ops",
             "lifecycle": {"requiredProfiles": ["development", "review"]},
             "profiles": {
@@ -482,7 +486,7 @@ class ContractTests(unittest.TestCase):
             normalize_project(project, ROOT)
 
     def test_pack_versions_are_explicit_and_do_not_upgrade_implicitly(self) -> None:
-        project = load_project(ROOT, ROOT)
+        project = normalize_project(current_project_fixture(readiness=True), ROOT)
         project["readiness"]["packs"] = [{"id": "library-cli", "version": 2}]
         with self.assertRaisesRegex(ProcessError, "unsupported readiness pack versions: library-cli@2"):
             readiness_summary(project)
@@ -516,7 +520,7 @@ class ContractTests(unittest.TestCase):
             "workspace-security": "Credential storage and encrypted-workspace adapters still need real-host evidence.",
         }
         project = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "project": "lyric-rail",
             "lifecycle": {"requiredProfiles": ["frontend", "python", "rust"]},
             "profiles": {

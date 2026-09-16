@@ -12,7 +12,8 @@ import sys
 import tempfile
 
 from engineering_process.contracts import ProcessError
-from engineering_process.publication_compat import branch_issues, commit_issues, validate_pull_request, validate_range
+from engineering_process.pr_description import validate_pull_request
+from engineering_process.source_publication import branch_issues, commit_issues, validate_range
 
 
 def verify_publication(root: Path, *, pull_request: bool) -> list[str]:

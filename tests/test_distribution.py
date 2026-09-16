@@ -22,16 +22,15 @@ def framed_digest(entries: list[tuple[str, bytes]]) -> str:
 
 
 class DistributionTests(unittest.TestCase):
-    def test_explicit_roots_accept_source_and_installed_layouts(self) -> None:
+    def test_explicit_roots_require_the_current_asset_layout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             with self.assertRaises(ProcessError):
                 distribution_root(root)
-            for layout in ("process_assets/skills", "skills"):
-                skill_root = root / layout
-                skill_root.mkdir(parents=True)
-                self.assertEqual(root, distribution_root(root))
-                skill_root.rmdir()
+            skill_root = root / "skills"
+            skill_root.mkdir(parents=True)
+            with self.assertRaises(ProcessError):
+                distribution_root(root)
 
     def test_packaged_skill_assets_match_the_source_catalog(self) -> None:
         root = Path(__file__).resolve().parent.parent
@@ -39,10 +38,10 @@ class DistributionTests(unittest.TestCase):
         declared = {
             target: set(paths)
             for target, paths in metadata["tool"]["setuptools"]["data-files"].items()
-            if target.startswith("share/engineering-process/skills/")
+            if target.startswith("share/engineering-process/process_assets/skills/")
         }
         expected = {
-            f"share/engineering-process/skills/{directory.name}": {
+            f"share/engineering-process/process_assets/skills/{directory.name}": {
                 path.relative_to(root).as_posix()
                 for path in directory.rglob("*") if path.is_file()
             }

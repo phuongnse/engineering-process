@@ -6,11 +6,13 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .artifact_standards import ArtifactStandard, MAX_DOCUMENT_BYTES
+from .artifact_standards import ArtifactStandard, MAX_DOCUMENT_BYTES, resolve_standard
 from .contracts import ProcessError, validate_document
 from .distribution import distribution_digest, distribution_root, schemas_root
 from .evidence import execution_identity, verification_report_matches_inputs
 from .project import load_project
+from .production_engineering import validate_current_run_documents
+from .source_publication import branch_issues, commit_issues, validate_range
 
 
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -30,6 +32,7 @@ CANONICAL_PR_FIELDS = frozenset({
     "blocking-findings",
     "non-blocking-dispositions",
 })
+MAX_BODY_BYTES = 1_000_000
 
 
 def _without_html_comments(body: str) -> tuple[str, list[str]]:
@@ -231,6 +234,41 @@ def body_issues(body: str, state: str, standard: ArtifactStandard) -> list[str]:
     return issues
 
 
+def validate_pull_request(
+    *,
+    title: str,
+    branch: str,
+    state: str,
+    body_path: Path | None,
+    project_root: Path | None = None,
+    process_root: Path | None = None,
+) -> dict[str, Any]:
+    """Validate current pull-request metadata and the selected body contract."""
+    issues = branch_issues(branch) + commit_issues(title)
+    if state not in {"draft", "ready"}:
+        issues.append("pull request state must be draft or ready")
+    body = ""
+    if body_path is not None:
+        try:
+            data = body_path.read_bytes()
+        except OSError as error:
+            raise ProcessError(f"cannot read pull request body: {error}") from error
+        if len(data) > MAX_BODY_BYTES:
+            issues.append("pull request body exceeds its size limit")
+        else:
+            try:
+                body = data.decode("utf-8")
+            except UnicodeError:
+                issues.append("pull request body must be UTF-8")
+    standard = resolve_standard(
+        project_root or Path.cwd(),
+        distribution_root(process_root),
+        "pull-request",
+    )
+    issues.extend(body_issues(body, state, standard))
+    return {"issues": issues, "standard": standard.metadata}
+
+
 def render_description(
     standard: ArtifactStandard,
     data: dict[str, Any] | None = None,
@@ -317,6 +355,7 @@ def build_pr_description_data(
     state = load_and_validate(run_path, "run", schema_root=schemas_root(dist_root))
     if state.get("changeId") != change_id:
         raise ProcessError(f"{run_path}: change identity mismatch")
+    validate_current_run_documents(state, dist_root)
     current_checkpoint = repository_snapshot(project_root)
     project = load_project(project_root, dist_root)
     runtime = execution_identity()

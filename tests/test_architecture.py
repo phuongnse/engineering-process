@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 import unittest
 
@@ -24,7 +25,6 @@ LAYERS = {
     "automation_name": 3,
     "issue": 3,
     "production_engineering": 2,
-    "publication_compat": 4,
     "source_publication": 2,
     "review_contexts": 2,
     "incidents": 3,
@@ -150,19 +150,42 @@ class ArchitectureTests(unittest.TestCase):
             "remote_verification.py",
             "supplemental.py",
             "transition.py",
+            "publication_compat.py",
         }
         actual = {path.name for path in RUNTIME.glob("*.py")}
         self.assertTrue(removed_modules.isdisjoint(actual))
+        self.assertFalse((ROOT / "schemas" / "project-legacy.schema.json").exists())
         workflows = {path.name for path in (ROOT / ".github" / "workflows").glob("*.yml")}
         self.assertEqual({"ci.yml", "publish.yml", "release-pr.yml"}, workflows)
 
-    def test_source_skills_have_no_orphaned_legacy_directories(self) -> None:
+    def test_source_skills_have_no_orphaned_directories(self) -> None:
         skills = {
             path.parent.name
             for path in (ROOT / "process_assets" / "skills").glob("*/SKILL.md")
         }
         self.assertNotIn("publish-change", skills)
         self.assertNotIn("cross-repo-change", skills)
+
+    def test_process_owned_contract_inventory_has_one_current_version(self) -> None:
+        schemas = ROOT / "schemas"
+        for path in sorted(schemas.glob("*.schema.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.name):
+                schema_version = document.get("properties", {}).get("schemaVersion")
+                if schema_version is not None:
+                    self.assertEqual({"const": 1}, schema_version)
+        for path in sorted((ROOT / "process_assets" / "standards").glob("*.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.name):
+                self.assertEqual(1, document["schemaVersion"])
+                self.assertEqual(1, document["version"])
+        for path in (
+            ROOT / "process-graph.json",
+            ROOT / "release.json",
+        ):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                self.assertEqual(1, document["schemaVersion"])
 
     def test_runtime_is_agent_neutral(self) -> None:
         forbidden_brand_substrings = (

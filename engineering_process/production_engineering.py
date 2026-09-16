@@ -5,12 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .contracts import ProcessError, load_and_validate
+from .contracts import ProcessError, load_and_validate, validate_document
 from .distribution import schemas_root, skills_root
 
 
-PLAN_SCHEMA_VERSION = 5
-REVIEW_SCHEMA_VERSION = 7
+PLAN_SCHEMA_VERSION = 1
+REVIEW_SCHEMA_VERSION = 1
 
 
 def load_invariant_floor(process_root: Path) -> dict[str, Any]:
@@ -28,6 +28,42 @@ def load_invariant_floor(process_root: Path) -> dict[str, Any]:
 
 def _canonical_ids(process_root: Path) -> list[str]:
     return [item["id"] for item in load_invariant_floor(process_root)["invariants"]]
+
+
+def validate_current_run_documents(
+    state: dict[str, Any], process_root: Path
+) -> None:
+    """Validate every bound lifecycle document against the current contracts."""
+    validate_document(
+        state["contract"]["document"],
+        "change",
+        schema_root=schemas_root(process_root),
+        source="lifecycle contract",
+    )
+    if state["plan"] is not None:
+        plan = validate_document(
+            state["plan"]["document"],
+            "plan",
+            schema_root=schemas_root(process_root),
+            source="lifecycle plan",
+        )
+        validate_plan_assessments(plan, process_root)
+    if state["review"] is not None:
+        review = validate_document(
+            state["review"]["document"],
+            "review",
+            schema_root=schemas_root(process_root),
+            source="lifecycle review",
+        )
+        validate_review_assessments(review, process_root)
+    for entry in state["reviewHistory"]:
+        review = validate_document(
+            entry["document"],
+            "review",
+            schema_root=schemas_root(process_root),
+            source="lifecycle review history",
+        )
+        validate_review_assessments(review, process_root)
 
 
 def _require_canonical_assessments(
@@ -48,8 +84,6 @@ def _require_canonical_assessments(
 
 
 def validate_plan_assessments(plan: dict[str, Any], process_root: Path) -> None:
-    if plan["schemaVersion"] != PLAN_SCHEMA_VERSION:
-        return
     assessments = _require_canonical_assessments(
         plan,
         process_root,
@@ -66,8 +100,6 @@ def validate_plan_assessments(plan: dict[str, Any], process_root: Path) -> None:
 
 
 def validate_review_assessments(review: dict[str, Any], process_root: Path) -> None:
-    if review["schemaVersion"] != REVIEW_SCHEMA_VERSION:
-        return
     assessments = _require_canonical_assessments(
         review,
         process_root,

@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError
-from engineering_process.publication_compat import _pull_request_body_issues, validate_pull_request
+from engineering_process.artifact_standards import resolve_standard
+from engineering_process.pr_description import body_issues, validate_pull_request
 from verification.generate_renovate_preset import generate_preset
 from verification import generate_renovate_preset
 
@@ -24,8 +25,9 @@ class AutomationTests(unittest.TestCase):
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
         preset = json.loads((ROOT / "templates" / "renovate.json").read_text(encoding="utf-8"))
         self.assertEqual(generate_preset(template), preset)
-        self.assertEqual([], _pull_request_body_issues(preset["prHeader"], "draft"))
-        self.assertTrue(_pull_request_body_issues(preset["prHeader"], "ready"))
+        standard = resolve_standard(None, ROOT, "pull-request")
+        self.assertEqual([], body_issues(preset["prHeader"], "draft", standard))
+        self.assertTrue(body_issues(preset["prHeader"], "ready", standard))
 
     def test_renovate_preset_rejects_an_incomplete_public_contract(self) -> None:
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")

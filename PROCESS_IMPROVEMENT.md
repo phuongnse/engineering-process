@@ -4,7 +4,14 @@ The process may change only for a concrete consumer need.
 
 A process change contract must name the consumer repository and a real incident,
 failed adoption, repeated friction, or missing capability in consumerEvidence. The
-engineering-process project configuration enforces that field.
+  engineering-process project configuration enforces that field.
+
+Process-owned artifacts and schemas have one current definition at version `1`.
+When a consumer exposes a shared gap in those definitions, the correction edits the
+current contract directly, including breaking changes. Unsupported release formats
+are rejected; this intake does not authorize a compatibility reader, migration layer,
+or fallback. Consumers update configuration, integrations, and generated artifacts
+when adopting the released correction.
 
 Choose the smallest correction:
 
@@ -20,8 +27,8 @@ Readiness creates a feedback loop, not autonomous mutation:
    planned capability whose reusable invariant is missing;
 2. consumer-specific behavior stays in that consumer;
 3. the smallest shared correction follows the normal lifecycle and independent review;
-4. changed pack requirements use a new immutable version, so process adoption never
-   forces a standards upgrade;
+4. package, release, and readiness identities remain immutable and pinned, so process
+   adoption never substitutes one release's evidence for another;
 5. the owner authorizes release and each consumer independently adopts it;
 6. the resulting consumer behavior becomes evidence for the next bounded iteration.
 

@@ -63,7 +63,6 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
   "schemas/process-lock.schema.json",
   "schemas/production-engineering.schema.json",
   "schemas/pr-description-data.schema.json",
-  "schemas/project-legacy.schema.json",
   "schemas/project.schema.json",
   "schemas/receipt.schema.json",
   "schemas/release-change.schema.json",
@@ -75,15 +74,15 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
   "schemas/verification-impact-selection.schema.json",
   "schemas/verification-selection.schema.json",
 ]
-"share/engineering-process/skills/change-complete" = ["process_assets/skills/change-complete/SKILL.md"]
-"share/engineering-process/skills/change-implement" = ["process_assets/skills/change-implement/SKILL.md"]
-"share/engineering-process/skills/change-plan" = ["process_assets/skills/change-plan/SKILL.md"]
-"share/engineering-process/skills/change-review" = ["process_assets/skills/change-review/SKILL.md"]
-"share/engineering-process/skills/change-start" = ["process_assets/skills/change-start/SKILL.md"]
-"share/engineering-process/skills/change-verify" = ["process_assets/skills/change-verify/SKILL.md"]
-"share/engineering-process/skills/deliver-change" = ["process_assets/skills/deliver-change/SKILL.md"]
-"share/engineering-process/skills/process-improve" = ["process_assets/skills/process-improve/SKILL.md"]
-"share/engineering-process/skills/production-engineering" = [
+"share/engineering-process/process_assets/skills/change-complete" = ["process_assets/skills/change-complete/SKILL.md"]
+"share/engineering-process/process_assets/skills/change-implement" = ["process_assets/skills/change-implement/SKILL.md"]
+"share/engineering-process/process_assets/skills/change-plan" = ["process_assets/skills/change-plan/SKILL.md"]
+"share/engineering-process/process_assets/skills/change-review" = ["process_assets/skills/change-review/SKILL.md"]
+"share/engineering-process/process_assets/skills/change-start" = ["process_assets/skills/change-start/SKILL.md"]
+"share/engineering-process/process_assets/skills/change-verify" = ["process_assets/skills/change-verify/SKILL.md"]
+"share/engineering-process/process_assets/skills/deliver-change" = ["process_assets/skills/deliver-change/SKILL.md"]
+"share/engineering-process/process_assets/skills/process-improve" = ["process_assets/skills/process-improve/SKILL.md"]
+"share/engineering-process/process_assets/skills/production-engineering" = [
   "process_assets/skills/production-engineering/SKILL.md",
   "process_assets/skills/production-engineering/invariants.json",
 ]

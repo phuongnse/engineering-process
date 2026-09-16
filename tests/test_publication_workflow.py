@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError
-from tests.test_publication_compat import CANONICAL_BODY
+from tests.test_publication import CANONICAL_BODY
 from verification.verify_publication import verify_publication
 
 

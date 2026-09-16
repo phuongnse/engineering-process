@@ -50,12 +50,6 @@ from .production_engineering import (
     validate_plan_assessments,
     validate_review_assessments,
 )
-from .publication_compat import (
-    branch_issues,
-    commit_issues,
-    validate_pull_request,
-    validate_range,
-)
 from .release import validate_release
 from .pr_description import (
     body_issues,
@@ -63,10 +57,12 @@ from .pr_description import (
     render_description,
     render_renovate_preset,
     render_template,
+    validate_pull_request,
 )
 from .release_notes import render_notes
 from .repository import repository_snapshot, same_checkpoint
 from .skills import validate_skills
+from .source_publication import branch_issues, commit_issues, validate_range
 
 
 Result = tuple[dict[str, Any], int]
@@ -181,8 +177,6 @@ def command_skills_validate(args: argparse.Namespace) -> Result:
 def command_doctor(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
-    if args.profile is not None and args.profile not in project["profiles"]:
-        raise ProcessError(f"unknown verification profile: {args.profile}")
     lock_path = args.project_root / ".process" / "process.lock"
     lock = load_and_validate(
         lock_path, "process-lock", schema_root=schemas_root(process_root)
@@ -212,7 +206,7 @@ def command_doctor(args: argparse.Namespace) -> Result:
 
 
 def command_setup(args: argparse.Namespace) -> Result:
-    """Run the consumer-owned setup actions retained during legacy migration."""
+    """Run the consumer-owned setup actions declared by the current project contract."""
     project = load_project(args.project_root, _process_root(args))
     if args.profile not in project["profiles"]:
         raise ProcessError(f"unknown verification profile: {args.profile}")
@@ -678,7 +672,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     skills_validate.add_argument("--root", type=Path)
     doctor = _leaf(commands, "doctor", command_doctor, help="Validate one consumer integration")
-    doctor.add_argument("--profile")
     setup = _leaf(commands, "setup", command_setup, help=argparse.SUPPRESS)
     setup.add_argument("--profile", required=True)
     setup.add_argument("--apply", action="store_true")
