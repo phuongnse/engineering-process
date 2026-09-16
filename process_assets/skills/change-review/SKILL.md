@@ -126,6 +126,14 @@ contract and a concrete consequence; tests must not introduce new product behavi
 Test counts, coverage percentages, or green profiles alone do not establish adequacy.
 No newly added test is required when existing evidence protects the behavior or an
 automated behavioral check is not meaningful; preserve consumer-mandated policies.
+Ensure the candidate implementation remains strictly agent-neutral and does not
+introduce hardcoded AI assistant harness names or vendor brand couplings into
+runtime logic or consumer boundaries. Reject symptom-patching workarounds: verify
+that the implementation addresses structural root causes rather than patching symptoms.
+Flag as a blocking finding any solution that relies on ad-hoc heuristic token filters,
+keyword blacklists/whitelists to approximate open-world meaning, special-case branches
+for unmanaged external callers or tools, silent error masking, or leaking ambient host
+state into deterministic authority boundaries.
 
 Read **production-engineering** and independently reassess every canonical invariant.
 Use the report's `productionEngineering` entries to record `satisfied`,

@@ -164,6 +164,56 @@ class ArchitectureTests(unittest.TestCase):
         self.assertNotIn("publish-change", skills)
         self.assertNotIn("cross-repo-change", skills)
 
+    def test_runtime_is_agent_neutral(self) -> None:
+        forbidden_brand_substrings = (
+            "antigravity",
+            "copilot",
+            "windsurf",
+            "claude",
+            "chatgpt",
+            "gemini",
+        )
+        for path in RUNTIME.glob("*.py"):
+            text = path.read_text(encoding="utf-8").lower()
+            for brand in forbidden_brand_substrings:
+                self.assertNotIn(
+                    brand,
+                    text,
+                    f"{path.name} must remain agent-neutral and not reference vendor brand {brand!r}",
+                )
+
+    def test_skills_are_agent_neutral(self) -> None:
+        forbidden_brand_substrings = (
+            "antigravity",
+            "copilot",
+            "windsurf",
+            "claude",
+            "chatgpt",
+            "gemini",
+        )
+        for path in (ROOT / "process_assets" / "skills").glob("**/*.md"):
+            text = path.read_text(encoding="utf-8").lower()
+            for brand in forbidden_brand_substrings:
+                self.assertNotIn(
+                    brand,
+                    text,
+                    f"{path.name} must remain agent-neutral and not reference vendor brand {brand!r}",
+                )
+
+    def test_runtime_has_no_transient_marker_lists(self) -> None:
+        evidence_text = (RUNTIME / "evidence.py").read_text(encoding="utf-8")
+        forbidden_tokens = (
+            "TRANSIENT_MARKERS",
+            "TRANSIENT_ENV_PREFIXES",
+            "_transient_prefixes",
+        )
+        for token in forbidden_tokens:
+            self.assertNotIn(
+                token,
+                evidence_text,
+                f"evidence.py must adopt Zero-List architecture and not contain {token!r}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
