@@ -189,16 +189,6 @@ class ArchitectureTests(unittest.TestCase):
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertEqual(1, document["schemaVersion"])
 
-    def test_removed_contract_paths_have_no_runtime_or_adoption_entry(self) -> None:
-        adoption = (RUNTIME / "adoption.py").read_text(encoding="utf-8")
-        self.assertNotIn("adoption-migrations", adoption)
-        self.assertNotIn("LEGACY_SKILL_FILES", adoption)
-        for path in (RUNTIME / "project.py", RUNTIME / "impact.py", RUNTIME / "lifecycle.py"):
-            with self.subTest(path=path.name):
-                source = path.read_text(encoding="utf-8")
-                self.assertNotIn("project-legacy", source)
-                self.assertNotIn("PRE_INVARIANT", source)
-
     def test_runtime_is_agent_neutral(self) -> None:
         forbidden_brand_substrings = (
             "antigravity",

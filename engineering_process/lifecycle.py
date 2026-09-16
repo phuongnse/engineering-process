@@ -45,6 +45,7 @@ from .project import (
 from .production_engineering import (
     PLAN_SCHEMA_VERSION,
     REVIEW_SCHEMA_VERSION,
+    validate_current_run_documents,
     validate_plan_assessments,
     validate_review_assessments,
 )
@@ -212,36 +213,7 @@ def _load_state(
     state = load_and_validate(path, "run", schema_root=schemas_root(process_root))
     if state["changeId"] != change_id:
         raise ProcessError(f"{path}: change identity mismatch")
-    validate_document(
-        state["contract"]["document"],
-        "change",
-        schema_root=schemas_root(process_root),
-        source="lifecycle contract",
-    )
-    if state["plan"] is not None:
-        plan = validate_document(
-            state["plan"]["document"],
-            "plan",
-            schema_root=schemas_root(process_root),
-            source="lifecycle plan",
-        )
-        validate_plan_assessments(plan, process_root)
-    if state["review"] is not None:
-        review = validate_document(
-            state["review"]["document"],
-            "review",
-            schema_root=schemas_root(process_root),
-            source="lifecycle review",
-        )
-        validate_review_assessments(review, process_root)
-    for entry in state["reviewHistory"]:
-        review = validate_document(
-            entry["document"],
-            "review",
-            schema_root=schemas_root(process_root),
-            source="lifecycle review history",
-        )
-        validate_review_assessments(review, process_root)
+    validate_current_run_documents(state, process_root)
     if state["plan"] is not None and not _has_plan_scope_policy(state):
         raise ProcessError("lifecycle state is missing the current plan scope binding")
     return state

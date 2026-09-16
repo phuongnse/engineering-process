@@ -11,6 +11,7 @@ from .contracts import ProcessError, validate_document
 from .distribution import distribution_digest, distribution_root, schemas_root
 from .evidence import execution_identity, verification_report_matches_inputs
 from .project import load_project
+from .production_engineering import validate_current_run_documents
 from .source_publication import branch_issues, commit_issues, validate_range
 
 
@@ -354,6 +355,7 @@ def build_pr_description_data(
     state = load_and_validate(run_path, "run", schema_root=schemas_root(dist_root))
     if state.get("changeId") != change_id:
         raise ProcessError(f"{run_path}: change identity mismatch")
+    validate_current_run_documents(state, dist_root)
     current_checkpoint = repository_snapshot(project_root)
     project = load_project(project_root, dist_root)
     runtime = execution_identity()

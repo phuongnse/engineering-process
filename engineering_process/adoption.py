@@ -139,6 +139,15 @@ def _expected_files(
 ) -> tuple[dict[Path, bytes], set[Path], dict[str, Any]]:
     existing_lock = _read_lock(project_root, process_root)
     existing_skills = set(existing_lock.get("skills", [])) if existing_lock else set()
+    if existing_lock is not None:
+        process = existing_lock["process"]
+        if (
+            process["version"] != VERSION
+            or process["digest"] != distribution_digest(process_root)
+        ):
+            raise ProcessError(
+                "existing process lock does not identify the current package and distribution"
+            )
     names = skill_names(process_root)
     new_skills = set(names)
     writes: dict[Path, bytes] = {}

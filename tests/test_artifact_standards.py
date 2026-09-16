@@ -653,6 +653,12 @@ class ArtifactStandardsTests(unittest.TestCase):
         run_path.write_bytes(formatted_json_bytes(no_scope_state))
         no_scope_data = build_pr_description_data(self.root, ROOT, "sample-change")
         self.assertFalse(no_scope_data["checks"]["required-profiles"])
+
+        nested_non_current = json.loads(original_run)
+        nested_non_current["contract"]["document"]["schemaVersion"] = 2
+        run_path.write_bytes(formatted_json_bytes(nested_non_current))
+        with self.assertRaisesRegex(ProcessError, "1 was expected"):
+            build_pr_description_data(self.root, ROOT, "sample-change")
         run_path.write_bytes(original_run)
 
         unknown_runtime = {

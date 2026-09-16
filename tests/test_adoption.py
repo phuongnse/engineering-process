@@ -144,6 +144,13 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual("unchanged", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
 
     def test_current_consumer_converges_and_second_apply_is_noop(self) -> None:
+        retained = (
+            self.root / ".process" / "adoption-migrations" / "unowned.json",
+            self.root / ".process" / "automation.json",
+        )
+        for path in retained:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("consumer-owned\n", encoding="utf-8")
         first = apply_adoption(
             self.root, PROCESS_ROOT, self.requirements, requirements_source=self.requirements
         )
@@ -154,6 +161,8 @@ class AdoptionTests(unittest.TestCase):
         )
         self.assertTrue((self.root / ".agents" / "skills" / "consumer-owned" / "SKILL.md").is_file())
         self.assertTrue((self.root / ".agents" / "skills" / "process-improve" / "SKILL.md").is_file())
+        for path in retained:
+            self.assertEqual("consumer-owned\n", path.read_text(encoding="utf-8"))
         self.assertEqual(
             (
                 PROCESS_ROOT
@@ -235,6 +244,25 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(
             "consumer documentation\n", readme.read_text(encoding="utf-8")
         )
+
+    def test_current_shape_lock_from_another_release_is_rejected_without_mutation(self) -> None:
+        lock_path = self.root / ".process" / "process.lock"
+        lock = {
+            "schemaVersion": 1,
+            "process": {
+                "package": "engineering-process",
+                "version": "2.6.0",
+                "digest": "sha256:" + "0" * 64,
+            },
+            "requirementsDigest": "sha256:" + "1" * 64,
+            "skills": ["process-improve"],
+            "managedFiles": [".agents/skills/process-improve/SKILL.md"],
+        }
+        write_json(lock_path, lock)
+        before = lock_path.read_bytes()
+        with self.assertRaisesRegex(ProcessError, "current package and distribution"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+        self.assertEqual(before, lock_path.read_bytes())
 
     def test_private_snapshot_must_match_checkout_lock(self) -> None:
         snapshot = self.root / "requirements" / "snapshot.txt"
