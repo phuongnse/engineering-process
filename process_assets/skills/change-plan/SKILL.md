@@ -25,6 +25,17 @@ boundaries. Decouple volatile external state from core decision logic rather tha
 attempting to filter it. Keep reasoning proportional; retaining a clear existing
 structure is a valid choice.
 
+For every material criterion or risk, make the chain reviewable: observed behavior or
+failure mode, violated contract or invariant, actual mechanism that can produce it,
+smallest sufficient changed boundary, and objective evidence that would distinguish
+the faulty state from the correction. `workItems[].affectedPaths` are literal
+repository-relative file or directory boundaries for the candidate diff. Declare only
+the paths needed by the accepted work; the lifecycle checks that every new candidate
+path is inside one of these boundaries before final verification and review. That
+machine check proves scope declaration only. It does not prove that the boundary is
+minimal, that the mechanism is the true cause, or that an evidence choice is
+semantically adequate; those remain independent-review judgments.
+
 Identify project knowledge this change would make misleading, incomplete, or obsolete,
 and concrete information gaps obstructing the accepted work. Plan only the necessary
 updates or additions in consumer-owned sources. Any proposed cleanup names the

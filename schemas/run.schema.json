@@ -57,6 +57,12 @@
     },
     "requiredPlanSchemaVersion": {"const": 5},
     "requiredReviewSchemaVersion": {"enum": [6, 7]},
+    "controlPaths": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+    },
     "history": {
       "type": "array",
       "maxItems": 2048,

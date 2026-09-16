@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -49,7 +50,11 @@ from .production_engineering import (
 )
 from .source_publication import branch_issues, current_branch, validate_current_source
 from .repository import (
-    repository_snapshot, require_committed_candidate, resolve_commit, same_checkpoint,
+    changed_paths,
+    repository_snapshot,
+    require_committed_candidate,
+    resolve_commit,
+    same_checkpoint,
 )
 from .review_contexts import (
     recorded_context_conflict,
@@ -89,6 +94,110 @@ def _actor(actor_id: str, context_id: str, kind: str) -> dict[str, str]:
 
 def _run_path(project_root: Path, change_id: str) -> Path:
     return project_root / ".process" / "runs" / change_id / "run.json"
+
+
+def _repository_relative_path(project_root: Path, path: Path) -> str | None:
+    try:
+        relative = path.resolve().relative_to(project_root.resolve())
+    except ValueError:
+        return None
+    value = relative.as_posix()
+    return value if value and value != "." else None
+
+
+def _remember_control_path(
+    state: dict[str, Any], project_root: Path, path: Path
+) -> None:
+    relative = _repository_relative_path(project_root, path)
+    if relative is None:
+        return
+    paths = set(state.get("controlPaths", []))
+    paths.add(relative)
+    state["controlPaths"] = sorted(paths)
+
+
+def _platform_scope_path(value: str) -> str:
+    return value.replace("\\", "/") if os.name == "nt" else value
+
+
+def _scope_path(value: str, *, source: str) -> str:
+    normalized = _platform_scope_path(value)
+    if normalized.startswith("/"):
+        raise ProcessError(
+            f"{source}: affectedPaths must contain literal repository-relative paths"
+        )
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.rstrip("/")
+    if not normalized or normalized == ".":
+        return ""
+    parts = normalized.split("/")
+    if (
+        normalized.startswith("/")
+        or (len(parts[0]) == 2 and parts[0][1] == ":")
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(character in normalized for character in "*?[")
+    ):
+        raise ProcessError(
+            f"{source}: affectedPaths must contain literal repository-relative paths"
+        )
+    return normalized
+
+
+def _scope_candidate_path(value: str) -> str:
+    normalized = _platform_scope_path(value)
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _has_plan_scope_policy(state: dict[str, Any]) -> bool:
+    return any(
+        event["event"] == "plan-scope-registered"
+        and event["details"].get("policy") == "literal-repository-boundaries-v1"
+        for event in state.get("history", [])
+    )
+
+
+def _require_planned_scope(project_root: Path, state: dict[str, Any]) -> None:
+    """Reject candidate files that the current plan did not declare.
+
+    The check proves only structural scope alignment. Causal correctness and
+    minimality remain independent-review judgments.
+    """
+    if not _has_plan_scope_policy(state):
+        return
+    comparison_base = state.get("comparisonBaseCommit")
+    plan = state.get("plan")
+    if not comparison_base or not isinstance(plan, dict):
+        return
+    boundaries = [
+        _scope_path(raw_path, source=f"plan work item {work_item['id']}")
+        for work_item in plan["document"]["workItems"]
+        for raw_path in work_item["affectedPaths"]
+    ]
+    if not boundaries:
+        raise ProcessError("plan must declare at least one affected path boundary")
+    control_paths = {
+        _scope_candidate_path(path) for path in state.get("controlPaths", [])
+    }
+    uncovered = sorted(
+        candidate
+        for raw_candidate in changed_paths(project_root, comparison_base)
+        for candidate in [_scope_candidate_path(raw_candidate)]
+        if candidate not in control_paths
+        and not any(
+            boundary == ""
+            or candidate == boundary
+            or candidate.startswith(boundary + "/")
+            for boundary in boundaries
+        )
+    )
+    if uncovered:
+        raise ProcessError(
+            "candidate paths are outside the declared plan scope: "
+            + ", ".join(uncovered)
+        )
 
 
 def _receipt_path(project_root: Path, change_id: str) -> Path:
@@ -564,8 +673,10 @@ def start_change(
         "reviewHistory": [],
         "receipt": None,
         "requiredPlanSchemaVersion": PLAN_SCHEMA_VERSION,
+        "controlPaths": [],
         "history": [],
     }
+    _remember_control_path(state, project_root, contract_path)
     _event(state, "started", actor)
     _save_state(project_root, process_root, state)
     return state
@@ -596,6 +707,7 @@ def register_plan(
     if plan["contractDigest"] != state["contract"]["digest"]:
         raise ProcessError("plan contractDigest does not match the accepted contract")
     actor = _actor(actor_id, context_id, kind)
+    _remember_control_path(state, project_root, plan_path)
     state["plan"] = {"digest": digest_json(plan), "document": plan}
     state["requiredReviewSchemaVersion"] = (
         REVIEW_SCHEMA_VERSION
@@ -604,6 +716,13 @@ def register_plan(
     )
     state["phase"] = "planned"
     _event(state, "planned", actor)
+    _event(
+        state,
+        "plan-scope-registered",
+        actor,
+        policy="literal-repository-boundaries-v1",
+        source="plan.workItems[].affectedPaths",
+    )
     _save_state(project_root, process_root, state)
     return state
 
@@ -713,6 +832,7 @@ def verify_change(
         if profile not in state["contract"]["document"]["requiredProfiles"]:
             raise ProcessError(f"profile {profile} is not required by change {change_id}")
 
+        _require_planned_scope(project_root, state)
         before = repository_snapshot(project_root)
         _publication_preflight(project_root, project, state, before)
         report = run_profile(project_root, project, profile)
@@ -745,6 +865,7 @@ def verify_impact_change(
         if profile not in selection.get("assuranceProfiles", ()):
             raise ProcessError(f"profile {profile} is not opted into final impact assurance")
 
+        _require_planned_scope(project_root, state)
         before = repository_snapshot(project_root)
         if not same_checkpoint(before, selection["checkpoint"]):
             raise ProcessError("final impact assurance selection is stale")
@@ -889,6 +1010,7 @@ def verify_remaining(
     with verification_lock(lock_path):
         state = _load_state(project_root, process_root, change_id)
         _require_phase(state, "implementing")
+        _require_planned_scope(project_root, state)
         executed: list[str] = []
         reused: list[str] = []
         completed: set[str] = set()
@@ -1266,6 +1388,7 @@ def start_review(
     reviewer = _actor(actor_id, context_id, kind)
     project = load_project(project_root, process_root)
     _require_current_baseline(project, state)
+    _require_planned_scope(project_root, state)
     if state["reviewHistory"]:
         original_reviewer = state["reviewHistory"][0]["document"]["reviewer"]
         if reviewer != original_reviewer:
@@ -1474,6 +1597,7 @@ def finish_change(
     actor = _actor(actor_id, context_id, kind)
     project = load_project(project_root, process_root)
     _require_current_baseline(project, state)
+    _require_planned_scope(project_root, state)
     checkpoint = repository_snapshot(project_root)
     publication = _publication_preflight(project_root, project, state, checkpoint)
     if not same_checkpoint(checkpoint, state["reviewAssignment"]["checkpoint"]):
