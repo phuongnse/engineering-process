@@ -1,40 +1,33 @@
-# Engineering Process v2.6.0
+# Engineering Process v2.7.0
 
-Changes since v2.5.0.
+Changes since v2.6.0.
 
 ## Features
 
-- **Select and assure verification units from explicit change impact.** ([#205](https://github.com/phuongnse/engineering-process/issues/205))
-  - **Problem:** A consumer could only choose a whole profile or reuse a whole-profile result, so a small change lacked a standard way to run related verification units. When impact was unclear, an automatic full-suite fallback could hide that dependency reach had not been resolved, while explicit coverage could not yet satisfy a final required profile.
-  - **What changed:** Add versioned consumer-owned impactProfiles, deterministic changed-path resolution, change explain --impact, and change verify --affected. Every path must resolve to matching units or the command stops with an explicit re-analysis action; an explicit global pattern is the only broad selection rule. Add a schema-version 2 finalProfiles opt-in so complete explicit coverage can run selected units as final impact-assurance evidence. Policy or candidate changes, missing coverage and unresolved paths fail closed; schema-version 1 policies remain feedback-only.
-  - **Where:** `schemas/project.schema.json`, `schemas/verification-impact-selection.schema.json`, `schemas/verification-selection.schema.json`, `schemas/run.schema.json`, `schemas/receipt.schema.json`, `engineering_process/impact.py`, `engineering_process/repository.py`, `engineering_process/lifecycle.py`, `engineering_process/cli.py`, `engineering_process/project.py`, `process_assets/skills/change-verify/SKILL.md`, `process_assets/skills/change-plan/SKILL.md`, `SELF_HOSTING.md`, `README.md`, `tests/test_contracts.py`, `tests/test_impact.py`, `tests/test_lifecycle.py`, `tests/test_skills.py`
-  - **Apply:** Adopt the package release, add impactProfiles to the consumer project policy, map every changed path to one or more independently executable commands, and run change explain --impact before change verify --affected. Opt selected required profiles into schema version 2 finalProfiles only after reviewing complete path coverage and global cross-cutting units; then run change verify --remaining. Resolve every unresolved path by inspecting the diff/dependency reach and updating the consumer-owned mapping or recording an owner decision.
-  - **Compatibility:** Backward-compatible opt-in. Existing project files, explicit profile verification, whole-profile reuse, required lifecycle profiles, and final review/release evidence remain supported. Consumers without impactProfiles receive a clear unavailable result, and schema-version 1 policies remain feedback-only.
-  - **Notes:** Path patterns are a versioned consumer policy, not a process guess. Overlapping units all run; a global unit may subsume narrower units only when its declared paths include the explicit universal \*\* pattern, while narrower patterns never cover unrelated paths. Affected feedback does not advance the lifecycle or prove final assurance. Final assurance records execution mode and selection identity in the existing lifecycle evidence; it does not create a second lifecycle or infer coverage from filenames, labels, commands, or diagnostics.
+- **Automate bounded process-improvement incident intake at change finish.** ([#214](https://github.com/phuongnse/engineering-process/issues/214))
+  - **Problem:** Process-improvement incidents were detected and filed through manual triage or post-hoc inspection, creating reliance on human intervention and unbounded or unrecorded incident intake.
+  - **What changed:** Automate closed-taxonomy incident intake at lifecycle finish before completion receipt sealing, deduplicate against the open tracker, log verification invalidations, sanitize execution identity, and enforce bounded taxonomy and recursion limits.
+  - **Where:** `engineering_process/evidence.py`, `engineering_process/incidents.py`, `engineering_process/lifecycle.py`, `process_assets/skills/change-complete/SKILL.md`, `process_assets/skills/process-improve/SKILL.md`, `tests/test_architecture.py`, `tests/test_incidents.py`, `tests/test_lifecycle.py`
+  - **Apply:** Adopt the new release package; change finish automatically runs closed-taxonomy incident intake and deduplication without requiring consumer configuration changes.
+  - **Compatibility:** No breaking change. Incident taxonomy is closed and governed by the repository owner; deduplication against tracker prevents recursion, and normal lifecycle transitions remain unchanged.
+  - **Notes:** Incident intake runs only before sealing completion receipts. Invalidation logs are recorded during verification; intake ignores invalidations if already deduplicated or outside the closed taxonomy.
 
 ## Fixes
 
-- **Render release records as readable Markdown without gratuitous escapes.** ([#171](https://github.com/phuongnse/engineering-process/issues/171))
-  - **Problem:** Generated release notes escaped every punctuation mark and padded ordinary code references, making otherwise complete issue-level records difficult to read.
-  - **What changed:** Escape only Markdown and HTML-sensitive metadata syntax, keep ordinary punctuation readable, and render simple owned references as normal inline code while retaining safe fencing for embedded backticks.
-  - **Where:** `engineering_process/release_notes.py`, `tests/test_release.py`, `release-changes/README.md`, `RELEASING.md`, `ARTIFACT_STANDARDS.md`, `RELEASE_NOTES.md`
-  - **Apply:** Use the normal prepare-release workflow and review the generated RELEASE\_NOTES.md against release.json before publication.
-  - **Compatibility:** No breaking change. Schema-v5 manifests and legacy release-note data remain readable; the selected release-notes@1 structure and published v2.5.0 body are not rewritten.
-  - **Notes:** This correction applies to subsequently generated release bodies. Published release artifacts remain immutable and must be corrected only through the owner's release policy.
-- **Batch reusable verification evidence across lifecycle stages.** ([#198](https://github.com/phuongnse/engineering-process/issues/198))
-  - **Problem:** Continuation verification could make repeated reuse decisions and authority calculations one profile at a time even when several reports already covered the same unchanged candidate.
-  - **What changed:** Batch valid whole-profile reuse decisions into one canonical state write and reuse one process-authority digest across stable evidence comparisons. Preserve the selected runtime path spelling and virtual-environment symlinks across POSIX and Windows while retaining fresh candidate snapshots, runtime identity checks, explicit refresh semantics, and correction-cycle invalidation.
-  - **Where:** `engineering_process/evidence.py`, `engineering_process/lifecycle.py`, `engineering_process/pr_description.py`, `process_assets/skills/change-verify/SKILL.md`, `README.md`, `tests/test_lifecycle.py`, `tests/test_skills.py`
-  - **Apply:** Use change verify --remaining for continuation work. The process reuses only exact valid reports and records reuse without relaunching their child commands.
-  - **Compatibility:** No breaking change. Explicit profile verification remains an unconditional refresh; stale, legacy, or mismatched evidence reruns; final review and finish still require exact-snapshot evidence.
-  - **Notes:** The optimization is operation-scoped and does not add a persistent success cache or reuse evidence across a changed candidate, mutation boundary, or incompatible runtime. Runtime path normalization no longer dereferences the selected executable before constructing the bounded child PATH.
-- **Make the full verification suite deterministic and expose bounded timing diagnostics.** ([#201](https://github.com/phuongnse/engineering-process/issues/201))
-  - **Problem:** The repository-owned full verification suite took about six minutes on Windows and review-context tests incorrectly reported stale evidence when run after the complete suite, while local output did not identify the slowest tests.
-  - **What changed:** Give review-context tests an isolated fixture owner, seed their verified states once per test class, use the same bounded child environment as the verification boundary, and report aggregate, slow-test, fixture-setup, and profile timing without changing profile exit semantics or deleting behavioral coverage. Lifecycle fixtures clone an immutable Git snapshot instead of copying a live .git directory, avoiding races with Git maintenance locks.
-  - **Where:** `tests/test_review_contexts.py`, `tests/test_lifecycle.py`, `verification/run_test_suite.py`
-  - **Apply:** Run the normal development and review profiles; use the bounded suite timing and slow-test summary to diagnose future cost, and do not replace final verification with a focused subset.
-  - **Compatibility:** No breaking change. Existing profile commands, required checks, skip behavior, process/Git/filesystem boundaries, and stored evidence semantics remain supported.
-  - **Notes:** The reviewed change evidence records repeated comparable self-consumer measurements and the bounded improvement method; it does not establish a universal latency target. Shared mutable checkouts and blanket mocks remain out of scope.
+- **Decouple ambient host environment from execution identity with Zero-List architecture.** (`owned change #agent-neutral-runtime-identity`)
+  - **Problem:** Runtime evidence identity hashed arbitrary ambient host environment variables, requiring fragile blacklist/whitelist workarounds and breaking verification evidence reuse when session metadata changed.
+  - **What changed:** Adopt a Zero-List architecture: decouple ambient host environment from execution identity digest, eliminate all transient keyword lists, add an automated architecture fitness test forbidding AI vendor couplings, and enforce anti-workaround review rules.
+  - **Where:** `engineering_process/evidence.py`, `process_assets/skills/change-plan/SKILL.md`, `process_assets/skills/change-review/SKILL.md`, `tests/test_architecture.py`, `tests/test_commands.py`
+  - **Apply:** No configuration changes required; runtime identity deterministically hashes only process-controlled interpreter, dependencies, and platform facts.
+  - **Compatibility:** No breaking change. Child execution environments continue to inherit OS tools and paths with secrets sanitized.
+  - **Notes:** Eliminates all keyword lists and workarounds. Runtime identity is invariant to external agent harnesses and host terminal session state.
+- **Enforce structural architecture verification over keyword test assertions and generalize invariant guidance.** (`owned change #structural-architecture-verification`)
+  - **Problem:** Architecture tests verified runtime invariants by searching for specific variable and token names, approximating structural invariants with keyword string matching and failing to detect architectural deviations under different identifiers.
+  - **What changed:** Replace keyword-based token assertions in architecture tests with AST syntax boundary inspection, generalize the authoritative-structure invariant to require structural syntax or behavioral invariance, and mandate independent reviewers to reject keyword/identifier name assertions in tests.
+  - **Where:** `process_assets/skills/change-review/SKILL.md`, `process_assets/skills/production-engineering/SKILL.md`, `process_assets/skills/production-engineering/invariants.json`, `tests/test_architecture.py`
+  - **Apply:** No action required; architecture tests and process guidance apply immediately.
+  - **Compatibility:** Non-breaking. Preserves test suite pass status while establishing structural AST verification.
+  - **Notes:** Ensures architectural verification tests invariant structural properties or behavioral invariance rather than local identifier presence.
 
 ## Upgrade and compatibility
 
@@ -44,6 +37,6 @@ Consumer CI, naming conventions and branch-protection settings remain consumer-o
 
 No breaking changes are included. Read each change's Apply, Compatibility and Notes entry before adopting.
 
-See [versioning and compatibility](https://github.com/phuongnse/engineering-process/blob/v2.6.0/VERSIONING.md) and [adoption guidance](https://github.com/phuongnse/engineering-process/blob/v2.6.0/SELF_HOSTING.md).
+See [versioning and compatibility](https://github.com/phuongnse/engineering-process/blob/v2.7.0/VERSIONING.md) and [adoption guidance](https://github.com/phuongnse/engineering-process/blob/v2.7.0/SELF_HOSTING.md).
 
-[Full change comparison](https://github.com/phuongnse/engineering-process/compare/v2.5.0...v2.6.0)
+[Full change comparison](https://github.com/phuongnse/engineering-process/compare/v2.6.0...v2.7.0)
