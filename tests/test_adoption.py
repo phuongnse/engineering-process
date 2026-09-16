@@ -279,7 +279,7 @@ class AdoptionTests(unittest.TestCase):
         apply_adoption(self.root, PROCESS_ROOT, self.requirements)
         agents = self.root / "AGENTS.md"
         agents.write_text(
-            agents.read_text(encoding="utf-8").replace("old\n", "changed\n", 1),
+            agents.read_text(encoding="utf-8").replace("deliver-change", "invalid-process-skill", 1),
             encoding="utf-8",
         )
         original_files = {
@@ -327,7 +327,7 @@ class AdoptionTests(unittest.TestCase):
         apply_adoption(self.root, PROCESS_ROOT, self.requirements)
         agents = self.root / "AGENTS.md"
         agents.write_text(
-            agents.read_text(encoding="utf-8").replace("old\n", "changed\n", 1),
+            agents.read_text(encoding="utf-8").replace("deliver-change", "invalid-process-skill", 1),
             encoding="utf-8",
         )
         original_lock = (self.root / ".process" / "process.lock").read_bytes()

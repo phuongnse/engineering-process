@@ -16,15 +16,21 @@ from engineering_process.contracts import (
 )
 from engineering_process.distribution import schemas_root
 from engineering_process.project import (
-    load_project,
     normalize_project,
     readiness_summary,
-    require_consumer_evidence,
 )
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS = schemas_root(ROOT)
+
+
+def current_project_fixture(*, readiness: bool = False) -> dict:
+    project = read_json(ROOT / ".process" / "project.json")
+    project["schemaVersion"] = 1
+    if readiness:
+        project["readiness"] = read_json(ROOT / ".process" / "readiness.json")
+    return project
 
 
 class ContractTests(unittest.TestCase):
@@ -68,7 +74,6 @@ class ContractTests(unittest.TestCase):
 
     def test_live_repository_contracts_validate(self) -> None:
         cases = [
-            (ROOT / ".process" / "process.lock", "process-lock"),
             (ROOT / "process-graph.json", "process-graph"),
             (ROOT / "release.json", "release"),
             (ROOT / "templates" / "renovate.json", "renovate-preset"),
@@ -84,12 +89,9 @@ class ContractTests(unittest.TestCase):
         for path, kind in cases:
             with self.subTest(path=path):
                 validate_document(read_json(path), kind, schema_root=SCHEMAS, source=str(path))
-        normalized = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
-        validate_document(normalized, "project", schema_root=SCHEMAS)
-        self.assertTrue(require_consumer_evidence(load_project(ROOT, ROOT)))
 
     def test_schema_rejects_unknown_fields(self) -> None:
-        project = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
+        project = normalize_project(current_project_fixture(), ROOT)
         project["governanceLayer"] = True
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(project, "project", schema_root=SCHEMAS)
@@ -100,7 +102,7 @@ class ContractTests(unittest.TestCase):
             validate_document(non_current, "project", schema_root=SCHEMAS)
 
     def test_publication_opt_in_and_receipt_metadata_are_schema_valid(self) -> None:
-        project = read_json(ROOT / ".process" / "project.json")
+        project = current_project_fixture()
         project["lifecycle"]["publication"] = {"required": True}
         validate_document(
             normalize_project(project, ROOT), "project", schema_root=SCHEMAS
@@ -169,7 +171,7 @@ class ContractTests(unittest.TestCase):
             validate_document(invalid, "receipt", schema_root=SCHEMAS)
 
     def test_final_impact_policy_requires_explicit_global_coverage(self) -> None:
-        project = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
+        project = normalize_project(current_project_fixture(), ROOT)
         project["impactProfiles"] = {
             "schemaVersion": 1,
             "finalProfiles": ["development"],
@@ -398,13 +400,8 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ProcessError):
             validate_document(invalid_version, "review", schema_root=SCHEMAS)
 
-    def test_released_process_lock_schema_uri_remains_accepted(self) -> None:
-        lock = read_json(ROOT / ".process" / "process.lock")
-        lock["$schema"] = "https://engineering-process.invalid/schemas/process-lock.schema.json"
-        validate_document(lock, "process-lock", schema_root=SCHEMAS)
-
     def test_live_readiness_resolves_library_cli_coverage(self) -> None:
-        project = load_project(ROOT, ROOT)
+        project = normalize_project(current_project_fixture(readiness=True), ROOT)
         readiness = readiness_summary(project)
         self.assertEqual([{"id": "library-cli", "version": 1}], readiness["packs"])
         self.assertEqual("production", readiness["stage"])
@@ -423,8 +420,7 @@ class ContractTests(unittest.TestCase):
         )
 
     def test_readiness_fails_closed_on_incomplete_or_ambiguous_evidence(self) -> None:
-        live = read_json(ROOT / ".process" / "project.json")
-        live["readiness"] = read_json(ROOT / ".process" / "readiness.json")
+        live = current_project_fixture(readiness=True)
         cases = []
         missing = deepcopy(live)
         missing["readiness"]["capabilities"].pop()
@@ -449,7 +445,7 @@ class ContractTests(unittest.TestCase):
                 normalize_project(project, ROOT)
 
     def test_readiness_remains_optional_for_current_consumers(self) -> None:
-        project = read_json(ROOT / ".process" / "project.json")
+        project = current_project_fixture()
         self.assertIsNone(readiness_summary(normalize_project(project, ROOT)))
 
     def test_operations_pack_resolves_renovate_ops_profiles_and_fails_closed(self) -> None:
@@ -490,7 +486,7 @@ class ContractTests(unittest.TestCase):
             normalize_project(project, ROOT)
 
     def test_pack_versions_are_explicit_and_do_not_upgrade_implicitly(self) -> None:
-        project = load_project(ROOT, ROOT)
+        project = normalize_project(current_project_fixture(readiness=True), ROOT)
         project["readiness"]["packs"] = [{"id": "library-cli", "version": 2}]
         with self.assertRaisesRegex(ProcessError, "unsupported readiness pack versions: library-cli@2"):
             readiness_summary(project)

@@ -48,7 +48,9 @@
           ".agents/skills/**",
           ".github/PULL_REQUEST_TEMPLATE.md",
           ".process/adopt-process.py",
+          ".process/automation.json",
           ".process/adopt-process-windows-job.py",
+          ".process/adoption-migrations/**",
           ".process/process.lock",
           ".process/project.json",
           "AGENTS.md"

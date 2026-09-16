@@ -237,19 +237,33 @@ class CliTests(unittest.TestCase):
         self.assertEqual("failed", json.loads(output.getvalue())["status"])
 
     def test_project_validate_reports_resolved_production_readiness(self) -> None:
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            code = main(
-                [
-                    "project",
-                    "validate",
-                    "--project-root",
-                    str(ROOT),
-                    "--process-root",
-                    str(ROOT),
-                    "--json",
-                ]
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            process_dir = project_root / ".process"
+            process_dir.mkdir(parents=True)
+            project = json.loads(
+                (ROOT / ".process" / "project.json").read_text(encoding="utf-8")
             )
+            project["schemaVersion"] = 1
+            (process_dir / "project.json").write_text(
+                json.dumps(project), encoding="utf-8"
+            )
+            (process_dir / "readiness.json").write_bytes(
+                (ROOT / ".process" / "readiness.json").read_bytes()
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main(
+                    [
+                        "project",
+                        "validate",
+                        "--project-root",
+                        str(project_root),
+                        "--process-root",
+                        str(ROOT),
+                        "--json",
+                    ]
+                )
         self.assertEqual(0, code)
         result = json.loads(output.getvalue())
         self.assertEqual("production", result["readiness"]["target"])

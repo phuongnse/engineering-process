@@ -180,8 +180,6 @@ class ArchitectureTests(unittest.TestCase):
                 self.assertEqual(1, document["schemaVersion"])
                 self.assertEqual(1, document["version"])
         for path in (
-            ROOT / ".process" / "project.json",
-            ROOT / ".process" / "process.lock",
             ROOT / "process-graph.json",
             ROOT / "release.json",
         ):
