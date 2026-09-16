@@ -39,9 +39,14 @@ def child_environment(
     ).absolute()
     runtime_directory = str(runtime_executable.parent)
     inherited_path = environment.get("PATH", "")
-    environment["PATH"] = os.pathsep.join(
-        entry for entry in (runtime_directory, inherited_path) if entry
+    path_entries = [entry for entry in inherited_path.split(os.pathsep) if entry]
+    runtime_is_first = bool(path_entries) and (
+        os.path.normcase(os.path.normpath(path_entries[0]))
+        == os.path.normcase(os.path.normpath(runtime_directory))
     )
+    if not runtime_is_first:
+        path_entries.insert(0, runtime_directory)
+    environment["PATH"] = os.pathsep.join(path_entries)
     environment["PYTHONUNBUFFERED"] = "1"
     return environment
 

@@ -23,6 +23,7 @@ from engineering_process.commands import (
     verification_lock,
 )
 from engineering_process.contracts import ProcessError
+from engineering_process.evidence import execution_identity as evidence_execution_identity
 from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
@@ -129,7 +130,9 @@ class CommandTests(unittest.TestCase):
 
     def test_child_path_does_not_reintroduce_an_empty_inherited_entry(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(
-            os.environ, {"PATH": "", "EMPTY_BINDING": ""}, clear=True
+            os.environ,
+            {"PATH": os.pathsep.join(("", "caller-one", "")), "EMPTY_BINDING": ""},
+            clear=True,
         ), patch(
             "engineering_process.commands.sys.executable",
             str(Path(directory) / "python"),
@@ -157,6 +160,41 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(2, identity["dependencies"]["count"])
         self.assertIn("EMPTY_BINDING", identity["environment"])
         self.assertEqual("", identity["environment"]["EMPTY_BINDING"])
+
+    def test_runtime_identity_matches_bounded_child(self) -> None:
+        with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False):
+            parent = execution_identity()
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import json; from engineering_process.commands import execution_identity; "
+                    "print(json.dumps(execution_identity(), sort_keys=True))",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+                env=_child_environment(),
+            )
+
+        self.assertEqual(parent, json.loads(child.stdout))
+
+    def test_runtime_identity_preserves_selected_executable_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(sys.executable).absolute()
+            alias = Path(directory) / ("python.exe" if os.name == "nt" else "python")
+            try:
+                alias.symlink_to(target)
+            except OSError as error:
+                self.skipTest(f"executable symlink unavailable: {error}")
+            identity = evidence_execution_identity(executable=alias)
+
+        selected = alias.absolute()
+        self.assertEqual(str(selected), identity["executable"])
+        self.assertEqual(
+            str(selected.parent), identity["environment"]["PATH"].split(os.pathsep)[0]
+        )
 
     def test_bare_runtime_command_uses_the_process_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
