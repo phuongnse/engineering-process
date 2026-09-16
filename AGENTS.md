@@ -29,12 +29,18 @@ it, while consumer-owned dependency and setup commands remain authoritative.
   handwritten shape validator beside JSON Schema.
 - A process change must cite evidence from a real consumer. Prefer deletion,
   clarification, or repair before adding another gate.
+- Every process-owned artifact, schema, and contract has one current definition at
+  version `1`; breaking changes edit it directly and consumers recreate affected
+  configuration and artifacts when adopting a release.
+- Runtime rejects non-current process data. Do not add legacy readers/writers,
+  compatibility adapters, migration layers, field guessing, or fallbacks; preserve
+  package/release identity, pin/hash, snapshot binding, lifecycle evidence freshness,
+  and independent review.
 - Source skills under process_assets/skills are the next distribution. Managed
   .agents/skills represent the currently adopted public release and change only in an
   adoption pull request.
-- Keep pre-1.0 doctor --profile and read-only publication adapters
-  until existing consumers have adopted 1.x. Setup may run only consumer-owned
-  argument arrays.
+- Keep current doctor, publication, setup, and argument-array execution choices only
+  where they still support the current contract.
 
 ## Verification
 

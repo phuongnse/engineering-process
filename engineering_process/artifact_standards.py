@@ -1,4 +1,4 @@
-"""Resolve one versioned artifact contract for both generation and verification."""
+"""Resolve one current artifact contract for both generation and verification."""
 
 from __future__ import annotations
 
@@ -120,15 +120,18 @@ class StandardCatalog:
             path = _consumer_file(self.project_root, selection["path"])
             source = selection["path"]
         else:
-            name, version = selection["builtin"].rsplit("@", 1)
-            path = self.process_root / "process_assets" / "standards" / f"{name}.v{version}.json"
             source = selection["builtin"]
+            if source != f"{artifact}@1":
+                raise ProcessError(f"unsupported packaged artifact standard: {source}")
+            path = self.process_root / "process_assets" / "standards" / f"{artifact}.v1.json"
             if path.is_symlink() or not path.is_file():
                 raise ProcessError(f"unsupported packaged artifact standard: {source}")
         document = load_and_validate(path, "artifact-standard", schema_root=schemas_root(self.process_root))
         if document["artifact"] != artifact:
             raise ProcessError(f"selected standard is for {document['artifact']}, not {artifact}")
-        if "builtin" in selection and (name != artifact or document["version"] != int(version)):
+        if "builtin" in selection and (
+            document["artifact"] != artifact or document["version"] != 1
+        ):
             raise ProcessError("packaged standard identity does not match its selection")
         _validate_relations(document)
         return ArtifactStandard(document, source)

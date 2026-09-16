@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "version", "previousVersion", "changes"],
   "properties": {
-    "schemaVersion": {"enum": [5, 6]},
+    "schemaVersion": {"const": 1},
     "version": {"$ref": "#/$defs/version"},
     "previousVersion": {"$ref": "#/$defs/version"},
     "changes": {
@@ -16,7 +16,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "type", "summary", "source"],
+        "required": ["id", "type", "summary", "source", "details"],
         "properties": {
           "id": {
             "type": "string",
@@ -32,30 +32,6 @@
       }
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": {"schemaVersion": {"const": 6}},
-        "required": ["schemaVersion"]
-      },
-      "then": {
-        "properties": {
-          "changes": {"items": {"required": ["details"]}}
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {"schemaVersion": {"const": 5}},
-        "required": ["schemaVersion"]
-      },
-      "then": {
-        "properties": {
-          "changes": {"items": {"not": {"required": ["details"]}}}
-        }
-      }
-    }
-  ],
   "$defs": {
     "version": {
       "type": "string",

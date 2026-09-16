@@ -36,11 +36,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "type",
-          "summary",
-          "source"
-        ],
+          "required": [
+            "type",
+            "summary",
+            "source",
+            "details"
+          ],
         "properties": {
           "type": {
             "type": "string",

@@ -137,7 +137,7 @@ class SkillTests(unittest.TestCase):
             ),
             "process-improve": (
                 "new immutable pack version",
-                "pending schema-version 7 review",
+                "pending review",
                 "never\nself-publishes or self-merges",
             ),
         }

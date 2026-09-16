@@ -28,7 +28,7 @@
     "version": "2.7.0"
   },
   "requirementsDigest": "sha256:8b656ca7147382de2643dbdc1de96ee2b2745749d061604fd7afa521ef7295db",
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "skills": [
     "change-complete",
     "change-implement",

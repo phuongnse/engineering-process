@@ -98,30 +98,28 @@ class ImpactSelectionTests(unittest.TestCase):
             self.assertEqual(["app-tests"], [item["id"] for item in selection["selectedUnits"]])
             self.assertEqual([], selection["unresolvedPaths"])
 
-    def test_version_two_policy_marks_final_assurance_selection(self) -> None:
+    def test_current_policy_marks_final_assurance_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             base = self.make_repository(root)
             (root / "src" / "app.py").write_text("two\n", encoding="utf-8")
             project = self.project()
-            project["impactProfiles"]["schemaVersion"] = 2
             project["impactProfiles"]["finalProfiles"] = ["development"]
             project["impactProfiles"]["profiles"]["development"][1]["paths"] = ["**"]
             selection = resolve_impact_selection(
                 root, ROOT, project, self.state(base)
             )
-            self.assertEqual(2, selection["schemaVersion"])
+            self.assertEqual(1, selection["schemaVersion"])
             self.assertEqual(["development"], selection["assuranceProfiles"])
             self.assertTrue(selection["policyDigest"].startswith("sha256:"))
             self.assertEqual(["global-tests"], [item["id"] for item in selection["selectedUnits"]])
 
-    def test_version_two_final_selection_remains_unresolved_without_global_trigger(self) -> None:
+    def test_current_final_selection_remains_unresolved_without_global_trigger(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             base = self.make_repository(root)
             (root / "unknown.txt").write_text("unknown\n", encoding="utf-8")
             project = self.project()
-            project["impactProfiles"]["schemaVersion"] = 2
             project["impactProfiles"]["finalProfiles"] = ["development"]
             selection = resolve_impact_selection(
                 root, ROOT, project, self.state(base)

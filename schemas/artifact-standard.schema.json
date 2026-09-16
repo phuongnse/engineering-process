@@ -19,9 +19,7 @@
       "$ref": "#/$defs/id"
     },
     "version": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 1000
+      "const": 1
     },
     "artifact": {
       "$ref": "#/$defs/id"

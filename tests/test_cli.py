@@ -201,12 +201,12 @@ class CliTests(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertEqual("failed", result["status"])
 
-    def test_contract_validate_keeps_the_plan_v4_reader(self) -> None:
-        legacy = {
-            "schemaVersion": 4,
-            "changeId": "legacy-change",
+    def test_contract_validate_rejects_a_non_current_plan(self) -> None:
+        non_current = {
+            "schemaVersion": 2,
+            "changeId": "sample-change",
             "contractDigest": "sha256:" + "0" * 64,
-            "approach": "Implement the accepted legacy plan.",
+            "approach": "Implement the accepted plan.",
             "workItems": [
                 {
                     "id": "implementation",
@@ -218,7 +218,7 @@ class CliTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "plan.json"
-            path.write_text(json.dumps(legacy), encoding="utf-8")
+            path.write_text(json.dumps(non_current), encoding="utf-8")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 code = main(
@@ -233,8 +233,8 @@ class CliTests(unittest.TestCase):
                         "--json",
                     ]
                 )
-        self.assertEqual(0, code)
-        self.assertEqual("passed", json.loads(output.getvalue())["status"])
+        self.assertEqual(2, code)
+        self.assertEqual("failed", json.loads(output.getvalue())["status"])
 
     def test_project_validate_reports_resolved_production_readiness(self) -> None:
         output = io.StringIO()
@@ -264,7 +264,7 @@ class CliTests(unittest.TestCase):
             "phase": "review-pending",
             "cycle": 2,
             "comparisonBaseCommit": "a" * 40,
-            "reviewAssignment": {"reportSchemaVersion": 7},
+            "reviewAssignment": {"reportSchemaVersion": 1},
             "history": [
                 {"event": "profile-failed", "details": {}},
                 {"event": "unrelated-event", "details": {"verdict": "changes-requested"}},
@@ -282,9 +282,6 @@ class CliTests(unittest.TestCase):
         with patch("engineering_process.cli.start_review", return_value=state):
             result, code = command_change_review_start(args)
             self.assertEqual("a" * 40, result["comparisonBaseCommit"])
-            del state["comparisonBaseCommit"]
-            legacy, _code = command_change_review_start(args)
-            self.assertNotIn("comparisonBaseCommit", legacy)
         self.assertEqual(0, code)
         self.assertEqual(["profile-failed"], result["processSignals"])
 

@@ -63,7 +63,7 @@ class LifecycleTests(unittest.TestCase):
         git(cls._template_path, "config", "user.email", "tests@example.invalid")
         git(cls._template_path, "config", "user.name", "Tests")
         cls._template_project = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "project": "sample",
             "lifecycle": {"requiredProfiles": ["development", "review"]},
             "profiles": {
@@ -114,7 +114,7 @@ class LifecycleTests(unittest.TestCase):
         )
         self.project = deepcopy(self._template_project)
         self.contract = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "id": "sample-change",
             "summary": "Make one sample change",
             "source": "issue-1",
@@ -132,7 +132,7 @@ class LifecycleTests(unittest.TestCase):
             item["id"] for item in load_invariant_floor(PROCESS_ROOT)["invariants"]
         ]
         self.plan = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "contractDigest": digest_json(self.contract),
             "approach": "Make and verify the bounded change.",
@@ -232,7 +232,7 @@ class LifecycleTests(unittest.TestCase):
             lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
         )
 
-    def test_legacy_run_without_scope_registration_remains_readable(self) -> None:
+    def test_run_without_current_scope_registration_is_rejected(self) -> None:
         self.begin()
         state_path = self.root / ".process/runs/sample-change/run.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -243,17 +243,8 @@ class LifecycleTests(unittest.TestCase):
         ]
         state.pop("controlPaths")
         write_json(state_path, state)
-        (self.root / "unplanned.txt").write_text("legacy candidate\n", encoding="utf-8")
-
-        state, report = verify_change(
-            self.root,
-            PROCESS_ROOT,
-            self.project,
-            "sample-change",
-            "development",
-        )
-        self.assertEqual("passed", report["status"])
-        self.assertEqual("implementing", state["phase"])
+        with self.assertRaisesRegex(ProcessError, "controlPaths"):
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
 
     def test_review_assignment_rejects_new_unplanned_path(self) -> None:
         self.begin()
@@ -351,7 +342,7 @@ class LifecycleTests(unittest.TestCase):
                 }
             ]
         return {
-            "schemaVersion": 7,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "reviewer": {
                 "actorId": "reviewer",
@@ -424,16 +415,14 @@ class LifecycleTests(unittest.TestCase):
                 start_change(self.root, PROCESS_ROOT, self.project, self.contract_path, actor_id="author", context_id="author-context", kind="agent")
             self.assertFalse((self.root / ".process/runs/sample-change/run.json").exists())
 
-    def test_old_run_without_a_pinned_base_remains_readable(self) -> None:
+    def test_run_without_a_current_pinned_base_is_rejected(self) -> None:
         self.begin()
         path = self.root / ".process/runs/sample-change/run.json"
         state = json.loads(path.read_text(encoding="utf-8"))
         del state["comparisonBaseCommit"]
         write_json(path, state)
-        self.verify_all()
-        state = start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
-        self.assertNotIn("comparisonBaseCommit", state)
-        self.assertEqual("HEAD", state["contract"]["document"]["comparisonBase"])
+        with self.assertRaisesRegex(ProcessError, "comparisonBaseCommit"):
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
 
     def test_happy_path_writes_one_completion_receipt(self) -> None:
         self.begin()
@@ -527,7 +516,7 @@ class LifecycleTests(unittest.TestCase):
     def test_publication_finish_rejects_invalid_source_and_keeps_approval(self) -> None:
         self.approve_publication_candidate()
         git(self.root, "branch", "-M", "codex/invalid")
-        with self.assertRaisesRegex(ProcessError, "publication compatibility checks failed"):
+        with self.assertRaisesRegex(ProcessError, "publication checks failed"):
             finish_change(
                 self.root,
                 PROCESS_ROOT,
@@ -593,7 +582,7 @@ class LifecycleTests(unittest.TestCase):
         state_path = self.root / ".process/runs/sample-change/run.json"
         before = state_path.read_bytes()
         git(self.root, "branch", "-M", "codex/invalid")
-        with self.assertRaisesRegex(ProcessError, "publication compatibility checks failed"):
+        with self.assertRaisesRegex(ProcessError, "publication checks failed"):
             start_review(self.root, PROCESS_ROOT, "sample-change",
                          actor_id="reviewer", context_id="review-context", kind="agent")
         self.assertEqual(before, state_path.read_bytes())
@@ -633,10 +622,10 @@ class LifecycleTests(unittest.TestCase):
                 runner.assert_not_called()
         self.assertEqual(before, state_path.read_bytes())
 
-    def test_publication_review_rejects_legacy_dirty_verification(self) -> None:
+    def test_publication_review_rejects_dirty_verification(self) -> None:
         self.prepare_publication_candidate()
         self.begin()
-        (self.root / "product.txt").write_text("legacy uncommitted candidate\n", encoding="utf-8")
+        (self.root / "product.txt").write_text("uncommitted candidate\n", encoding="utf-8")
         # Reproduce evidence recorded by a process without the early preflight.
         with patch("engineering_process.lifecycle._publication_preflight"):
             self.verify_all()
@@ -671,7 +660,7 @@ class LifecycleTests(unittest.TestCase):
             kind="agent",
         )
         self.assertEqual("completed", state["phase"])
-        self.assertEqual(2, receipt["schemaVersion"])
+        self.assertEqual(1, receipt["schemaVersion"])
         self.assertEqual(
             {
                 "branch": "fix/sample_change",
@@ -702,10 +691,10 @@ class LifecycleTests(unittest.TestCase):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         state.pop("comparisonBaseCommit")
         write_json(state_path, state)
-        with self.assertRaisesRegex(ProcessError, "requires a pinned comparison base"):
+        with self.assertRaisesRegex(ProcessError, "comparisonBaseCommit"):
             finish_change(self.root, PROCESS_ROOT, "sample-change",
                           actor_id="coordinator", context_id="finish-context", kind="agent")
-        self.assertEqual("approved", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+        self.assertEqual("approved", state["phase"])
         self.assertFalse((self.root / ".process/receipts/sample-change.json").exists())
 
     def test_publication_finish_rejects_transient_different_head(self) -> None:
@@ -805,7 +794,7 @@ class LifecycleTests(unittest.TestCase):
             lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
         )
 
-    def test_new_run_rejects_the_legacy_plan_writer(self) -> None:
+    def test_new_run_rejects_a_non_current_plan(self) -> None:
         start_change(
             self.root,
             PROCESS_ROOT,
@@ -815,11 +804,10 @@ class LifecycleTests(unittest.TestCase):
             context_id="author-context",
             kind="agent",
         )
-        legacy = deepcopy(self.plan)
-        legacy["schemaVersion"] = 4
-        legacy.pop("productionEngineering")
-        write_json(self.plan_path, legacy)
-        with self.assertRaisesRegex(ProcessError, "schemaVersion must be 5"):
+        non_current = deepcopy(self.plan)
+        non_current["schemaVersion"] = 2
+        write_json(self.plan_path, non_current)
+        with self.assertRaisesRegex(ProcessError, "1 was expected"):
             register_plan(
                 self.root,
                 PROCESS_ROOT,
@@ -830,7 +818,16 @@ class LifecycleTests(unittest.TestCase):
                 kind="agent",
             )
 
-    def test_new_review_assignment_requires_version_seven_and_dispositions(self) -> None:
+    def test_run_rejects_a_non_current_bound_contract(self) -> None:
+        self.begin()
+        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        state = json.loads(run_path.read_text(encoding="utf-8"))
+        state["contract"]["document"]["schemaVersion"] = 2
+        write_json(run_path, state)
+        with self.assertRaisesRegex(ProcessError, "1 was expected"):
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+
+    def test_new_review_assignment_requires_current_contract_and_dispositions(self) -> None:
         self.begin()
         self.verify_all()
         state = start_review(
@@ -841,14 +838,12 @@ class LifecycleTests(unittest.TestCase):
             context_id="review-context",
             kind="agent",
         )
-        self.assertEqual(7, state["reviewAssignment"]["reportSchemaVersion"])
+        self.assertEqual(1, state["reviewAssignment"]["reportSchemaVersion"])
         review_path = self.root / ".process" / "runs" / "review-input.json"
         review = self.review_document("approved")
-        review["schemaVersion"] = 6
-        review.pop("productionEngineering")
-        review.pop("processImprovement")
+        review["schemaVersion"] = 2
         write_json(review_path, review)
-        with self.assertRaisesRegex(ProcessError, "schemaVersion must be 7"):
+        with self.assertRaisesRegex(ProcessError, "1 was expected"):
             submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
 
         review = self.review_document("approved")
@@ -901,101 +896,6 @@ class LifecycleTests(unittest.TestCase):
         review["processImprovement"]["recordUrl"] = (
             "https://github.com/phuongnse/engineering-process/issues/127"
         )
-        write_json(review_path, review)
-        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
-        self.assertEqual("approved", state["phase"])
-
-    def test_legacy_plan_uses_version_six_review_evidence(self) -> None:
-        start_change(
-            self.root,
-            PROCESS_ROOT,
-            self.project,
-            self.contract_path,
-            actor_id="author",
-            context_id="author-context",
-            kind="agent",
-        )
-        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
-        run = json.loads(run_path.read_text(encoding="utf-8"))
-        run.pop("requiredPlanSchemaVersion")
-        write_json(run_path, run)
-        legacy = deepcopy(self.plan)
-        legacy["schemaVersion"] = 4
-        legacy.pop("productionEngineering")
-        write_json(self.plan_path, legacy)
-        register_plan(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            self.plan_path,
-            actor_id="author",
-            context_id="author-context",
-            kind="agent",
-        )
-        begin_implementation(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="implementer",
-            context_id="implementation-context",
-            kind="agent",
-        )
-        self.verify_all()
-        state = start_review(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="reviewer",
-            context_id="review-context",
-            kind="agent",
-        )
-        self.assertEqual(6, state["reviewAssignment"]["reportSchemaVersion"])
-
-        review = self.review_document("approved")
-        review["schemaVersion"] = 6
-        review.pop("productionEngineering")
-        review.pop("processImprovement")
-        review["findings"] = [self.non_blocking_finding()]
-        review["findings"][0]["disposition"] = {
-            "status": "resolved",
-            "rationale": "Resolved in the reviewed snapshot.",
-        }
-        review_path = self.root / ".process" / "runs" / "review-input.json"
-        write_json(review_path, review)
-        state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
-        self.assertEqual("approved", state["phase"])
-        state, _ = finish_change(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="coordinator",
-            context_id="finish-context",
-            kind="agent",
-        )
-        self.assertEqual("completed", state["phase"])
-
-    def test_unversioned_legacy_assignment_accepts_version_five_review(self) -> None:
-        self.begin()
-        self.verify_all()
-        start_review(
-            self.root,
-            PROCESS_ROOT,
-            "sample-change",
-            actor_id="reviewer",
-            context_id="review-context",
-            kind="agent",
-        )
-        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
-        run = json.loads(run_path.read_text(encoding="utf-8"))
-        run["reviewAssignment"].pop("reportSchemaVersion")
-        write_json(run_path, run)
-
-        review = self.review_document("approved")
-        review["schemaVersion"] = 5
-        review.pop("productionEngineering")
-        review.pop("processImprovement")
-        review["findings"] = [self.non_blocking_finding()]
-        review_path = self.root / ".process" / "runs" / "review-input.json"
         write_json(review_path, review)
         state = submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
         self.assertEqual("approved", state["phase"])
@@ -1174,34 +1074,26 @@ class LifecycleTests(unittest.TestCase):
         start_review(self.root, PROCESS_ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
         state_path = self.root / ".process/runs/sample-change/run.json"
 
-        # The same closure rule applies to every supported report reader.
-        for version in (5, 6, 7):
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            state["reviewAssignment"]["reportSchemaVersion"] = version
-            write_json(state_path, state)
-            for variant in ("omitted", "renamed", "accepted-risk", "tracked-follow-up"):
-                report = self.review_document("approved")
-                report["schemaVersion"] = version
-                if version < 7:
-                    del report["productionEngineering"]
-                    del report["processImprovement"]
-                finding = deepcopy(blocker)
-                finding["severity"] = "non-blocking"
-                finding["disposition"] = {
-                    "status": "resolved" if variant == "renamed" else variant,
-                    "rationale": "The previously reported behavior is still unimplemented.",
-                    "owner": "maintainer",
-                    "recordUrl": "https://example.invalid/issues/1",
-                }
-                if variant == "renamed":
-                    finding["id"] = "renamed-bug"
-                report["findings"] = [] if variant == "omitted" else [finding]
-                write_json(report_path, report)
-                with self.subTest(version=version, variant=variant), self.assertRaisesRegex(ProcessError, "prior blocking finding"):
-                    submit_review(self.root, PROCESS_ROOT, "sample-change", report_path)
-                self.assertEqual("review-pending", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
-                with self.assertRaisesRegex(ProcessError, "expected approved"):
-                    finish_change(self.root, PROCESS_ROOT, "sample-change", actor_id="coordinator", context_id="finish", kind="agent")
+        # The closure rule is exercised against the one current report contract.
+        for variant in ("omitted", "renamed", "accepted-risk", "tracked-follow-up"):
+            report = self.review_document("approved")
+            finding = deepcopy(blocker)
+            finding["severity"] = "non-blocking"
+            finding["disposition"] = {
+                "status": "resolved" if variant == "renamed" else variant,
+                "rationale": "The previously reported behavior is still unimplemented.",
+                "owner": "maintainer",
+                "recordUrl": "https://example.invalid/issues/1",
+            }
+            if variant == "renamed":
+                finding["id"] = "renamed-bug"
+            report["findings"] = [] if variant == "omitted" else [finding]
+            write_json(report_path, report)
+            with self.subTest(variant=variant), self.assertRaisesRegex(ProcessError, "prior blocking finding"):
+                submit_review(self.root, PROCESS_ROOT, "sample-change", report_path)
+            self.assertEqual("review-pending", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+            with self.assertRaisesRegex(ProcessError, "expected approved"):
+                finish_change(self.root, PROCESS_ROOT, "sample-change", actor_id="coordinator", context_id="finish", kind="agent")
 
         resolved = deepcopy(blocker)
         resolved["severity"] = "non-blocking"
@@ -1500,7 +1392,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_final_impact_assurance_records_selected_units_as_profile_evidence(self) -> None:
         self.project["impactProfiles"] = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "finalProfiles": ["development", "review"],
             "profiles": {
                 profile: [
@@ -1536,7 +1428,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_unresolved_final_impact_assurance_blocks_remaining_verification(self) -> None:
         self.project["impactProfiles"] = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "finalProfiles": ["development", "review"],
             "profiles": {
                 profile: [
@@ -1748,7 +1640,7 @@ class LifecycleTests(unittest.TestCase):
             )
         self.assertEqual(2, runner.call_count)
 
-    def test_selection_reports_legacy_passing_evidence_as_unknown(self) -> None:
+    def test_selection_reports_missing_input_identity_as_unknown(self) -> None:
         self.begin()
         verify_change(
             self.root, PROCESS_ROOT, self.project, "sample-change", "development"
@@ -1953,7 +1845,7 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual("specified", state["phase"])
 
-    def test_evidence_only_process_change_policy_remains_compatible(self) -> None:
+    def test_evidence_only_process_change_policy_remains_current(self) -> None:
         self.project["lifecycle"]["processChanges"] = {
             "requireConsumerEvidence": True
         }

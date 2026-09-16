@@ -64,6 +64,6 @@
     }
   ],
   "previousVersion": "2.6.0",
-  "schemaVersion": 6,
+  "schemaVersion": 1,
   "version": "2.7.0"
 }

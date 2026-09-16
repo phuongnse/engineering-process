@@ -137,7 +137,7 @@ def main() -> int:
         installed_preset = environment / "share" / "engineering-process" / "templates" / "renovate.json"
         if installed_preset.read_bytes() != expected_preset:
             raise RuntimeError("installed wheel Renovate preset differs from the canonical source")
-        installed_skill_root = environment / "share" / "engineering-process" / "skills"
+        installed_skill_root = environment / "share" / "engineering-process" / "process_assets" / "skills"
         installed_skills = {
             path.relative_to(installed_skill_root).as_posix(): path.read_bytes()
             for path in installed_skill_root.rglob("*") if path.is_file()
@@ -192,8 +192,8 @@ print('Installed consumer standard and draft/ready checks: PASSED')
         release_data = consumer / "release-data.json"
         release_data.write_text(json.dumps({
             "schemaVersion": 1, "title": "Fixture release", "introduction": "Reviewed fixture changes.",
-            "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "fixture-change"}],
-            "sections": {"upgrade": "No migration required."},
+            "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "fixture-change", "details": {"problem": "The fixture needs release detail.", "changes": "Preserve behavior.", "affectedPaths": ["consumer/"], "apply": "Adopt the current package.", "compatibility": "No breaking change.", "notes": "Installed artifact fixture."}}],
+            "sections": {"upgrade": "No additional consumer action."},
         }), encoding="utf-8")
         issue_data = consumer / "issue-data.json"
         issue_data.write_text(json.dumps({

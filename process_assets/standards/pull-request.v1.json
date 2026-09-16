@@ -43,7 +43,7 @@
           {
             "id": "compatibility",
             "label": "Compatibility",
-            "description": "Compatibility and migration impact, or none."
+            "description": "Compatibility impact and consumer action, or none."
           },
           {
             "id": "stack",

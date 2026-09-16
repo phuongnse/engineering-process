@@ -33,7 +33,7 @@ from engineering_process.pr_description import (
     render_template,
 )
 from engineering_process.production_engineering import load_invariant_floor
-from engineering_process.publication_compat import validate_pull_request
+from engineering_process.pr_description import validate_pull_request
 from engineering_process.release_notes import render_notes
 from engineering_process.repository import repository_snapshot
 
@@ -108,7 +108,7 @@ class ArtifactStandardsTests(unittest.TestCase):
 
     def test_override_changes_generation_validation_and_renovate_together(self) -> None:
         document = deepcopy(resolve_standard(None, ROOT, "pull-request").document)
-        document.update(id="company.pr", version=2)
+        document.update(id="company.pr", version=1)
         summary = document["rules"]["sections"][0]
         summary["heading"] = "## Changes delivered"
         summary["fields"].reverse()
@@ -147,6 +147,7 @@ class ArtifactStandardsTests(unittest.TestCase):
         duplicate = deepcopy(original); duplicate["rules"]["sections"].append(deepcopy(duplicate["rules"]["sections"][0])); changes.append(duplicate)
         malformed = deepcopy(original); malformed["rules"]["sections"][0]["heading"] += "\n"; changes.append(malformed)
         unsupported = deepcopy(original); unsupported["schemaVersion"] = 2; changes.append(unsupported)
+        unsupported_version = deepcopy(original); unsupported_version["version"] = 2; changes.append(unsupported_version)
         for document in changes:
             with self.subTest(document=document):
                 with self.assertRaises(ProcessError):
@@ -196,12 +197,20 @@ class ArtifactStandardsTests(unittest.TestCase):
 
     def test_release_override_and_source_records_determine_verified_bytes(self) -> None:
         document = deepcopy(resolve_standard(None, ROOT, "release-notes").document)
-        document.update(id="company.release", version=3)
+        document.update(id="company.release", version=1)
         document["rules"]["groups"].reverse()
         document["rules"]["groups"][0]["heading"] = "Corrections"
         document["rules"]["sections"].append({"id": "security", "heading": "Security impact"})
         self.select(document)
-        data = {"schemaVersion": 1, "title": "Example v1.1.0", "introduction": "Changes since v1.0.0.", "changes": [{"type": "fix", "summary": "Keep literal *text* and 1. markers.", "source": "issue #10"}, {"type": "capability", "summary": "Add the requested behavior.", "source": "https://example.com/issues/12"}], "sections": {"upgrade": "No migration required.", "security": "No security behavior changed."}}
+        details = {
+            "problem": "A current release needs actionable detail.",
+            "changes": "Record the accepted change.",
+            "affectedPaths": ["src/owner.py"],
+            "apply": "Adopt the current release.",
+            "compatibility": "No breaking change.",
+            "notes": "The consumer owns the release action.",
+        }
+        data = {"schemaVersion": 1, "title": "Example v1.1.0", "introduction": "Changes since v1.0.0.", "changes": [{"type": "fix", "summary": "Keep literal *text* and 1. markers.", "source": "issue #10", "details": deepcopy(details)}, {"type": "capability", "summary": "Add the requested behavior.", "source": "https://example.com/issues/12", "details": deepcopy(details)}], "sections": {"upgrade": "No additional consumer action.", "security": "No security behavior changed."}}
         data_path = self.write("release-data.json", data)
         path = self.root / "notes.md"
         code, rendered = self.cli("render", "--artifact", "release-notes", "--data-file", str(data_path), "--output", str(path))
@@ -295,7 +304,7 @@ class ArtifactStandardsTests(unittest.TestCase):
 
     def test_issue_prefix_cannot_replace_title_in_either_state(self) -> None:
         document = deepcopy(resolve_standard(None, ROOT, "issue").document)
-        document.update(id="consumer.issue", version=2)
+        document.update(id="consumer.issue", version=1)
         document["rules"]["title"]["prefix"] = "[work] "
         self.select(document)
         body = self.root / "issue.md"
@@ -315,7 +324,7 @@ class ArtifactStandardsTests(unittest.TestCase):
 
     def test_issue_override_title_state_and_reference_rules_share_one_authority(self) -> None:
         document = deepcopy(resolve_standard(None, ROOT, "issue").document)
-        document.update(id="consumer.issue", version=2)
+        document.update(id="consumer.issue", version=1)
         document["rules"]["title"]["prefix"] = "[work] "
         document["rules"]["states"]["open"]["sections"][0]["heading"] = "## Consumer request"
         document["rules"]["states"]["open"]["sections"][0]["fields"].reverse()
@@ -361,7 +370,7 @@ class ArtifactStandardsTests(unittest.TestCase):
         self.assertEqual(0, code, result)
         self.assertEqual("acme-dependency-updates\n", result["content"])
         document = deepcopy(resolve_standard(None, ROOT, "automation-name").document)
-        document.update(id="consumer.automation-name", version=2)
+        document.update(id="consumer.automation-name", version=1)
         document["rules"].update(components=["role", "owner"], separator=".", case="preserve", maxLength=40)
         self.select(document)
         name = self.root / "app-name.txt"
@@ -394,11 +403,11 @@ class ArtifactStandardsTests(unittest.TestCase):
 
     def test_release_ready_requires_resolved_values_and_known_change_types(self) -> None:
         standard = resolve_standard(None, ROOT, "release-notes")
-        data = {"schemaVersion": 1, "title": "Example", "introduction": "Changes in this release.", "changes": [{"type": "fix", "summary": "Correct the behavior.", "source": "issue-1"}], "sections": {"upgrade": "pending"}}
+        data = {"schemaVersion": 1, "title": "Example", "introduction": "Changes in this release.", "changes": [{"type": "fix", "summary": "Correct the behavior.", "source": "issue-1", "details": {"problem": "The current behavior is incomplete.", "changes": "Correct the behavior.", "affectedPaths": ["src/owner.py"], "apply": "pending", "compatibility": "No breaking change.", "notes": "Current contract fixture."}}], "sections": {"upgrade": "pending"}}
         self.assertIn("pending", render_notes(standard, data, state="draft"))
         with self.assertRaisesRegex(ProcessError, "unresolved"):
             render_notes(standard, data)
-        data["sections"]["upgrade"] = "No migration required."
+        data["sections"]["upgrade"] = "No additional consumer action."
         data["changes"][0]["type"] = "unclassified"
         with self.assertRaisesRegex(ProcessError, "unsupported change types"):
             render_notes(standard, data)
@@ -432,7 +441,7 @@ class ArtifactStandardsTests(unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "Tests"], cwd=self.root, check=True)
 
         project = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "project": "sample",
             "lifecycle": {"requiredProfiles": ["development", "review"]},
             "profiles": {
@@ -458,7 +467,7 @@ class ArtifactStandardsTests(unittest.TestCase):
         subprocess.run(["git", "commit", "-qm", "initial"], cwd=self.root, check=True)
 
         contract = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "id": "sample-change",
             "summary": "Make one sample change",
             "source": "https://example.com/issues/100",
@@ -476,7 +485,7 @@ class ArtifactStandardsTests(unittest.TestCase):
             item["id"] for item in load_invariant_floor(ROOT)["invariants"]
         ]
         plan = {
-            "schemaVersion": 5,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "contractDigest": digest_json(contract),
             "approach": "Make and verify the bounded change.",
@@ -509,7 +518,7 @@ class ArtifactStandardsTests(unittest.TestCase):
 
         start_review(self.root, ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
         review_doc_1 = {
-            "schemaVersion": 7,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "reviewer": {"actorId": "reviewer", "contextId": "review-context", "kind": "agent"},
             "checkpoint": repository_snapshot(self.root),
@@ -546,7 +555,7 @@ class ArtifactStandardsTests(unittest.TestCase):
 
         start_review(self.root, ROOT, "sample-change", actor_id="reviewer", context_id="review-context", kind="agent")
         review_doc_2 = {
-            "schemaVersion": 7,
+            "schemaVersion": 1,
             "changeId": "sample-change",
             "reviewer": {"actorId": "reviewer", "contextId": "review-context", "kind": "agent"},
             "checkpoint": repository_snapshot(self.root),
@@ -639,11 +648,11 @@ class ArtifactStandardsTests(unittest.TestCase):
         diagnostic_data = build_pr_description_data(self.root, ROOT, "sample-change")
         self.assertFalse(diagnostic_data["checks"]["required-profiles"])
 
-        legacy_state = json.loads(original_run)
-        legacy_state["verification"]["development"].pop("scope")
-        run_path.write_bytes(formatted_json_bytes(legacy_state))
-        legacy_data = build_pr_description_data(self.root, ROOT, "sample-change")
-        self.assertFalse(legacy_data["checks"]["required-profiles"])
+        no_scope_state = json.loads(original_run)
+        no_scope_state["verification"]["development"].pop("scope")
+        run_path.write_bytes(formatted_json_bytes(no_scope_state))
+        no_scope_data = build_pr_description_data(self.root, ROOT, "sample-change")
+        self.assertFalse(no_scope_data["checks"]["required-profiles"])
         run_path.write_bytes(original_run)
 
         unknown_runtime = {

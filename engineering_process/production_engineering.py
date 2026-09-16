@@ -9,8 +9,8 @@ from .contracts import ProcessError, load_and_validate
 from .distribution import schemas_root, skills_root
 
 
-PLAN_SCHEMA_VERSION = 5
-REVIEW_SCHEMA_VERSION = 7
+PLAN_SCHEMA_VERSION = 1
+REVIEW_SCHEMA_VERSION = 1
 
 
 def load_invariant_floor(process_root: Path) -> dict[str, Any]:
@@ -48,8 +48,6 @@ def _require_canonical_assessments(
 
 
 def validate_plan_assessments(plan: dict[str, Any], process_root: Path) -> None:
-    if plan["schemaVersion"] != PLAN_SCHEMA_VERSION:
-        return
     assessments = _require_canonical_assessments(
         plan,
         process_root,
@@ -66,8 +64,6 @@ def validate_plan_assessments(plan: dict[str, Any], process_root: Path) -> None:
 
 
 def validate_review_assessments(review: dict[str, Any], process_root: Path) -> None:
-    if review["schemaVersion"] != REVIEW_SCHEMA_VERSION:
-        return
     assessments = _require_canonical_assessments(
         review,
         process_root,

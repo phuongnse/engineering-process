@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "project", "lifecycle", "profiles"],
   "properties": {
-    "schemaVersion": {"const": 5},
+    "schemaVersion": {"const": 1},
     "project": {"$ref": "#/$defs/id"},
     "lifecycle": {
       "type": "object",
@@ -100,7 +100,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "profiles"],
       "properties": {
-        "schemaVersion": {"enum": [1, 2]},
+        "schemaVersion": {"const": 1},
         "profiles": {"$ref": "#/$defs/impactProfileMap"},
         "finalProfiles": {
           "type": "array",
@@ -109,17 +109,7 @@
           "uniqueItems": true,
           "items": {"$ref": "#/$defs/id"}
         }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {"schemaVersion": {"const": 2}},
-            "required": ["schemaVersion"]
-          },
-          "then": {"required": ["finalProfiles"]},
-          "else": {"not": {"required": ["finalProfiles"]}}
-        }
-      ]
+      }
     },
     "impactProfileMap": {
       "type": "object",
@@ -200,7 +190,7 @@
             "required": ["id", "version"],
             "properties": {
               "id": {"enum": ["desktop-media", "library-cli", "operations"]},
-              "version": {"type": "integer", "minimum": 1, "maximum": 1000}
+              "version": {"const": 1}
             }
           }
         },

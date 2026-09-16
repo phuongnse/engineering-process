@@ -32,13 +32,6 @@ START_MARKER = "<!-- engineering-process:start -->"
 END_MARKER = "<!-- engineering-process:end -->"
 PR_START_MARKER = "<!-- engineering-process:pr-description:start -->"
 PR_END_MARKER = "<!-- engineering-process:pr-description:end -->"
-LEGACY_SKILL_FILES = (
-    Path("SKILL.md"),
-    Path(".engineering-process.json"),
-    Path("references/execution.md"),
-)
-
-
 def _managed_inventory_path(raw: str, skills: set[str]) -> Path:
     relative = PurePosixPath(raw)
     if relative.as_posix() != raw:
@@ -144,8 +137,8 @@ def _expected_files(
     process_root: Path,
     requirements_digest: str,
 ) -> tuple[dict[Path, bytes], set[Path], dict[str, Any]]:
-    old_lock = _read_lock(project_root, process_root)
-    old_skills = set(old_lock.get("skills", [])) if old_lock else set()
+    existing_lock = _read_lock(project_root, process_root)
+    existing_skills = set(existing_lock.get("skills", [])) if existing_lock else set()
     names = skill_names(process_root)
     new_skills = set(names)
     writes: dict[Path, bytes] = {}
@@ -170,24 +163,15 @@ def _expected_files(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
 
-    if old_lock and old_lock["schemaVersion"] == 2:
-        old_managed = {
-            _managed_inventory_path(path, old_skills)
-            for path in old_lock["managedFiles"]
+    if existing_lock:
+        existing_managed = {
+            _managed_inventory_path(path, existing_skills)
+            for path in existing_lock["managedFiles"]
         }
     else:
-        old_managed = {
-            Path(".agents/skills") / name / relative
-            for name in old_skills
-            for relative in LEGACY_SKILL_FILES
-            if (project_root / ".agents" / "skills" / name / relative).is_file()
-        }
-        if (project_root / ".process" / "adopt-process.py").is_file():
-            old_managed.add(Path(".process/adopt-process.py"))
-        if (project_root / ".process" / "adopt-process-windows-job.py").is_file():
-            old_managed.add(Path(".process/adopt-process-windows-job.py"))
+        existing_managed = set()
 
-    for name in sorted(old_skills | new_skills):
+    for name in sorted(existing_skills | new_skills):
         target = project_root / ".agents" / "skills" / name
         if not target.exists():
             continue
@@ -208,12 +192,12 @@ def _expected_files(
     for relative in new_managed:
         expected = writes[relative]
         path = project_root / relative
-        if path.exists() and relative not in old_managed:
+        if path.exists() and relative not in existing_managed:
             if not path.is_file() or path.read_bytes() != expected:
                 raise ProcessError(
                     f"{relative}: consumer-owned path collides with a managed file"
                 )
-    for relative in old_managed:
+    for relative in existing_managed:
         if relative not in writes and (project_root / relative).is_file():
             deletions.add(relative)
 
@@ -228,24 +212,13 @@ def _expected_files(
         path = project_root / relative
         if (
             path.exists()
-            and relative not in old_managed
+            and relative not in existing_managed
             and (not path.is_file() or path.read_bytes() != writes[relative])
         ):
             raise ProcessError(
                 f"{relative}: consumer-owned path collides with a managed file"
             )
         new_managed.add(relative)
-    for legacy_file in (
-        Path(".process/automation.json"),
-    ):
-        if (project_root / legacy_file).exists():
-            deletions.add(legacy_file)
-    migration_root = project_root / ".process" / "adoption-migrations"
-    if migration_root.is_dir() and not migration_root.is_symlink():
-        for path in migration_root.glob("*.json"):
-            if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.json", path.name) and path.is_file() and not path.is_symlink():
-                deletions.add(path.relative_to(project_root))
-
     agents_template = (process_root / "templates" / "AGENTS.process.md").read_text(
         encoding="utf-8"
     )
@@ -280,7 +253,7 @@ def _expected_files(
     deletions.difference_update(writes)
 
     lock = {
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "process": {
             "package": "engineering-process",
             "version": VERSION,
@@ -453,7 +426,9 @@ def _apply_transaction(
         precondition()
         for relative in sorted(writes, key=lambda item: item.as_posix()):
             path = _target(project_root, relative)
-            os.replace(staged.pop(relative), path)
+            temporary = staged[relative]
+            os.replace(temporary, path)
+            staged.pop(relative)
         for relative in sorted(deletions, key=lambda item: item.as_posix(), reverse=True):
             path = _target(project_root, relative)
             path.unlink(missing_ok=True)
