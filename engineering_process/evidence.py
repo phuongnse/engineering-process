@@ -17,13 +17,6 @@ from .repository import same_checkpoint
 
 
 SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "PRIVATE_KEY")
-TRANSIENT_MARKERS = (
-    "ANTIGRAVITY_",
-    "_SOURCE_METADATA",
-    "_STEP_INDEX",
-    "_CONVERSATION_ID",
-    "_TRAJECTORY_ID",
-)
 
 
 def child_environment(
@@ -37,9 +30,7 @@ def child_environment(
         upper = name.upper()
         if name in {"PYTHONHOME", "PYTHONPATH"}:
             continue
-        if any(marker in upper for marker in SECRET_MARKERS) or any(
-            marker in upper for marker in TRANSIENT_MARKERS
-        ):
+        if any(marker in upper for marker in SECRET_MARKERS):
             continue
         # Empty bindings remain meaningful inputs to a consumer command.
         environment[name] = value
@@ -91,9 +82,6 @@ def execution_identity(
         "executable": str(runtime_executable),
         "python": sys.version,
         "platform": platform.platform(),
-        "environment": child_environment(
-            executable=runtime_executable, source=source
-        ),
         "dependencies": dependency_identity,
     }
 

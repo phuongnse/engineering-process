@@ -23,7 +23,10 @@ from engineering_process.commands import (
     verification_lock,
 )
 from engineering_process.contracts import ProcessError
-from engineering_process.evidence import execution_identity as evidence_execution_identity
+from engineering_process.evidence import (
+    child_environment,
+    execution_identity as evidence_execution_identity,
+)
 from engineering_process.supervision import CleanupOutcome, process_supervisor
 
 
@@ -158,8 +161,6 @@ class CommandTests(unittest.TestCase):
             identity = execution_identity()
 
         self.assertEqual(2, identity["dependencies"]["count"])
-        self.assertIn("EMPTY_BINDING", identity["environment"])
-        self.assertEqual("", identity["environment"]["EMPTY_BINDING"])
 
     def test_runtime_identity_matches_bounded_child(self) -> None:
         with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False):
@@ -193,7 +194,7 @@ class CommandTests(unittest.TestCase):
         selected = alias.absolute()
         self.assertEqual(str(selected), identity["executable"])
         self.assertEqual(
-            str(selected.parent), identity["environment"]["PATH"].split(os.pathsep)[0]
+            str(selected.parent), child_environment(executable=alias)["PATH"].split(os.pathsep)[0]
         )
 
     def test_bare_runtime_command_uses_the_process_runtime(self) -> None:

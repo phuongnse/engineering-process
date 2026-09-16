@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "agent-neutral-runtime-identity",
+  "type": "fix",
+  "summary": "Decouple ambient host environment from execution identity with Zero-List architecture.",
+  "source": "owned change #agent-neutral-runtime-identity",
+  "details": {
+    "problem": "Runtime evidence identity hashed arbitrary ambient host environment variables, requiring fragile blacklist/whitelist workarounds and breaking verification evidence reuse when session metadata changed.",
+    "changes": "Adopt a Zero-List architecture: decouple ambient host environment from execution identity digest, eliminate all transient keyword lists, add an automated architecture fitness test forbidding AI vendor couplings, and enforce anti-workaround review rules.",
+    "affectedPaths": [
+      "engineering_process/evidence.py",
+      "process_assets/skills/change-plan/SKILL.md",
+      "process_assets/skills/change-review/SKILL.md",
+      "tests/test_architecture.py",
+      "tests/test_commands.py"
+    ],
+    "apply": "No configuration changes required; runtime identity deterministically hashes only process-controlled interpreter, dependencies, and platform facts.",
+    "compatibility": "No breaking change. Child execution environments continue to inherit OS tools and paths with secrets sanitized.",
+    "notes": "Eliminates all keyword lists and workarounds. Runtime identity is invariant to external agent harnesses and host terminal session state."
+  }
+}
