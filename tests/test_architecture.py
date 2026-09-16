@@ -27,6 +27,7 @@ LAYERS = {
     "publication_compat": 4,
     "source_publication": 2,
     "review_contexts": 2,
+    "incidents": 3,
     "pr_description": 3,
     "release_notes": 3,
     "release": 2,

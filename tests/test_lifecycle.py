@@ -1869,6 +1869,56 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertEqual("specified", state["phase"])
 
+    def test_evidence_invalidated_event_recorded_on_mismatch(self) -> None:
+        self.begin()
+        verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
+        (self.root / "product.txt").write_text("modified content\n", encoding="utf-8")
+        state, _ = verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "review")
+        events = [e["event"] for e in state["history"]]
+        self.assertIn("evidence-invalidated", events)
+        inv_event = next(e for e in state["history"] if e["event"] == "evidence-invalidated")
+        self.assertEqual("development", inv_event["details"]["profile"])
+        self.assertEqual("input-digest-mismatch", inv_event["details"]["reason"])
+
+    def test_finish_collects_and_records_incidents(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        state = json.loads(run_path.read_text(encoding="utf-8"))
+        state["history"].append(
+            {
+                "event": "evidence-invalidated",
+                "at": "2026-09-16T00:00:00Z",
+                "actor": {"actorId": "test", "contextId": "test", "kind": "agent"},
+                "details": {"profile": "development", "reason": "input-digest-mismatch"},
+            }
+        )
+        write_json(run_path, state)
+
+        state, receipt = finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="coordinator",
+            context_id="finish-context",
+            kind="agent",
+        )
+        self.assertEqual("completed", state["phase"])
+        events = [e["event"] for e in state["history"]]
+        self.assertIn("incident-collected", events)
+
 
 if __name__ == "__main__":
     unittest.main()
