@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,6 +18,24 @@ from .repository import _git
 DEFAULT_MAX_ISSUES_PER_FINISH = 3
 DEFAULT_MAX_ISSUES_PER_KEY = 1
 DEFAULT_PROCESS_REPO = "phuongnse/engineering-process"
+MAX_TRACKER_RESULTS = 32
+MAX_TRACKER_OUTPUT_BYTES = 64_000
+MAX_TRACKER_URL_BYTES = 512
+MAX_TRACKER_TITLE_BYTES = 512
+
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_SAFE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ISSUE_URL = re.compile(
+    r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)$"
+)
+_SAFE_REASON = {
+    "input-digest-mismatch",
+    "checkpoint-mismatch",
+    "policy-changed",
+    "runtime-changed",
+    "comparison-base-changed",
+    "verification-repetition",
+}
 
 CLOSED_TAXONOMY = (
     "evidence-integrity",
@@ -41,11 +59,176 @@ class Incident:
         return asdict(self)
 
 
+def _policy_allows_external_intake(project: dict[str, Any]) -> bool:
+    """Use the existing consumer process policy as the external-I/O boundary."""
+    policy = project.get("lifecycle", {}).get("processChanges", {})
+    return bool(
+        isinstance(policy, dict)
+        and policy.get("requireConsumerEvidence") is True
+        and isinstance(policy.get("acceptedIssueUrlPrefix"), str)
+        and policy["acceptedIssueUrlPrefix"]
+    )
+
+
+def _valid_issue_url(repo: str, value: Any) -> bool:
+    if not isinstance(value, str) or len(value.encode("utf-8")) > MAX_TRACKER_URL_BYTES:
+        return False
+    match = _ISSUE_URL.fullmatch(value)
+    return bool(match and match.group(1).casefold() == repo.casefold())
+
+
+def _validate_tracker_matches(matches: Any) -> list[dict[str, Any]]:
+    """Validate the small provider result shape before making a decision."""
+    if not isinstance(matches, list) or len(matches) > MAX_TRACKER_RESULTS:
+        raise ProcessError("tracker search returned an invalid result set")
+    try:
+        encoded = json.dumps(matches, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ProcessError("tracker search returned invalid data") from error
+    if len(encoded) > MAX_TRACKER_OUTPUT_BYTES:
+        raise ProcessError("tracker search exceeded its output limit")
+    for item in matches:
+        if not isinstance(item, dict):
+            raise ProcessError("tracker search returned an invalid result set")
+        if not isinstance(item.get("title"), str):
+            raise ProcessError("tracker search returned an invalid result set")
+        if len(item["title"].encode("utf-8")) > MAX_TRACKER_TITLE_BYTES:
+            raise ProcessError("tracker search returned an invalid result set")
+        if not isinstance(item.get("url"), str):
+            raise ProcessError("tracker search returned an invalid result set")
+        if item.get("state") not in {"OPEN", "CLOSED"}:
+            raise ProcessError("tracker search returned an invalid result set")
+    return matches
+
+
+def _safe_identifier(value: Any, fallback: str = "unknown") -> str:
+    text = value if isinstance(value, str) else ""
+    return text if _SAFE_IDENTIFIER.fullmatch(text) else fallback
+
+
+def _safe_consumer(value: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.-]", "-", value if isinstance(value, str) else "").strip("-")
+    return _safe_identifier(text)
+
+
+def _public_details(incident: Incident) -> dict[str, Any]:
+    """Project internal incident state into a small, typed public shape."""
+    allowed = {
+        "evidence-integrity": {
+            "profile", "reason", "cycle", "verificationCount",
+            "recordedInputDigest", "currentInputDigest", "recordedCheckpointFingerprint",
+            "currentCheckpointFingerprint", "digest",
+        },
+        "execution-boundary": {"profile", "checkId"},
+        "governance-thrashing": {"cycleCount"},
+        "invariant-violation": {"invariant"},
+        "publication-boundary": {"reason"},
+        "explicit-review-signal": set(),
+    }.get(incident.kind, set())
+    public: dict[str, Any] = {}
+    for key in sorted(allowed):
+        value = incident.details.get(key)
+        if key in {"profile", "checkId", "invariant"}:
+            if _SAFE_IDENTIFIER.fullmatch(value or ""):
+                public[key] = value
+        elif key == "reason":
+            if value in _SAFE_REASON:
+                public[key] = value
+        elif key in {
+            "recordedInputDigest", "currentInputDigest",
+            "recordedCheckpointFingerprint", "currentCheckpointFingerprint", "digest",
+        }:
+            if _SAFE_DIGEST.fullmatch(value or ""):
+                public[key] = value
+        elif key in {"cycle", "verificationCount", "cycleCount"}:
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2048:
+                public[key] = value
+    return public
+
+
+def _public_summary(incident: Incident) -> str:
+    """Build a title/body summary without copying reviewer or runtime prose."""
+    invariant = _safe_identifier(incident.invariant)
+    details = _public_details(incident)
+    if incident.kind == "evidence-integrity":
+        return f"Verification evidence crossed the '{invariant}' freshness boundary"
+    if incident.kind == "execution-boundary":
+        profile = _safe_identifier(details.get("profile"))
+        check = _safe_identifier(details.get("checkId"), "check")
+        return f"Bounded execution reported '{check}' in profile '{profile}'"
+    if incident.kind == "governance-thrashing":
+        return "The change crossed the correction/reviewer recovery boundary"
+    if incident.kind == "invariant-violation":
+        return f"Production invariant '{invariant}' was violated during review"
+    if incident.kind == "publication-boundary":
+        return "Publication preflight reported a bounded source boundary failure"
+    return "Independent review reported a shared-process signal"
+
+
+def _record_intake_event(
+    state: dict[str, Any],
+    event: str,
+    actor: dict[str, str],
+    incident: Incident,
+    stable_key: str,
+    **details: Any,
+) -> None:
+    state.setdefault("history", []).append(
+        {
+            "event": event,
+            "at": _now_iso(),
+            "actor": actor,
+            "details": {
+                "stableKey": stable_key,
+                "kind": incident.kind,
+                "invariant": incident.invariant,
+                **details,
+            },
+        }
+    )
+
+
+def _prior_intake_result(
+    state: dict[str, Any], stable_key: str, process_repo: str
+) -> dict[str, Any] | None:
+    """Return the first recorded result so a repeated finish cannot retry a side effect."""
+    for event in reversed(state.get("history", [])):
+        if event.get("details", {}).get("stableKey") != stable_key:
+            continue
+        details = event.get("details", {})
+        if event.get("event") in {"process-improvement-created", "process-improvement-reused"}:
+            record_url = details.get("recordUrl")
+            if _valid_issue_url(process_repo, record_url):
+                return {
+                    "status": "reused",
+                    "stableKey": stable_key,
+                    "recordUrl": record_url,
+                }
+            return {
+                "status": "failed",
+                "stableKey": stable_key,
+                "errorCode": "invalid-record-url",
+            }
+        if event.get("event") == "process-improvement-suppressed":
+            return {
+                "status": "suppressed",
+                "stableKey": stable_key,
+                "reason": details.get("reason", "policy-disabled"),
+            }
+        if event.get("event") == "process-improvement-failed":
+            return {
+                "status": "failed",
+                "stableKey": stable_key,
+                "errorCode": details.get("errorCode", "tracker-failed"),
+            }
+    return None
+
+
 def stable_title_key(consumer: str, process_version: str, invariant: str, kind: str) -> str:
     """Format the stable non-sensitive deduplication title key."""
-    clean_consumer = re.sub(r"[^a-zA-Z0-9_.-]", "-", consumer).strip("-")
-    clean_invariant = re.sub(r"[^a-zA-Z0-9_.-]", "-", invariant).strip("-")
-    clean_kind = re.sub(r"[^a-zA-Z0-9_.-]", "-", kind).strip("-")
+    clean_consumer = _safe_consumer(consumer)
+    clean_invariant = _safe_identifier(invariant)
+    clean_kind = _safe_identifier(kind)
     return f"[consumer-process][{clean_consumer}][{process_version}][{clean_invariant}][{clean_kind}]"
 
 
@@ -102,6 +285,21 @@ def collect_incidents(
                     kind="evidence-integrity",
                     invariant=profile,
                     summary=f"Verification report for '{profile}' was invalidated due to {reason}",
+                    details=details,
+                    severity="high",
+                )
+            )
+
+    # 1c. Publication-boundary: callers may persist a structured preflight failure
+    # before returning the lifecycle operation's error. Never infer one from text.
+    for event in history:
+        if event.get("event") == "publication-failed":
+            details = event.get("details", {})
+            _add(
+                Incident(
+                    kind="publication-boundary",
+                    invariant="publication",
+                    summary="Publication preflight reported a bounded source boundary failure",
                     details=details,
                     severity="high",
                 )
@@ -231,7 +429,7 @@ def collect_incidents(
 
 
 def _default_search_tracker(repo: str, search_query: str) -> list[dict[str, Any]]:
-    """Execute gh issue list to find existing matching issues."""
+    """Search all tracker states or fail explicitly; an error is never an empty result."""
     try:
         result = subprocess.run(
             [
@@ -242,6 +440,8 @@ def _default_search_tracker(repo: str, search_query: str) -> list[dict[str, Any]
                 repo,
                 "--state",
                 "all",
+                "--limit",
+                str(MAX_TRACKER_RESULTS),
                 "--search",
                 f"{search_query} in:title",
                 "--json",
@@ -249,20 +449,26 @@ def _default_search_tracker(repo: str, search_query: str) -> list[dict[str, Any]
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             timeout=30,
             check=False,
         )
-        if result.returncode == 0:
-            return json.loads(result.stdout)
-    except Exception:
-        pass
-    return []
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ProcessError("tracker search failed") from error
+    if result.returncode != 0:
+        raise ProcessError("tracker search failed")
+    if len(result.stdout.encode("utf-8")) > MAX_TRACKER_OUTPUT_BYTES:
+        raise ProcessError("tracker search exceeded its output limit")
+    try:
+        matches = json.loads(result.stdout)
+    except (TypeError, ValueError) as error:
+        raise ProcessError("tracker search returned invalid data") from error
+    return _validate_tracker_matches(matches)
 
 
 def _default_create_issue(repo: str, title: str, body: str) -> str:
-    """Execute gh issue create and return the created permanent issue URL."""
+    """Create one issue and return its unvalidated provider result."""
     try:
         result = subprocess.run(
             [
@@ -278,17 +484,18 @@ def _default_create_issue(repo: str, title: str, body: str) -> str:
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             timeout=30,
             check=False,
         )
-        if result.returncode == 0:
-            return result.stdout.strip()
-        detail = result.stderr.strip()
-        raise ProcessError(f"gh issue create failed: {detail}")
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise ProcessError(f"cannot create issue via gh: {error}") from error
+        raise ProcessError("tracker issue creation failed") from error
+    if result.returncode != 0:
+        raise ProcessError("tracker issue creation failed")
+    if len(result.stdout.encode("utf-8")) > MAX_TRACKER_URL_BYTES:
+        raise ProcessError("tracker issue creation returned an invalid URL")
+    return result.stdout.strip()
 
 
 def render_sanitized_issue_body(
@@ -297,23 +504,24 @@ def render_sanitized_issue_body(
     incident: Incident,
     state: dict[str, Any],
 ) -> str:
-    """Render a sanitized issue body complying with public disclosure standards."""
-    clean_details = {
-        k: v
-        for k, v in incident.details.items()
-        if not any(secret in k.lower() for secret in ("token", "secret", "key", "pass", "cred"))
-    }
-    details_rendered = json.dumps(clean_details, indent=2, sort_keys=True)
+    """Render a bounded body from the allow-listed public incident projection."""
+    safe_consumer = _safe_consumer(consumer)
+    safe_version = _safe_identifier(process_version)
+    safe_kind = _safe_identifier(incident.kind)
+    safe_invariant = _safe_identifier(incident.invariant)
+    details_rendered = json.dumps(
+        _public_details(incident), indent=2, sort_keys=True
+    )
 
     return f"""## Consumer evidence
 
-Consumer: `{consumer}`
-Process authority: engineering-process `{process_version}`
-Incident kind: `{incident.kind}`
-Invariant: `{incident.invariant}`
+Consumer: `{safe_consumer}`
+Process authority: engineering-process `{safe_version}`
+Incident kind: `{safe_kind}`
+Invariant: `{safe_invariant}`
 
 Observed behavior:
-{incident.summary}
+{_public_summary(incident)}
 
 ### Structured incident details
 
@@ -323,11 +531,11 @@ Observed behavior:
 
 ## Expected invariant
 
-The shared process must maintain the `{incident.invariant}` invariant under the `{incident.kind}` boundary without unhandled errors, dropped evidence, or unexpected operational thrashing.
+The shared process must maintain the `{safe_invariant}` invariant under the `{safe_kind}` boundary without unhandled errors, dropped evidence, or unexpected operational thrashing.
 
 ## Scope
 
-Shared process guidance and enforcement for `{incident.invariant}`. Product behavior stays in the consumer repository; this report is an evidence handoff only.
+Shared process guidance and enforcement for `{safe_invariant}`. Product behavior stays in the consumer repository; this report is an evidence handoff only.
 """
 
 
@@ -335,11 +543,7 @@ def is_process_producer_change(state: dict[str, Any]) -> bool:
     """Check if the current change is modifying the shared process distribution itself."""
     contract = state.get("contract", {}).get("document", {})
     affected = contract.get("affectedProjects", [])
-    source = contract.get("source", "")
-    return (
-        "engineering-process" in affected
-        or "phuongnse/engineering-process" in source
-    )
+    return "engineering-process" in affected
 
 
 def process_improvement_intake(
@@ -352,13 +556,14 @@ def process_improvement_intake(
     create_issue_fn: Callable[[str, str, str], str] | None = None,
     max_issues_per_finish: int = DEFAULT_MAX_ISSUES_PER_FINISH,
     max_issues_per_key: int = DEFAULT_MAX_ISSUES_PER_KEY,
+    project: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Collect, evaluate, deduplicate, and record process improvement incidents before finish."""
+    """Collect incidents and perform bounded, policy-authorized tracker handoff."""
     incidents = collect_incidents(project_root, process_root, state)
     if not incidents:
         return []
 
-    project = load_project(project_root, process_root)
+    project = project if project is not None else load_project(project_root, process_root)
     consumer = resolve_consumer_identity(project_root, project)
     process_repo = resolve_process_repo(project)
     search_tracker = search_tracker_fn if search_tracker_fn is not None else _default_search_tracker
@@ -366,125 +571,165 @@ def process_improvement_intake(
 
     is_producer = is_process_producer_change(state)
     created_count = 0
+    created_by_key: dict[str, int] = {}
     results: list[dict[str, Any]] = []
 
     for incident in incidents:
-        # Record incident collection event
-        state["history"].append(
-            {
-                "event": "incident-collected",
-                "at": _now_iso(),
-                "actor": actor,
-                "details": {
-                    "kind": incident.kind,
-                    "invariant": incident.invariant,
-                    "summary": incident.summary,
-                    "severity": incident.severity,
-                },
-            }
+        stable_key = stable_title_key(consumer, VERSION, incident.invariant, incident.kind)
+        previous = _prior_intake_result(state, stable_key, process_repo)
+        if previous is not None:
+            results.append(previous)
+            continue
+
+        _record_intake_event(
+            state,
+            "incident-collected",
+            actor,
+            incident,
+            stable_key,
+            summary=_public_summary(incident),
+            severity=incident.severity,
         )
 
-        stable_key = stable_title_key(consumer, VERSION, incident.invariant, incident.kind)
-        search_sub = f"[{incident.invariant}][{incident.kind}]"
-
-        # 1. Tracker search and deduplication across all issue states
-        matches = search_tracker(process_repo, search_sub)
-        exact_match = next((item for item in matches if search_sub in item.get("title", "")), None)
-
-        if exact_match:
-            record_url = exact_match.get("url")
-            state["history"].append(
-                {
-                    "event": "process-improvement-reused",
-                    "at": _now_iso(),
-                    "actor": actor,
-                    "details": {
-                        "stableKey": stable_key,
-                        "recordUrl": record_url,
-                        "kind": incident.kind,
-                        "invariant": incident.invariant,
-                        "state": exact_match.get("state"),
-                    },
-                }
+        # Collection is observable even when policy forbids external I/O.
+        if not _policy_allows_external_intake(project):
+            _record_intake_event(
+                state,
+                "process-improvement-suppressed",
+                actor,
+                incident,
+                stable_key,
+                reason="policy-disabled",
             )
-            results.append({"status": "reused", "stableKey": stable_key, "recordUrl": record_url})
+            results.append(
+                {"status": "suppressed", "stableKey": stable_key, "reason": "policy-disabled"}
+            )
             continue
 
-        # 2. Recursion breaker: process-producer changes cannot autonomously create recursive process issues
+        # A producer must not create or search for recursive process issues.
         if is_producer:
-            state["history"].append(
-                {
-                    "event": "process-improvement-suppressed",
-                    "at": _now_iso(),
-                    "actor": actor,
-                    "details": {
-                        "stableKey": stable_key,
-                        "kind": incident.kind,
-                        "invariant": incident.invariant,
-                        "reason": "recursion-breaker:process-producer-change",
-                    },
-                }
+            _record_intake_event(
+                state,
+                "process-improvement-suppressed",
+                actor,
+                incident,
+                stable_key,
+                reason="recursion-breaker",
             )
-            results.append({"status": "suppressed", "stableKey": stable_key, "reason": "recursion-breaker"})
+            results.append(
+                {"status": "suppressed", "stableKey": stable_key, "reason": "recursion-breaker"}
+            )
             continue
 
-        # 3. Finite creation budget check
-        if created_count >= max_issues_per_finish:
-            state["history"].append(
-                {
-                    "event": "process-improvement-suppressed",
-                    "at": _now_iso(),
-                    "actor": actor,
-                    "details": {
-                        "stableKey": stable_key,
-                        "kind": incident.kind,
-                        "invariant": incident.invariant,
-                        "reason": "budget-exhausted:finish-limit-reached",
-                    },
-                }
+        # No external operation is useful when the configured creation budget is empty.
+        if (
+            max_issues_per_finish < 1
+            or max_issues_per_key < 1
+            or created_count >= max_issues_per_finish
+            or created_by_key.get(stable_key, 0) >= max_issues_per_key
+        ):
+            reason = (
+                "budget-exhausted:finish-limit-reached"
+                if created_count >= max_issues_per_finish
+                else "budget-exhausted:key-limit-reached"
+            )
+            _record_intake_event(
+                state,
+                "process-improvement-suppressed",
+                actor,
+                incident,
+                stable_key,
+                reason=reason,
             )
             results.append({"status": "suppressed", "stableKey": stable_key, "reason": "budget-exhausted"})
             continue
 
-        # 4. Render sanitized issue and create
+        try:
+            matches = _validate_tracker_matches(search_tracker(process_repo, stable_key))
+            exact_matches = [
+                item
+                for item in matches
+                if item["title"] == stable_key
+                or item["title"].startswith(stable_key + " ")
+            ]
+            if len(exact_matches) > 1:
+                raise ProcessError("tracker search returned ambiguous matching issues")
+            if exact_matches:
+                exact_match = exact_matches[0]
+                record_url = exact_match.get("url")
+                if not _valid_issue_url(process_repo, record_url):
+                    raise ProcessError("tracker search returned an invalid issue URL")
+                _record_intake_event(
+                    state,
+                    "process-improvement-reused",
+                    actor,
+                    incident,
+                    stable_key,
+                    recordUrl=record_url,
+                    trackerState=exact_match.get("state"),
+                )
+                results.append(
+                    {"status": "reused", "stableKey": stable_key, "recordUrl": record_url}
+                )
+                continue
+        except Exception:
+            _record_intake_event(
+                state,
+                "process-improvement-failed",
+                actor,
+                incident,
+                stable_key,
+                stage="search",
+                errorCode="tracker-search-failed",
+            )
+            results.append(
+                {
+                    "status": "failed",
+                    "stableKey": stable_key,
+                    "errorCode": "tracker-search-failed",
+                }
+            )
+            continue
+
         body = render_sanitized_issue_body(consumer, VERSION, incident, state)
-        title = f"{stable_key} {incident.summary}"
+        title = f"{stable_key} {_public_summary(incident)}"
         try:
             record_url = create_issue(process_repo, title, body)
+            if not _valid_issue_url(process_repo, record_url):
+                raise ProcessError("tracker issue creation returned an invalid URL")
             created_count += 1
-            state["history"].append(
+            created_by_key[stable_key] = created_by_key.get(stable_key, 0) + 1
+            _record_intake_event(
+                state,
+                "process-improvement-created",
+                actor,
+                incident,
+                stable_key,
+                recordUrl=record_url,
+            )
+            results.append(
+                {"status": "created", "stableKey": stable_key, "recordUrl": record_url}
+            )
+        except Exception:
+            _record_intake_event(
+                state,
+                "process-improvement-failed",
+                actor,
+                incident,
+                stable_key,
+                stage="create",
+                errorCode="tracker-create-failed",
+            )
+            results.append(
                 {
-                    "event": "process-improvement-created",
-                    "at": _now_iso(),
-                    "actor": actor,
-                    "details": {
-                        "stableKey": stable_key,
-                        "recordUrl": record_url,
-                        "kind": incident.kind,
-                        "invariant": incident.invariant,
-                    },
+                    "status": "failed",
+                    "stableKey": stable_key,
+                    "errorCode": "tracker-create-failed",
                 }
             )
-            results.append({"status": "created", "stableKey": stable_key, "recordUrl": record_url})
-        except Exception as error:
-            state["history"].append(
-                {
-                    "event": "process-improvement-failed",
-                    "at": _now_iso(),
-                    "actor": actor,
-                    "details": {
-                        "stableKey": stable_key,
-                        "kind": incident.kind,
-                        "invariant": incident.invariant,
-                        "error": str(error),
-                    },
-                }
-            )
-            results.append({"status": "failed", "stableKey": stable_key, "error": str(error)})
 
     return results
 
 
 def _now_iso() -> str:
-    from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

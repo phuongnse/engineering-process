@@ -393,8 +393,9 @@ class AutomationTests(unittest.TestCase):
             set(re.findall(r"^    id: ([a-z_]+)$", form, re.MULTILINE)),
         )
         self.assertGreaterEqual(form.count("required: true"), 13)
-        self.assertIn('title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT] "', form)
-        self.assertIn("searched open engineering-process issues for the complete stable key", form)
+        self.assertIn('title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND] "', form)
+        self.assertIn("search open and closed issues for this exact value", form)
+        self.assertIn("searched open and closed engineering-process issues for the complete stable key", form)
         for forbidden in ("secrets", "credentials", "raw private logs", "media", "private source"):
             self.assertIn(forbidden, form)
         workflows = "\n".join(

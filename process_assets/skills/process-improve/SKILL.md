@@ -25,7 +25,18 @@ Before `change finish` writes the completion receipt, the process collects struc
 5. `publication-boundary`: branch, commit subject, or range preflight failure;
 6. `explicit-review-signal`: reviewer-classified `shared-process`.
 
-Incidents are deduplicated against the tracker using the stable title key across open and closed states. Matches are reused; missing issues are created automatically under a finite budget (default at most 1 issue per key, at most 3 issues per finish run). A recursion breaker prevents process-producer changes from filing recursive self-improvement issues. All results are recorded in lifecycle history as `created`, `reused`, `suppressed`, or `failed`.
+Incidents are deduplicated against the tracker using the complete current title key
+`[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]` across open
+and closed states. External intake is enabled only when the consumer's process-change
+policy supplies its accepted issue namespace; collection remains local and observable
+when that policy is disabled. Matches are reused; missing issues are created automatically
+under a finite budget (default at most 1 issue per key, at most 3 issues per finish run).
+Search failure is a failure result, not an empty match. A recursion breaker prevents
+process-producer changes from tracker I/O, and a result already recorded for the same
+key is reused before another call. Public bodies contain only allow-listed structured
+identifiers, counts, and digests; reviewer prose and arbitrary runtime details are not
+published. All results are recorded in lifecycle history as `created`, `reused`,
+`suppressed`, or `failed`.
 
 ## Consumer issue handoff
 
@@ -43,8 +54,7 @@ secrets, credentials, tokens, media, private source, raw private logs, or
 production-only metadata. Use a public summary that links to private evidence only
 when authorized readers can access it.
 
-Use a stable title key such as
-`[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT]`. Search before creating:
+Use the stable title key `[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]`. Search before creating:
 
     gh issue list --repo phuongnse/engineering-process --state all \
       --search 'STABLE-KEY in:title'

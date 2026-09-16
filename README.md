@@ -337,10 +337,15 @@ skill chooses product priorities or changes readiness automatically.
 
 When a consumer incident exposes a reusable process gap, `process-improve` first keeps
 the consumer safe, then prepares a sanitized GitHub issue draft from that checkout.
-It deduplicates by consumer/process-version/invariant, requires owner authorization
-before `gh issue create`, and uses an accepted issue as the later process change source
-and `consumerEvidence`. No producer clone, consumer-CI write token, automatic process
-mutation, or wait for a process release is required to continue consumer development.
+It deduplicates by the complete current key
+`[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]`, requires
+owner authorization before `gh issue create`, and uses an accepted issue as the later
+process change source and `consumerEvidence`. Finish-time intake collects structured
+signals for the same taxonomy, but sends nothing unless the consumer's process-change
+policy enables the tracker boundary. Search failure is recorded as failure, not as an
+empty search; an existing run result is reused before any retry. No raw reviewer prose,
+private paths, consumer-CI write token, automatic process mutation, or wait for a
+process release is required to continue consumer development.
 
 Pin the process in requirements/process.in:
 
@@ -501,7 +506,8 @@ assigned checkpoint:
 
 `change review start` returns the current `reportSchemaVersion: 1` for its assignment
 and bounded `processSignals` derived from existing lifecycle events. Signals are
-prompts for independent judgment, not evidence that hidden external actions occurred.
+prompts for independent judgment, not evidence that hidden external actions occurred;
+they do not authorize tracker writes or conclude that a shared-process defect exists.
 Priority records impact if unresolved, while severity controls the current lifecycle
 gate. Every non-blocking finding records one disposition: `resolved` with a rationale,
 or `accepted-risk` / `tracked-follow-up` with a rationale, owner, and stable HTTPS

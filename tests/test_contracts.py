@@ -90,6 +90,12 @@ class ContractTests(unittest.TestCase):
             with self.subTest(path=path):
                 validate_document(read_json(path), kind, schema_root=SCHEMAS, source=str(path))
 
+    def test_live_project_uses_the_current_contract(self) -> None:
+        project = read_json(ROOT / ".process" / "project.json")
+        self.assertEqual(1, project["schemaVersion"])
+        normalized = normalize_project(project, ROOT)
+        self.assertEqual("engineering-process", normalized["project"])
+
     def test_schema_rejects_unknown_fields(self) -> None:
         project = normalize_project(current_project_fixture(), ROOT)
         project["governanceLayer"] = True

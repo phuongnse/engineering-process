@@ -1306,8 +1306,32 @@ def _record_verification(
                 "evidence-invalidated",
                 actor,
                 profile=name,
-                reason="input-digest-mismatch",
+                reason=(
+                    "checkpoint-mismatch"
+                    if not same_checkpoint(previous.get("checkpoint", {}), before)
+                    else "input-digest-mismatch"
+                ),
                 cycle=state.get("cycle", 1),
+                **(
+                    {"recordedInputDigest": previous["inputDigest"]}
+                    if previous.get("inputDigest")
+                    else {}
+                ),
+                **(
+                    {"currentInputDigest": input_digests[name]}
+                    if input_digests.get(name)
+                    else {}
+                ),
+                **(
+                    {"recordedCheckpointFingerprint": previous["checkpoint"]["fingerprint"]}
+                    if previous.get("checkpoint", {}).get("fingerprint")
+                    else {}
+                ),
+                **(
+                    {"currentCheckpointFingerprint": before["fingerprint"]}
+                    if before.get("fingerprint")
+                    else {}
+                ),
             )
     state["verification"] = retained_verification
     profile = report["profile"]
@@ -1633,9 +1657,17 @@ def finish_change(
 
     try:
         from .incidents import process_improvement_intake
-        process_improvement_intake(project_root, process_root, state, actor)
-    except Exception as error:
-        _event(state, "process-improvement-failed", actor, error=str(error))
+        process_improvement_intake(
+            project_root, process_root, state, actor, project=project
+        )
+    except Exception:
+        _event(
+            state,
+            "process-improvement-failed",
+            actor,
+            stage="intake",
+            errorCode="process-improvement-intake-failed",
+        )
 
     receipt = {
         "schemaVersion": 1,

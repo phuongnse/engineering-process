@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 from engineering_process import VERSION
+from engineering_process.contracts import ProcessError
 from engineering_process.incidents import (
     CLOSED_TAXONOMY,
     Incident,
+    _default_search_tracker,
     collect_incidents,
     is_process_producer_change,
     process_improvement_intake,
@@ -189,14 +193,16 @@ class IncidentIntakeTests(unittest.TestCase):
                 "profile": "development",
                 "secret_token": "ghp_secret12345",
                 "api_key": "private_key_abc",
-                "digest": "sha256:1234",
+                "digest": "sha256:" + "1" * 64,
+                "rationale": "C:\\private\\raw-details",
             },
         )
         body = render_sanitized_issue_body("test-org/test-repo", "2.6.0", incident, {})
         self.assertNotIn("ghp_secret12345", body)
         self.assertNotIn("private_key_abc", body)
+        self.assertNotIn("raw-details", body)
         self.assertIn("development", body)
-        self.assertIn("sha256:1234", body)
+        self.assertIn("sha256:" + "1" * 64, body)
 
     def test_process_improvement_intake_reuses_existing_tracker_issue(self) -> None:
         state = {
@@ -216,7 +222,7 @@ class IncidentIntakeTests(unittest.TestCase):
         mock_matches = [
             {
                 "number": 214,
-                "title": "[consumer-process][test][2.6.0][development][evidence-integrity] Verification issue",
+                "title": f"[consumer-process][consumer][{VERSION}][development][evidence-integrity] Verification issue",
                 "url": "https://github.com/phuongnse/engineering-process/issues/214",
                 "state": "OPEN",
             }
@@ -275,6 +281,17 @@ class IncidentIntakeTests(unittest.TestCase):
         events = [e["event"] for e in state["history"]]
         self.assertIn("process-improvement-suppressed", events)
 
+    def test_process_issue_source_does_not_misclassify_a_consumer_change(self) -> None:
+        state = {
+            "contract": {
+                "document": {
+                    "affectedProjects": ["consumer-app"],
+                    "source": "https://github.com/phuongnse/engineering-process/issues/214",
+                }
+            }
+        }
+        self.assertFalse(is_process_producer_change(state))
+
     def test_process_improvement_intake_exhausts_budget(self) -> None:
         state = {
             "changeId": "consumer-change",
@@ -308,6 +325,174 @@ class IncidentIntakeTests(unittest.TestCase):
         self.assertEqual("created", results[0]["status"])
         self.assertEqual("suppressed", results[1]["status"])
         self.assertEqual("budget-exhausted", results[1]["reason"])
+
+    def test_tracker_search_uses_the_complete_identity(self) -> None:
+        state = {
+            "changeId": "consumer-change",
+            "cycle": 1,
+            "contract": {"document": {"affectedProjects": ["external-app"], "source": "https://example.com"}},
+            "history": [
+                {"event": "evidence-invalidated", "details": {"profile": "development", "reason": "input-digest-mismatch"}},
+            ],
+            "verification": {},
+        }
+        actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
+        queries: list[str] = []
+        created = Mock(return_value="https://github.com/phuongnse/engineering-process/issues/300")
+
+        results = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=lambda repo, query: queries.append(query) or [
+                {
+                    "title": "[consumer-process][other-consumer][2.7.0][development][evidence-integrity] unrelated",
+                    "url": "https://github.com/phuongnse/engineering-process/issues/301",
+                    "state": "OPEN",
+                }
+            ],
+            create_issue_fn=created,
+        )
+
+        expected = stable_title_key("consumer", VERSION, "development", "evidence-integrity")
+        self.assertEqual([expected], queries)
+        self.assertEqual("created", results[0]["status"])
+        created.assert_called_once()
+        self.assertTrue(created.call_args.args[1].startswith(expected + " "))
+
+        second_search = Mock()
+        second_create = Mock()
+        second = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=second_search,
+            create_issue_fn=second_create,
+        )
+        self.assertEqual("reused", second[0]["status"])
+        self.assertEqual(results[0]["recordUrl"], second[0]["recordUrl"])
+        second_search.assert_not_called()
+        second_create.assert_not_called()
+
+    def test_search_failure_is_not_treated_as_no_match_and_is_idempotent(self) -> None:
+        state = {
+            "changeId": "consumer-change",
+            "cycle": 1,
+            "contract": {"document": {"affectedProjects": ["external-app"], "source": "https://example.com"}},
+            "history": [
+                {"event": "evidence-invalidated", "details": {"profile": "development", "reason": "input-digest-mismatch"}},
+            ],
+            "verification": {},
+        }
+        actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
+        search = Mock(side_effect=ProcessError("private tracker response"))
+        create = Mock()
+
+        first = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=search,
+            create_issue_fn=create,
+        )
+        second = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=search,
+            create_issue_fn=create,
+        )
+
+        self.assertEqual("failed", first[0]["status"])
+        self.assertEqual("tracker-search-failed", first[0]["errorCode"])
+        self.assertEqual(first, second)
+        search.assert_called_once()
+        create.assert_not_called()
+        self.assertNotIn("private tracker response", json.dumps(state))
+
+    def test_policy_disabled_collects_but_does_not_touch_tracker(self) -> None:
+        project_path = self.project_root / ".process" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["lifecycle"]["processChanges"].pop("acceptedIssueUrlPrefix")
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        state = {
+            "changeId": "consumer-change",
+            "cycle": 1,
+            "contract": {"document": {"affectedProjects": ["external-app"], "source": "https://example.com"}},
+            "history": [
+                {"event": "evidence-invalidated", "details": {"profile": "development", "reason": "input-digest-mismatch"}},
+            ],
+            "verification": {},
+        }
+        actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
+        search = Mock()
+        create = Mock()
+
+        results = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=search,
+            create_issue_fn=create,
+        )
+
+        self.assertEqual("suppressed", results[0]["status"])
+        self.assertEqual("policy-disabled", results[0]["reason"])
+        search.assert_not_called()
+        create.assert_not_called()
+        self.assertIn("incident-collected", [event["event"] for event in state["history"]])
+
+    def test_invalid_created_url_is_a_failure_without_created_evidence(self) -> None:
+        state = {
+            "changeId": "consumer-change",
+            "cycle": 1,
+            "contract": {"document": {"affectedProjects": ["external-app"], "source": "https://example.com"}},
+            "history": [
+                {"event": "evidence-invalidated", "details": {"profile": "development", "reason": "input-digest-mismatch"}},
+            ],
+            "verification": {},
+        }
+        actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
+        results = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=lambda repo, query: [],
+            create_issue_fn=lambda repo, title, body: "https://example.com/issues/300",
+        )
+
+        self.assertEqual("failed", results[0]["status"])
+        self.assertEqual("tracker-create-failed", results[0]["errorCode"])
+        self.assertNotIn("process-improvement-created", [event["event"] for event in state["history"]])
+
+    @patch("engineering_process.incidents.subprocess.run")
+    def test_default_tracker_search_is_bounded_and_queries_all_states(self, run: Mock) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            ["gh"], 0, stdout="[]", stderr=""
+        )
+
+        self.assertEqual([], _default_search_tracker("phuongnse/engineering-process", "STABLE-KEY"))
+        command = run.call_args.args[0]
+        self.assertIn("--state", command)
+        self.assertEqual("all", command[command.index("--state") + 1])
+        self.assertIn("--limit", command)
+        self.assertEqual("32", command[command.index("--limit") + 1])
+        self.assertIn("STABLE-KEY in:title", command)
+
+    @patch("engineering_process.incidents.subprocess.run")
+    def test_default_tracker_search_failure_raises_without_returning_empty(self, run: Mock) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            ["gh"], 1, stdout="[]", stderr="private tracker response"
+        )
+
+        with self.assertRaisesRegex(ProcessError, "tracker search failed"):
+            _default_search_tracker("phuongnse/engineering-process", "STABLE-KEY")
 
 
 if __name__ == "__main__":

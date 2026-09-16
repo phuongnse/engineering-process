@@ -25,7 +25,7 @@ branch, subject, and pinned range in the single current version-1 receipt only a
 the repository and branch remain unchanged. A failed preflight leaves the approved
 run incomplete.
 
-Before writing the receipt, `change finish` executes the automated incident intake preflight: it inspects lifecycle history and verification evidence for closed-taxonomy incidents, deduplicates by stable title key, and records created, reused, suppressed, or failed process improvement intake events without blocking consumer completion.
+Before writing the receipt, `change finish` executes the automated incident intake preflight: it inspects lifecycle history and verification evidence for the closed taxonomy, records the complete stable-key decision, and performs tracker I/O only under the consumer's process-change policy. Search/writer failures, suppression, reuse, and creation are recorded as bounded intake events; a recorded result is not retried and intake never blocks consumer completion.
 
 This source preflight does not validate a provider pull-request body or make a pull
 request ready. The consumer's required CI must run the same branch, head-commit,

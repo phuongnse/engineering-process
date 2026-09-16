@@ -1873,7 +1873,27 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("evidence-invalidated", events)
         inv_event = next(e for e in state["history"] if e["event"] == "evidence-invalidated")
         self.assertEqual("development", inv_event["details"]["profile"])
-        self.assertEqual("input-digest-mismatch", inv_event["details"]["reason"])
+        self.assertEqual("checkpoint-mismatch", inv_event["details"]["reason"])
+        self.assertRegex(
+            inv_event["details"]["recordedInputDigest"],
+            r"^sha256:[0-9a-f]{64}$",
+        )
+        self.assertRegex(
+            inv_event["details"]["currentInputDigest"],
+            r"^sha256:[0-9a-f]{64}$",
+        )
+        self.assertRegex(
+            inv_event["details"]["recordedCheckpointFingerprint"],
+            r"^sha256:[0-9a-f]{64}$",
+        )
+        self.assertRegex(
+            inv_event["details"]["currentCheckpointFingerprint"],
+            r"^sha256:[0-9a-f]{64}$",
+        )
+        self.assertNotEqual(
+            inv_event["details"]["recordedCheckpointFingerprint"],
+            inv_event["details"]["currentCheckpointFingerprint"],
+        )
 
     def test_finish_collects_and_records_incidents(self) -> None:
         self.begin()
