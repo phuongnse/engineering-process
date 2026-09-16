@@ -59,6 +59,7 @@ jobs:
       - name: Validate actual pull request publication
         if: github.event_name == 'pull_request'
         env:
+          PYTHONPATH: .
           PUBLICATION_BRANCH: ${{ github.event.pull_request.head.ref }}
           PUBLICATION_TITLE: ${{ github.event.pull_request.title }}
           PUBLICATION_BODY: ${{ github.event.pull_request.body }}
