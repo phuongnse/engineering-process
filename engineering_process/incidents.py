@@ -463,50 +463,17 @@ def _run_tracker_command(
         )
     except OSError as error:
         raise ProcessError(failure_message) from error
-    assert process.stdout is not None
-    assert process.stderr is not None
-
     output = bytearray()
     overflow = threading.Event()
     stream_error = threading.Event()
-
-    def read_output() -> None:
-        try:
-            while True:
-                remaining = output_limit + 1 - len(output)
-                if remaining <= 0:
-                    overflow.set()
-                    return
-                chunk = process.stdout.read(min(64 * 1024, remaining))
-                if not chunk:
-                    return
-                output.extend(chunk)
-                if len(output) > output_limit:
-                    overflow.set()
-                    return
-        except (OSError, ValueError):
-            stream_error.set()
-        finally:
-            process.stdout.close()
-
-    def discard_error() -> None:
-        try:
-            while process.stderr.read(64 * 1024):
-                pass
-        except (OSError, ValueError):
-            stream_error.set()
-        finally:
-            process.stderr.close()
-
-    reader = threading.Thread(target=read_output, daemon=True)
-    error_reader = threading.Thread(target=discard_error, daemon=True)
-    reader.start()
-    error_reader.start()
-    deadline = time.monotonic() + 30
     timed_out = False
     cleanup_error: str | None = None
     cleanup_bounded = True
     termination_requested = False
+    reader: threading.Thread | None = None
+    error_reader: threading.Thread | None = None
+    reader_started = False
+    error_reader_started = False
 
     def apply_cleanup(outcome: Any) -> None:
         nonlocal cleanup_error, cleanup_bounded
@@ -521,6 +488,45 @@ def _run_tracker_command(
         apply_cleanup(supervisor.terminate(process, grace_seconds=2))
 
     try:
+        if process.stdout is None or process.stderr is None:
+            raise ProcessError("tracker process did not expose output streams")
+
+        def read_output() -> None:
+            try:
+                while True:
+                    remaining = output_limit + 1 - len(output)
+                    if remaining <= 0:
+                        overflow.set()
+                        return
+                    chunk = process.stdout.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        return
+                    output.extend(chunk)
+                    if len(output) > output_limit:
+                        overflow.set()
+                        return
+            except (OSError, ValueError):
+                stream_error.set()
+            finally:
+                process.stdout.close()
+
+        def discard_error() -> None:
+            try:
+                while process.stderr.read(64 * 1024):
+                    pass
+            except (OSError, ValueError):
+                stream_error.set()
+            finally:
+                process.stderr.close()
+
+        reader = threading.Thread(target=read_output, daemon=True)
+        error_reader = threading.Thread(target=discard_error, daemon=True)
+        reader.start()
+        reader_started = True
+        error_reader.start()
+        error_reader_started = True
+        deadline = time.monotonic() + 30
+
         while reader.is_alive():
             try:
                 supervisor.observe(process)
@@ -564,9 +570,14 @@ def _run_tracker_command(
             cleanup_bounded = False
             cleanup_error = cleanup_error or "tracker process finalization failed"
 
-        reader.join(timeout=2)
-        error_reader.join(timeout=2)
-        if reader.is_alive() or error_reader.is_alive():
+        if reader_started and reader is not None:
+            reader.join(timeout=2)
+        if error_reader_started and error_reader is not None:
+            error_reader.join(timeout=2)
+        if (
+            (reader_started and reader is not None and reader.is_alive())
+            or (error_reader_started and error_reader is not None and error_reader.is_alive())
+        ):
             cleanup_bounded = False
             cleanup_error = cleanup_error or "tracker output drain did not finish"
         try:
