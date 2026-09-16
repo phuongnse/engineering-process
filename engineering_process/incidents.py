@@ -13,9 +13,11 @@ import time
 from typing import Any, Callable
 
 from .contracts import ProcessError
+from .evidence import child_environment
 from . import VERSION
 from .project import load_project
 from .repository import _git
+from .supervision import process_supervisor
 
 DEFAULT_MAX_ISSUES_PER_FINISH = 3
 DEFAULT_MAX_ISSUES_PER_KEY = 1
@@ -451,17 +453,18 @@ def _run_tracker_command(
     output_limit: int,
     failure_message: str,
 ) -> bytes:
-    """Run a tracker command with bounded stdout, time, and cleanup."""
+    """Run a tracker command with the shared bounded process supervisor."""
+    supervisor = process_supervisor()
     try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+        process = supervisor.spawn(
+            tuple(command),
+            working_directory=Path.cwd(),
+            environment=child_environment(),
         )
     except OSError as error:
         raise ProcessError(failure_message) from error
     assert process.stdout is not None
+    assert process.stderr is not None
 
     output = bytearray()
     overflow = threading.Event()
@@ -486,53 +489,80 @@ def _run_tracker_command(
         finally:
             process.stdout.close()
 
+    def discard_error() -> None:
+        try:
+            while process.stderr.read(64 * 1024):
+                pass
+        except (OSError, ValueError):
+            stream_error.set()
+        finally:
+            process.stderr.close()
+
     reader = threading.Thread(target=read_output, daemon=True)
+    error_reader = threading.Thread(target=discard_error, daemon=True)
     reader.start()
+    error_reader.start()
     deadline = time.monotonic() + 30
     timed_out = False
+    cleanup_error: str | None = None
+    cleanup_bounded = True
+    termination_requested = False
+
+    def apply_cleanup(outcome: Any) -> None:
+        nonlocal cleanup_error, cleanup_bounded
+        cleanup_bounded = cleanup_bounded and bool(outcome.bounded)
+        cleanup_error = cleanup_error or outcome.error
+
+    def request_termination() -> None:
+        nonlocal termination_requested
+        if termination_requested:
+            return
+        termination_requested = True
+        apply_cleanup(supervisor.terminate(process, grace_seconds=2))
+
     while reader.is_alive():
+        try:
+            supervisor.observe(process)
+        except OSError:
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker process observation failed"
+            break
         if overflow.is_set():
+            request_termination()
             break
         if time.monotonic() >= deadline:
             timed_out = True
+            request_termination()
             break
         time.sleep(0.01)
 
     if overflow.is_set() or timed_out:
-        try:
-            process.terminate()
-        except OSError:
-            pass
-        try:
-            process.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            try:
-                process.kill()
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-    else:
+        request_termination()
+
+    if not reader.is_alive() and process.poll() is None and not overflow.is_set() and not timed_out:
         try:
             process.wait(timeout=max(0, deadline - time.monotonic()))
         except (OSError, subprocess.TimeoutExpired):
             timed_out = True
-            try:
-                process.terminate()
-            except OSError:
-                pass
-            try:
-                process.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    process.kill()
-                except OSError:
-                    pass
+            request_termination()
+
+    try:
+        apply_cleanup(supervisor.finalize(process, grace_seconds=2))
+    except OSError:
+        cleanup_bounded = False
+        cleanup_error = cleanup_error or "tracker process finalization failed"
 
     reader.join(timeout=2)
-    if reader.is_alive():
+    error_reader.join(timeout=2)
+    if reader.is_alive() or error_reader.is_alive():
+        cleanup_bounded = False
+        cleanup_error = cleanup_error or "tracker output drain did not finish"
+    try:
+        process.wait(timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        cleanup_bounded = False
+        cleanup_error = cleanup_error or "tracker process was not reaped"
+    if not cleanup_bounded or cleanup_error:
         raise ProcessError(failure_message)
     if overflow.is_set():
         raise ProcessError(f"{failure_message} exceeded its output limit")

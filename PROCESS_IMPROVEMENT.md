@@ -45,7 +45,10 @@ never a consumer-CI responsibility and never a reason to grant a consumer or Ren
 token write access to this repository.
 
 Both CLI and manual submission use the same non-sensitive
-`[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]` title key.
+`[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]` title key.
+`CONSUMER-KEY` is the runtime's injective encoding: ASCII letters, digits, dots, and
+hyphens stay unchanged; every other UTF-8 byte becomes `_hh` (`phuongnse/lyric-rail`
+becomes `phuongnse_2flyric-rail`).
 Without `gh`, search all open and closed issues for that complete key before the form,
 reuse an existing issue when present, and replace every title placeholder before submitting. If no issue
 URL is available yet, a pending review remains `review-pending` awaiting owner creation;

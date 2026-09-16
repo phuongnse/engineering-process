@@ -338,7 +338,10 @@ skill chooses product priorities or changes readiness automatically.
 When a consumer incident exposes a reusable process gap, `process-improve` first keeps
 the consumer safe, then prepares a sanitized GitHub issue draft from that checkout.
 It deduplicates by the complete current key
-`[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]`, requires
+`[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]`, where
+`CONSUMER-KEY` keeps ASCII letters, digits, dots, and hyphens and encodes every other
+UTF-8 byte as `_hh` (for example, `phuongnse/lyric-rail` becomes
+`phuongnse_2flyric-rail`). It requires
 owner authorization before `gh issue create`, and uses an accepted issue as the later
 process change source and `consumerEvidence`. Finish-time intake collects structured
 signals for the same taxonomy, but sends nothing unless the consumer's process-change

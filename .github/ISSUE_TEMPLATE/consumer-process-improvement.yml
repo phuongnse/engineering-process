@@ -1,6 +1,6 @@
 name: Consumer process improvement
 description: Report a concrete consumer incident, adoption failure, repeated friction, or missing shared capability.
-title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND] "
+title: "[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND] "
 body:
   - type: markdown
     attributes:
@@ -26,8 +26,8 @@ body:
     id: stable_key
     attributes:
       label: Stable deduplication key
-      description: Use the non-sensitive title key `[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]` and search open and closed issues for this exact value.
-      placeholder: "[consumer-process][lyric-rail][1.1.0][conditional-security-routing][explicit-review-signal]"
+      description: Use the non-sensitive title key `[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]`. Keep ASCII letters, digits, dots, and hyphens in CONSUMER-KEY; encode every other UTF-8 byte as `_hh` (for example, `phuongnse/lyric-rail` becomes `phuongnse_2flyric-rail`). Search open and closed issues for this exact value.
+      placeholder: "[consumer-process][phuongnse_2flyric-rail][1.1.0][conditional-security-routing][explicit-review-signal]"
     validations:
       required: true
   - type: dropdown

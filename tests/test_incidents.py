@@ -6,6 +6,7 @@ import json
 import io
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -550,49 +551,64 @@ class IncidentIntakeTests(unittest.TestCase):
         self.assertEqual("tracker-create-failed", results[0]["errorCode"])
         self.assertNotIn("process-improvement-created", [event["event"] for event in state["history"]])
 
-    @patch("engineering_process.incidents.subprocess.Popen")
-    def test_default_tracker_search_is_bounded_and_queries_all_states(self, popen: Mock) -> None:
+    @patch("engineering_process.incidents.process_supervisor")
+    def test_default_tracker_search_is_bounded_and_queries_all_states(self, select_supervisor: Mock) -> None:
         process = Mock()
         process.stdout = io.BytesIO(b"[]")
+        process.stderr = io.BytesIO()
         process.returncode = 0
         process.poll.return_value = 0
         process.wait.return_value = 0
-        popen.return_value = process
+        supervisor = Mock()
+        supervisor.spawn.return_value = process
+        supervisor.finalize.return_value = SimpleNamespace(bounded=True, error=None)
+        select_supervisor.return_value = supervisor
 
         self.assertEqual([], _default_search_tracker("phuongnse/engineering-process", "STABLE-KEY"))
-        command = popen.call_args.args[0]
+        command = supervisor.spawn.call_args.args[0]
         self.assertIn("--state", command)
         self.assertEqual("all", command[command.index("--state") + 1])
         self.assertIn("--limit", command)
         self.assertEqual("32", command[command.index("--limit") + 1])
         self.assertIn("STABLE-KEY in:title", command)
 
-    @patch("engineering_process.incidents.subprocess.Popen")
-    def test_default_tracker_search_failure_raises_without_returning_empty(self, popen: Mock) -> None:
+    @patch("engineering_process.incidents.process_supervisor")
+    def test_default_tracker_search_failure_raises_without_returning_empty(self, select_supervisor: Mock) -> None:
         process = Mock()
         process.stdout = io.BytesIO(b"[]")
+        process.stderr = io.BytesIO()
         process.returncode = 1
         process.poll.return_value = 1
         process.wait.return_value = 1
-        popen.return_value = process
+        supervisor = Mock()
+        supervisor.spawn.return_value = process
+        supervisor.finalize.return_value = SimpleNamespace(bounded=True, error=None)
+        select_supervisor.return_value = supervisor
 
         with self.assertRaisesRegex(ProcessError, "tracker search failed"):
             _default_search_tracker("phuongnse/engineering-process", "STABLE-KEY")
 
-    @patch("engineering_process.incidents.subprocess.Popen")
-    def test_tracker_output_limit_terminates_before_unbounded_capture(self, popen: Mock) -> None:
+    @patch("engineering_process.incidents.process_supervisor")
+    def test_tracker_output_limit_terminates_before_unbounded_capture(self, select_supervisor: Mock) -> None:
         process = Mock()
         process.stdout = io.BytesIO(b"x" * 100)
+        process.stderr = io.BytesIO()
         process.returncode = 0
         process.poll.return_value = 0
         process.wait.return_value = 0
-        popen.return_value = process
+        supervisor = Mock()
+        supervisor.spawn.return_value = process
+        supervisor.terminate.return_value = SimpleNamespace(bounded=True, error=None)
+        supervisor.finalize.return_value = SimpleNamespace(bounded=True, error=None)
+        select_supervisor.return_value = supervisor
 
         with self.assertRaisesRegex(ProcessError, "output limit"):
             _run_tracker_command(
                 ["gh"], output_limit=8, failure_message="tracker search failed"
             )
-        process.terminate.assert_called_once()
+        supervisor.terminate.assert_called_once()
+        supervisor.finalize.assert_called_once()
+        process.wait.assert_called()
 
 
 if __name__ == "__main__":
