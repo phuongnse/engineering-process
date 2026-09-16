@@ -520,48 +520,60 @@ def _run_tracker_command(
         termination_requested = True
         apply_cleanup(supervisor.terminate(process, grace_seconds=2))
 
-    while reader.is_alive():
+    try:
+        while reader.is_alive():
+            try:
+                supervisor.observe(process)
+            except OSError:
+                cleanup_bounded = False
+                cleanup_error = cleanup_error or "tracker process observation failed"
+                break
+            if overflow.is_set():
+                request_termination()
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                request_termination()
+                break
+            time.sleep(0.01)
+
+        if overflow.is_set() or timed_out:
+            request_termination()
+
+        if (
+            not reader.is_alive()
+            and process.poll() is None
+            and not overflow.is_set()
+            and not timed_out
+        ):
+            try:
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+            except (OSError, subprocess.TimeoutExpired):
+                timed_out = True
+                request_termination()
+    finally:
         try:
-            supervisor.observe(process)
-        except OSError:
+            if process.poll() is None:
+                request_termination()
+        except BaseException:
             cleanup_bounded = False
-            cleanup_error = cleanup_error or "tracker process observation failed"
-            break
-        if overflow.is_set():
-            request_termination()
-            break
-        if time.monotonic() >= deadline:
-            timed_out = True
-            request_termination()
-            break
-        time.sleep(0.01)
-
-    if overflow.is_set() or timed_out:
-        request_termination()
-
-    if not reader.is_alive() and process.poll() is None and not overflow.is_set() and not timed_out:
+            cleanup_error = cleanup_error or "tracker process termination could not be requested"
         try:
-            process.wait(timeout=max(0, deadline - time.monotonic()))
+            apply_cleanup(supervisor.finalize(process, grace_seconds=2))
+        except BaseException:
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker process finalization failed"
+
+        reader.join(timeout=2)
+        error_reader.join(timeout=2)
+        if reader.is_alive() or error_reader.is_alive():
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker output drain did not finish"
+        try:
+            process.wait(timeout=2)
         except (OSError, subprocess.TimeoutExpired):
-            timed_out = True
-            request_termination()
-
-    try:
-        apply_cleanup(supervisor.finalize(process, grace_seconds=2))
-    except OSError:
-        cleanup_bounded = False
-        cleanup_error = cleanup_error or "tracker process finalization failed"
-
-    reader.join(timeout=2)
-    error_reader.join(timeout=2)
-    if reader.is_alive() or error_reader.is_alive():
-        cleanup_bounded = False
-        cleanup_error = cleanup_error or "tracker output drain did not finish"
-    try:
-        process.wait(timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        cleanup_bounded = False
-        cleanup_error = cleanup_error or "tracker process was not reaped"
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker process was not reaped"
     if not cleanup_bounded or cleanup_error:
         raise ProcessError(failure_message)
     if overflow.is_set():
