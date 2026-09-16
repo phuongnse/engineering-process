@@ -455,14 +455,7 @@ def _run_tracker_command(
 ) -> bytes:
     """Run a tracker command with the shared bounded process supervisor."""
     supervisor = process_supervisor()
-    try:
-        process = supervisor.spawn(
-            tuple(command),
-            working_directory=Path.cwd(),
-            environment=child_environment(),
-        )
-    except OSError as error:
-        raise ProcessError(failure_message) from error
+    process: Any | None = None
     output = bytearray()
     overflow = threading.Event()
     stream_error = threading.Event()
@@ -482,12 +475,49 @@ def _run_tracker_command(
 
     def request_termination() -> None:
         nonlocal termination_requested
-        if termination_requested:
+        if termination_requested or process is None:
             return
         termination_requested = True
         apply_cleanup(supervisor.terminate(process, grace_seconds=2))
 
+    def finalize_process() -> None:
+        nonlocal cleanup_error, cleanup_bounded
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                request_termination()
+        except BaseException:
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker process termination could not be requested"
+        try:
+            apply_cleanup(supervisor.finalize(process, grace_seconds=2))
+        except BaseException:
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker process finalization failed"
+
+        if reader_started and reader is not None:
+            reader.join(timeout=2)
+        if error_reader_started and error_reader is not None:
+            error_reader.join(timeout=2)
+        if (
+            (reader_started and reader is not None and reader.is_alive())
+            or (error_reader_started and error_reader is not None and error_reader.is_alive())
+        ):
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker output drain did not finish"
+        try:
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            cleanup_bounded = False
+            cleanup_error = cleanup_error or "tracker process was not reaped"
+
     try:
+        process = supervisor.spawn(
+            tuple(command),
+            working_directory=Path.cwd(),
+            environment=child_environment(),
+        )
         if process.stdout is None or process.stderr is None:
             raise ProcessError("tracker process did not expose output streams")
 
@@ -557,34 +587,10 @@ def _run_tracker_command(
             except (OSError, subprocess.TimeoutExpired):
                 timed_out = True
                 request_termination()
+    except OSError as error:
+        raise ProcessError(failure_message) from error
     finally:
-        try:
-            if process.poll() is None:
-                request_termination()
-        except BaseException:
-            cleanup_bounded = False
-            cleanup_error = cleanup_error or "tracker process termination could not be requested"
-        try:
-            apply_cleanup(supervisor.finalize(process, grace_seconds=2))
-        except BaseException:
-            cleanup_bounded = False
-            cleanup_error = cleanup_error or "tracker process finalization failed"
-
-        if reader_started and reader is not None:
-            reader.join(timeout=2)
-        if error_reader_started and error_reader is not None:
-            error_reader.join(timeout=2)
-        if (
-            (reader_started and reader is not None and reader.is_alive())
-            or (error_reader_started and error_reader is not None and error_reader.is_alive())
-        ):
-            cleanup_bounded = False
-            cleanup_error = cleanup_error or "tracker output drain did not finish"
-        try:
-            process.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            cleanup_bounded = False
-            cleanup_error = cleanup_error or "tracker process was not reaped"
+        finalize_process()
     if not cleanup_bounded or cleanup_error:
         raise ProcessError(failure_message)
     if overflow.is_set():

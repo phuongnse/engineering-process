@@ -649,6 +649,34 @@ class IncidentIntakeTests(unittest.TestCase):
         supervisor.finalize.assert_called_once()
         process.wait.assert_called()
 
+    @patch("engineering_process.incidents.process_supervisor")
+    def test_tracker_setup_failure_still_cleans_up_spawned_process(self, select_supervisor: Mock) -> None:
+        process = Mock()
+        process.stdout = None
+        process.stderr = io.BytesIO()
+        process.returncode = 0
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        supervisor = Mock()
+        supervisor.spawn.return_value = process
+
+        def terminate(*args: object, **kwargs: object) -> SimpleNamespace:
+            del args, kwargs
+            process.poll.return_value = 0
+            return SimpleNamespace(bounded=True, error=None)
+
+        supervisor.terminate.side_effect = terminate
+        supervisor.finalize.return_value = SimpleNamespace(bounded=True, error=None)
+        select_supervisor.return_value = supervisor
+
+        with self.assertRaisesRegex(ProcessError, "did not expose output streams"):
+            _run_tracker_command(
+                ["gh"], output_limit=8, failure_message="tracker search failed"
+            )
+        supervisor.terminate.assert_called_once()
+        supervisor.finalize.assert_called_once()
+        process.wait.assert_called()
+
 
 if __name__ == "__main__":
     unittest.main()
