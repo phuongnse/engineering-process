@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+import io
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -14,6 +14,7 @@ from engineering_process.contracts import ProcessError
 from engineering_process.incidents import (
     CLOSED_TAXONOMY,
     Incident,
+    _run_tracker_command,
     _default_search_tracker,
     collect_incidents,
     is_process_producer_change,
@@ -68,8 +69,12 @@ class IncidentIntakeTests(unittest.TestCase):
     def test_stable_title_key_formatting_and_sanitization(self) -> None:
         key = stable_title_key("org/my-consumer", "2.6.0", "evidence-drop", "evidence-integrity")
         self.assertEqual(
-            "[consumer-process][org-my-consumer][2.6.0][evidence-drop][evidence-integrity]",
+            "[consumer-process][org_2fmy-consumer][2.6.0][evidence-drop][evidence-integrity]",
             key,
+        )
+        self.assertNotEqual(
+            stable_title_key("org/a-b", VERSION, "invariant", "kind"),
+            stable_title_key("org-a/b", VERSION, "invariant", "kind"),
         )
 
     def test_collect_incidents_detects_evidence_invalidation(self) -> None:
@@ -292,6 +297,40 @@ class IncidentIntakeTests(unittest.TestCase):
         }
         self.assertFalse(is_process_producer_change(state))
 
+    def test_unsupported_issue_namespace_is_suppressed_without_default_fallback(self) -> None:
+        project_path = self.project_root / ".process" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["lifecycle"]["processChanges"]["acceptedIssueUrlPrefix"] = (
+            "https://gitlab.example/process/issues/"
+        )
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        state = {
+            "changeId": "consumer-change",
+            "cycle": 1,
+            "contract": {"document": {"affectedProjects": ["external-app"], "source": "https://example.com"}},
+            "history": [
+                {"event": "evidence-invalidated", "details": {"profile": "development", "reason": "input-digest-mismatch"}},
+            ],
+            "verification": {},
+        }
+        actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
+        search = Mock()
+        create = Mock()
+
+        results = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=search,
+            create_issue_fn=create,
+        )
+
+        self.assertIsNone(resolve_process_repo(project))
+        self.assertEqual("unsupported-tracker-namespace", results[0]["reason"])
+        search.assert_not_called()
+        create.assert_not_called()
+
     def test_process_improvement_intake_exhausts_budget(self) -> None:
         state = {
             "changeId": "consumer-change",
@@ -325,6 +364,46 @@ class IncidentIntakeTests(unittest.TestCase):
         self.assertEqual("created", results[0]["status"])
         self.assertEqual("suppressed", results[1]["status"])
         self.assertEqual("budget-exhausted", results[1]["reason"])
+
+    def test_budget_does_not_skip_reuse_for_a_later_incident(self) -> None:
+        state = {
+            "changeId": "consumer-change",
+            "cycle": 1,
+            "contract": {"document": {"affectedProjects": ["external-app"], "source": "https://example.com"}},
+            "history": [
+                {"event": "evidence-invalidated", "details": {"profile": "development", "reason": "input-digest-mismatch"}},
+                {"event": "evidence-invalidated", "details": {"profile": "review", "reason": "input-digest-mismatch"}},
+            ],
+            "verification": {},
+        }
+        actor = {"actorId": "coordinator", "contextId": "finish", "kind": "agent"}
+        review_key = stable_title_key("consumer", VERSION, "review", "evidence-integrity")
+        queries: list[str] = []
+
+        def search(repo: str, query: str) -> list[dict[str, str]]:
+            queries.append(query)
+            if query == review_key:
+                return [{
+                    "title": review_key + " existing",
+                    "url": "https://github.com/phuongnse/engineering-process/issues/401",
+                    "state": "CLOSED",
+                }]
+            return []
+
+        create = Mock(return_value="https://github.com/phuongnse/engineering-process/issues/400")
+        results = process_improvement_intake(
+            self.project_root,
+            Path.cwd(),
+            state,
+            actor,
+            search_tracker_fn=search,
+            create_issue_fn=create,
+            max_issues_per_finish=1,
+        )
+
+        self.assertEqual(["created", "reused"], [item["status"] for item in results])
+        self.assertEqual([review_key], [query for query in queries if query == review_key])
+        create.assert_called_once()
 
     def test_tracker_search_uses_the_complete_identity(self) -> None:
         state = {
@@ -471,28 +550,49 @@ class IncidentIntakeTests(unittest.TestCase):
         self.assertEqual("tracker-create-failed", results[0]["errorCode"])
         self.assertNotIn("process-improvement-created", [event["event"] for event in state["history"]])
 
-    @patch("engineering_process.incidents.subprocess.run")
-    def test_default_tracker_search_is_bounded_and_queries_all_states(self, run: Mock) -> None:
-        run.return_value = subprocess.CompletedProcess(
-            ["gh"], 0, stdout="[]", stderr=""
-        )
+    @patch("engineering_process.incidents.subprocess.Popen")
+    def test_default_tracker_search_is_bounded_and_queries_all_states(self, popen: Mock) -> None:
+        process = Mock()
+        process.stdout = io.BytesIO(b"[]")
+        process.returncode = 0
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        popen.return_value = process
 
         self.assertEqual([], _default_search_tracker("phuongnse/engineering-process", "STABLE-KEY"))
-        command = run.call_args.args[0]
+        command = popen.call_args.args[0]
         self.assertIn("--state", command)
         self.assertEqual("all", command[command.index("--state") + 1])
         self.assertIn("--limit", command)
         self.assertEqual("32", command[command.index("--limit") + 1])
         self.assertIn("STABLE-KEY in:title", command)
 
-    @patch("engineering_process.incidents.subprocess.run")
-    def test_default_tracker_search_failure_raises_without_returning_empty(self, run: Mock) -> None:
-        run.return_value = subprocess.CompletedProcess(
-            ["gh"], 1, stdout="[]", stderr="private tracker response"
-        )
+    @patch("engineering_process.incidents.subprocess.Popen")
+    def test_default_tracker_search_failure_raises_without_returning_empty(self, popen: Mock) -> None:
+        process = Mock()
+        process.stdout = io.BytesIO(b"[]")
+        process.returncode = 1
+        process.poll.return_value = 1
+        process.wait.return_value = 1
+        popen.return_value = process
 
         with self.assertRaisesRegex(ProcessError, "tracker search failed"):
             _default_search_tracker("phuongnse/engineering-process", "STABLE-KEY")
+
+    @patch("engineering_process.incidents.subprocess.Popen")
+    def test_tracker_output_limit_terminates_before_unbounded_capture(self, popen: Mock) -> None:
+        process = Mock()
+        process.stdout = io.BytesIO(b"x" * 100)
+        process.returncode = 0
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        popen.return_value = process
+
+        with self.assertRaisesRegex(ProcessError, "output limit"):
+            _run_tracker_command(
+                ["gh"], output_limit=8, failure_message="tracker search failed"
+            )
+        process.terminate.assert_called_once()
 
 
 if __name__ == "__main__":

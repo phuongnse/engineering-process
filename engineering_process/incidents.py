@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import threading
+import time
 from typing import Any, Callable
 
 from .contracts import ProcessError
@@ -17,7 +19,6 @@ from .repository import _git
 
 DEFAULT_MAX_ISSUES_PER_FINISH = 3
 DEFAULT_MAX_ISSUES_PER_KEY = 1
-DEFAULT_PROCESS_REPO = "phuongnse/engineering-process"
 MAX_TRACKER_RESULTS = 32
 MAX_TRACKER_OUTPUT_BYTES = 64_000
 MAX_TRACKER_URL_BYTES = 512
@@ -71,7 +72,11 @@ def _policy_allows_external_intake(project: dict[str, Any]) -> bool:
 
 
 def _valid_issue_url(repo: str, value: Any) -> bool:
-    if not isinstance(value, str) or len(value.encode("utf-8")) > MAX_TRACKER_URL_BYTES:
+    if (
+        not isinstance(repo, str)
+        or not isinstance(value, str)
+        or len(value.encode("utf-8")) > MAX_TRACKER_URL_BYTES
+    ):
         return False
     match = _ISSUE_URL.fullmatch(value)
     return bool(match and match.group(1).casefold() == repo.casefold())
@@ -107,8 +112,17 @@ def _safe_identifier(value: Any, fallback: str = "unknown") -> str:
 
 
 def _safe_consumer(value: Any) -> str:
-    text = re.sub(r"[^A-Za-z0-9_.-]", "-", value if isinstance(value, str) else "").strip("-")
-    return _safe_identifier(text)
+    raw = value if isinstance(value, str) else ""
+    if not raw:
+        return "unknown"
+    encoded: list[str] = []
+    for byte in raw.encode("utf-8"):
+        character = chr(byte)
+        if character.isascii() and (character.isalnum() or character in ".-"):
+            encoded.append(character)
+        else:
+            encoded.append(f"_{byte:02x}")
+    return "".join(encoded)
 
 
 def _public_details(incident: Incident) -> dict[str, Any]:
@@ -244,17 +258,20 @@ def resolve_consumer_identity(project_root: Path, project: dict[str, Any]) -> st
     return project.get("project", "unknown-consumer")
 
 
-def resolve_process_repo(project: dict[str, Any]) -> str:
-    """Resolve the destination repository for process issues."""
+def resolve_process_repo(project: dict[str, Any]) -> str | None:
+    """Resolve a supported configured GitHub destination, with no fallback."""
     prefix = (
         project.get("lifecycle", {})
         .get("processChanges", {})
         .get("acceptedIssueUrlPrefix", "")
     )
-    match = re.search(r"github\.com/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)/issues/?", prefix)
+    match = re.fullmatch(
+        r"https://github\.com/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)/issues/",
+        prefix,
+    )
     if match:
         return match.group(1)
-    return DEFAULT_PROCESS_REPO
+    return None
 
 
 def collect_incidents(
@@ -428,74 +445,153 @@ def collect_incidents(
     return incidents
 
 
-def _default_search_tracker(repo: str, search_query: str) -> list[dict[str, Any]]:
-    """Search all tracker states or fail explicitly; an error is never an empty result."""
+def _run_tracker_command(
+    command: list[str],
+    *,
+    output_limit: int,
+    failure_message: str,
+) -> bytes:
+    """Run a tracker command with bounded stdout, time, and cleanup."""
     try:
-        result = subprocess.run(
-            [
-                "gh",
-                "issue",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "all",
-                "--limit",
-                str(MAX_TRACKER_RESULTS),
-                "--search",
-                f"{search_query} in:title",
-                "--json",
-                "number,title,url,state",
-            ],
+        process = subprocess.Popen(
+            command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=30,
-            check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ProcessError("tracker search failed") from error
-    if result.returncode != 0:
-        raise ProcessError("tracker search failed")
-    if len(result.stdout.encode("utf-8")) > MAX_TRACKER_OUTPUT_BYTES:
-        raise ProcessError("tracker search exceeded its output limit")
+    except OSError as error:
+        raise ProcessError(failure_message) from error
+    assert process.stdout is not None
+
+    output = bytearray()
+    overflow = threading.Event()
+    stream_error = threading.Event()
+
+    def read_output() -> None:
+        try:
+            while True:
+                remaining = output_limit + 1 - len(output)
+                if remaining <= 0:
+                    overflow.set()
+                    return
+                chunk = process.stdout.read(min(64 * 1024, remaining))
+                if not chunk:
+                    return
+                output.extend(chunk)
+                if len(output) > output_limit:
+                    overflow.set()
+                    return
+        except (OSError, ValueError):
+            stream_error.set()
+        finally:
+            process.stdout.close()
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    deadline = time.monotonic() + 30
+    timed_out = False
+    while reader.is_alive():
+        if overflow.is_set():
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        time.sleep(0.01)
+
+    if overflow.is_set() or timed_out:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    else:
+        try:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+        except (OSError, subprocess.TimeoutExpired):
+            timed_out = True
+            try:
+                process.terminate()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+
+    reader.join(timeout=2)
+    if reader.is_alive():
+        raise ProcessError(failure_message)
+    if overflow.is_set():
+        raise ProcessError(f"{failure_message} exceeded its output limit")
+    if timed_out:
+        raise ProcessError(f"{failure_message} timed out")
+    if stream_error.is_set() or process.returncode != 0:
+        raise ProcessError(failure_message)
+    return bytes(output)
+
+
+def _default_search_tracker(repo: str, search_query: str) -> list[dict[str, Any]]:
+    """Search all tracker states or fail explicitly; an error is never an empty result."""
+    output = _run_tracker_command(
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "all",
+            "--limit",
+            str(MAX_TRACKER_RESULTS),
+            "--search",
+            f"{search_query} in:title",
+            "--json",
+            "number,title,url,state",
+        ],
+        output_limit=MAX_TRACKER_OUTPUT_BYTES,
+        failure_message="tracker search failed",
+    )
     try:
-        matches = json.loads(result.stdout)
-    except (TypeError, ValueError) as error:
+        matches = json.loads(output.decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError) as error:
         raise ProcessError("tracker search returned invalid data") from error
     return _validate_tracker_matches(matches)
 
 
 def _default_create_issue(repo: str, title: str, body: str) -> str:
     """Create one issue and return its unvalidated provider result."""
+    output = _run_tracker_command(
+        [
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            repo,
+            "--title",
+            title,
+            "--body",
+            body,
+        ],
+        output_limit=MAX_TRACKER_URL_BYTES,
+        failure_message="tracker issue creation failed",
+    )
     try:
-        result = subprocess.run(
-            [
-                "gh",
-                "issue",
-                "create",
-                "--repo",
-                repo,
-                "--title",
-                title,
-                "--body",
-                body,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ProcessError("tracker issue creation failed") from error
-    if result.returncode != 0:
-        raise ProcessError("tracker issue creation failed")
-    if len(result.stdout.encode("utf-8")) > MAX_TRACKER_URL_BYTES:
-        raise ProcessError("tracker issue creation returned an invalid URL")
-    return result.stdout.strip()
+        return output.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise ProcessError("tracker issue creation returned an invalid URL") from error
 
 
 def render_sanitized_issue_body(
@@ -606,6 +702,24 @@ def process_improvement_intake(
             )
             continue
 
+        if process_repo is None:
+            _record_intake_event(
+                state,
+                "process-improvement-suppressed",
+                actor,
+                incident,
+                stable_key,
+                reason="unsupported-tracker-namespace",
+            )
+            results.append(
+                {
+                    "status": "suppressed",
+                    "stableKey": stable_key,
+                    "reason": "unsupported-tracker-namespace",
+                }
+            )
+            continue
+
         # A producer must not create or search for recursive process issues.
         if is_producer:
             _record_intake_event(
@@ -619,29 +733,6 @@ def process_improvement_intake(
             results.append(
                 {"status": "suppressed", "stableKey": stable_key, "reason": "recursion-breaker"}
             )
-            continue
-
-        # No external operation is useful when the configured creation budget is empty.
-        if (
-            max_issues_per_finish < 1
-            or max_issues_per_key < 1
-            or created_count >= max_issues_per_finish
-            or created_by_key.get(stable_key, 0) >= max_issues_per_key
-        ):
-            reason = (
-                "budget-exhausted:finish-limit-reached"
-                if created_count >= max_issues_per_finish
-                else "budget-exhausted:key-limit-reached"
-            )
-            _record_intake_event(
-                state,
-                "process-improvement-suppressed",
-                actor,
-                incident,
-                stable_key,
-                reason=reason,
-            )
-            results.append({"status": "suppressed", "stableKey": stable_key, "reason": "budget-exhausted"})
             continue
 
         try:
@@ -688,6 +779,31 @@ def process_improvement_intake(
                     "stableKey": stable_key,
                     "errorCode": "tracker-search-failed",
                 }
+            )
+            continue
+
+        # Reuse is free of creation budget; only a missing match is suppressed here.
+        if (
+            max_issues_per_finish < 1
+            or max_issues_per_key < 1
+            or created_count >= max_issues_per_finish
+            or created_by_key.get(stable_key, 0) >= max_issues_per_key
+        ):
+            reason = (
+                "budget-exhausted:finish-limit-reached"
+                if created_count >= max_issues_per_finish
+                else "budget-exhausted:key-limit-reached"
+            )
+            _record_intake_event(
+                state,
+                "process-improvement-suppressed",
+                actor,
+                incident,
+                stable_key,
+                reason=reason,
+            )
+            results.append(
+                {"status": "suppressed", "stableKey": stable_key, "reason": "budget-exhausted"}
             )
             continue
 
