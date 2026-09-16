@@ -142,7 +142,12 @@ def process_improvement_signals(state: dict[str, Any]) -> list[str]:
             and item["details"].get("verdict") == "changes-requested"
         ):
             signals.add("review-changes-requested")
+        elif item["event"] == "evidence-invalidated":
+            signals.add("evidence-invalidated")
+        elif item["event"] == "review-assignment-replaced":
+            signals.add("review-assignment-replaced")
     return sorted(signals)
+
 
 
 def _require_phase(state: dict[str, Any], *phases: str) -> None:
@@ -1153,9 +1158,8 @@ def _record_verification(
         )
         for name in {*state["verification"], report["profile"]}
     }
-    state["verification"] = {
-        name: previous
-        for name, previous in state["verification"].items()
+    retained_verification: dict[str, Any] = {}
+    for name, previous in state["verification"].items():
         if _verification_report_matches_inputs(
             project_root,
             process_root,
@@ -1167,8 +1171,23 @@ def _record_verification(
             require_input=True,
             runtime=runtime,
             authority_digest=authority_digest,
-        )
-    }
+        ):
+            retained_verification[name] = previous
+        else:
+            actor = (
+                state["currentImplementation"]["actor"]
+                if state.get("currentImplementation")
+                else {"actorId": "coordinator", "contextId": "lifecycle", "kind": "agent"}
+            )
+            _event(
+                state,
+                "evidence-invalidated",
+                actor,
+                profile=name,
+                reason="input-digest-mismatch",
+                cycle=state.get("cycle", 1),
+            )
+    state["verification"] = retained_verification
     profile = report["profile"]
     report["checkpoint"] = after
     report["recordedAt"] = _now()
@@ -1498,6 +1517,13 @@ def finish_change(
                 for check in report["checks"]
             ],
         }
+
+    try:
+        from .incidents import process_improvement_intake
+        process_improvement_intake(project_root, process_root, state, actor)
+    except Exception as error:
+        _event(state, "process-improvement-failed", actor, error=str(error))
+
     receipt = {
         "schemaVersion": 1,
         "changeId": change_id,
