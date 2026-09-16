@@ -72,6 +72,22 @@ child environment match. Legacy evidence without that identity reruns. This is
 whole-profile reuse: equal check IDs and ordered side effects are never merged, and
 the lifecycle receipt still records only actual executions.
 
+Reuse is stage-aware rather than a blanket cache: the contract and plan travel by
+digest; valid whole-profile verification can satisfy a continuation request; review
+and finish consume the same reports after rechecking the snapshot; and a new
+implementation cycle invalidates verification. Operation-local calculation reuse is
+allowed only before a mutation/concurrency boundary. Impact feedback and generated
+documents remain derived artifacts and never replace final required profiles or
+independent review.
+
+Consumers that can prove complete changed-path coverage may opt selected required
+profiles into final impact assurance with `impactProfiles.schemaVersion: 2` and
+`finalProfiles`. Each opted profile must declare an explicit global unit whose paths
+include the universal `**` pattern for cross-cutting reach. The lifecycle then
+records the selected units as final
+verification evidence; missing or unresolved coverage blocks rather than silently
+falling back. Existing version 1 policies remain feedback-only.
+
 `processctl change review replace-reused` repairs only an initial pending assignment
 proven to reuse another change's agent context, before a submitted review or normal
 report file exists. It validates a fresh replacement and current verification,
@@ -142,6 +158,33 @@ Python 3.11 or newer and Git are required. A consumer owns .process/project.json
             "timeoutSeconds": 600
           }
         ]
+      },
+      "impactProfiles": {
+        "schemaVersion": 1,
+        "profiles": {
+          "development": [
+          {
+            "id": "unit-tests",
+            "run": ["python", "-m", "unittest", "tests.test_orders"],
+            "timeoutSeconds": 600,
+            "paths": ["src/orders/**", "tests/test_orders.py"]
+          },
+          {
+            "id": "cross-cutting",
+            "run": ["python", "-m", "unittest"],
+            "timeoutSeconds": 900,
+            "paths": ["**/process-policy.json"]
+          }
+          ],
+          "review": [
+          {
+            "id": "package",
+            "run": ["python", "-m", "build"],
+            "timeoutSeconds": 600,
+            "paths": ["src/**", "pyproject.toml"]
+          }
+          ]
+        }
       }
     }
 
@@ -496,6 +539,33 @@ When continuing an incomplete verification, inspect and execute the necessary se
 The explicit `--profile` form remains a refresh and is never silently converted to
 reuse.
 
+For fast feedback, consumers may declare a versioned `impactProfiles` policy in
+`.process/project.json` and run only units related to the candidate paths:
+
+    processctl change explain --change-id change-123 --impact
+    processctl change verify --change-id change-123 --affected --affected-profile development
+
+Each impact unit owns an exact command and path-pattern coverage. Matching is
+explicit and deterministic; overlapping units all run. A unit with
+`scope: "global"` may subsume narrower units only when its declared paths include
+the universal `**` pattern; a narrower pattern never covers unrelated paths. Every
+changed path must resolve for
+each requested profile. Missing policy, unsupported policy, or an unmapped path is
+`unresolved`/`unavailable`: the process launches nothing and returns the action
+`inspect-diff-and-update-impact-policy`. The agent must inspect the diff and
+dependency reach, update the consumer-owned mapping or obtain an owner decision,
+then repeat the explanation. It must not use a full profile as a fallback.
+
+Affected execution under a version 1 policy is feedback evidence only and never
+advances the lifecycle or satisfies a required profile. A consumer that can prove
+complete coverage may use schema version 2 with `finalProfiles`; `--remaining` then
+records the selected units as `impact-assurance` evidence. Each opted profile needs
+an explicit global unit with the universal `**` pattern for cross-cutting reach, and
+unresolved final coverage
+blocks rather than falling back silently. Explicit `--profile` remains the full
+refresh. Consumers that do not adopt the opt-in retain the existing final boundary;
+the affected command does not guess a policy for them.
+
 Assign an independent reviewer and submit its report:
 
     processctl change review start \
@@ -582,9 +652,11 @@ At any point:
 ## Release to consumer PR
 
 Each release includes [reviewed release contents](RELEASE_NOTES.md) generated from
-the canonical manifest: shipped features/fixes, their source issues or changes, and
-upgrade guidance. The release PR reviews this file; the GitHub Release publishes the
-same contents. See [the release procedure](RELEASING.md) for authoring and checks.
+the canonical manifest: one record per shipped feature/fix, its source issue, the
+problem and affected paths, the application action, compatibility impact, important
+notes, and upgrade guidance. The release PR reviews this file; the GitHub Release
+publishes the same contents. See [the release procedure](RELEASING.md) for authoring
+and checks.
 
 This producer's release identity inputs and text assets declared by
 `tool.setuptools.data-files` use UTF-8 without BOM and LF, matching `.gitattributes`.

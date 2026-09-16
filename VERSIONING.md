@@ -25,8 +25,16 @@ supported review schemas already permit the `resolved` disposition.
 Artifact selection, standard definitions and renderer inputs use their own schema 1
 documents. Packaged standard versions are immutable after publication. Consumers can
 pin a built-in version or select a complete consumer-owned override; unsupported
-explicit selections fail without fallback. Existing project, run and review schemas
-are unchanged. See [consumer document standards](ARTIFACT_STANDARDS.md).
+explicit selections fail without fallback. Existing project, run and review schema
+versions and legacy readers remain supported; this release adds the versioned
+verification-impact-selection schema and additive project/run evidence fields. See
+[consumer document standards](ARTIFACT_STANDARDS.md).
+
+Release fragments use schema 2 for new releases. Their structured detail fields are
+carried into release manifest schema 6 and rendered into the published notes. Manifest
+schema 5 and release-note data without details remain readable, so this is an additive
+release-authoring capability rather than a consumer runtime break. New preparation
+rejects incomplete or mixed fragment versions before changing release files.
 
 Existing publication command arguments remain valid. The updated PR adapter resolves
 the current consumer's selected standard and repairs the ready-placeholder gap; the

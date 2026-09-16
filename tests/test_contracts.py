@@ -59,6 +59,7 @@ class ContractTests(unittest.TestCase):
             "renovate-preset",
             "review",
             "run",
+            "verification-impact-selection",
             "verification-selection",
         }
         actual = {path.name.removesuffix(".schema.json") for path in SCHEMAS.glob("*.json")}
@@ -150,6 +151,9 @@ class ContractTests(unittest.TestCase):
             },
         }
         validate_document(receipt, "receipt", schema_root=SCHEMAS)
+        receipt["verification"]["development"]["executionMode"] = "impact-assurance"
+        receipt["verification"]["development"]["selectionDigest"] = f"sha256:{'4' * 64}"
+        validate_document(receipt, "receipt", schema_root=SCHEMAS)
         legacy = deepcopy(receipt)
         legacy["schemaVersion"] = 1
         legacy.pop("publication")
@@ -162,6 +166,45 @@ class ContractTests(unittest.TestCase):
         invalid["publication"]["commit"] = "0" * 40
         with self.assertRaisesRegex(ProcessError, "Additional properties"):
             validate_document(invalid, "receipt", schema_root=SCHEMAS)
+
+    def test_final_impact_policy_requires_explicit_global_coverage(self) -> None:
+        project = normalize_project(read_json(ROOT / ".process" / "project.json"), ROOT)
+        project["impactProfiles"] = {
+            "schemaVersion": 2,
+            "finalProfiles": ["development"],
+            "profiles": {
+                "development": [
+                    {
+                        "id": "global-development",
+                        "run": ["python", "-c", "pass"],
+                        "timeoutSeconds": 10,
+                        "scope": "global",
+                        "paths": ["**"],
+                    }
+                ]
+            },
+        }
+        normalized = normalize_project(project, ROOT)
+        self.assertEqual(("development",), tuple(
+            normalized["impactProfiles"]["finalProfiles"]
+        ))
+
+        invalid_global = deepcopy(project)
+        invalid_global["impactProfiles"]["profiles"]["development"][0]["paths"] = [
+            "**/policy.json"
+        ]
+        with self.assertRaises(ProcessError):
+            normalize_project(invalid_global, ROOT)
+
+        invalid = deepcopy(project)
+        invalid["impactProfiles"]["profiles"]["development"][0].pop("scope")
+        with self.assertRaisesRegex(ProcessError, "requires an explicit global unit"):
+            normalize_project(invalid, ROOT)
+
+        invalid_version = deepcopy(project)
+        invalid_version["impactProfiles"]["schemaVersion"] = 1
+        with self.assertRaises(ProcessError):
+            normalize_project(invalid_version, ROOT)
 
     def test_run_schema_accepts_legacy_and_safe_diagnostic_reports(self) -> None:
         schema = read_json(SCHEMAS / "run.schema.json")
@@ -217,6 +260,9 @@ class ContractTests(unittest.TestCase):
                 "1",
             ],
         }
+        validator.validate(report)
+        report["executionMode"] = "impact-assurance"
+        report["selectionDigest"] = f"sha256:{'4' * 64}"
         validator.validate(report)
 
     def test_review_v6_requires_durable_non_blocking_dispositions(self) -> None:

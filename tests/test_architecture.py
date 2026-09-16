@@ -19,6 +19,7 @@ LAYERS = {
     "evidence": 2,
     "repository": 1,
     "project": 2,
+    "impact": 3,
     "artifact_standards": 2,
     "automation_name": 3,
     "issue": 3,

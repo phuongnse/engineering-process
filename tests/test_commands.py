@@ -130,7 +130,9 @@ class CommandTests(unittest.TestCase):
 
     def test_child_path_does_not_reintroduce_an_empty_inherited_entry(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(
-            os.environ, {"PATH": "", "EMPTY_BINDING": ""}, clear=True
+            os.environ,
+            {"PATH": os.pathsep.join(("", "caller-one", "")), "EMPTY_BINDING": ""},
+            clear=True,
         ), patch(
             "engineering_process.commands.sys.executable",
             str(Path(directory) / "python"),

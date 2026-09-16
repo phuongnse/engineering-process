@@ -8,7 +8,7 @@ from typing import Any
 
 from .artifact_standards import ArtifactStandard, MAX_DOCUMENT_BYTES
 from .contracts import ProcessError, validate_document
-from .distribution import distribution_root, schemas_root
+from .distribution import distribution_digest, distribution_root, schemas_root
 from .evidence import execution_identity, verification_report_matches_inputs
 from .project import load_project
 
@@ -320,6 +320,7 @@ def build_pr_description_data(
     current_checkpoint = repository_snapshot(project_root)
     project = load_project(project_root, dist_root)
     runtime = execution_identity()
+    authority_digest = distribution_digest(dist_root)
 
     contract = state.get("contract", {}).get("document", {})
     source = contract.get("source", "pending")
@@ -342,6 +343,7 @@ def build_pr_description_data(
             require_input=True,
             require_explicit_scope=True,
             runtime=runtime,
+            authority_digest=authority_digest,
         )
     ]
     passed_profiles.sort()

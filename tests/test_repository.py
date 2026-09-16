@@ -11,7 +11,8 @@ from unittest.mock import patch
 from engineering_process.contracts import ProcessError
 from engineering_process import repository
 from engineering_process.repository import (
-    repository_snapshot, require_committed_candidate, resolve_commit, same_checkpoint,
+    changed_paths, repository_snapshot, require_committed_candidate, resolve_commit,
+    same_checkpoint,
 )
 
 
@@ -20,7 +21,7 @@ def git(root: Path, *arguments: str) -> None:
 
 
 class RepositorySnapshotTests(unittest.TestCase):
-    def make_repository(self, root: Path) -> None:
+    def make_repository(self, root: Path) -> str:
         git(root, "init", "-q")
         git(root, "config", "user.email", "tests@example.invalid")
         git(root, "config", "user.name", "Tests")
@@ -28,6 +29,9 @@ class RepositorySnapshotTests(unittest.TestCase):
         (root / "tracked.txt").write_text("one\n", encoding="utf-8")
         git(root, "add", ".")
         git(root, "commit", "-qm", "initial")
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
 
     def test_tracked_and_untracked_content_change_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -51,6 +55,27 @@ class RepositorySnapshotTests(unittest.TestCase):
             for reference in ("HEAD", "review-base", "review-tag"):
                 with self.subTest(reference=reference):
                     self.assertEqual(expected, resolve_commit(root, reference))
+
+    def test_changed_paths_includes_worktree_add_delete_and_untracked_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.make_repository(root)
+            (root / "tracked.txt").unlink()
+            (root / "added.txt").write_text("added\n", encoding="utf-8")
+            (root / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+            self.assertEqual(
+                ("added.txt", "tracked.txt", "untracked.txt"),
+                changed_paths(root, base),
+            )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX filename semantics")
+    def test_changed_paths_preserves_literal_backslash_on_posix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.make_repository(root)
+            literal = root / r"src\secret.py"
+            literal.write_text("secret\n", encoding="utf-8")
+            self.assertEqual((r"src\secret.py",), changed_paths(root, base))
 
     def test_lifecycle_state_does_not_invalidate_its_own_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

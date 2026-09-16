@@ -110,6 +110,7 @@ def verification_input_digest(
     profile: str,
     *,
     runtime: dict[str, Any] | None = None,
+    authority_digest: str | None = None,
 ) -> str | None:
     """Bind reusable evidence to every input controlled by this process."""
     runtime = runtime if runtime is not None else execution_identity()
@@ -119,7 +120,11 @@ def verification_input_digest(
     return digest_json({
         "authority": {
             "version": VERSION,
-            "distribution": distribution_digest(process_root),
+            "distribution": (
+                authority_digest
+                if authority_digest is not None
+                else distribution_digest(process_root)
+            ),
         },
         "project": project,
         "contractDigest": state["contract"]["digest"],
@@ -145,6 +150,7 @@ def verification_report_matches_inputs(
     require_input: bool,
     require_explicit_scope: bool = False,
     runtime: dict[str, Any] | None = None,
+    authority_digest: str | None = None,
 ) -> bool:
     """Return whether one report is reusable for the supplied inputs."""
     scope = report.get("scope")
@@ -169,5 +175,6 @@ def verification_report_matches_inputs(
         state,
         profile,
         runtime=runtime,
+        authority_digest=authority_digest,
     )
     return current is not None and recorded == current

@@ -5,56 +5,157 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from engineering_process.contracts import ProcessError, digest_json, read_json, validate_document
-from engineering_process.commands import _child_environment
+from engineering_process.evidence import child_environment
+from engineering_process.evidence import verification_input_digest
 from engineering_process.lifecycle import (
     begin_implementation, finish_change, register_plan, start_change,
     start_review, submit_review, verify_change,
 )
 from engineering_process.repository import repository_snapshot
+from engineering_process.project import load_project
 from engineering_process import lifecycle
 from engineering_process import review_contexts
 from tests import test_lifecycle as fixture_module
 from tests.test_lifecycle import PROCESS_ROOT, git, write_json
 
 
+def process_child_environment() -> dict[str, str]:
+    """Launch a child with the same raw environment seen by the parent."""
+    environment = child_environment()
+    runtime_directory = str(Path(sys.executable).resolve().parent)
+    prefix = runtime_directory + os.pathsep
+    if environment["PATH"].startswith(prefix):
+        environment["PATH"] = environment["PATH"][len(prefix):]
+    return environment
+
+
+def prepare_verified_change(
+    fixture, change: str, root: Path, process_root: Path, timings: dict[str, float] | None = None
+) -> dict:
+    started = time.perf_counter()
+    contract = deepcopy(fixture.contract)
+    contract["id"] = change
+    folder = root / ".process" / "runs" / change
+    source = folder / "change-input.json"
+    write_json(source, contract)
+    start_change(root, process_root, fixture.project, source,
+                 actor_id="author", context_id=f"author-{change}", kind="agent")
+    plan = deepcopy(fixture.plan)
+    plan.update(changeId=change, contractDigest=digest_json(contract))
+    plan_path = folder / "plan-input.json"
+    write_json(plan_path, plan)
+    register_plan(root, process_root, change, plan_path,
+                  actor_id="author", context_id=f"author-{change}", kind="agent")
+    begin_implementation(root, process_root, change, actor_id="implementer",
+                         context_id=f"implementation-{change}", kind="agent")
+    for profile in contract["requiredProfiles"]:
+        profile_started = time.perf_counter()
+        state, report = verify_change(root, process_root, fixture.project, change, profile)
+        if timings is not None:
+            timings["seed_profile_seconds"] += time.perf_counter() - profile_started
+        if report["status"] != "passed":
+            raise AssertionError(f"{change}/{profile} did not pass: {report}")
+    if timings is not None:
+        timings["seed_lifecycle_seconds"] += time.perf_counter() - started
+    return state
+
+
 class ReviewContextTests(unittest.TestCase):
+    class Fixture(fixture_module.LifecycleTests):
+        """Use a fixture template owned by this test class."""
+
+        _template_directory: tempfile.TemporaryDirectory | None = None
+        _template_path: Path | None = None
+        _template_project: dict[str, object] = {}
+
+        def setUp(self) -> None:
+            started = time.perf_counter()
+            super().setUp()
+            seed = ReviewContextTests._seed_fixture
+            if seed is None:
+                raise AssertionError("review fixture seed was not initialized")
+            for change in ("current", "previous"):
+                source = seed.root / ".process" / "runs" / change
+                target = self.root / ".process" / "runs" / change
+                shutil.copytree(source, target, dirs_exist_ok=True)
+            project = load_project(self.root, PROCESS_ROOT)
+            for change in ("current", "previous"):
+                path = self.root / ".process" / "runs" / change / "run.json"
+                state = read_json(path)
+                for profile, report in state["verification"].items():
+                    report["inputDigest"] = verification_input_digest(
+                        self.root, PROCESS_ROOT, project, state, profile
+                    )
+                validate_document(state, "run", schema_root=PROCESS_ROOT / "schemas")
+                write_json(path, state)
+            ReviewContextTests._timings["per_test_setup_seconds"] += time.perf_counter() - started
+            ReviewContextTests._timings["per_test_setup_count"] += 1
+
+    _seed_fixture: Fixture | None = None
+    _timings: dict[str, float] = {}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._timings = {
+            "per_test_setup_seconds": 0.0,
+            "per_test_setup_count": 0,
+            "seed_lifecycle_seconds": 0.0,
+            "seed_profile_seconds": 0.0,
+        }
+        cls.Fixture.setUpClass()
+        cls._seed_fixture = cls.Fixture("runTest")
+        started = time.perf_counter()
+        fixture_module.LifecycleTests.setUp(cls._seed_fixture)
+        prepare_verified_change(
+            cls._seed_fixture, "current", cls._seed_fixture.root, PROCESS_ROOT, cls._timings
+        )
+        prepare_verified_change(
+            cls._seed_fixture, "previous", cls._seed_fixture.root, PROCESS_ROOT, cls._timings
+        )
+        cls._timings["seed_setup_seconds"] = time.perf_counter() - started
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        count = cls._timings.get("per_test_setup_count", 0)
+        mean = cls._timings.get("per_test_setup_seconds", 0.0) / count if count else 0.0
+        print(
+            "Review fixture timing: "
+            f"seed_setup={cls._timings.get('seed_setup_seconds', 0.0):.3f}s; "
+            f"seed_lifecycle={cls._timings.get('seed_lifecycle_seconds', 0.0):.3f}s; "
+            f"seed_profiles={cls._timings.get('seed_profile_seconds', 0.0):.3f}s; "
+            f"per_test_setup_total={cls._timings.get('per_test_setup_seconds', 0.0):.3f}s; "
+            f"per_test_setup_count={int(count)}; per_test_setup_mean={mean:.3f}s"
+        )
+        if cls._seed_fixture is not None:
+            cls._seed_fixture.tearDown()
+            cls._seed_fixture = None
+        cls.Fixture.tearDownClass()
+
     def setUp(self) -> None:
-        self.fixture = fixture_module.LifecycleTests("runTest")
+        self.fixture = self.Fixture("runTest")
         self.fixture.setUp()
         self.addCleanup(self.fixture.tearDown)
         self.root = self.fixture.root.resolve()
-        self.prepare("current")
 
     def state_path(self, change: str, root: Path | None = None) -> Path:
         return (root or self.root) / ".process" / "runs" / change / "run.json"
 
     def prepare(self, change: str, root: Path | None = None) -> dict:
         root = root or self.root
-        contract = deepcopy(self.fixture.contract)
-        contract["id"] = change
-        folder = self.state_path(change, root).parent
-        source = folder / "change-input.json"
-        write_json(source, contract)
-        start_change(root, PROCESS_ROOT, self.fixture.project, source,
-                     actor_id="author", context_id=f"author-{change}", kind="agent")
-        plan = deepcopy(self.fixture.plan)
-        plan.update(changeId=change, contractDigest=digest_json(contract))
-        plan_path = folder / "plan-input.json"
-        write_json(plan_path, plan)
-        register_plan(root, PROCESS_ROOT, change, plan_path,
-                      actor_id="author", context_id=f"author-{change}", kind="agent")
-        begin_implementation(root, PROCESS_ROOT, change, actor_id="implementer",
-                             context_id=f"implementation-{change}", kind="agent")
-        for profile in contract["requiredProfiles"]:
-            state, report = verify_change(root, PROCESS_ROOT, self.fixture.project, change, profile)
-            self.assertEqual("passed", report["status"])
+        existing = self.state_path(change, root)
+        if root == self.root and existing.is_file():
+            return read_json(existing)
+        state = prepare_verified_change(self.fixture, change, root, PROCESS_ROOT)
+        self.assertEqual("verified", state["phase"])
         return state
 
     def assign(self, change: str, context: str = "review-context", *,
@@ -386,7 +487,7 @@ class ReviewContextTests(unittest.TestCase):
                 ]
                 processes.append(subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                  env=_child_environment()))
+                                                  env=process_child_environment()))
             outputs = [process.communicate(timeout=45) for process in processes]
             self.assertEqual([0, 2], sorted(process.returncode for process in processes), outputs)
             rejected = next(stdout for process, (stdout, _) in zip(processes, outputs) if process.returncode)
@@ -496,7 +597,7 @@ class ReviewContextTests(unittest.TestCase):
             [sys.executable, str(PROCESS_ROOT / "processctl.py"), "change", "review", "replace-reused",
              "--project-root", str(self.root), "--process-root", str(PROCESS_ROOT),
              "--change-id", "current", "--actor", "new-reviewer", "--context", "new-context", "--json"],
-            capture_output=True, timeout=45, check=False, env=_child_environment(),
+            capture_output=True, timeout=45, check=False, env=process_child_environment(),
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         output = json.loads(result.stdout)

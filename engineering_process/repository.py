@@ -61,6 +61,44 @@ def resolve_commit(root: Path, reference: str) -> str:
     ).decode("ascii").strip()
 
 
+def changed_paths(root: Path, comparison_base: str) -> tuple[str, ...]:
+    """Return candidate paths changed from a pinned base through the worktree.
+
+    The result intentionally includes staged, unstaged, committed, deleted and
+    untracked consumer files. Lifecycle state remains outside the impact domain.
+    """
+    root = root.resolve()
+    base = resolve_commit(root, comparison_base)
+    records = _git(
+        root,
+        [
+            "diff",
+            "--name-only",
+            "-z",
+            "--diff-filter=ACDMRTUXB",
+            base,
+            "--",
+        ],
+    )
+    untracked = _git(
+        root,
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    values: set[str] = set()
+    for raw in records.split(b"\0") + untracked.split(b"\0"):
+        if not raw:
+            continue
+        relative = os.fsdecode(raw)
+        if os.name == "nt":
+            relative = relative.replace("\\", "/")
+        if relative.startswith(tuple(os.fsdecode(prefix) for prefix in STATE_PREFIXES)):
+            continue
+        values.add(relative)
+        if len(values) > MAX_FILES:
+            raise ProcessError(f"candidate impact exceeds {MAX_FILES} paths")
+    return tuple(sorted(values))
+
+
 def require_committed_candidate(root: Path, head: str = "HEAD") -> None:
     root = root.resolve()
     head = resolve_commit(root, head)

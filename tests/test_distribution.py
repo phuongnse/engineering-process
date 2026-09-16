@@ -51,6 +51,22 @@ class DistributionTests(unittest.TestCase):
         }
         self.assertEqual(expected, declared)
 
+    def test_packaged_schema_assets_match_the_source_catalog(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        declared = {
+            target: set(paths)
+            for target, paths in metadata["tool"]["setuptools"]["data-files"].items()
+            if target == "share/engineering-process/schemas"
+        }
+        expected = {
+            "share/engineering-process/schemas": {
+                f"schemas/{path.name}"
+                for path in (root / "schemas").glob("*.json")
+            }
+        }
+        self.assertEqual(expected, declared)
+
     def test_digests_follow_canonical_relative_posix_order(self) -> None:
         entries = [
             ("skills/sample/SKILL.md", b"skill\n"),

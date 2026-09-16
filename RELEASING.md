@@ -5,8 +5,12 @@ PR after CI and independent review.
 
 ## Prepare
 
-Every public change adds one release-changes/*.json fragment with type fix,
-capability, or breaking. The highest type derives the next version:
+Every externally meaningful change adds one `release-changes/*.json` fragment with
+`schemaVersion: 2`, a direct source reference, and complete problem/change/surface/
+application/compatibility/notes details. If one pull request resolves multiple issues,
+create one fragment per issue or independently adoptable behavior. Do not use an issue
+range as the only description. The fragment type is `fix`, `capability`, or `breaking`;
+the highest type derives the next version:
 
 - fix: patch;
 - capability: minor;
@@ -16,9 +20,11 @@ Run the Prepare release PR workflow with that exact version. It executes:
 
     python verification/prepare_release.py VERSION
 
-The script validates every fragment, updates pyproject.toml,
-engineering_process.VERSION, release.json, and RELEASE_NOTES.md, removes consumed fragments, and opens
-automation/release/vVERSION. It refuses a version not derived from the fragments.
+The script validates every fragment, creates a schema-v6 `release.json` that preserves
+all detail records, updates pyproject.toml, engineering_process.VERSION, and
+RELEASE_NOTES.md, removes consumed fragments, and opens automation/release/vVERSION.
+It refuses incomplete or mixed legacy fragments and a version not derived from the
+fragments.
 
 For an owner-authorized release-tooling correction, run the same preparation command
 in the candidate branch and review its code and generated version files together in
@@ -26,21 +32,27 @@ the normal Release PR. This retains the same CI, independent review, and merge b
 
 ## Release contents
 
-`release.json` is the sole contents authority. Each fragment summary explains the
-observable change and its consumer impact; source identifies the issue, PR, or owned
-change reference. Breaking-change summaries name the upgrade action or point to its
-versioned compatibility guidance. Implementation identities and version-bump PR titles
-are not descriptions of shipped features.
+`release.json` is the sole contents authority. Each record explains the problem,
+observable change, affected paths, application action, compatibility impact, and
+important notes; source identifies one issue, PR, or owned change reference. A
+breaking record names the upgrade action or points to its versioned compatibility
+guidance. Implementation identities and version-bump PR titles are not descriptions
+of shipped features.
 
 Preparation generates `RELEASE_NOTES.md`, grouped into breaking changes, features,
-and fixes, with every summary/source, version comparison, and adoption guidance.
-Review this artifact alongside the manifest. Regenerate it with
+and fixes, with each issue source and its complete detail fields. Detailed releases
+also state explicitly when no breaking changes are included. Review this artifact
+alongside the manifest. Regenerate it with
 `python verification/render_release_notes.py --output RELEASE_NOTES.md`; local and
 CI checks use `--check RELEASE_NOTES.md` to reject missing or stale bytes. Do not
 maintain a second handwritten changelog.
 The wrapper supplies consumer-owned records and upgrade text to the reusable renderer
 under the selected `release-notes` standard. The same definition drives generation and
 byte comparison; [consumer overrides](ARTIFACT_STANDARDS.md) remain repository-owned.
+Record text is rendered as readable literal Markdown metadata: only structural syntax
+is escaped, and ordinary owned references use normal inline-code delimiters. A release
+record is not a substitute for a list of source issues; split independently adoptable
+issues or behaviors into separate records.
 
 ## Publish
 
@@ -77,6 +89,9 @@ and retries the idempotent adoption dispatch.
 Source commits predating the owned notes renderer retain the legacy generated-notes
 path. Previously published release bodies are never rewritten; a body mismatch for
 the new format fails instead of silently replacing reviewed or published text.
+If a published release such as v2.5.0 needs clearer explanation, preserve its tag and
+published body and make the correction through a later owner-authorized release or
+the owner's documented publication policy.
 
 There are no release-plan review dispatches, authority transitions, evidence restore
 chains, or separate publication controller. Branch protection, CI, independent

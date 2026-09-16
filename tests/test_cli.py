@@ -61,6 +61,16 @@ class CliTests(unittest.TestCase):
             ["change", "explain", "--change-id", "sample-change"]
         )
         self.assertEqual("sample-change", explain.change_id)
+        affected = build_parser().parse_args(
+            ["change", "verify", "--change-id", "sample-change", "--affected", "--affected-profile", "development"]
+        )
+        self.assertTrue(affected.affected)
+        self.assertEqual(["development"], affected.affected_profile)
+        impact = build_parser().parse_args(
+            ["change", "explain", "--change-id", "sample-change", "--impact", "--profile", "development"]
+        )
+        self.assertTrue(impact.impact)
+        self.assertEqual("development", impact.profile)
 
     def test_remaining_command_propagates_failed_execution(self) -> None:
         state = {
