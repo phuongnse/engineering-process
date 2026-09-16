@@ -60,8 +60,11 @@ with a keyword, identifier, filename, diagnostic-text, environment-variable, or
 exception vocabulary. If an external or ambient host factor is volatile and outside
 the repository's managed authority boundary, decouple it from deterministic decision
 and evidence logic entirely instead of attempting to filter it with blacklists or
-whitelists. A literal mapping remains appropriate only when an owned, versioned
-protocol defines the complete domain, such as a state machine or schema enum.
+whitelists. Verification checks must demonstrate invariant structural boundaries or
+behavioral invariance across unmanaged variance, rather than asserting the absence
+or presence of specific local tokens, identifier names, or incident-specific strings.
+A literal mapping remains appropriate only when an owned, versioned protocol defines
+the complete domain, such as a state machine or schema enum.
 
 Verification proves only the deterministic properties exercised by its exact
 commands on the unchanged candidate. It must not claim to infer architecture,

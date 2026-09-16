@@ -200,19 +200,28 @@ class ArchitectureTests(unittest.TestCase):
                     f"{path.name} must remain agent-neutral and not reference vendor brand {brand!r}",
                 )
 
-    def test_runtime_has_no_transient_marker_lists(self) -> None:
-        evidence_text = (RUNTIME / "evidence.py").read_text(encoding="utf-8")
-        forbidden_tokens = (
-            "TRANSIENT_MARKERS",
-            "TRANSIENT_ENV_PREFIXES",
-            "_transient_prefixes",
+    def test_execution_identity_never_reads_ambient_environment(self) -> None:
+        source = (RUNTIME / "evidence.py").read_text(encoding="utf-8")
+        module_ast = ast.parse(source)
+        fn_node = next(
+            (
+                node
+                for node in ast.walk(module_ast)
+                if isinstance(node, ast.FunctionDef) and node.name == "execution_identity"
+            ),
+            None,
         )
-        for token in forbidden_tokens:
-            self.assertNotIn(
-                token,
-                evidence_text,
-                f"evidence.py must adopt Zero-List architecture and not contain {token!r}",
-            )
+        self.assertIsNotNone(fn_node, "execution_identity function must exist in evidence.py")
+        assert fn_node is not None
+        for child in ast.walk(fn_node):
+            if isinstance(child, ast.Attribute) and child.attr == "environ":
+                self.fail(
+                    "execution_identity must not access os.environ; Zero-List architecture forbids ambient environment identity"
+                )
+            if isinstance(child, ast.Name) and child.id == "environ":
+                self.fail(
+                    "execution_identity must not access environ; Zero-List architecture forbids ambient environment identity"
+                )
 
 
 if __name__ == "__main__":
