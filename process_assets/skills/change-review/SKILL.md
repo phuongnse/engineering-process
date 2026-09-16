@@ -109,6 +109,16 @@ Apply the existing blocking rules to demonstrated violations even when tests pas
 preference for a pattern, shorter code, or a different valid structure is insufficient.
 Do not retrofit new design criteria into the frozen contract.
 
+For each material accepted criterion or risk, independently trace observed symptom or
+failure mode -> violated behavior or invariant -> actual mechanism -> smallest
+sufficient changed boundary -> evidence capable of distinguishing the faulty state
+from the correction. Block a solution that fixes a symptom while leaving that
+mechanism reachable, changes a broader boundary without a contract reason, or claims
+minimality without inspecting the complete diff. The runtime plan-scope check proves
+only that paths were declared; it does not prove causal correctness or minimality.
+Do not treat a valid schema, a `satisfied`/`approved` boolean, a checklist, test
+count, coverage number, or green profile as proof of those semantic properties.
+
 Assess relevant project knowledge against implementation and accepted requirements:
 can the intended reader find the authoritative current source, understand sufficient
 explanations in a logical order, and use meaningful connections where helpful? A
@@ -129,6 +139,10 @@ or applicable contract and a concrete consequence; tests must not introduce new 
 behavior. Test counts, coverage percentages, or green profiles alone do not establish
 adequacy. No newly added test is required when existing evidence protects the behavior
 or an automated behavioral check is not meaningful; preserve consumer-mandated policies.
+Evidence references must be grounded in the exact reviewed snapshot and the actual
+consumer checks or focused regression boundary. A passing command proves only the
+properties its expectations and execution boundary observe; it cannot by itself prove
+that the selected check exercises the causal mechanism claimed by the plan.
 Ensure the candidate implementation remains strictly agent-neutral and does not
 introduce hardcoded AI assistant harness names or vendor brand couplings into
 runtime logic or consumer boundaries. Reject symptom-patching workarounds: verify

@@ -310,7 +310,18 @@ register its old plan; that registration is assigned review schema version 6. Re
 schema version 7 requires an independent result and evidence for each entry. A
 violation links to a blocking finding, so it cannot coexist with approval. Structural
 completeness is machine-enforced; the reviewer remains responsible for contextual
-truth.
+truth. New plans also treat `workItems[].affectedPaths` as literal repository-relative
+file or directory boundaries. Before final verification, review assignment, and
+finish, the runtime rejects a candidate path outside those declared boundaries and
+ignores only the exact contract/plan input paths recorded as process control inputs.
+This proves scope alignment, not root-cause correctness or minimality.
+
+The plan and implementation skills require a causal chain from observed behavior or
+risk through the violated contract, actual mechanism, smallest sufficient boundary,
+and falsifiable evidence. Independent review must inspect that chain and the complete
+diff. Schema validity, status booleans, check counts, coverage numbers, and green
+profiles establish only their observed structural or execution properties; they do
+not replace that semantic judgment.
 
 This assessment is not a production certificate. Production still requires the
 consumer's immutable readiness pack, every required capability in `enforced` state,

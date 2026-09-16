@@ -16,6 +16,8 @@ from engineering_process.contracts import ProcessError, digest_json
 from engineering_process.artifact_standards import resolve_standard
 from engineering_process.distribution import distribution_digest
 from engineering_process.lifecycle import (
+    _scope_candidate_path,
+    _scope_path,
     begin_implementation,
     finish_change,
     lifecycle_status,
@@ -124,7 +126,7 @@ class LifecycleTests(unittest.TestCase):
             ],
             "requiredProfiles": ["development", "review"],
         }
-        self.contract_path = self.root / "change.json"
+        self.contract_path = self.root / ".process" / "inputs" / "change.json"
         write_json(self.contract_path, self.contract)
         self.invariant_ids = [
             item["id"] for item in load_invariant_floor(PROCESS_ROOT)["invariants"]
@@ -138,7 +140,7 @@ class LifecycleTests(unittest.TestCase):
                 {
                     "id": "implementation",
                     "outcome": "Implement accepted behavior",
-                    "affectedPaths": ["product.txt"],
+                    "affectedPaths": ["product.txt", ".process/"],
                 }
             ],
             "risks": [],
@@ -152,7 +154,7 @@ class LifecycleTests(unittest.TestCase):
                 for invariant_id in self.invariant_ids
             ],
         }
-        self.plan_path = self.root / "plan.json"
+        self.plan_path = self.root / ".process" / "inputs" / "plan.json"
         write_json(self.plan_path, self.plan)
 
     def tearDown(self) -> None:
@@ -185,6 +187,101 @@ class LifecycleTests(unittest.TestCase):
             context_id="implementation-context",
             kind="agent",
         )
+
+    def test_new_run_records_control_inputs_and_enforces_plan_scope(self) -> None:
+        self.plan["workItems"][0]["affectedPaths"] = ["product.txt"]
+        write_json(self.plan_path, self.plan)
+        self.begin()
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual(
+            [
+                ".process/inputs/change.json",
+                ".process/inputs/plan.json",
+            ],
+            state["controlPaths"],
+        )
+        self.assertTrue(
+            any(
+                event["event"] == "plan-scope-registered"
+                for event in state["history"]
+            )
+        )
+
+        (self.root / "unplanned.txt").write_text("outside the plan\n", encoding="utf-8")
+        (self.root / "product.txt.bak").write_text("sibling path\n", encoding="utf-8")
+        (self.root / ".process" / "unrelated.txt").write_text(
+            "unrelated process path\n", encoding="utf-8"
+        )
+        with patch("engineering_process.lifecycle.run_profile") as runner:
+            with self.assertRaisesRegex(
+                ProcessError,
+                "candidate paths are outside the declared plan scope: "
+                ".process/unrelated.txt, product.txt.bak, unplanned.txt",
+            ):
+                verify_change(
+                    self.root,
+                    PROCESS_ROOT,
+                    self.project,
+                    "sample-change",
+                    "development",
+                )
+            runner.assert_not_called()
+
+        self.assertEqual(
+            "implementing",
+            lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
+        )
+
+    def test_legacy_run_without_scope_registration_remains_readable(self) -> None:
+        self.begin()
+        state_path = self.root / ".process/runs/sample-change/run.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["history"] = [
+            event
+            for event in state["history"]
+            if event["event"] != "plan-scope-registered"
+        ]
+        state.pop("controlPaths")
+        write_json(state_path, state)
+        (self.root / "unplanned.txt").write_text("legacy candidate\n", encoding="utf-8")
+
+        state, report = verify_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            "sample-change",
+            "development",
+        )
+        self.assertEqual("passed", report["status"])
+        self.assertEqual("implementing", state["phase"])
+
+    def test_review_assignment_rejects_new_unplanned_path(self) -> None:
+        self.begin()
+        self.verify_all()
+        (self.root / "unplanned.txt").write_text("outside the plan\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "outside the declared plan scope"):
+            start_review(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="reviewer",
+                context_id="review-context",
+                kind="agent",
+            )
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual("verified", state["phase"])
+        self.assertIsNone(state["reviewAssignment"])
+
+    def test_scope_normalization_preserves_posix_literal_paths(self) -> None:
+        with patch("engineering_process.lifecycle.os.name", "posix"):
+            boundary = _scope_path("src/", source="test")
+            candidate = _scope_candidate_path(r"src\secret.py")
+
+        self.assertEqual("src", boundary)
+        self.assertEqual(r"src\secret.py", candidate)
+        self.assertFalse(candidate.startswith(boundary + "/"))
+        with self.assertRaisesRegex(ProcessError, "repository-relative"):
+            _scope_path("/", source="test")
 
     def prepare_publication_candidate(self, branch: str = "fix/sample_change") -> str:
         base = subprocess.check_output(
@@ -1455,7 +1552,13 @@ class LifecycleTests(unittest.TestCase):
             },
         }
         write_json(self.root / ".process" / "project.json", self.project)
-        git(self.root, "add", ".process/project.json", "change.json", "plan.json")
+        git(
+            self.root,
+            "add",
+            ".process/project.json",
+            ".process/inputs/change.json",
+            ".process/inputs/plan.json",
+        )
         git(self.root, "commit", "-qm", "test: configure impact assurance")
         self.begin()
 
