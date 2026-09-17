@@ -23,7 +23,7 @@ def child_environment(
     *,
     executable: str | Path | None = None,
     source: Mapping[str, str] | None = None,
-    managed_only: bool = False,
+    managed_only: bool = True,
 ) -> dict[str, str]:
     """Project the environment used by consumer checks.
 
