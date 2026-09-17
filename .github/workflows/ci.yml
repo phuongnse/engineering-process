@@ -85,26 +85,39 @@ jobs:
           - os: windows-latest
             python: "3.14"
     steps:
+      - name: Classify candidate verification
+        id: classify
+        shell: bash
+        env:
+          PR_EVENT_ACTION: ${{ github.event.action }}
+          PR_BASE_CHANGED: ${{ github.event.changes.base && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME:$PR_EVENT_ACTION:$PR_BASE_CHANGED" in
+            push::*|pull_request:opened:*|pull_request:synchronize:*|pull_request:reopened:*|pull_request:ready_for_review:*|pull_request:edited:true)
+              mode=full
+              ;;
+            pull_request:converted_to_draft:*|pull_request:edited:false)
+              mode=retained
+              ;;
+            *)
+              echo "unsupported verification event: $GITHUB_EVENT_NAME/$PR_EVENT_ACTION (base changed: $PR_BASE_CHANGED)" >&2
+              exit 1
+              ;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: >-
-          github.event_name == 'push' ||
-          github.event.action == 'opened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review' ||
-          (github.event.action == 'edited' && github.event.changes.base)
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        if: steps.classify.outputs.mode == 'full'
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        if: steps.classify.outputs.mode == 'retained'
+        with:
+          python-version: ${{ matrix.python }}
       - name: Install source and test dependencies
-        if: >-
-          github.event_name == 'push' ||
-          github.event.action == 'opened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review' ||
-          (github.event.action == 'edited' && github.event.changes.base)
+        if: steps.classify.outputs.mode == 'full'
         run: >-
           python -m pip install
           -r engineering_process/requirements-runtime.txt
@@ -112,46 +125,19 @@ jobs:
           -r engineering_process/requirements-build.txt
           --editable .
       - name: Test runtime and contracts
-        if: >-
-          github.event_name == 'push' ||
-          github.event.action == 'opened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review' ||
-          (github.event.action == 'edited' && github.event.changes.base)
+        if: steps.classify.outputs.mode == 'full'
         run: python verification/run_test_suite.py
       - name: Validate the complete skill graph
-        if: >-
-          github.event_name == 'push' ||
-          github.event.action == 'opened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review' ||
-          (github.event.action == 'edited' && github.event.changes.base)
+        if: steps.classify.outputs.mode == 'full'
         run: python processctl.py skills validate --root process_assets/skills
       - name: Validate release identity
-        if: >-
-          github.event_name == 'push' ||
-          github.event.action == 'opened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review' ||
-          (github.event.action == 'edited' && github.event.changes.base)
+        if: steps.classify.outputs.mode == 'full'
         run: python processctl.py release validate
       - name: Validate reviewed release contents
-        if: >-
-          github.event_name == 'push' ||
-          github.event.action == 'opened' ||
-          github.event.action == 'synchronize' ||
-          github.event.action == 'reopened' ||
-          github.event.action == 'ready_for_review' ||
-          (github.event.action == 'edited' && github.event.changes.base)
+        if: steps.classify.outputs.mode == 'full'
         run: python verification/render_release_notes.py --check RELEASE_NOTES.md
       - name: Verify retained code evidence for metadata-only update
-        if: >-
-          github.event_name == 'pull_request' &&
-          (github.event.action == 'converted_to_draft' ||
-           (github.event.action == 'edited' && !github.event.changes.base))
+        if: steps.classify.outputs.mode == 'retained'
         env:
           GH_TOKEN: ${{ github.token }}
           REQUIRED_CHECK_NAME: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -196,12 +182,5 @@ jobs:
           )
           PY
       - name: Build and install the distribution
-        if: >-
-          (github.event_name == 'push' ||
-           github.event.action == 'opened' ||
-           github.event.action == 'synchronize' ||
-           github.event.action == 'reopened' ||
-           github.event.action == 'ready_for_review' ||
-           (github.event.action == 'edited' && github.event.changes.base)) &&
-          matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        if: steps.classify.outputs.mode == 'full' && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         run: python verification/verify_distribution.py
