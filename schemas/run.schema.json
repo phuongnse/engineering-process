@@ -13,6 +13,8 @@
     "contract": {"$ref": "#/$defs/boundDocument"},
     "comparisonBaseCommit": {"type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
     "plan": {"oneOf": [{"$ref": "#/$defs/boundDocument"}, {"type": "null"}]},
+    "supersedes": {"$ref": "#/$defs/supersession"},
+    "blocker": {"$ref": "#/$defs/blocker"},
     "implementations": {
       "type": "array",
       "maxItems": 256,
@@ -155,6 +157,7 @@
         "outputExceeded": {"type": "boolean"},
         "descendantsTerminated": {"type": "boolean"},
         "streamFailed": {"type": "boolean"},
+        "cleanupFailed": {"type": "boolean"},
         "durationMs": {"type": "integer", "minimum": 0},
         "stdout": {"$ref": "#/$defs/stream"},
         "stderr": {"$ref": "#/$defs/stream"}
@@ -189,6 +192,8 @@
         "profile": {"$ref": "#/$defs/id"},
         "check": {"$ref": "#/$defs/id"},
         "position": {"type": "integer", "minimum": 1, "maximum": 32},
+        "failureKind": {"enum": ["command-failure", "execution-condition", "unknown"]},
+        "failure": {"$ref": "#/$defs/failureSummary"},
         "command": {
           "type": "array",
           "minItems": 6,
@@ -227,6 +232,74 @@
         "recordedAt": {"type": "string", "format": "date-time"},
         "reason": {"type": "string", "minLength": 1, "maxLength": 1000}
       }
+    },
+    "failureSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "exitCode", "timedOut", "outputExceeded", "descendantsTerminated", "streamFailed", "durationMs", "stdout", "stderr"],
+      "properties": {
+        "status": {"const": "failed"},
+        "exitCode": {"type": "integer"},
+        "timedOut": {"type": "boolean"},
+        "outputExceeded": {"type": "boolean"},
+        "descendantsTerminated": {"type": "boolean"},
+        "streamFailed": {"type": "boolean"},
+        "cleanupFailed": {"type": "boolean"},
+        "durationMs": {"type": "integer", "minimum": 0},
+        "stdout": {"$ref": "#/$defs/stream"},
+        "stderr": {"$ref": "#/$defs/stream"}
+      }
+    },
+    "supersession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changeId", "runPath", "runDigest", "phase", "cycle", "comparisonBaseCommit", "controlPaths"],
+      "properties": {
+        "changeId": {"$ref": "#/$defs/id"},
+        "runPath": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "runDigest": {"$ref": "#/$defs/digest"},
+        "phase": {"enum": ["specified", "planned", "implementing", "verified", "review-pending", "approved", "changes-requested", "completed", "blocked"]},
+        "cycle": {"type": "integer", "minimum": 0},
+        "comparisonBaseCommit": {"type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+        "controlPaths": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "cycle", "at", "action", "reason"],
+      "properties": {
+        "kind": {"enum": ["plan-scope", "verification-execution"]},
+        "cycle": {"type": "integer", "minimum": 1},
+        "at": {"type": "string", "format": "date-time"},
+        "action": {"enum": ["owner-decision", "consumer-action"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "\\S"},
+        "errorCode": {"enum": ["invalid-working-directory", "spawn-failed"]},
+        "profile": {"$ref": "#/$defs/id"},
+        "paths": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512}
+        },
+        "checkpoint": {"$ref": "#/$defs/checkpoint"},
+        "inputDigest": {"$ref": "#/$defs/digest"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "plan-scope"}}, "required": ["kind"]},
+          "then": {"required": ["paths", "checkpoint"], "not": {"required": ["profile"]}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "verification-execution"}}, "required": ["kind"]},
+          "then": {"required": ["profile", "checkpoint", "errorCode"]}
+        }
+      ]
     },
     "reviewReplacement": {
       "type": "object",

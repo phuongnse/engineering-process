@@ -88,3 +88,9 @@ gaps after completion. Carry the owner and stable record URL for every accepted-
 or tracked-follow-up disposition into the durable handoff. Finish never edits
 readiness, upgrades a pack version, promotes a capability, or turns `building` into a
 production claim; those are reviewed consumer-owned source changes.
+
+Completion consumes only the current run's contract, plan, fresh verification, and
+approved review. A superseding run's prior relation is historical provenance; it does
+not make the prior run's evidence, approval, findings, or receipt valid for the new
+candidate. The prior blocked run remains visible and is not rewritten or marked
+complete by finishing its replacement.

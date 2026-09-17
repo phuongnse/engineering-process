@@ -7,11 +7,11 @@ description: Run the project-owned verification profiles on one unchanged reposi
 
 ## Route card
 
-**State:** `implementing`. **Do:** inspect `change explain`, then execute only the
-accepted required profiles that are not validly reusable; use the exact consumer
-commands and fail closed on scope, mutation, timeout, or unknown identity. **Evidence:**
-passed reports bound to one checkpoint and input identity. **Next:** independent
-review; profiles are not rerun by review or finish.
+**State:** `implementing` (or a recorded execution blocker). **Do:** inspect `change
+explain`, then execute only the accepted required profiles that are not validly
+reusable; use the exact consumer commands and fail closed on scope, mutation, timeout,
+or unknown identity. **Evidence:** passed reports bound to one checkpoint and input
+identity. **Next:** independent review; profiles are not rerun by review or finish.
 
 Read the registered acceptance criteria and .process/project.json. When publication
 is required, commit the complete candidate on a valid publication branch before final
@@ -37,6 +37,23 @@ accepted contract and plan, consumer project policy, process authority, runtime 
 runs again. Optional configured profiles not selected by the accepted contract are
 reported as inapplicable; a required profile missing from the current policy is
 blocked. This path never deduplicates check positions or equal check IDs.
+
+A failed full-profile report is not evidence for any required profile. The same run
+retains its failed check, one-based position, exit result, timeout/output/stream and
+cleanup indicators, bounded stream counts/hashes, safe reproduction arguments, report
+digest, recorded time, and candidate checkpoint. `change explain` exposes these facts
+with a `current`, `stale`, or `unavailable` label. It never includes raw stdout,
+stderr, traceback, secrets, or a guessed test failure; if the consumer command has no
+safe structured failure report, that limit is explicit. Historical or partial reports
+are not treated as the current candidate.
+
+When a failed report still matches the exact candidate and input identity,
+`--remaining` blocks instead of retrying the same operation. Change the relevant
+consumer input, candidate, authority, or dependency through its owner-controlled route,
+or deliberately request the explicit full-profile refresh. A later pass proves only
+that later execution passed; it does not by itself explain or prove the earlier
+failure was fixed. A selective check/module/command run remains diagnostic and never
+becomes required evidence.
 
 The stage reuse map is deliberately narrow:
 
@@ -99,9 +116,12 @@ execution, an unresolved final selection blocks remaining verification, and an o
 or release workflow may intentionally request the explicit full profile.
 
 Commands are exact argument arrays with timeouts. Do not substitute a different tool
-or narrower check when a required command fails. A command failure, timeout, output
-or stream failure, failed descendant cleanup, or tracked repository mutation is a
-failure and leaves the change in implementing. Successfully cleaned post-exit
+or narrower check when a required command fails. A non-zero exit is a command failure;
+timeout, output limit, stream, cleanup, spawn, and other inability-to-produce-report
+conditions are execution failures. The report or lifecycle blocker identifies which
+condition occurred and the missing consumer action. A command failure report leaves
+the change implementing but blocks same-input remaining work; a spawn failure records
+the same bounded stop without raw process detail. Successfully cleaned post-exit
 descendants remain recorded without replacing the foreground command result.
 
 In a fresh session, use the consumer's declared bootstrap and the supported runtime

@@ -228,8 +228,14 @@ class LifecycleTests(unittest.TestCase):
             runner.assert_not_called()
 
         self.assertEqual(
-            "implementing",
+            "blocked",
             lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"],
+        )
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual("plan-scope", state["blocker"]["kind"])
+        self.assertEqual(
+            [".process/unrelated.txt", "product.txt.bak", "unplanned.txt"],
+            state["blocker"]["paths"],
         )
 
     def test_run_without_current_scope_registration_is_rejected(self) -> None:
@@ -245,6 +251,222 @@ class LifecycleTests(unittest.TestCase):
         write_json(state_path, state)
         with self.assertRaisesRegex(ProcessError, "controlPaths"):
             lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+
+    def test_owner_supersedes_plan_scope_blocker_without_carrying_evidence(self) -> None:
+        self.plan["workItems"][0]["affectedPaths"] = ["product.txt"]
+        write_json(self.plan_path, self.plan)
+        self.begin()
+        output = self.root / "output" / "required.txt"
+        output.parent.mkdir(parents=True)
+        output.write_text("inherited implementation\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "owner decision required"):
+            verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                "sample-change",
+                "development",
+            )
+
+        old_run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        old_run = json.loads(old_run_path.read_text(encoding="utf-8"))
+        new_contract = deepcopy(self.contract)
+        new_contract.update(
+            {
+                "id": "recovery-change",
+                "summary": "Continue the accepted outcome after a plan boundary decision",
+                "comparisonBase": old_run["comparisonBaseCommit"],
+                "supersedes": {
+                    "changeId": "sample-change",
+                    "reason": "missing-plan-boundary",
+                },
+            }
+        )
+        new_contract_path = self.root / ".process" / "inputs" / "recovery-change.json"
+        write_json(new_contract_path, new_contract)
+        started = start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            new_contract_path,
+            actor_id="owner",
+            context_id="recovery-owner",
+            kind="human",
+        )
+        self.assertEqual("specified", started["phase"])
+        self.assertEqual("sample-change", started["supersedes"]["changeId"])
+        self.assertEqual("sample-change", started["supersedes"]["runPath"].split("/")[2])
+        self.assertEqual({}, started["verification"])
+        self.assertIsNone(started["review"])
+        self.assertEqual(
+            digest_json(old_run), started["supersedes"]["runDigest"]
+        )
+
+        new_plan = deepcopy(self.plan)
+        new_plan["changeId"] = "recovery-change"
+        new_plan["contractDigest"] = digest_json(new_contract)
+        new_plan_path = self.root / ".process" / "inputs" / "recovery-change-plan.json"
+        new_plan["workItems"][0]["affectedPaths"] = ["product.txt"]
+        write_json(new_plan_path, new_plan)
+        with self.assertRaisesRegex(ProcessError, "output/required.txt"):
+            register_plan(
+                self.root,
+                PROCESS_ROOT,
+                "recovery-change",
+                new_plan_path,
+                actor_id="owner",
+                context_id="recovery-owner",
+                kind="human",
+            )
+        self.assertEqual(
+            "specified",
+            lifecycle_status(self.root, PROCESS_ROOT, "recovery-change")["phase"],
+        )
+
+        new_plan["workItems"][0]["affectedPaths"] = ["product.txt", "output"]
+        write_json(new_plan_path, new_plan)
+        register_plan(
+            self.root,
+            PROCESS_ROOT,
+            "recovery-change",
+            new_plan_path,
+            actor_id="owner",
+            context_id="recovery-owner",
+            kind="human",
+        )
+        state = begin_implementation(
+            self.root,
+            PROCESS_ROOT,
+            "recovery-change",
+            actor_id="implementer-recovery",
+            context_id="implementation-recovery",
+            kind="agent",
+        )
+        self.assertEqual({}, state["verification"])
+        verify_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            "recovery-change",
+            "development",
+        )
+        state, _report = verify_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            "recovery-change",
+            "review",
+        )
+        self.assertEqual("verified", state["phase"])
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "recovery-change",
+            actor_id="reviewer-recovery",
+            context_id="review-recovery",
+            kind="agent",
+        )
+        review = self.review_document("approved")
+        review["changeId"] = "recovery-change"
+        review["reviewer"] = {
+            "actorId": "reviewer-recovery",
+            "contextId": "review-recovery",
+            "kind": "agent",
+        }
+        review_path = self.root / ".process" / "runs" / "recovery-review.json"
+        write_json(review_path, review)
+        submit_review(self.root, PROCESS_ROOT, "recovery-change", review_path)
+        completed, _receipt = finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "recovery-change",
+            actor_id="coordinator",
+            context_id="finish-recovery",
+            kind="agent",
+        )
+        self.assertEqual("completed", completed["phase"])
+        self.assertEqual("blocked", lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["phase"])
+
+    def test_superseding_recovery_rejects_prior_review_history(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        new_contract = deepcopy(self.contract)
+        new_contract.update(
+            {
+                "id": "invalid-recovery",
+                "supersedes": {
+                    "changeId": "sample-change",
+                    "reason": "missing-plan-boundary",
+                },
+            }
+        )
+        path = self.root / ".process" / "inputs" / "invalid-recovery.json"
+        write_json(path, new_contract)
+        with self.assertRaisesRegex(ProcessError, "implementing or blocked"):
+            start_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                path,
+                actor_id="owner",
+                context_id="owner-recovery",
+                kind="human",
+            )
+        self.assertFalse(
+            (self.root / ".process" / "runs" / "invalid-recovery" / "run.json").exists()
+        )
+
+    def test_superseding_recovery_rejects_a_new_comparison_base(self) -> None:
+        self.plan["workItems"][0]["affectedPaths"] = ["product.txt"]
+        write_json(self.plan_path, self.plan)
+        self.begin()
+        (self.root / "output.txt").write_text("inherited\n", encoding="utf-8")
+        with self.assertRaises(ProcessError):
+            verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                "sample-change",
+                "development",
+            )
+        git(self.root, "add", "output.txt")
+        git(self.root, "commit", "-qm", "test: move the recovery base")
+
+        contract = deepcopy(self.contract)
+        contract.update(
+            {
+                "id": "wrong-base-recovery",
+                "comparisonBase": "HEAD",
+                "supersedes": {
+                    "changeId": "sample-change",
+                    "reason": "missing-plan-boundary",
+                },
+            }
+        )
+        path = self.root / ".process" / "inputs" / "wrong-base-recovery.json"
+        write_json(path, contract)
+        with self.assertRaisesRegex(ProcessError, "retain the prior comparison base"):
+            start_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                path,
+                actor_id="owner",
+                context_id="recovery-owner",
+                kind="human",
+            )
 
     def test_review_assignment_rejects_new_unplanned_path(self) -> None:
         self.begin()
@@ -1219,6 +1441,118 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("implementing", state["phase"])
         self.assertEqual(["profile-failed"], process_improvement_signals(state))
 
+    def test_failed_profile_diagnostic_is_current_and_remaining_does_not_retry(self) -> None:
+        secret = "TOPSECRET-LIFECYCLE-DIAGNOSTIC"
+        self.project["profiles"]["development"] = [
+            {
+                "id": "format",
+                "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                "timeoutSeconds": 10,
+            },
+            {
+                "id": "tests",
+                "run": [
+                    sys.executable,
+                    "-c",
+                    f"import sys; print({secret!r}, file=sys.stderr); raise SystemExit(17)",
+                ],
+                "timeoutSeconds": 10,
+            },
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+
+        state, report = verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        self.assertEqual("failed", report["status"])
+        self.assertEqual("command-failure", report["diagnostic"]["failureKind"])
+        self.assertEqual(17, report["diagnostic"]["failure"]["exitCode"])
+        self.assertEqual("profile-failed", state["history"][-1]["event"])
+        self.assertRegex(state["history"][-1]["details"]["reportDigest"], r"^sha256:[0-9a-f]{64}$")
+
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        requirement = next(
+            item for item in selection["requirements"] if item["profile"] == "development"
+        )
+        self.assertEqual("blocked", selection["status"])
+        self.assertEqual("blocked", requirement["action"])
+        self.assertEqual("current", requirement["diagnostic"]["status"])
+        self.assertEqual("tests", requirement["diagnostic"]["check"])
+        self.assertEqual(
+            requirement["diagnostic"], selection["diagnostics"][0]
+        )
+        persisted = (
+            self.root / ".process" / "runs" / "sample-change" / "run.json"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(secret, persisted)
+        self.assertNotIn(sys.executable, persisted)
+
+        with patch("engineering_process.lifecycle.run_profile") as runner:
+            with self.assertRaisesRegex(ProcessError, "verification selection is blocked"):
+                verify_remaining(
+                    self.root, PROCESS_ROOT, self.project, "sample-change"
+                )
+        runner.assert_not_called()
+
+    def test_missing_failure_descriptor_is_reported_as_unavailable(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(17)",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        path = self.root / ".process" / "runs" / "sample-change" / "run.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state["verification"]["development"].pop("diagnostic")
+        write_json(path, state)
+
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        requirement = next(
+            item for item in selection["requirements"] if item["profile"] == "development"
+        )
+        self.assertEqual("unknown", requirement["status"])
+        self.assertEqual("blocked", requirement["action"])
+        self.assertEqual("unavailable", requirement["diagnostic"]["status"])
+        self.assertIn("not recorded", requirement["diagnostic"]["reason"])
+
+    def test_spawn_failure_records_execution_blocker_without_retry(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            "definitely-missing-processctl-test-command"
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        with self.assertRaisesRegex(ProcessError, "cannot start command"):
+            verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                "sample-change",
+                "development",
+            )
+
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual("implementing", state["phase"])
+        self.assertEqual("verification-execution", state["blocker"]["kind"])
+        self.assertEqual("consumer-action", state["blocker"]["action"])
+        self.assertEqual("spawn-failed", state["blocker"]["errorCode"])
+        self.assertEqual("spawn-failed", state["history"][-1]["details"]["errorCode"])
+        self.assertIn("verification-execution-blocked", process_improvement_signals(state))
+        with patch("engineering_process.lifecycle.run_profile") as runner:
+            with self.assertRaisesRegex(ProcessError, "verification selection is blocked"):
+                verify_remaining(
+                    self.root, PROCESS_ROOT, self.project, "sample-change"
+                )
+        runner.assert_not_called()
+
     def test_verification_uses_the_current_project_policy(self) -> None:
         self.begin()
         current = deepcopy(self.project)
@@ -1342,15 +1676,13 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("implementing", state["phase"])
             self.assertEqual(2, runner.call_count)
 
-            state, selection = verify_remaining(
-                self.root, PROCESS_ROOT, self.project, "sample-change"
-            )
-            self.assertEqual("implementing", state["phase"])
-            self.assertEqual(["development"], selection["reuseProfiles"])
-            self.assertEqual(["review"], selection["executeProfiles"])
-            self.assertEqual(3, runner.call_count)
+            with self.assertRaisesRegex(ProcessError, "verification selection is blocked"):
+                verify_remaining(
+                    self.root, PROCESS_ROOT, self.project, "sample-change"
+                )
+            self.assertEqual(2, runner.call_count)
         self.assertEqual(
-            2,
+            1,
             sum(event["event"] == "profile-reused" for event in state["history"]),
         )
 
@@ -1389,6 +1721,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(["development", "review"], selection["reuseProfiles"])
         self.assertEqual(["security"], selection["executeProfiles"])
         self.assertEqual("failed", state["verification"]["security"]["status"])
+        with self.assertRaisesRegex(ProcessError, "verification selection is blocked"):
+            verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
 
     def test_final_impact_assurance_records_selected_units_as_profile_evidence(self) -> None:
         self.project["impactProfiles"] = {
@@ -1493,6 +1829,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(1, runner.call_count)
         self.assertEqual("failed", state["verification"]["development"]["status"])
         self.assertNotIn("review", state["verification"])
+        with self.assertRaisesRegex(ProcessError, "verification selection is blocked"):
+            verify_remaining(
+                self.root, PROCESS_ROOT, self.project, "sample-change"
+            )
+        self.assertEqual(1, runner.call_count)
 
     def test_remaining_verification_re_resolves_after_candidate_mutation(self) -> None:
         self.begin()

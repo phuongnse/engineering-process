@@ -582,6 +582,26 @@ When continuing an incomplete verification, inspect and execute the necessary se
 The explicit `--profile` form remains a refresh and is never silently converted to
 reuse.
 
+If implementation discovers paths outside the frozen plan, verification records a
+`plan-scope` blocker and stops before approval. Do not edit the accepted plan or keep
+retrying the same check. When the accepted outcome is unchanged, an owner can prepare
+a new current-v1 contract with `supersedes` pointing to the blocked run and reason
+`missing-plan-boundary`; `change start` preserves the old run by path/digest and keeps
+its exact comparison base. The new plan must cover the complete inherited diff. The
+new run starts without old verification, approval, findings, or receipt. If the
+outcome changes, use a fresh accepted contract and decision instead.
+
+Failed required verification is kept in the same run. Its safe diagnostic identifies
+the profile/check and position, exit result, timeout/output/stream/cleanup indicators,
+bounded stream metadata, fixed reproduction arguments, report digest, recorded time,
+and candidate checkpoint. `change explain` labels the descriptor current, stale, or
+unavailable; it never persists raw output or guesses a test failure. Remaining-work
+execution blocks a failed report on the same candidate/input identity, while changed
+inputs or a deliberate explicit profile refresh remain separate from evidence reuse.
+Spawn and other execution-condition failures record the missing consumer action. These
+lifecycle blockers are distinct from consumer behavior, owner decisions, and any goal
+harness retry counter.
+
 For fast feedback, consumers may declare the current `impactProfiles` policy in
 `.process/project.json` and run only units related to the candidate paths:
 

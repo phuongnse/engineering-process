@@ -190,6 +190,13 @@ If no issue URL is available yet, the review truthfully remains `review-pending`
 awaiting owner issue creation; missing GitHub tools or CLI access does not waive the
 durable record requirement. The review itself remains read-only.
 
+If a superseding run is presented, review the linked prior run and its digest as
+history, then review the new contract, plan, complete inherited diff, fresh required
+profiles, and independent assignment. Do not treat the relation as approval, do not
+reuse the old run's evidence or findings as current evidence, and reject any new base
+or plan boundary that makes inherited implementation disappear from the reviewed
+range. A plan-scope blocker is a recovery handoff, not permission to bypass review.
+
 For process adoption changes, reviewers assess the candidate against the four bounded cases:
 1) guidance-only update; 2) runtime, dependency, or schema contract break; 3) mixed adoption with product source changes; 4) unknown impact. Verify adoption integrity (`processctl adoption check`, hash lock, doctor) and direct rejection/recovery of superseded inputs without requiring the reviewer to re-review the upstream producer's entire source implementation. Verify that required profiles are satisfied through valid passing reports or valid reuse, with no omitted baseline profiles.
 

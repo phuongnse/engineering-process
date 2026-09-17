@@ -319,23 +319,15 @@ class CommandTests(unittest.TestCase):
         self.assertEqual("failed", report["status"])
         self.assertEqual(["fail"], [item["id"] for item in report["checks"]])
         self.assertEqual({"kind": "profile"}, report["scope"])
-        self.assertEqual(
-            {
-                "kind": "selective-check-reproduction",
-                "profile": "development",
-                "check": "fail",
-                "position": 1,
-                "command": [
-                    "processctl",
-                    "verify",
-                    "--profile",
-                    "development",
-                    "--check-position",
-                    "1",
-                ],
-            },
-            report["diagnostic"],
-        )
+        self.assertEqual("selective-check-reproduction", report["diagnostic"]["kind"])
+        self.assertEqual("development", report["diagnostic"]["profile"])
+        self.assertEqual("fail", report["diagnostic"]["check"])
+        self.assertEqual(1, report["diagnostic"]["position"])
+        self.assertEqual("command-failure", report["diagnostic"]["failureKind"])
+        self.assertEqual(7, report["diagnostic"]["failure"]["exitCode"])
+        self.assertFalse(report["diagnostic"]["failure"]["timedOut"])
+        self.assertFalse(report["diagnostic"]["failure"]["outputExceeded"])
+        self.assertFalse(report["diagnostic"]["failure"]["cleanupFailed"])
 
     def test_profile_failure_descriptor_excludes_child_details(self) -> None:
         secret = "TOPSECRET-DIAGNOSTIC-VALUE"
@@ -396,6 +388,27 @@ class CommandTests(unittest.TestCase):
         )
         self.assertEqual(["rust-tests"], [item["id"] for item in report["checks"]])
         self.assertNotIn("diagnostic", report)
+
+    def test_failure_diagnostic_distinguishes_execution_conditions(self) -> None:
+        project = {
+            "profiles": {
+                "development": [
+                    {
+                        "id": "noisy",
+                        "run": [sys.executable, "-c", "print('x' * 100000)"],
+                        "timeoutSeconds": 10,
+                        "maxOutputBytes": 1024,
+                    }
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_profile(Path(directory), project, "development")
+
+        self.assertEqual("failed", report["status"])
+        self.assertEqual("execution-condition", report["diagnostic"]["failureKind"])
+        self.assertTrue(report["diagnostic"]["failure"]["outputExceeded"])
+        self.assertTrue(report["diagnostic"]["failure"]["stdout"]["truncated"])
 
     def test_duplicate_ids_reproduce_one_authoritative_position(self) -> None:
         project = {

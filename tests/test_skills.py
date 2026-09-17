@@ -170,6 +170,53 @@ class SkillTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
 
+    def test_recovery_guidance_distinguishes_scope_failure_and_diagnostic_retry(self) -> None:
+        roots = ROOT / "process_assets" / "skills"
+        checks = {
+            "deliver-change": (
+                "plan-scope",
+                "supersedes",
+                "Prior findings, approvals",
+                "does not retry a failed profile",
+            ),
+            "change-start": (
+                "same resolved `comparisonBaseCommit`",
+                "recorded plan-scope stop",
+                "without prior verification",
+            ),
+            "change-plan": (
+                "complete diff from its recorded comparison base",
+                "cover inherited source changes",
+            ),
+            "change-implement": (
+                "current run is terminal for this contract",
+                "owner-approved",
+            ),
+            "change-verify": (
+                "current`, `stale`, or `unavailable",
+                "blocks instead of retrying",
+                "explicit full-profile refresh",
+            ),
+            "change-review": (
+                "linked prior run and its digest",
+                "not permission to bypass review",
+            ),
+            "change-complete": (
+                "historical provenance",
+                "does not make the prior run's evidence",
+            ),
+            "process-improve": (
+                "plan-scope recovery",
+                "execution-condition blocker",
+                "goal or orchestration harness",
+            ),
+        }
+        for skill, fragments in checks.items():
+            text = (roots / skill / "SKILL.md").read_text(encoding="utf-8")
+            for fragment in fragments:
+                with self.subTest(skill=skill, fragment=fragment):
+                    self.assertIn(" ".join(fragment.split()), " ".join(text.split()))
+
 
 if __name__ == "__main__":
     unittest.main()

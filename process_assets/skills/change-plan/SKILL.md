@@ -50,6 +50,13 @@ updates or additions in consumer-owned sources. Any proposed cleanup names the
 obstacle, smallest useful repair, and expected benefit; unrelated gaps remain
 non-blocking proposals.
 
+For a contract that supersedes a plan-scope-blocked run, inspect the linked prior run
+and the complete diff from its recorded comparison base. Add only the implementation
+boundaries needed for the already accepted outcome; the new literal boundaries must
+cover inherited source changes as well as the new contract/plan control inputs. Do not
+carry prior verification, review, approval, findings, or correction-budget state into
+the plan, and do not select a new comparison base that hides inherited work.
+
 Explain a material or non-obvious evidence strategy in the existing `approach`, tied
 to accepted behavior, contract boundaries, and concrete risks. Derive expectations
 for new deterministic behavior from acceptance criteria and important cases; preserve

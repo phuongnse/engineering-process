@@ -122,6 +122,16 @@ requests; do not create a second lifecycle or evidence federation. The process n
 self-publishes or self-merges: the owner retains release and adoption authority, and
 the next consumer result becomes evidence for another bounded iteration.
 
+When the observed friction is a frozen-plan boundary or a failed verification, classify
+the layer before proposing a process correction. A missing accepted outcome is an owner
+contract decision; an accepted outcome with an omitted implementation path is a
+plan-scope recovery; a non-zero consumer command is command failure; and timeout,
+output, stream, cleanup, or spawn inability is an execution-condition blocker. A goal
+or orchestration harness correction counter is not automatically a lifecycle blocker.
+Use the exact run/report/checkpoint metadata to describe what is known and what still
+needs diagnosis, and never publish raw command output or infer a cause from diagnostic
+text.
+
 When maintainers accept the issue, use its URL as the process change `source` and copy
 its bounded incident into `consumerEvidence`. Close the issue only after the process
 release is adopted and the originating consumer confirms the incident no longer
