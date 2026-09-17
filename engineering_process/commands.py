@@ -7,11 +7,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import os
 from pathlib import Path
-from queue import Empty, Full, Queue
 import sys
 import threading
 import time
-from typing import Any, BinaryIO, Callable, Iterator
+from typing import Any, BinaryIO, Iterator
 
 from .contracts import ProcessError
 from .evidence import child_environment, execution_identity as _execution_identity
@@ -21,11 +20,7 @@ from .supervision import process_supervisor
 DEFAULT_OUTPUT_BYTES = 1_000_000
 TERMINATION_SECONDS = 2
 OBSERVATION_INTERVAL_SECONDS = 1.0
-PROGRESS_DRAIN_SECONDS = 0.05
 _EXECUTION_LOCK = threading.Lock()
-
-ProgressCallback = Callable[[dict[str, Any]], None]
-
 
 class ExecutionError(ProcessError):
     """A bounded command could not produce a check report."""
@@ -173,81 +168,53 @@ def _progress_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _notify_progress(
-    callback: ProgressCallback | None,
-    event: dict[str, Any],
-) -> None:
-    """Notify an optional observer without changing command outcome semantics."""
-    if callback is None:
-        return
-    try:
-        callback(event)
-    except Exception:
-        # Observability is deliberately best effort. A broken consumer-side
-        # renderer must not turn a command result into a different result.
-        return
+class ProgressSink:
+    """Bounded, data-only status sink with terminal-event retention."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sequence = 0
+        self._latest: dict[str, Any] | None = None
+        self._terminal: dict[str, Any] | None = None
+
+    def publish(self, event: dict[str, Any]) -> None:
+        """Store status without invoking caller code or blocking on I/O."""
+        with self._lock:
+            self._sequence += 1
+            self._latest = dict(event)
+            if event.get("phase") == "completed":
+                self._terminal = dict(event)
+
+    def read(self, after_sequence: int = 0) -> tuple[int, dict[str, Any] | None]:
+        """Return the newest status after a sequence number, if available."""
+        with self._lock:
+            if self._sequence <= after_sequence:
+                return self._sequence, None
+            event = self._latest
+            return self._sequence, (dict(event) if event is not None else None)
 
 
-_PROGRESS_STOP = object()
+class _ScopedProgressSink:
+    """Add profile/position context without adding another side-effect owner."""
+
+    def __init__(self, sink: ProgressSink, profile: str, position: int) -> None:
+        self._sink = sink
+        self._profile = profile
+        self._position = position
+
+    def publish(self, event: dict[str, Any]) -> None:
+        projected = dict(event)
+        projected["profile"] = self._profile
+        projected["position"] = self._position
+        self._sink.publish(projected)
 
 
-class _ProgressDispatcher:
-    """Keep observer work off the bounded child-supervision thread."""
-
-    def __init__(self, callback: ProgressCallback | None) -> None:
-        self._callback = callback
-        self._queue: Queue[dict[str, Any] | object] = Queue(maxsize=1)
-        self._thread: threading.Thread | None = None
-        if callback is not None:
-            self._thread = threading.Thread(
-                target=self._run,
-                name="process-progress-observer",
-                daemon=True,
-            )
-            self._thread.start()
-
-    def _run(self) -> None:
-        while True:
-            event = self._queue.get()
-            try:
-                if event is _PROGRESS_STOP:
-                    return
-                assert self._callback is not None
-                try:
-                    self._callback(event)
-                except Exception:
-                    # An observer is best effort and must not affect execution.
-                    pass
-            finally:
-                self._queue.task_done()
-
-    def notify(self, event: dict[str, Any]) -> None:
-        try:
-            self._queue.put_nowait(event)
-        except Full:
-            # A slow observer may lose an intermediate status, but it cannot
-            # back-pressure the runner or accumulate unbounded notifications.
-            return
-
-    def close(self) -> None:
-        if self._thread is None:
-            return
-        deadline = time.monotonic() + PROGRESS_DRAIN_SECONDS
-        while self._queue.unfinished_tasks and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            self._queue.put_nowait(_PROGRESS_STOP)
-        except Full:
-            try:
-                self._queue.get_nowait()
-                self._queue.task_done()
-            except Empty:
-                pass
-            try:
-                self._queue.put_nowait(_PROGRESS_STOP)
-            except Full:
-                pass
-        self._thread.join(timeout=PROGRESS_DRAIN_SECONDS)
+def scoped_progress_sink(
+    sink: ProgressSink,
+    profile: str,
+    position: int,
+) -> _ScopedProgressSink:
+    return _ScopedProgressSink(sink, profile, position)
 
 
 def _progress_event(
@@ -277,11 +244,19 @@ def _progress_event(
     }
 
 
-def _run_check_with_progress(
+def _publish_progress(
+    sink: ProgressSink | _ScopedProgressSink | None,
+    event: dict[str, Any],
+) -> None:
+    if sink is not None:
+        sink.publish(event)
+
+
+def _run_check(
     project_root: Path,
     check: dict[str, Any],
     *,
-    progress_callback: ProgressCallback | None = None,
+    progress_sink: ProgressSink | _ScopedProgressSink | None = None,
 ) -> dict[str, Any]:
     command = check["run"]
     if not isinstance(command, list) or not command:
@@ -347,8 +322,8 @@ def _run_check_with_progress(
             last_observed_at = _progress_timestamp()
             now = time.monotonic()
             if now >= next_progress:
-                _notify_progress(
-                    progress_callback,
+                _publish_progress(
+                    progress_sink,
                     _progress_event(
                         check=check,
                         started=started,
@@ -426,8 +401,8 @@ def _run_check_with_progress(
         "stdout": stdout_digest.summary(),
         "stderr": stderr_digest.summary(),
     }
-    _notify_progress(
-        progress_callback,
+    _publish_progress(
+        progress_sink,
         _progress_event(
             check=check,
             started=started,
@@ -443,36 +418,17 @@ def _run_check_with_progress(
     return result
 
 
-def _run_check(
-    project_root: Path,
-    check: dict[str, Any],
-    *,
-    progress_callback: ProgressCallback | None = None,
-) -> dict[str, Any]:
-    dispatcher = _ProgressDispatcher(progress_callback)
-    try:
-        return _run_check_with_progress(
-            project_root,
-            check,
-            progress_callback=(
-                dispatcher.notify if progress_callback is not None else None
-            ),
-        )
-    finally:
-        dispatcher.close()
-
-
 def run_check(
     project_root: Path,
     check: dict[str, Any],
     *,
-    progress_callback: ProgressCallback | None = None,
+    progress_sink: ProgressSink | _ScopedProgressSink | None = None,
 ) -> dict[str, Any]:
     with _EXECUTION_LOCK:
         return _run_check(
             project_root,
             check,
-            progress_callback=progress_callback,
+            progress_sink=progress_sink,
         )
 
 
@@ -482,7 +438,7 @@ def run_profile(
     profile: str,
     *,
     check_position: int | None = None,
-    progress_callback: ProgressCallback | None = None,
+    progress_sink: ProgressSink | None = None,
 ) -> dict[str, Any]:
     configured_checks = project["profiles"].get(profile)
     if configured_checks is None:
@@ -501,21 +457,13 @@ def run_profile(
     reports: list[dict[str, Any]] = []
     failed_position: int | None = None
     for position, check in zip(positions, checks, strict=True):
-        def observe(event: dict[str, Any]) -> None:
-            if progress_callback is None:
-                return
-            progress_event = dict(event)
-            progress_event["profile"] = profile
-            progress_event["position"] = position
-            progress_callback(progress_event)
-
-        if progress_callback is None:
+        if progress_sink is None:
             report = run_check(project_root, check)
         else:
             report = run_check(
                 project_root,
                 check,
-                progress_callback=observe,
+                progress_sink=_ScopedProgressSink(progress_sink, profile, position),
             )
         reports.append(report)
         if report["status"] != "passed":

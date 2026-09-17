@@ -7,13 +7,14 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import threading
 from typing import Any, Callable
 
 from . import VERSION
 from .adoption import apply_adoption, check_adoption
 from .automation_name import render_name
 from .artifact_standards import MAX_DOCUMENT_BYTES, read_document, resolve_standard
-from .commands import run_check, run_profile
+from .commands import ProgressSink, run_check, run_profile
 from .contracts import (
     CONTRACT_KINDS,
     ProcessError,
@@ -159,6 +160,46 @@ def _emit_progress(event: dict[str, Any]) -> None:
     )
 
 
+def _run_with_progress(
+    operation: Callable[[ProgressSink], Result],
+) -> Result:
+    """Run verification separately so rendering never shares the runner loop."""
+    sink = ProgressSink()
+    result: Result | None = None
+    failure: BaseException | None = None
+
+    def execute() -> None:
+        nonlocal result, failure
+        try:
+            result = operation(sink)
+        except BaseException as error:  # propagate through the CLI thread
+            failure = error
+
+    worker = threading.Thread(target=execute, name="process-verification", daemon=False)
+    worker.start()
+    sequence = 0
+    while worker.is_alive():
+        sequence, event = sink.read(sequence)
+        if event is not None:
+            try:
+                _emit_progress(event)
+            except Exception:
+                pass
+        worker.join(timeout=0.05)
+    worker.join()
+    sequence, event = sink.read(sequence)
+    if event is not None:
+        try:
+            _emit_progress(event)
+        except Exception:
+            pass
+    if failure is not None:
+        raise failure
+    if result is None:
+        raise RuntimeError("verification worker returned no result")
+    return result
+
+
 def command_project_validate(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
@@ -269,7 +310,10 @@ def command_setup(args: argparse.Namespace) -> Result:
     ), (0 if status == "passed" else 1)
 
 
-def command_verify(args: argparse.Namespace) -> Result:
+def _command_verify(
+    args: argparse.Namespace,
+    progress_sink: ProgressSink | None = None,
+) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
     before = repository_snapshot(args.project_root)
@@ -278,7 +322,7 @@ def command_verify(args: argparse.Namespace) -> Result:
         project,
         args.profile,
         check_position=args.check_position,
-        progress_callback=_emit_progress if getattr(args, "progress", False) else None,
+        progress_sink=progress_sink,
     )
     after = repository_snapshot(args.project_root)
     if not same_checkpoint(before, after):
@@ -288,6 +332,12 @@ def command_verify(args: argparse.Namespace) -> Result:
     return _result("verify", status=report["status"], report=report), (
         0 if report["status"] == "passed" else 1
     )
+
+
+def command_verify(args: argparse.Namespace) -> Result:
+    if getattr(args, "progress", False):
+        return _run_with_progress(lambda sink: _command_verify(args, sink))
+    return _command_verify(args)
 
 
 def command_adoption_apply(args: argparse.Namespace) -> Result:
@@ -355,7 +405,10 @@ def command_change_implement(args: argparse.Namespace) -> Result:
     return _state_result("change implement", state), 0
 
 
-def command_change_verify(args: argparse.Namespace) -> Result:
+def _command_change_verify(
+    args: argparse.Namespace,
+    progress_sink: ProgressSink | None = None,
+) -> Result:
     process_root = _process_root(args)
     if getattr(args, "affected", False):
         selected_profiles = tuple(getattr(args, "affected_profile", []) or []) or None
@@ -365,7 +418,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
             {},
             args.change_id,
             profiles=selected_profiles,
-            progress_callback=_emit_progress if getattr(args, "progress", False) else None,
+            progress_sink=progress_sink,
         )
         execution_status = executions[0]["status"] if executions else None
         status = (
@@ -393,7 +446,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
             process_root,
             project,
             args.change_id,
-            progress_callback=_emit_progress if getattr(args, "progress", False) else None,
+            progress_sink=progress_sink,
         )
         executions = []
         failures = []
@@ -446,7 +499,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
         project,
         args.change_id,
         args.profile,
-        progress_callback=_emit_progress if getattr(args, "progress", False) else None,
+        progress_sink=progress_sink,
     )
     code = 0 if report["status"] == "passed" else 1
     return _state_result(
@@ -456,6 +509,12 @@ def command_change_verify(args: argparse.Namespace) -> Result:
         profile=args.profile,
         profileStatus=report["status"],
     ), code
+
+
+def command_change_verify(args: argparse.Namespace) -> Result:
+    if getattr(args, "progress", False):
+        return _run_with_progress(lambda sink: _command_change_verify(args, sink))
+    return _command_change_verify(args)
 
 
 def command_change_explain(args: argparse.Namespace) -> Result:

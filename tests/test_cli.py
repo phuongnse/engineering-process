@@ -86,9 +86,9 @@ class CliTests(unittest.TestCase):
             "byteCount": 1,
         }
 
-        def fake_run_profile(*_args, progress_callback=None, **_kwargs):
-            if progress_callback is not None:
-                progress_callback(
+        def fake_run_profile(*_args, progress_sink=None, **_kwargs):
+            if progress_sink is not None:
+                progress_sink.publish(
                     {
                         "phase": "running",
                         "status": "running",

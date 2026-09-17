@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 from engineering_process.commands import (
     _child_environment,
+    ProgressSink,
     execution_identity,
     run_check,
     run_profile,
@@ -298,35 +299,55 @@ class CommandTests(unittest.TestCase):
         self.assertRegex(report["stdout"]["sha256"], r"^sha256:[0-9a-f]{64}$")
 
     def test_progress_observer_reports_silent_runner_without_claiming_progress(self) -> None:
-        events: list[dict[str, object]] = []
+        sink = ProgressSink()
         with tempfile.TemporaryDirectory() as directory, patch(
             "engineering_process.commands.OBSERVATION_INTERVAL_SECONDS", 0.02
         ):
-            report = run_check(
-                Path(directory),
-                {
-                    "id": "silent",
-                    "run": [sys.executable, "-c", "import time; time.sleep(0.15)"],
-                    "timeoutSeconds": 10,
-                },
-                progress_callback=events.append,
+            result: dict[str, dict[str, object]] = {}
+            thread = threading.Thread(
+                target=lambda: result.setdefault(
+                    "report",
+                    run_check(
+                        Path(directory),
+                        {
+                            "id": "silent",
+                            "run": [sys.executable, "-c", "import time; time.sleep(0.15)"],
+                            "timeoutSeconds": 10,
+                        },
+                        progress_sink=sink,
+                    ),
+                )
             )
+            thread.start()
+            sequence = 0
+            running: dict[str, object] | None = None
+            deadline = time.monotonic() + 2
+            while thread.is_alive() and time.monotonic() < deadline:
+                sequence, event = sink.read(sequence)
+                if event is not None and event["phase"] == "running":
+                    running = event
+                    break
+                thread.join(0.01)
+            thread.join(2)
+            sequence, completed = sink.read(sequence)
+            report = result["report"]
 
         self.assertEqual("passed", report["status"])
-        running = [event for event in events if event["phase"] == "running"]
-        self.assertTrue(running)
-        self.assertTrue(running[0]["runnerActive"])
-        self.assertTrue(running[0]["runnerResponsive"])
-        self.assertEqual("unknown", running[0]["progress"])
-        self.assertEqual(0, running[0]["outputBytes"])
-        self.assertEqual(10, running[0]["timeoutSeconds"])
-        self.assertIsInstance(running[0]["elapsedMs"], int)
-        self.assertIsInstance(running[0]["lastObservedAt"], str)
-        completed = events[-1]
+        self.assertIsNotNone(running)
+        assert running is not None
+        self.assertTrue(running["runnerActive"])
+        self.assertTrue(running["runnerResponsive"])
+        self.assertEqual("unknown", running["progress"])
+        self.assertEqual(0, running["outputBytes"])
+        self.assertEqual(10, running["timeoutSeconds"])
+        self.assertIsInstance(running["elapsedMs"], int)
+        self.assertIsInstance(running["lastObservedAt"], str)
+        self.assertIsNotNone(completed)
+        assert completed is not None
         self.assertEqual("completed", completed["phase"])
         self.assertFalse(completed["runnerActive"])
         self.assertEqual("passed", completed["status"])
-        for event in events:
+        for event in (running, completed):
             self.assertNotIn("stdout", event)
             self.assertNotIn("stderr", event)
             self.assertNotIn("command", event)
@@ -335,7 +356,7 @@ class CommandTests(unittest.TestCase):
             self.assertNotIn("percent", event)
 
     def test_profile_progress_adds_authoritative_profile_and_position(self) -> None:
-        events: list[dict[str, object]] = []
+        sink = ProgressSink()
         project = {
             "profiles": {
                 "development": [
@@ -359,23 +380,19 @@ class CommandTests(unittest.TestCase):
                 Path(directory),
                 project,
                 "development",
-                progress_callback=events.append,
+                progress_sink=sink,
             )
 
         self.assertEqual("passed", report["status"])
-        running = next(
-            event
-            for event in events
-            if event["phase"] == "running" and event["check"] == "silent"
-        )
-        self.assertEqual("development", running["profile"])
-        self.assertEqual(2, running["position"])
-        self.assertEqual("silent", running["check"])
+        _sequence, completed = sink.read()
+        self.assertIsNotNone(completed)
+        assert completed is not None
+        self.assertEqual("development", completed["profile"])
+        self.assertEqual(2, completed["position"])
+        self.assertEqual("silent", completed["check"])
+        self.assertEqual("completed", completed["phase"])
 
-    def test_progress_observer_failure_does_not_change_command_result(self) -> None:
-        def broken_observer(_event: dict[str, object]) -> None:
-            raise RuntimeError("observer-secret")
-
+    def test_progress_sink_does_not_change_command_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch(
             "engineering_process.commands.OBSERVATION_INTERVAL_SECONDS", 0.01
         ):
@@ -386,35 +403,23 @@ class CommandTests(unittest.TestCase):
                     "run": [sys.executable, "-c", "import time; time.sleep(0.03)"],
                     "timeoutSeconds": 10,
                 },
-                progress_callback=broken_observer,
+                progress_sink=ProgressSink(),
             )
 
         self.assertEqual("passed", report["status"])
 
-    def test_blocking_progress_observer_cannot_extend_timeout(self) -> None:
-        entered = threading.Event()
-        release = threading.Event()
-
-        def blocking_observer(_event: dict[str, object]) -> None:
-            entered.set()
-            release.wait(5)
-
+    def test_progress_sink_cannot_extend_timeout(self) -> None:
         started = time.monotonic()
-        try:
-            with tempfile.TemporaryDirectory() as directory:
-                report = run_check(
-                    Path(directory),
-                    {
-                        "id": "blocking-observer",
-                        "run": [sys.executable, "-c", "import time; time.sleep(5)"],
-                        "timeoutSeconds": 0.05,
-                    },
-                    progress_callback=blocking_observer,
-                )
-        finally:
-            release.set()
-
-        self.assertTrue(entered.wait(1))
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_check(
+                Path(directory),
+                {
+                    "id": "bounded-observer",
+                    "run": [sys.executable, "-c", "import time; time.sleep(5)"],
+                    "timeoutSeconds": 0.05,
+                },
+                progress_sink=ProgressSink(),
+            )
         self.assertTrue(report["timedOut"])
         self.assertLess(time.monotonic() - started, 1.0)
 
