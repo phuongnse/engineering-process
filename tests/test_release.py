@@ -110,9 +110,9 @@ class ReleaseTests(unittest.TestCase):
                 {"id": "break", "type": "breaking", "summary": "Breaking boundary", "source": "break-1"},
             ])
         )
-        ordinary = notes[notes.index("**Ordinary fix**"):notes.index("**New capability**")]
-        capability = notes[notes.index("**New capability**"):notes.index("**Breaking boundary**")]
-        breaking = notes[notes.index("**Breaking boundary**"):notes.index("## Upgrade")]
+        breaking = notes[notes.index("**Breaking boundary**"):notes.index("## Features")]
+        capability = notes[notes.index("**New capability**"):notes.index("## Fixes")]
+        ordinary = notes[notes.index("**Ordinary fix**"):notes.index("## Upgrade")]
         self.assertIn("**What changed:**", ordinary)
         self.assertIn("**Compatibility:**", ordinary)
         self.assertNotIn("**Where:**", ordinary)
