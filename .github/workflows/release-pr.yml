@@ -115,15 +115,18 @@ jobs:
           if [ -n "$pr_number" ] && [ "$is_draft" != "true" ]; then
             gh pr ready "$pr_number" --undo
           fi
+          if [ -n "$pr_number" ] && [ "$edit_metadata" = true ]; then
+            # GITHUB_TOKEN-authored edited events do not start a new workflow run.
+            # Apply the canonical metadata before the synchronize event from the
+            # new head push so that one normal full run observes the repaired PR.
+            gh pr edit "$pr_number" \
+              --title "$desired_title" \
+              --body-file .github/release-pr-body.md
+          fi
           git push --force-with-lease origin "$branch"
           if [ -n "$pr_number" ]; then
             refreshed_pr="$(gh pr view "$pr_number" --json baseRefName,baseRefOid,headRefName,headRefOid)"
             validate_pr_binding "$refreshed_pr" "$expected_head"
-            if [ "$edit_metadata" = true ]; then
-              gh pr edit "$pr_number" \
-                --title "$desired_title" \
-                --body-file .github/release-pr-body.md
-            fi
           else
             created_pr_url="$(gh pr create \
               --base main \
