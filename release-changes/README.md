@@ -22,10 +22,10 @@ not replace those records with an issue range:
 
 `source` identifies exactly one issue, pull request, or owned change. Do not put an
 issue range, several issue URLs, or a pull-request summary that hides independently
-adoptable behavior in one fragment. The six detail fields are required so a reader
-can understand the problem, implementation surface, and adoption action without
-opening the full history. `compatibility` must explicitly state whether the item is
-breaking; use `type: "breaking"` when it is.
+adoptable behavior in one fragment. The six structured detail fields remain required
+in the manifest so reviewers can inspect the full record, while the selected release
+standard projects only the detail useful for that change type. `compatibility` must
+explicitly state whether the item is breaking; use `type: "breaking"` when it is.
 
 The renderer treats the summary and detail values as literal single-line metadata:
 ordinary punctuation remains readable, while Markdown and HTML-sensitive syntax is

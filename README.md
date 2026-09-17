@@ -82,6 +82,25 @@ allowed only before a mutation/concurrency boundary. Impact feedback and generat
 documents remain derived artifacts and never replace final required profiles or
 independent review.
 
+### Performance evidence for the 3.0.0 follow-up
+
+The measurements below were taken on 2026-09-17 with the same Windows workspace
+runtime and checked-in commands. They are observations, not a speed target:
+
+| Scenario | Baseline `7dd2125` | Candidate `1729c19` | Interpretation |
+| --- | ---: | ---: | --- |
+| Development profile (`run_test_suite.py`) | 341.098s; 314 tests | 335.331s; 320 tests | Assurance changed because six regressions were added; no performance improvement is claimed. |
+| Four review checks | 38.576s, direct commands | 35.827s, lifecycle profile | Close but not identical wrapper paths; no process-overhead improvement is claimed. |
+| Continuation/reuse fixture | 5.803s | 5.561s | Same one-test fixture; no meaningful change. |
+| Correction-cycle fixture | 3.992s | 4.090s | Same one-test fixture; no meaningful change. |
+| Adoption convergence fixture | 1.185s | 1.107s | Same one-test fixture; no meaningful change. |
+
+The candidate lifecycle recorded 370.936s for development and 35.827s for review;
+the development value includes the bounded lifecycle runner around the consumer
+suite. The process does not add a cache or telemetry system. These measurements
+prove the compared observations and limits only; host variance, cache state, and the
+different test count prevent a stronger end-to-end optimization claim.
+
 Consumers that can prove complete changed-path coverage may opt selected required
 profiles into final impact assurance with `impactProfiles.schemaVersion: 1` and
 `finalProfiles`. Each opted profile must declare an explicit global unit whose paths
@@ -344,9 +363,13 @@ UTF-8 byte as `_hh` (for example, `phuongnse/lyric-rail` becomes
 `phuongnse_2flyric-rail`). It requires
 owner authorization before `gh issue create`, and uses an accepted issue as the later
 process change source and `consumerEvidence`. Finish-time intake collects structured
-signals for the same taxonomy, but sends nothing unless the consumer's process-change
-policy enables the tracker boundary. Search failure is recorded as failure, not as an
-empty search; an existing run result is reused before any retry. No raw reviewer prose,
+signals for the same taxonomy, but expected activity is not an incident by itself: one
+correct evidence invalidation, an explicit refresh, a rerun after correction, a
+reopened completed change, or one ordinary review correction remains lifecycle history
+unless the current cycle shows repeated abnormal behavior. Intake sends nothing unless
+the consumer's process-change policy enables the tracker boundary. Search failure is
+recorded as failure, not as an empty search; an existing run result is reused before
+any retry. No raw reviewer prose,
 private paths, consumer-CI write token, automatic process mutation, or wait for a
 process release is required to continue consumer development.
 
@@ -627,10 +650,11 @@ single current review contract.
 ### Public pull-request evidence
 
 The default pull-request standard keeps public assurance separate from local
-lifecycle identity. Its five sections and labeled fields are ordered and stable:
-outcome and scope; source, risk, compatibility, and stack; profiles, snapshot, and
-completion receipt; verdict, cycles, blocking status, and non-blocking dispositions;
-and a distinct completion gate for the overall assertions.
+lifecycle identity. Its three purpose-led sections are ordered and stable: the
+reader-facing result; contract and current evidence; and review plus completion.
+Only information needed to understand impact, assurance, and the completion decision
+is shown by default; local identities and incidental dependency boilerplate stay out
+of the public body.
 The public description never needs an actor ID, context ID, reviewer
 handle, or local `.process/runs` path. Those values remain in lifecycle state, where
 they enforce self-review rejection but do not pretend to be provider-authenticated
@@ -641,7 +665,7 @@ Consumers can select a supported override through `.process/standards.json`; see
 [generation, verification and custom-format boundaries](ARTIFACT_STANDARDS.md).
 `processctl publication validate-pr` checks that selected contract deterministically.
 It rejects missing, repeated, misplaced, hidden, unordered, or unsupported visible
-structure. Completion checkboxes belong only to the Completion gate section. Ready
+structure. Completion checkboxes belong only to the Review and completion section. Ready
 pull requests must have every checkbox checked and no unresolved default placeholder
 values; drafts may retain pending fields and unchecked work. The author/coordinator
 replaces them with actual evidence before ready/merge; the reviewer supplies the verdict.
@@ -670,11 +694,13 @@ At any point:
 ## Release to consumer PR
 
 Each release includes [reviewed release contents](RELEASE_NOTES.md) generated from
-the canonical manifest: one record per shipped feature/fix, its source issue, the
-problem and affected paths, the application action, compatibility impact, important
-notes, and upgrade guidance. The release PR reviews this file; the GitHub Release
-publishes the same contents. See [the release procedure](RELEASING.md) for authoring
-and checks.
+the canonical manifest: one reader-facing record per shipped behavior, its source,
+observable result, compatibility impact, and the action needed for that change type.
+The manifest retains structured problem, path, application, and notes data for review;
+the standard projects only the details that help a reader act, with breaking changes
+receiving the fullest impact and adaptation context. The release PR reviews this file;
+the GitHub Release publishes the same contents. See [the release procedure](RELEASING.md)
+for authoring and checks.
 
 This producer's release identity inputs and text assets declared by
 `tool.setuptools.data-files` use UTF-8 without BOM and LF, matching `.gitattributes`.

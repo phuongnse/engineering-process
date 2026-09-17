@@ -74,6 +74,14 @@ def render_notes(
     if state == "ready" and any(standard.unresolved(value) for value in values):
         raise ProcessError("ready release notes contain an unresolved value")
 
+    detail_labels = {
+        "problem": "Problem",
+        "changes": "What changed",
+        "affectedPaths": "Where",
+        "apply": "Apply",
+        "compatibility": "Compatibility",
+        "notes": "Notes",
+    }
     lines = [f"# {data['title']}", "", data["introduction"], ""]
     for group in standard.rules["groups"]:
         changes = [change for change in data["changes"] if change["type"] == group["type"]]
@@ -86,16 +94,15 @@ def render_notes(
             )
             details = change["details"]
             lines.append(f"- **{_text(change['summary'])}** ({reference})")
-            lines.extend([
-                f"  - **Problem:** {_text(details['problem'])}",
-                f"  - **What changed:** {_text(details['changes'])}",
-                "  - **Where:** " + ", ".join(
-                    _reference(path, None) for path in details["affectedPaths"]
-                ),
-                f"  - **Apply:** {_text(details['apply'])}",
-                f"  - **Compatibility:** {_text(details['compatibility'])}",
-                f"  - **Notes:** {_text(details['notes'])}",
-            ])
+            for field in standard.rules["detailFields"][change["type"]]:
+                label = detail_labels[field]
+                if field == "affectedPaths":
+                    value = ", ".join(
+                        _reference(path, None) for path in details["affectedPaths"]
+                    )
+                else:
+                    value = _text(details[field])
+                lines.append(f"  - **{label}:** {value}")
         lines.append("")
     for section in standard.rules["sections"]:
         lines.extend([f"## {section['heading']}", "", data["sections"][section["id"]], ""])

@@ -21,7 +21,7 @@ Run the Prepare release PR workflow with that exact version. It executes:
     python verification/prepare_release.py VERSION
 
 The script validates every fragment, creates the current schema-version-1 `release.json` that preserves
-all detail records, updates pyproject.toml, engineering_process.VERSION, and
+all structured detail records, updates pyproject.toml, engineering_process.VERSION, and
 RELEASE_NOTES.md, removes consumed fragments, and opens automation/release/vVERSION.
 It refuses incomplete or non-current fragments and a version not derived from the
 fragments.
@@ -40,7 +40,8 @@ Implementation identities and version-bump PR titles are not descriptions
 of shipped features.
 
 Preparation generates `RELEASE_NOTES.md`, grouped into breaking changes, features,
-and fixes, with each issue source and its complete detail fields. Detailed releases
+and fixes, with each issue source and the detail projection selected for its change
+type. The manifest remains the review authority for complete detail fields. Detailed releases
 also state explicitly when no breaking changes are included. Review this artifact
 alongside the manifest. Regenerate it with
 `python verification/render_release_notes.py --output RELEASE_NOTES.md`; local and
@@ -50,9 +51,11 @@ The wrapper supplies consumer-owned records and upgrade text to the reusable ren
 under the selected `release-notes` standard. The same definition drives generation and
 byte comparison; [consumer overrides](ARTIFACT_STANDARDS.md) remain repository-owned.
 Record text is rendered as readable literal Markdown metadata: only structural syntax
-is escaped, and ordinary owned references use normal inline-code delimiters. A release
-record is not a substitute for a list of source issues; split independently adoptable
-issues or behaviors into separate records.
+is escaped, and ordinary owned references use normal inline-code delimiters. Ordinary
+records emphasize result and compatibility; capability records add the consumer
+action; breaking records include the problem and adaptation action. A release record
+is not a substitute for a list of source issues; split independently adoptable issues
+or behaviors into separate records.
 
 ## Publish
 

@@ -29,6 +29,11 @@
         "id": "upgrade",
         "heading": "Upgrade and compatibility"
       }
-    ]
+    ],
+    "detailFields": {
+      "breaking": ["problem", "changes", "apply", "compatibility"],
+      "capability": ["changes", "apply", "compatibility"],
+      "fix": ["changes", "compatibility"]
+    }
   }
 }

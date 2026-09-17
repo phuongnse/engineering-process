@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form only after mitigating or safely blocking the consumer incident under its current authority. Replace the title placeholders with the same stable key entered below and search open and closed issues for that complete key before submitting. Reuse an existing issue instead of creating a duplicate. Do not include secrets, credentials, private source, raw private logs, media, tokens, or production-only metadata. A public sanitized issue may reference private consumer evidence.
+        Use this form only after mitigating or safely blocking a concrete consumer need under its current authority. Do not report one correct evidence invalidation, an explicit refresh, a rerun after correction, a reopened completed change, or one ordinary review correction as a process defect without repeated abnormal evidence. Replace the title placeholders with the same stable key entered below and search open and closed issues for that complete key before submitting. Reuse an existing issue instead of creating a duplicate. Do not include secrets, credentials, private source, raw private logs, media, tokens, or production-only metadata. A public sanitized issue may reference private consumer evidence.
   - type: input
     id: consumer
     attributes:

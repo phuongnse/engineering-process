@@ -1912,14 +1912,15 @@ class LifecycleTests(unittest.TestCase):
 
         run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
         state = json.loads(run_path.read_text(encoding="utf-8"))
-        state["history"].append(
-            {
-                "event": "evidence-invalidated",
-                "at": "2026-09-16T00:00:00Z",
-                "actor": {"actorId": "test", "contextId": "test", "kind": "agent"},
-                "details": {"profile": "development", "reason": "input-digest-mismatch"},
-            }
-        )
+        for _ in range(2):
+            state["history"].append(
+                {
+                    "event": "evidence-invalidated",
+                    "at": "2026-09-16T00:00:00Z",
+                    "actor": {"actorId": "test", "contextId": "test", "kind": "agent"},
+                    "details": {"profile": "development", "reason": "input-digest-mismatch"},
+                }
+            )
         write_json(run_path, state)
 
         state, receipt = finish_change(
@@ -1933,6 +1934,75 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("completed", state["phase"])
         events = [e["event"] for e in state["history"]]
         self.assertIn("incident-collected", events)
+
+    def test_finish_classifies_repeated_corrections_across_implementation_cycles(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-cycle-1.json"
+        write_json(review_path, self.review_document("changes-requested"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        for cycle in (2, 3):
+            begin_implementation(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="implementer",
+                context_id="implementation-context",
+                kind="agent",
+            )
+            self.verify_all()
+            start_review(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="reviewer",
+                context_id="review-context",
+                kind="agent",
+            )
+            review_path = self.root / ".process" / "runs" / f"review-cycle-{cycle}.json"
+            if cycle == 2:
+                review = self.review_document("changes-requested")
+            else:
+                review = self.review_document("approved")
+                review["findings"] = [{
+                    "id": "bug",
+                    "severity": "non-blocking",
+                    "priority": "P1",
+                    "criterionId": "works",
+                    "origin": "production-invariant",
+                    "summary": "The bounded behavior was corrected.",
+                    "location": "product.txt",
+                    "disposition": {"status": "resolved", "rationale": "Corrected before approval."},
+                }]
+            write_json(review_path, review)
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        state, _receipt = finish_change(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="coordinator",
+            context_id="finish-context",
+            kind="agent",
+        )
+        incident_events = [
+            event for event in state["history"] if event["event"] == "incident-collected"
+        ]
+        self.assertTrue(
+            any(
+                event["details"]["invariant"] == "excessive-review-cycles"
+                for event in incident_events
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -132,6 +132,7 @@ def _public_details(incident: Incident) -> dict[str, Any]:
     allowed = {
         "evidence-integrity": {
             "profile", "reason", "cycle", "verificationCount",
+            "invalidationCount",
             "recordedInputDigest", "currentInputDigest", "recordedCheckpointFingerprint",
             "currentCheckpointFingerprint", "digest",
         },
@@ -156,7 +157,7 @@ def _public_details(incident: Incident) -> dict[str, Any]:
         }:
             if _SAFE_DIGEST.fullmatch(value or ""):
                 public[key] = value
-        elif key in {"cycle", "verificationCount", "cycleCount"}:
+        elif key in {"cycle", "verificationCount", "invalidationCount", "cycleCount"}:
             if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2048:
                 public[key] = value
     return public
@@ -293,25 +294,66 @@ def collect_incidents(
 
     history = state.get("history", [])
 
-    # 1. Evidence-integrity: explicit evidence-invalidated events
-    for event in history:
+    # Only the current implementation cycle can attribute a new signal to the
+    # operation being finished.  Older history may belong to an already
+    # completed change or to a prior correction cycle.
+    cycle_start = -1
+    current_cycle = state.get("cycle", 1)
+    for index, event in enumerate(history):
+        if (
+            event.get("event") == "implementation-started"
+            and event.get("details", {}).get("cycle") == current_cycle
+        ):
+            cycle_start = index
+    current_history = history[cycle_start + 1:]
+    lineage_start = -1
+    for index in range(cycle_start - 1, -1, -1):
+        if history[index].get("event") == "finished":
+            lineage_start = index
+            break
+    active_lineage = history[lineage_start + 1:]
+
+    # 1. Evidence-integrity: repeated invalidation before a successful rerun.
+    # One invalidation is expected when a candidate, policy, runtime, or input
+    # changes; it is not evidence of a shared-process defect by itself.
+    pending_invalidations: dict[str, dict[str, Any]] = {}
+    for event in current_history:
         if event.get("event") == "evidence-invalidated":
             details = event.get("details", {})
             profile = details.get("profile", "unknown-profile")
-            reason = details.get("reason", "input-digest-mismatch")
-            _add(
-                Incident(
-                    kind="evidence-integrity",
-                    invariant=profile,
-                    summary=f"Verification report for '{profile}' was invalidated due to {reason}",
-                    details=details,
-                    severity="high",
+            # A legacy/minimal state without an implementation boundary cannot
+            # prove whether the invalidation was expected, so retain it as an
+            # actionable evidence-integrity signal instead of guessing.
+            repeated = dict(details) if cycle_start < 0 else None
+            if profile in pending_invalidations or repeated is not None:
+                repeated = dict(details) if repeated is None else repeated
+                repeated["invalidationCount"] = 2 if profile in pending_invalidations else 1
+                _add(
+                    Incident(
+                        kind="evidence-integrity",
+                        invariant=profile,
+                        summary=(
+                            f"Verification report for '{profile}' was invalidated "
+                            + (
+                                "repeatedly before a successful rerun"
+                                if profile in pending_invalidations
+                                else "without a current implementation boundary"
+                            )
+                        ),
+                        details=repeated,
+                        severity="high",
+                    )
                 )
-            )
+            else:
+                pending_invalidations[profile] = details
+        elif event.get("event") == "profile-verified":
+            profile = event.get("details", {}).get("profile")
+            if profile:
+                pending_invalidations.pop(profile, None)
 
     # 1c. Publication-boundary: callers may persist a structured preflight failure
     # before returning the lifecycle operation's error. Never infer one from text.
-    for event in history:
+    for event in current_history:
         if event.get("event") == "publication-failed":
             details = event.get("details", {})
             _add(
@@ -323,30 +365,6 @@ def collect_incidents(
                     severity="high",
                 )
             )
-
-    # 1b. Evidence-integrity: redundant profile-verified events within the same cycle
-    verified_by_cycle: dict[int, dict[str, int]] = {}
-    for event in history:
-        if event.get("event") == "profile-verified":
-            details = event.get("details", {})
-            profile = details.get("profile")
-            if profile:
-                cycle = event.get("actor", {}).get("cycle") or state.get("cycle", 1)
-                verified_by_cycle.setdefault(cycle, {})
-                verified_by_cycle[cycle][profile] = verified_by_cycle[cycle].get(profile, 0) + 1
-
-    for cycle, counts in verified_by_cycle.items():
-        for profile, count in counts.items():
-            if count > 1:
-                _add(
-                    Incident(
-                        kind="evidence-integrity",
-                        invariant="verification-repetition",
-                        summary=f"Profile '{profile}' required {count} passing verification runs in cycle {cycle}",
-                        details={"profile": profile, "cycle": cycle, "verificationCount": count},
-                        severity="medium",
-                    )
-                )
 
     # 2. Execution-boundary: check timeouts, overflows, terminated descendants, stream failures
     for profile, report in state.get("verification", {}).items():
@@ -393,19 +411,29 @@ def collect_incidents(
                     )
                 )
 
-    # 3. Governance-thrashing: multiple correction cycles or reviewer replacement
-    if state.get("cycle", 1) >= 2:
+    # 3. Governance-thrashing: repeated corrections in the active change lineage
+    # or reviewer replacement. Review corrections advance implementation cycles,
+    # so cycle equality cannot identify the repeated sequence.
+    correction_count = sum(
+        event.get("event") == "review-submitted"
+        and event.get("details", {}).get("verdict") == "changes-requested"
+        for event in active_lineage
+    )
+    if correction_count >= 2:
         _add(
             Incident(
                 kind="governance-thrashing",
                 invariant="excessive-review-cycles",
-                summary=f"Change required {state['cycle']} correction cycles before approval",
-                details={"cycleCount": state["cycle"]},
+                summary=(
+                    f"Change received {correction_count} changes-requested reviews "
+                    "in the active implementation lineage"
+                ),
+                details={"cycleCount": correction_count},
                 severity="medium",
             )
         )
 
-    for event in history:
+    for event in active_lineage:
         if event.get("event") == "review-assignment-replaced":
             _add(
                 Incident(
@@ -516,7 +544,7 @@ def _run_tracker_command(
         process = supervisor.spawn(
             tuple(command),
             working_directory=Path.cwd(),
-            environment=child_environment(),
+            environment=child_environment(managed_only=True),
         )
         if process.stdout is None or process.stderr is None:
             raise ProcessError("tracker process did not expose output streams")

@@ -22,32 +22,26 @@ from engineering_process.source_publication import (
 )
 
 
-CANONICAL_BODY = """## Summary
+CANONICAL_BODY = """## Result
 
 - Outcome: Preserve the requested behavior.
 - Scope: Runtime and regression tests.
 
-## Contract and risk
+## Contract and evidence
 
 - Source: https://github.com/example/project/issues/123
 - Risk: medium
 - Compatibility: Existing callers are unchanged.
-- Stack: none
-
-## Verification
-
 - Profiles: `development`, `review`
 - Snapshot: `sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
 - Completion receipt: `sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 
-## Independent review
+## Review and completion
 
 - Verdict: approved
 - Cycles: 1
 - Blocking findings: 0 open
 - Non-blocking dispositions: none
-
-## Completion gate
 
 - [x] Accepted scope is implemented without silent expansion.
 - [x] Required profiles pass on the reviewed snapshot.
@@ -81,30 +75,30 @@ class PublicationTests(unittest.TestCase):
 
     def test_pull_request_requires_unique_ordered_sections(self) -> None:
         without_contract = CANONICAL_BODY.replace(
-            "## Contract and risk\n", "Contract and risk\n", 1
+            "## Contract and evidence\n", "Contract and evidence\n", 1
         )
         self.assertIn(
-            "pull request body is missing ## Contract and risk",
+            "pull request body is missing ## Contract and evidence",
             self.validate_body(without_contract),
         )
 
         without_completion = CANONICAL_BODY.replace(
-            "## Completion gate\n", "Completion gate\n", 1
+            "## Review and completion\n", "Review and completion\n", 1
         )
         self.assertIn(
-            "pull request body is missing ## Completion gate",
+            "pull request body is missing ## Review and completion",
             self.validate_body(without_completion),
         )
 
         repeated = CANONICAL_BODY.replace(
-            "## Summary\n", "## Summary\n## Summary\n", 1
+            "## Result\n", "## Result\n## Result\n", 1
         )
         self.assertIn(
-            "pull request body repeats ## Summary", self.validate_body(repeated)
+            "pull request body repeats ## Result", self.validate_body(repeated)
         )
 
-        verification = CANONICAL_BODY.index("## Verification")
-        review = CANONICAL_BODY.index("## Independent review")
+        verification = CANONICAL_BODY.index("## Contract and evidence")
+        review = CANONICAL_BODY.index("## Review and completion")
         out_of_order = (
             CANONICAL_BODY[:verification]
             + CANONICAL_BODY[review:]
@@ -116,7 +110,7 @@ class PublicationTests(unittest.TestCase):
         )
 
         unexpected = CANONICAL_BODY.replace(
-            "## Verification", "## Screenshots\n\nNone.\n\n## Verification", 1
+            "## Contract and evidence", "## Screenshots\n\nNone.\n\n## Contract and evidence", 1
         )
         self.assertIn(
             "pull request body has unexpected section ## Screenshots",
@@ -126,7 +120,7 @@ class PublicationTests(unittest.TestCase):
     def test_pull_request_requires_unique_ordered_fields(self) -> None:
         missing = CANONICAL_BODY.replace("- Compatibility:", "- Upgrade:", 1)
         self.assertIn(
-            "pull request body is missing Compatibility in ## Contract and risk",
+            "pull request body is missing Compatibility in ## Contract and evidence",
             self.validate_body(missing),
         )
 
@@ -156,7 +150,7 @@ class PublicationTests(unittest.TestCase):
             1,
         )
         self.assertIn(
-            "pull request body fields are out of order in ## Summary",
+            "pull request body fields are out of order in ## Result",
             self.validate_body(out_of_order),
         )
 
@@ -220,7 +214,7 @@ class PublicationTests(unittest.TestCase):
         )
 
         mixed_hierarchy = CANONICAL_BODY.replace(f"\n{first}", "", 1).replace(
-            "## Completion gate", f"{first}\n\n## Completion gate", 1
+            "## Review and completion", f"{first}\n\n## Review and completion", 1
         )
         self.assertIn(
             "pull request body misplaces checklist item: "
@@ -235,22 +229,22 @@ class PublicationTests(unittest.TestCase):
             self.validate_body(fenced),
         )
         self.assertIn(
-            "pull request body is missing ## Summary", self.validate_body(fenced)
+            "pull request body is missing ## Result", self.validate_body(fenced)
         )
 
         hidden = f"<!--\n{CANONICAL_BODY}"
         hidden_issues = self.validate_body(hidden)
         self.assertIn("pull request body has an unclosed HTML comment", hidden_issues)
-        self.assertIn("pull request body is missing ## Summary", hidden_issues)
+        self.assertIn("pull request body is missing ## Result", hidden_issues)
 
         closed_hidden = f"<!--\n{CANONICAL_BODY}-->\n"
         self.assertIn(
-            "pull request body is missing ## Summary",
+            "pull request body is missing ## Result",
             self.validate_body(closed_hidden),
         )
 
         unclosed_fence = CANONICAL_BODY.replace(
-            "## Summary", "```markdown\n## Summary", 1
+            "## Result", "```markdown\n## Result", 1
         )
         self.assertIn(
             "pull request body has an unclosed Markdown fence",
@@ -266,7 +260,7 @@ class PublicationTests(unittest.TestCase):
                     separated_issues,
                 )
                 self.assertIn(
-                    "pull request body is missing ## Summary", separated_issues
+                    "pull request body is missing ## Result", separated_issues
                 )
 
     def test_pull_request_accepts_commonmark_line_endings(self) -> None:
@@ -286,7 +280,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual([], self.validate_body(referenced))
 
         misplaced = CANONICAL_BODY.replace(
-            "## Summary", "Refs #123.\n\n## Summary", 1
+            "## Result", "Refs #123.\n\n## Result", 1
         )
         self.assertIn(
             "pull request body issue reference must follow the checklist",

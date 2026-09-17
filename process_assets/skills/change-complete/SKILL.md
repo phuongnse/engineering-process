@@ -5,6 +5,15 @@ description: Complete an approved change when routed by deliver-change, only whi
 
 # Complete a change
 
+## Route card
+
+**State:** `approved`. **Do:** recheck the exact reviewed checkpoint and let
+`change finish` write the one receipt; keep release, merge, adoption, and deployment
+with the consumer owner. **Evidence:** required profiles, approved independent
+review, current publication boundary, incident-intake result, and receipt. **Next:**
+owner-controlled publication/adoption, or a new implementation cycle if the candidate
+changes.
+
 Confirm the lifecycle is approved, every required profile passed, every blocking
 finding is closed, every non-blocking finding has its required disposition, and the
 repository still matches the reviewed snapshot.

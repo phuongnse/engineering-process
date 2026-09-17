@@ -20,13 +20,7 @@
             "heading": "## Request",
             "fields": [
               {"id": "context", "label": "Context", "description": "Bounded consumer context or observed problem."},
-              {"id": "expected-outcome", "label": "Expected outcome", "description": "Observable result without prescribing speculative implementation."}
-            ],
-            "checks": []
-          },
-          {
-            "heading": "## Evidence and scope",
-            "fields": [
+              {"id": "expected-outcome", "label": "Expected outcome", "description": "Observable result without prescribing speculative implementation."},
               {"id": "evidence", "label": "Evidence", "description": "Reproduction, check, finding, digest, or other publishable evidence."},
               {"id": "scope", "label": "Scope", "description": "In-scope and out-of-scope boundaries."},
               {"id": "acceptance-criteria", "label": "Acceptance criteria", "description": "Observable conditions that satisfy the request."},
@@ -42,13 +36,7 @@
             "heading": "## Request",
             "fields": [
               {"id": "context", "label": "Context", "description": "Bounded consumer context or observed problem."},
-              {"id": "expected-outcome", "label": "Expected outcome", "description": "Observable result without prescribing speculative implementation."}
-            ],
-            "checks": []
-          },
-          {
-            "heading": "## Evidence and scope",
-            "fields": [
+              {"id": "expected-outcome", "label": "Expected outcome", "description": "Observable result without prescribing speculative implementation."},
               {"id": "evidence", "label": "Evidence", "description": "Reproduction, check, finding, digest, or other publishable evidence."},
               {"id": "scope", "label": "Scope", "description": "In-scope and out-of-scope boundaries."},
               {"id": "acceptance-criteria", "label": "Acceptance criteria", "description": "Observable conditions that satisfy the request."},
@@ -57,7 +45,7 @@
             "checks": []
           },
           {
-            "heading": "## Closure evidence",
+            "heading": "## Resolution",
             "fields": [
               {"id": "resolution", "label": "Resolution", "description": "Observable resolution delivered."},
               {"id": "implementing-change", "label": "Implementing change", "description": "Durable HTTPS pull-request or change URL.", "format": "record-url"},
@@ -73,6 +61,6 @@
         ]
       }
     },
-    "guidance": "Use the open record for a bounded accepted request. Close only with actual resolution and verification evidence. Release, adoption, and consumer confirmation are required when the accepted outcome depends on them; use the literal value none only when a category does not apply. Tracker state, labels, priority, assignment, and prose truth remain consumer-owned."
+    "guidance": "Use Request for the context, expected result, evidence, scope, criteria, and durable references. A closed record adds Resolution once, with only the release, adoption, or consumer-confirmation evidence that the outcome actually depends on; use none when a category does not apply. Tracker state, labels, priority, assignment, and prose truth remain consumer-owned."
   }
 }

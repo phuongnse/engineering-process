@@ -58,10 +58,11 @@ requires regenerating the template and collecting fresh verification evidence.
 
 ## Issues
 
-The default issue record covers the accepted request while open and adds resolution,
-implementation, verification, release/adoption/consumer confirmation, remaining risk,
-and follow-up evidence when closed. The record is portable Markdown: its first line is
-the title and the remaining sections are the body. Tracker creation, updates, closure,
+The default issue record keeps context, expected outcome, evidence, scope, criteria,
+and references together under `Request`. A closed record adds one `Resolution` section
+for the delivered result and only the release/adoption/consumer-confirmation evidence
+that the outcome depends on. The record is portable Markdown: its first line is the
+title and the remaining sections are the body. Tracker creation, updates, closure,
 labels, priority, assignment, and product taxonomy remain consumer-owned actions.
 
 Supply values under stable field IDs and render the selected state:
@@ -158,7 +159,7 @@ To prepare PR data automatically from canonical lifecycle run and receipt record
 
     processctl artifact prepare-pr-data --change-id CHANGE_ID --data-file overrides.json --output pr-data.json
 
-Authors supply narrative fields (`outcome`, `scope`, `compatibility`, `stack`, `issueReference`, and `accepted-scope` check) in `overrides.json`. Canonical facts (`source`, `risk`, `profiles`, `snapshot`, `completion-receipt`, `verdict`, `cycles`, `blocking-findings`, `non-blocking-dispositions`) derive directly from verified run and receipt records without leaking private actor/context IDs or local paths.
+Authors supply narrative fields (`outcome`, `scope`, `compatibility`, `issueReference`, and `accepted-scope` check) in `overrides.json`. Canonical facts (`source`, `risk`, `profiles`, `snapshot`, `completion-receipt`, `verdict`, `cycles`, `blocking-findings`, `non-blocking-dispositions`) derive directly from verified run and receipt records without leaking private actor/context IDs or local paths.
 
 `artifact render` and `artifact validate` can also take `--change-id` directly:
 
@@ -171,7 +172,11 @@ The consumer maps its release records to the packaged `release-notes-data` schem
 This input belongs to the consumer; it does not replace its versioning policy or
 become another authoritative changelog. A change supplies structured `details`
 with `problem`, `changes`, `affectedPaths`, `apply`, `compatibility`, and `notes` so
-the renderer can expose actionable information without relying on an issue range.
+the renderer can select actionable information without relying on an issue range.
+The current standard maps change type to visible detail: ordinary fixes show the
+result and compatibility, capabilities add the action to take, and breaking changes
+also show the problem and adaptation action. Paths and caveats remain available in the
+manifest without being repeated in every public item.
 For example:
 
 ```json
@@ -209,8 +214,7 @@ security impact. Update the consumer's data mapping when changing IDs or require
 
 Change summaries are literal text. HTTP(S) source references become links; other
 owned references remain code spans without invented GitHub links. The renderer adds
-labelled Problem, What changed, Where, Apply,
-Compatibility, and Notes lines. `repositoryUrl` can identify the consumer's GitHub
+only the labels selected for the change type. `repositoryUrl` can identify the consumer's GitHub
 repository for compact issue/PR link labels. The renderer escapes only Markdown or
 HTML-sensitive syntax in metadata, leaves ordinary punctuation readable, and uses
 ordinary inline-code delimiters for references that contain no backticks. Authors

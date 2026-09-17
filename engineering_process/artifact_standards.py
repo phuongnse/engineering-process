@@ -81,9 +81,28 @@ def _validate_relations(document: dict[str, Any]) -> None:
             _unique([entry["id"] for entry in entries], f"{kind} ids")
             _unique([entry["label"] for entry in entries], f"{kind} labels")
     elif document["adapter"] == "release-notes":
-        _unique([group["type"] for group in rules["groups"]], "change types")
+        change_types = [group["type"] for group in rules["groups"]]
+        _unique(change_types, "change types")
         _unique([section["id"] for section in rules["sections"]], "release section ids")
         _unique([item["heading"] for item in rules["groups"] + rules["sections"]], "release headings")
+        detail_fields = rules["detailFields"]
+        if set(detail_fields) != set(change_types):
+            raise ProcessError(
+                "release detailFields must define every selected change type exactly once"
+            )
+        allowed = {
+            "problem",
+            "changes",
+            "affectedPaths",
+            "apply",
+            "compatibility",
+            "notes",
+        }
+        for change_type, fields in detail_fields.items():
+            if not fields or any(field not in allowed for field in fields):
+                raise ProcessError(
+                    f"release detailFields for {change_type} contains an unsupported field"
+                )
     elif document["adapter"] == "issue":
         for state, definition in rules["states"].items():
             sections = definition["sections"]

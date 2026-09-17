@@ -253,7 +253,7 @@ class ArtifactStandardsTests(unittest.TestCase):
         closed = issue_data("closed")
         closed_source = self.write("closed.json", closed)
         self.assertEqual(0, self.cli("render", "--artifact", "issue", "--state", "closed", "--data-file", str(closed_source), "--output", str(body))[0])
-        self.assertIn(b"## Closure evidence", body.read_bytes())
+        self.assertIn(b"## Resolution", body.read_bytes())
         self.assertEqual(0, self.cli("validate", "--artifact", "issue", "--state", "closed", "--data-file", str(closed_source), "--body-file", str(body))[0])
 
     def test_issue_reference_grammar_is_checked_before_render_and_validation(self) -> None:
@@ -699,7 +699,13 @@ class ArtifactStandardsTests(unittest.TestCase):
             "issueReference": "Refs #100.",
         }
         overrides_path = self.write(".process/runs/overrides.json", overrides)
-        data_with_overrides = build_pr_description_data(self.root, ROOT, "sample-change", overrides=overrides)
+        data_with_overrides = build_pr_description_data(
+            self.root,
+            ROOT,
+            "sample-change",
+            overrides=overrides,
+            standard=resolve_standard(self.root, ROOT, "pull-request"),
+        )
         self.assertEqual("Deliver bounded sample change.", data_with_overrides["fields"]["outcome"])
         self.assertEqual("product.txt file only.", data_with_overrides["fields"]["scope"])
         self.assertEqual("approved", data_with_overrides["fields"]["verdict"])

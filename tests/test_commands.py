@@ -143,8 +143,7 @@ class CommandTests(unittest.TestCase):
             environment = _child_environment()
 
         self.assertNotIn("", environment["PATH"].split(os.pathsep))
-        self.assertIn("EMPTY_BINDING", environment)
-        self.assertEqual("", environment["EMPTY_BINDING"])
+        self.assertNotIn("EMPTY_BINDING", environment)
 
     def test_runtime_identity_preserves_duplicate_dependencies(self) -> None:
         class Distribution:
@@ -161,6 +160,32 @@ class CommandTests(unittest.TestCase):
             identity = execution_identity()
 
         self.assertEqual(2, identity["dependencies"]["count"])
+
+    def test_runtime_identity_ignores_unmanaged_environment_and_tracks_path(self) -> None:
+        original_path = os.environ.get("PATH", "")
+        with patch.dict(
+            os.environ,
+            {"PATH": original_path, "CONSUMER_INPUT": "first", "SERVICE_TOKEN": "secret-value"},
+            clear=False,
+        ):
+            first = execution_identity()
+        with patch.dict(
+            os.environ,
+            {"PATH": original_path, "CONSUMER_INPUT": "second", "SERVICE_TOKEN": "other-secret"},
+            clear=False,
+        ):
+            second = execution_identity()
+
+        self.assertEqual(
+            first["environment"]["digest"], second["environment"]["digest"]
+        )
+        self.assertTrue(first["environment"]["known"])
+        self.assertNotIn("secret-value", json.dumps(first))
+        with patch.dict(os.environ, {"PATH": "different-managed-path"}, clear=False):
+            changed_path = execution_identity()
+        self.assertNotEqual(
+            first["environment"]["digest"], changed_path["environment"]["digest"]
+        )
 
     def test_runtime_identity_matches_bounded_child(self) -> None:
         with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False):
