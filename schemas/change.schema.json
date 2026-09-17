@@ -40,6 +40,15 @@
       "uniqueItems": true,
       "items": {"$ref": "#/$defs/id"}
     },
+    "supersedes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changeId", "reason"],
+      "properties": {
+        "changeId": {"$ref": "#/$defs/id"},
+        "reason": {"const": "missing-plan-boundary"}
+      }
+    },
     "consumerEvidence": {
       "type": "array",
       "minItems": 1,

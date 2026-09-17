@@ -14,7 +14,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from .commands import run_check, run_profile, verification_lock
+from .commands import ExecutionError, run_check, run_profile, verification_lock
 from .contracts import (
     ProcessError,
     digest_json,
@@ -76,10 +76,34 @@ NEXT_COMMAND = {
     "blocked": None,
 }
 MAX_REVIEW_CORRECTION_CYCLES = 2
+MAX_RECOVERY_MEASUREMENTS = 1024
+RECOVERY_METRIC_DEFAULTS = {
+    "remainingBlockedAttempts": 0,
+    "failedProfileRefreshes": 0,
+    "remainingInvalidationExecutions": 0,
+    "profileExecutions": 0,
+    "checkLaunches": 0,
+}
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _recovery_metrics(state: dict[str, Any]) -> dict[str, int]:
+    metrics = state.setdefault(
+        "recoveryMetrics", dict(RECOVERY_METRIC_DEFAULTS)
+    )
+    for name, value in RECOVERY_METRIC_DEFAULTS.items():
+        metrics.setdefault(name, value)
+    return metrics
+
+
+def _increment_recovery_metric(
+    state: dict[str, Any], name: str, amount: int = 1
+) -> None:
+    metrics = _recovery_metrics(state)
+    metrics[name] = min(MAX_RECOVERY_MEASUREMENTS, metrics[name] + amount)
 
 
 def _actor(actor_id: str, context_id: str, kind: str) -> dict[str, str]:
@@ -159,29 +183,39 @@ def _has_plan_scope_policy(state: dict[str, Any]) -> bool:
     )
 
 
-def _require_planned_scope(project_root: Path, state: dict[str, Any]) -> None:
-    """Reject candidate files that the current plan did not declare.
-
-    The check proves only structural scope alignment. Causal correctness and
-    minimality remain independent-review judgments.
-    """
-    if not _has_plan_scope_policy(state):
-        return
+def _planned_scope_uncovered(
+    project_root: Path,
+    state: dict[str, Any],
+    *,
+    plan_document: dict[str, Any] | None = None,
+    control_paths: set[str] | None = None,
+) -> list[str]:
+    if plan_document is None:
+        if not _has_plan_scope_policy(state):
+            return []
+        plan = state.get("plan")
+        if not isinstance(plan, dict):
+            return []
+        plan_document = plan["document"]
     comparison_base = state.get("comparisonBaseCommit")
-    plan = state.get("plan")
-    if not comparison_base or not isinstance(plan, dict):
-        return
+    if not comparison_base:
+        return []
     boundaries = [
         _scope_path(raw_path, source=f"plan work item {work_item['id']}")
-        for work_item in plan["document"]["workItems"]
+        for work_item in plan_document["workItems"]
         for raw_path in work_item["affectedPaths"]
     ]
     if not boundaries:
         raise ProcessError("plan must declare at least one affected path boundary")
-    control_paths = {
-        _scope_candidate_path(path) for path in state.get("controlPaths", [])
-    }
-    uncovered = sorted(
+    if control_paths is None:
+        control_paths = {
+            _scope_candidate_path(path) for path in state.get("controlPaths", [])
+        }
+    else:
+        control_paths = {
+            _scope_candidate_path(path) for path in control_paths
+        }
+    return sorted(
         candidate
         for raw_candidate in changed_paths(project_root, comparison_base)
         for candidate in [_scope_candidate_path(raw_candidate)]
@@ -193,11 +227,55 @@ def _require_planned_scope(project_root: Path, state: dict[str, Any]) -> None:
             for boundary in boundaries
         )
     )
+
+
+def _require_planned_scope(project_root: Path, state: dict[str, Any]) -> None:
+    """Reject candidate files that the current plan did not declare.
+
+    The check proves only structural scope alignment. Causal correctness and
+    minimality remain independent-review judgments.
+    """
+    uncovered = _planned_scope_uncovered(project_root, state)
     if uncovered:
         raise ProcessError(
             "candidate paths are outside the declared plan scope: "
             + ", ".join(uncovered)
         )
+
+
+def _record_plan_scope_blocker(
+    project_root: Path,
+    process_root: Path,
+    state: dict[str, Any],
+    checkpoint: dict[str, Any],
+) -> list[str]:
+    uncovered = _planned_scope_uncovered(project_root, state)
+    if not uncovered:
+        return []
+    actor = state["currentImplementation"]["actor"]
+    state["blocker"] = {
+        "kind": "plan-scope",
+        "cycle": state["cycle"],
+        "at": _now(),
+        "action": "owner-decision",
+        "reason": (
+            "the frozen plan does not cover the current candidate; preserve the "
+            "accepted outcome and start an owner-approved superseding contract/plan"
+        ),
+        "paths": uncovered,
+        "checkpoint": checkpoint,
+    }
+    state["phase"] = "blocked"
+    _event(
+        state,
+        "plan-scope-blocked",
+        actor,
+        paths=uncovered,
+        action="owner-decision",
+        checkpoint=checkpoint,
+    )
+    _save_state(project_root, process_root, state)
+    return uncovered
 
 
 def _receipt_path(project_root: Path, change_id: str) -> Path:
@@ -256,6 +334,10 @@ def process_improvement_signals(state: dict[str, Any]) -> list[str]:
             signals.add("review-changes-requested")
         elif item["event"] == "evidence-invalidated":
             signals.add("evidence-invalidated")
+        elif item["event"] == "plan-scope-blocked":
+            signals.add("plan-scope-blocked")
+        elif item["event"] == "verification-execution-blocked":
+            signals.add("verification-execution-blocked")
         elif item["event"] == "review-assignment-replaced":
             signals.add("review-assignment-replaced")
     return sorted(signals)
@@ -334,6 +416,115 @@ def _verification_report_matches_inputs(
     )
 
 
+def _verification_report_input_relation(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    profile: str,
+    report: dict[str, Any],
+    checkpoint: dict[str, Any],
+    *,
+    runtime: dict[str, Any],
+    authority_digest: str,
+) -> bool | None:
+    """Compare a report's candidate/input identity without treating failure as evidence."""
+    if not same_checkpoint(report.get("checkpoint", {}), checkpoint):
+        return False
+    recorded = report.get("inputDigest")
+    current = _verification_input_digest(
+        project_root,
+        process_root,
+        project,
+        state,
+        profile,
+        runtime=runtime,
+        authority_digest=authority_digest,
+    )
+    if not recorded or current is None:
+        return None
+    return recorded == current
+
+
+def _diagnostic_descriptor_complete(report: dict[str, Any]) -> bool:
+    descriptor = report.get("diagnostic")
+    return (
+        isinstance(descriptor, dict)
+        and descriptor.get("descriptorVersion") == 1
+        and descriptor.get("profile") == report.get("profile")
+        and descriptor.get("kind")
+        in {"selective-check-reproduction", "impact-unit-failure"}
+    )
+
+
+def _failure_diagnostic(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    profile: str,
+    report: dict[str, Any],
+    checkpoint: dict[str, Any],
+    *,
+    runtime: dict[str, Any],
+    authority_digest: str,
+) -> dict[str, Any]:
+    relation = _verification_report_input_relation(
+        project_root,
+        process_root,
+        project,
+        state,
+        profile,
+        report,
+        checkpoint,
+        runtime=runtime,
+        authority_digest=authority_digest,
+    )
+    if relation is False:
+        status = "stale"
+        reason = "the failed report belongs to a different candidate or verification input identity"
+    elif relation is None:
+        status = "unavailable"
+        reason = "the failed report has no complete input identity; its details cannot be treated as current"
+    elif not _diagnostic_descriptor_complete(report):
+        status = "unavailable"
+        reason = "the failed report has no complete safe diagnostic descriptor; test-level detail was not recorded"
+    else:
+        status = "current"
+        failure = report["diagnostic"].get("failure", {})
+        truncated = any(
+            isinstance(failure.get(stream), dict)
+            and failure[stream].get("truncated") is True
+            for stream in ("stdout", "stderr")
+        )
+        if truncated:
+            reason = (
+                "the descriptor belongs to this run's current candidate and input "
+                "identity; bounded output was truncated and raw detail is unavailable"
+            )
+        elif report["diagnostic"].get("kind") == "impact-unit-failure":
+            reason = (
+                "the selected impact unit is current; its command text is intentionally "
+                "unavailable and only its digest is recorded"
+            )
+        else:
+            reason = (
+                "the descriptor belongs to this run's current candidate and input identity"
+            )
+
+    diagnostic: dict[str, Any] = {
+        "profile": profile,
+        "status": status,
+        "reportDigest": digest_json(report),
+        "runPath": f".process/runs/{state['changeId']}/run.json",
+        "cycle": state["cycle"],
+        "checkpoint": report.get("checkpoint", checkpoint),
+        "recordedAt": report.get("recordedAt", _now()),
+        "reason": reason,
+    }
+    return diagnostic
+
+
 def _required_verification_matches_inputs(
     project_root: Path,
     process_root: Path,
@@ -373,6 +564,7 @@ def _verification_selection(
     required = tuple(state["contract"]["document"]["requiredProfiles"])
     configured = project["profiles"]
     requirements: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
     execute: list[str] = []
     reuse: list[str] = []
     blocked: list[str] = []
@@ -400,6 +592,32 @@ def _verification_selection(
     for profile in required:
         mode = "full"
         previous = state["verification"].get(profile)
+        diagnostic: dict[str, Any] | None = None
+        execution_blocker = state.get("blocker")
+        blocker_active = False
+        if (
+            isinstance(execution_blocker, dict)
+            and execution_blocker.get("kind") == "verification-execution"
+            and execution_blocker.get("profile") == profile
+            and execution_blocker.get("cycle") == state["cycle"]
+            and same_checkpoint(execution_blocker.get("checkpoint", {}), current)
+        ):
+            recorded_input = execution_blocker.get("inputDigest")
+            current_input = _verification_input_digest(
+                project_root,
+                process_root,
+                project,
+                state,
+                profile,
+                runtime=runtime,
+                authority_digest=authority_digest,
+            )
+            blocker_active = (
+                not recorded_input
+                or current_input is None
+                or recorded_input == current_input
+            )
+
         if profile not in configured:
             status, action, reason = (
                 "blocked",
@@ -407,6 +625,79 @@ def _verification_selection(
                 "the accepted profile is not present in the current project policy",
             )
             blocked.append(profile)
+        elif blocker_active:
+            status, action, reason = (
+                "blocked",
+                "blocked",
+                execution_blocker["reason"]
+                + "; inspect the consumer execution condition before retrying",
+            )
+            blocked.append(profile)
+        elif previous is not None and previous.get("status") == "failed":
+            diagnostic = _failure_diagnostic(
+                project_root,
+                process_root,
+                project,
+                state,
+                profile,
+                previous,
+                current,
+                runtime=runtime,
+                authority_digest=authority_digest,
+            )
+            diagnostics.append(diagnostic)
+            relation = _verification_report_input_relation(
+                project_root,
+                process_root,
+                project,
+                state,
+                profile,
+                previous,
+                current,
+                runtime=runtime,
+                authority_digest=authority_digest,
+            )
+            if relation is True and diagnostic["status"] == "current":
+                status, action, reason = (
+                    "blocked",
+                    "blocked",
+                    "the required profile failed on this exact input; inspect the current run diagnostic and take a concrete recovery action before an explicit refresh",
+                )
+                blocked.append(profile)
+            elif relation is None or diagnostic["status"] == "unavailable":
+                status, action, reason = (
+                    "unknown",
+                    "blocked",
+                    "the failed report is incomplete or lacks a trustworthy current identity; do not retry it through remaining work until the exact run is inspected",
+                )
+                blocked.append(profile)
+            elif profile in assurance_profiles and assurance_selection is not None:
+                assurance_requirement = assurance_requirements[profile]
+                if assurance_selection["status"] == "ready":
+                    status, action, reason = (
+                        "remaining",
+                        "execute",
+                        "the failed report is stale for the current input; final impact assurance will execute the required units",
+                    )
+                    mode = "impact-assurance"
+                else:
+                    status, action, reason = (
+                        "blocked",
+                        "blocked",
+                        assurance_requirement.get(
+                            "reason",
+                            assurance_selection["resolution"]["reason"],
+                        ),
+                    )
+                    blocked.append(profile)
+            else:
+                status, action, reason = (
+                    "remaining",
+                    "execute",
+                    "the failed report belongs to a different candidate or input identity; rerun the required profile after that change",
+                )
+            if action == "execute":
+                execute.append(profile)
         elif previous is not None and _verification_report_matches_inputs(
             project_root,
             process_root,
@@ -494,6 +785,8 @@ def _verification_selection(
             "reason": reason,
         }
         item["mode"] = mode
+        if diagnostic is not None:
+            item["diagnostic"] = diagnostic
         if previous is not None and previous["status"] == "passed":
             item["evidence"] = {
                 "checkpoint": previous["checkpoint"],
@@ -542,6 +835,7 @@ def _verification_selection(
         "reuseProfiles": reuse,
         "inapplicableProfiles": inapplicable,
         "blockedProfiles": blocked,
+        "diagnostics": diagnostics,
         **(
             {
                 "assuranceProfiles": list(assurance_profiles),
@@ -620,6 +914,52 @@ def start_change(
     if path.exists():
         raise ProcessError(f"change {change_id} already exists; resume it with status")
 
+    supersedes = contract.get("supersedes")
+    previous_state: dict[str, Any] | None = None
+    if supersedes is not None:
+        previous_change_id = supersedes["changeId"]
+        if previous_change_id == change_id:
+            raise ProcessError("a change cannot supersede itself")
+        previous_state = _load_state(
+            project_root, process_root, previous_change_id
+        )
+        if previous_state["phase"] not in {"implementing", "blocked"}:
+            raise ProcessError(
+                "superseding recovery requires an implementing or blocked prior run"
+            )
+        if previous_state.get("blocker", {}).get("kind") != "plan-scope":
+            raise ProcessError(
+                "superseding recovery requires a recorded plan-scope blocker"
+            )
+        previous_contract = previous_state["contract"]["document"]
+        changed_contract_fields = [
+            field
+            for field in (
+                "summary",
+                "source",
+                "risk",
+                "affectedProjects",
+                "acceptanceCriteria",
+                "requiredProfiles",
+            )
+            if contract[field] != previous_contract[field]
+        ]
+        if changed_contract_fields:
+            raise ProcessError(
+                "superseding recovery must preserve accepted contract fields: "
+                + ", ".join(changed_contract_fields)
+            )
+        if (
+            previous_state.get("plan") is None
+            or previous_state.get("reviewAssignment") is not None
+            or previous_state.get("review") is not None
+            or previous_state.get("reviewHistory")
+            or previous_state.get("receipt") is not None
+        ):
+            raise ProcessError(
+                "superseding recovery cannot discard prior review, finding, approval, or receipt history"
+            )
+
     declared = set(contract["requiredProfiles"])
     available = set(project["profiles"])
     missing = sorted(declared - available)
@@ -660,6 +1000,13 @@ def start_change(
 
     actor = _actor(actor_id, context_id, kind)
     comparison_base = resolve_commit(project_root, contract["comparisonBase"])
+    if (
+        previous_state is not None
+        and comparison_base != previous_state["comparisonBaseCommit"]
+    ):
+        raise ProcessError(
+            "superseding recovery must retain the prior comparison base commit"
+        )
     state: dict[str, Any] = {
         "schemaVersion": 1,
         "changeId": change_id,
@@ -668,6 +1015,7 @@ def start_change(
         "contract": {"digest": digest_json(contract), "document": contract},
         "comparisonBaseCommit": comparison_base,
         "plan": None,
+        "recoveryMetrics": dict(RECOVERY_METRIC_DEFAULTS),
         "implementations": [],
         "currentImplementation": None,
         "verification": {},
@@ -680,8 +1028,30 @@ def start_change(
         "controlPaths": [],
         "history": [],
     }
+    if previous_state is not None:
+        previous_path = _run_path(project_root, previous_state["changeId"])
+        state["supersedes"] = {
+            "changeId": previous_state["changeId"],
+            "runPath": previous_path.relative_to(project_root).as_posix(),
+            "runDigest": digest_json(previous_state),
+            "phase": previous_state["phase"],
+            "cycle": previous_state["cycle"],
+            "comparisonBaseCommit": previous_state["comparisonBaseCommit"],
+            "controlPaths": list(previous_state.get("controlPaths", [])),
+        }
+        state["controlPaths"] = list(previous_state.get("controlPaths", []))
     _remember_control_path(state, project_root, contract_path)
     _event(state, "started", actor)
+    if previous_state is not None:
+        _event(
+            state,
+            "superseding-run-started",
+            actor,
+            reason=supersedes["reason"],
+            previousRun=deepcopy(state["supersedes"]),
+            carriedVerification=False,
+            carriedReview=False,
+        )
     _save_state(project_root, process_root, state)
     return state
 
@@ -710,6 +1080,21 @@ def register_plan(
         raise ProcessError("plan changeId does not match lifecycle state")
     if plan["contractDigest"] != state["contract"]["digest"]:
         raise ProcessError("plan contractDigest does not match the accepted contract")
+    plan_control_paths = set(state.get("controlPaths", []))
+    plan_relative = _repository_relative_path(project_root, plan_path)
+    if plan_relative is not None:
+        plan_control_paths.add(plan_relative)
+    uncovered = _planned_scope_uncovered(
+        project_root,
+        state,
+        plan_document=plan,
+        control_paths=plan_control_paths,
+    )
+    if uncovered:
+        raise ProcessError(
+            "plan does not cover current candidate paths: "
+            + ", ".join(uncovered)
+        )
     actor = _actor(actor_id, context_id, kind)
     _remember_control_path(state, project_root, plan_path)
     state["plan"] = {"digest": digest_json(plan), "document": plan}
@@ -739,6 +1124,13 @@ def begin_implementation(
 ) -> dict[str, Any]:
     state = _load_state(project_root, process_root, change_id)
     actor = _actor(actor_id, context_id, kind)
+    if (
+        state["phase"] == "blocked"
+        and state.get("blocker", {}).get("kind") == "plan-scope"
+    ):
+        raise ProcessError(
+            f"change {change_id} is blocked by frozen plan scope; start an owner-approved superseding change"
+        )
     if state["phase"] == "implementing":
         participants = [
             item
@@ -778,6 +1170,7 @@ def begin_implementation(
     state["implementations"].append(implementation)
     state["currentImplementation"] = implementation
     state["verification"] = {}
+    state.pop("blocker", None)
     state["reviewAssignment"] = None
     state["review"] = None
     state["receipt"] = None
@@ -814,12 +1207,69 @@ def _publication_preflight(
     return publication
 
 
+def _record_execution_blocker(
+    project_root: Path,
+    process_root: Path,
+    state: dict[str, Any],
+    profile: str,
+    checkpoint: dict[str, Any],
+    input_digest: str | None,
+    error: ExecutionError,
+) -> None:
+    state["blocker"] = {
+        "kind": "verification-execution",
+        "cycle": state["cycle"],
+        "at": _now(),
+        "action": "consumer-action",
+        "reason": (
+            "the bounded verification command could not produce a report; inspect "
+            "the consumer command/runtime before retrying"
+        ),
+        "errorCode": error.code,
+        "profile": profile,
+        "checkpoint": checkpoint,
+        **({"inputDigest": input_digest} if input_digest is not None else {}),
+    }
+    _event(
+        state,
+        "verification-execution-blocked",
+        state["currentImplementation"]["actor"],
+        profile=profile,
+        errorCode=error.code,
+        checkpoint=checkpoint,
+        **({"inputDigest": input_digest} if input_digest is not None else {}),
+    )
+    _save_state(project_root, process_root, state)
+
+
+def _record_remaining_blocked(
+    project_root: Path,
+    process_root: Path,
+    state: dict[str, Any],
+    selection: dict[str, Any],
+) -> None:
+    metrics = _recovery_metrics(state)
+    if metrics["remainingBlockedAttempts"] >= MAX_RECOVERY_MEASUREMENTS:
+        return
+    _increment_recovery_metric(state, "remainingBlockedAttempts")
+    _event(
+        state,
+        "remaining-work-blocked",
+        state["currentImplementation"]["actor"],
+        blockedProfiles=selection["blockedProfiles"],
+        selectionDigest=digest_json(selection),
+    )
+    _save_state(project_root, process_root, state)
+
+
 def verify_change(
     project_root: Path,
     process_root: Path,
     project: dict[str, Any],
     change_id: str,
     profile: str,
+    *,
+    request_kind: str = "explicit-profile",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     initial = _load_state(project_root, process_root, change_id)
     _require_phase(initial, "implementing")
@@ -832,12 +1282,49 @@ def verify_change(
         if profile not in state["contract"]["document"]["requiredProfiles"]:
             raise ProcessError(f"profile {profile} is not required by change {change_id}")
 
-        _require_planned_scope(project_root, state)
         before = repository_snapshot(project_root)
+        uncovered = _record_plan_scope_blocker(
+            project_root, process_root, state, before
+        )
+        if uncovered:
+            raise ProcessError(
+                "candidate paths are outside the declared plan scope: "
+                + ", ".join(uncovered)
+                + "; owner decision required before recovery"
+            )
         _publication_preflight(project_root, project, state, before)
-        report = run_profile(project_root, project, profile)
+        runtime = execution_identity()
+        authority_digest = distribution_digest(process_root)
+        input_digest = _verification_input_digest(
+            project_root,
+            process_root,
+            project,
+            state,
+            profile,
+            runtime=runtime,
+            authority_digest=authority_digest,
+        )
+        try:
+            report = run_profile(project_root, project, profile)
+        except ExecutionError as error:
+            _record_execution_blocker(
+                project_root,
+                process_root,
+                state,
+                profile,
+                before,
+                input_digest,
+                error,
+            )
+            raise
         return _record_verification(
-            project_root, process_root, change_id, state["cycle"], before, report
+            project_root,
+            process_root,
+            change_id,
+            state["cycle"],
+            before,
+            report,
+            request_kind=request_kind,
         )
 
 
@@ -848,6 +1335,8 @@ def verify_impact_change(
     change_id: str,
     profile: str,
     selection: dict[str, Any],
+    *,
+    request_kind: str = "remaining",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run a consumer-opted final impact assurance profile."""
     initial = _load_state(project_root, process_root, change_id)
@@ -865,8 +1354,16 @@ def verify_impact_change(
         if profile not in selection.get("assuranceProfiles", ()):
             raise ProcessError(f"profile {profile} is not opted into final impact assurance")
 
-        _require_planned_scope(project_root, state)
         before = repository_snapshot(project_root)
+        uncovered = _record_plan_scope_blocker(
+            project_root, process_root, state, before
+        )
+        if uncovered:
+            raise ProcessError(
+                "candidate paths are outside the declared plan scope: "
+                + ", ".join(uncovered)
+                + "; owner decision required before recovery"
+            )
         if not same_checkpoint(before, selection["checkpoint"]):
             raise ProcessError("final impact assurance selection is stale")
         if selection.get("assurancePolicyDigest") != digest_json(project.get("impactProfiles", {})):
@@ -890,15 +1387,52 @@ def verify_impact_change(
         ]
         if not selected_units:
             raise ProcessError(f"final impact assurance selected no units for profile {profile}")
-        report = run_profile(
-            project_root,
-            {"profiles": {profile: selected_units}},
-            profile,
-        )
+        try:
+            report = run_profile(
+                project_root,
+                {"profiles": {profile: selected_units}},
+                profile,
+            )
+        except ExecutionError as error:
+            _record_execution_blocker(
+                project_root,
+                process_root,
+                state,
+                profile,
+                before,
+                _verification_input_digest(
+                    project_root, process_root, project, state, profile
+                ),
+                error,
+            )
+            raise
+        if report["status"] == "failed" and isinstance(report.get("diagnostic"), dict):
+            diagnostic = report["diagnostic"]
+            position = diagnostic.get("position")
+            if isinstance(position, int) and 1 <= position <= len(selected_units):
+                failed_unit = selected_units[position - 1]
+                report["diagnostic"] = {
+                    "kind": "impact-unit-failure",
+                    "descriptorVersion": 1,
+                    "profile": profile,
+                    "check": failed_unit["id"],
+                    "unit": failed_unit["id"],
+                    "unitPosition": position,
+                    "commandDigest": digest_json(failed_unit["run"]),
+                    "commandAvailable": False,
+                    "failureKind": diagnostic.get("failureKind", "unknown"),
+                    "failure": deepcopy(diagnostic["failure"]),
+                }
         report["executionMode"] = "impact-assurance"
         report["selectionDigest"] = digest_json(selection)
         return _record_verification(
-            project_root, process_root, change_id, state["cycle"], before, report
+            project_root,
+            process_root,
+            change_id,
+            state["cycle"],
+            before,
+            report,
+            request_kind=request_kind,
         )
 
 
@@ -1010,7 +1544,16 @@ def verify_remaining(
     with verification_lock(lock_path):
         state = _load_state(project_root, process_root, change_id)
         _require_phase(state, "implementing")
-        _require_planned_scope(project_root, state)
+        before = repository_snapshot(project_root)
+        uncovered = _record_plan_scope_blocker(
+            project_root, process_root, state, before
+        )
+        if uncovered:
+            raise ProcessError(
+                "candidate paths are outside the declared plan scope: "
+                + ", ".join(uncovered)
+                + "; owner decision required before recovery"
+            )
         executed: list[str] = []
         reused: list[str] = []
         completed: set[str] = set()
@@ -1022,6 +1565,9 @@ def verify_remaining(
             project = load_project(project_root, process_root)
             selection = _verification_selection(project_root, process_root, project, state)
             if selection["status"] == "blocked":
+                _record_remaining_blocked(
+                    project_root, process_root, state, selection
+                )
                 raise ProcessError(
                     "verification selection is blocked: "
                     + ", ".join(selection["blockedProfiles"])
@@ -1068,7 +1614,12 @@ def verify_remaining(
                     )
                 else:
                     state, report = verify_change(
-                        project_root, process_root, project, change_id, profile
+                        project_root,
+                        process_root,
+                        project,
+                        change_id,
+                        profile,
+                        request_kind="remaining",
                     )
                 executed.append(profile)
                 if report["status"] != "passed":
@@ -1083,7 +1634,10 @@ def verify_remaining(
             project,
             state,
         )
-        if final_selection["status"] == "blocked":
+        if final_selection["status"] == "blocked" and not executed:
+            _record_remaining_blocked(
+                project_root, process_root, state, final_selection
+            )
             raise ProcessError(
                 "verification selection is blocked: "
                 + ", ".join(final_selection["blockedProfiles"])
@@ -1138,6 +1692,15 @@ def verify_affected(
             return state, selection, []
         _require_current_baseline(project, state)
         before = repository_snapshot(project_root)
+        uncovered = _record_plan_scope_blocker(
+            project_root, process_root, state, before
+        )
+        if uncovered:
+            raise ProcessError(
+                "candidate paths are outside the declared plan scope: "
+                + ", ".join(uncovered)
+                + "; owner decision required before recovery"
+            )
         selection = resolve_impact_selection(
             project_root,
             process_root,
@@ -1164,7 +1727,25 @@ def verify_affected(
         executions: list[dict[str, Any]] = []
         for selected in selection["selectedUnits"]:
             unit = lookup[(selected["profile"], selected["id"])]
-            report = run_check(project_root, unit)
+            try:
+                report = run_check(project_root, unit)
+            except ExecutionError as error:
+                _record_execution_blocker(
+                    project_root,
+                    process_root,
+                    state,
+                    selected["profile"],
+                    before,
+                    _verification_input_digest(
+                        project_root,
+                        process_root,
+                        project,
+                        state,
+                        selected["profile"],
+                    ),
+                    error,
+                )
+                raise
             executions.append(
                 {
                     "profile": selected["profile"],
@@ -1257,6 +1838,8 @@ def _record_verification(
     cycle: int,
     before: dict[str, Any],
     report: dict[str, Any],
+    *,
+    request_kind: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     # Profiles run outside the lock. Reload so their publication cannot erase
     # participants or evidence recorded by another command while they ran.
@@ -1264,6 +1847,8 @@ def _record_verification(
     _require_phase(state, "implementing")
     if state["cycle"] != cycle:
         raise ProcessError("implementation cycle changed while verification was running")
+    if request_kind not in {"explicit-profile", "remaining"}:
+        raise ProcessError(f"unsupported verification request kind: {request_kind}")
     project = load_project(project_root, process_root)
     runtime = execution_identity()
     after = repository_snapshot(project_root)
@@ -1280,8 +1865,67 @@ def _record_verification(
         )
         for name in {*state["verification"], report["profile"]}
     }
+    previous_report_for_profile = state["verification"].get(report["profile"])
+    failed_profile_refresh = (
+        isinstance(previous_report_for_profile, dict)
+        and previous_report_for_profile.get("status") == "failed"
+    )
+    failed_report_relation = (
+        _verification_report_input_relation(
+            project_root,
+            process_root,
+            project,
+            state,
+            report["profile"],
+            previous_report_for_profile,
+            before,
+            runtime=runtime,
+            authority_digest=authority_digest,
+        )
+        if failed_profile_refresh
+        else None
+    )
     retained_verification: dict[str, Any] = {}
+    actor = (
+        state["currentImplementation"]["actor"]
+        if state.get("currentImplementation")
+        else {"actorId": "coordinator", "contextId": "lifecycle", "kind": "agent"}
+    )
     for name, previous in state["verification"].items():
+        if previous.get("status") == "failed":
+            if name != report["profile"]:
+                retained_verification[name] = previous
+                continue
+            relation = _verification_report_input_relation(
+                project_root,
+                process_root,
+                project,
+                state,
+                name,
+                previous,
+                before,
+                runtime=runtime,
+                authority_digest=authority_digest,
+            )
+            if not same_checkpoint(previous.get("checkpoint", {}), before):
+                reason = "checkpoint-mismatch"
+            elif relation is True:
+                reason = "explicit-refresh"
+            elif relation is False:
+                reason = "input-digest-mismatch"
+            else:
+                reason = "input-identity-unavailable"
+            details: dict[str, Any] = {
+                "profile": name,
+                "reason": reason,
+                "cycle": state.get("cycle", 1),
+                "reportDigest": digest_json(previous),
+                "recordedAt": previous.get("recordedAt"),
+            }
+            if isinstance(previous.get("diagnostic"), dict):
+                details["diagnostic"] = deepcopy(previous["diagnostic"])
+            _event(state, "profile-failure-replaced", actor, **details)
+            continue
         if _verification_report_matches_inputs(
             project_root,
             process_root,
@@ -1296,11 +1940,6 @@ def _record_verification(
         ):
             retained_verification[name] = previous
         else:
-            actor = (
-                state["currentImplementation"]["actor"]
-                if state.get("currentImplementation")
-                else {"actorId": "coordinator", "contextId": "lifecycle", "kind": "agent"}
-            )
             _event(
                 state,
                 "evidence-invalidated",
@@ -1346,6 +1985,25 @@ def _record_verification(
         report["status"] = "failed"
         report["reason"] = "repository changed while verification was running"
     state["verification"][profile] = report
+    _increment_recovery_metric(state, "profileExecutions")
+    _increment_recovery_metric(
+        state, "checkLaunches", len(report.get("checks", []))
+    )
+    if failed_profile_refresh and request_kind == "explicit-profile":
+        _increment_recovery_metric(state, "failedProfileRefreshes")
+    elif (
+        failed_profile_refresh
+        and request_kind == "remaining"
+        and failed_report_relation is False
+    ):
+        _increment_recovery_metric(
+            state, "remainingInvalidationExecutions"
+        )
+    if (
+        state.get("blocker", {}).get("kind") == "verification-execution"
+        and state["blocker"].get("profile") == profile
+    ):
+        state.pop("blocker", None)
 
     required = state["contract"]["document"]["requiredProfiles"]
     all_passed = all(
@@ -1366,12 +2024,22 @@ def _record_verification(
     )
     if all_passed:
         state["phase"] = "verified"
-    actor = state["currentImplementation"]["actor"]
+    event_details: dict[str, Any] = {"profile": profile}
+    if report["status"] == "failed":
+        event_details.update(
+            {
+                "reportDigest": digest_json(report),
+                "checkpoint": report["checkpoint"],
+                "recordedAt": report["recordedAt"],
+            }
+        )
+        if isinstance(report.get("diagnostic"), dict):
+            event_details["diagnostic"] = deepcopy(report["diagnostic"])
     _event(
         state,
         "profile-verified" if report["status"] == "passed" else "profile-failed",
         actor,
-        profile=profile,
+        **event_details,
     )
     _save_state(project_root, process_root, state)
     return state, report

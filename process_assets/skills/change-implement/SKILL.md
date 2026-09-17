@@ -70,3 +70,11 @@ gaps merely because they are listed.
 When evidence exposes a contract gap, stop and ask the project owner to supersede the
 contract. Do not make review prose into new scope. When implementation is ready,
 route to **change-verify**.
+
+When the lifecycle has a `plan-scope` blocker, the current run is terminal for this
+contract: stop editing and stop retrying. Report the uncovered paths, whether the
+accepted outcome is unchanged, and the exact owner action. An owner-approved
+superseding contract may continue the compatible work through `change start` →
+`change plan` → `change implement`; use the recorded prior run relation and preserve
+all inherited candidate paths. A new outcome is not an implementation-boundary
+repair and requires a fresh accepted decision.

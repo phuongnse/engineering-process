@@ -251,6 +251,7 @@ class ContractTests(unittest.TestCase):
         report["scope"] = {"kind": "profile"}
         report["diagnostic"] = {
             "kind": "selective-check-reproduction",
+            "descriptorVersion": 1,
             "profile": "rust",
             "check": "rust-tests",
             "position": 1,
@@ -262,11 +263,85 @@ class ContractTests(unittest.TestCase):
                 "--check-position",
                 "1",
             ],
+            "failureKind": "command-failure",
+            "failure": {
+                "id": "rust-tests",
+                "status": "failed",
+                "exitCode": 101,
+                "timedOut": False,
+                "outputExceeded": False,
+                "descendantsTerminated": False,
+                "streamFailed": False,
+                "cleanupFailed": False,
+                "durationMs": 1,
+                "stdout": {
+                    "bytes": 0,
+                    "sha256": f"sha256:{'0' * 64}",
+                    "truncated": False,
+                },
+                "stderr": {
+                    "bytes": 0,
+                    "sha256": f"sha256:{'0' * 64}",
+                    "truncated": False,
+                },
+            },
         }
         validator.validate(report)
         report["executionMode"] = "impact-assurance"
         report["selectionDigest"] = f"sha256:{'4' * 64}"
         validator.validate(report)
+
+    def test_change_and_run_schema_accept_a_bound_scope_recovery(self) -> None:
+        change = {
+            "schemaVersion": 1,
+            "id": "recovery",
+            "summary": "Recover an incomplete plan",
+            "source": "issue-1",
+            "comparisonBase": "HEAD",
+            "risk": "high",
+            "affectedProjects": ["sample"],
+            "acceptanceCriteria": [{"id": "works", "outcome": "The outcome remains supported."}],
+            "requiredProfiles": ["development"],
+            "supersedes": {
+                "changeId": "prior-change",
+                "reason": "missing-plan-boundary",
+            },
+        }
+        validate_document(change, "change", schema_root=SCHEMAS)
+
+        run = {
+            "schemaVersion": 1,
+            "changeId": "recovery",
+            "phase": "specified",
+            "cycle": 0,
+            "contract": {
+                "digest": f"sha256:{'1' * 64}",
+                "document": change,
+            },
+            "comparisonBaseCommit": "0" * 40,
+            "plan": None,
+            "supersedes": {
+                "changeId": "prior-change",
+                "runPath": ".process/runs/prior-change/run.json",
+                "runDigest": f"sha256:{'2' * 64}",
+                "phase": "blocked",
+                "cycle": 1,
+                "comparisonBaseCommit": "0" * 40,
+                "controlPaths": [".process/inputs/prior.json"],
+            },
+            "implementations": [],
+            "currentImplementation": None,
+            "verification": {},
+            "reviewAssignment": None,
+            "review": None,
+            "reviewHistory": [],
+            "receipt": None,
+            "requiredPlanSchemaVersion": 1,
+            "requiredReviewSchemaVersion": 1,
+            "controlPaths": [".process/inputs/recovery.json"],
+            "history": [],
+        }
+        validate_document(run, "run", schema_root=SCHEMAS)
 
     def test_current_review_requires_durable_non_blocking_dispositions(self) -> None:
         review = {

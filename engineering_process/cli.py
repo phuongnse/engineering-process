@@ -485,6 +485,9 @@ def command_change_status(args: argparse.Namespace) -> Result:
         "change status",
         state,
         nextCommand=state["nextCommand"],
+        blocker=state.get("blocker"),
+        supersedes=state.get("supersedes"),
+        recoveryMetrics=state.get("recoveryMetrics"),
         verification={
             name: report["status"] for name, report in state["verification"].items()
         },

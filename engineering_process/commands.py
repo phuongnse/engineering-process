@@ -21,6 +21,14 @@ TERMINATION_SECONDS = 2
 _EXECUTION_LOCK = threading.Lock()
 
 
+class ExecutionError(ProcessError):
+    """A bounded command could not produce a check report."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def _child_environment() -> dict[str, str]:
     return child_environment(executable=sys.executable)
 
@@ -164,8 +172,9 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         working_directory = working_directory.resolve(strict=True)
         working_directory.relative_to(project_root.resolve(strict=True))
     except (OSError, ValueError) as error:
-        raise ProcessError(
-            f"check {check['id']}: working directory escapes project root"
+        raise ExecutionError(
+            f"check {check['id']}: working directory escapes project root",
+            code="invalid-working-directory",
         ) from error
 
     timeout = check.get("timeoutSeconds", 300)
@@ -179,7 +188,10 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
             environment=_child_environment(),
         )
     except OSError as error:
-        raise ProcessError(f"check {check['id']}: cannot start command: {error}") from error
+        raise ExecutionError(
+            f"check {check['id']}: cannot start command: {error}",
+            code="spawn-failed",
+        ) from error
     assert process.stdout is not None and process.stderr is not None
 
     budget = _OutputBudget(output_limit)
@@ -204,6 +216,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
     output_exceeded = False
     descendants = False
     cleanup_error: str | None = None
+    cleanup_failed = False
     deadline = started + timeout
     try:
         while process.poll() is None:
@@ -215,6 +228,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
                 )
                 descendants = descendants or cleanup.descendants_found
                 cleanup_error = cleanup.error
+                cleanup_failed = cleanup_failed or cleanup.error is not None
                 break
             if time.monotonic() >= deadline:
                 timed_out = True
@@ -223,6 +237,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
                 )
                 descendants = descendants or cleanup.descendants_found
                 cleanup_error = cleanup.error
+                cleanup_failed = cleanup_failed or cleanup.error is not None
                 break
             time.sleep(0.01)
     except BaseException:
@@ -235,6 +250,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
             )
             descendants = descendants or cleanup.descendants_found
             cleanup_error = cleanup_error or cleanup.error
+            cleanup_failed = cleanup_failed or cleanup.error is not None or not cleanup.bounded
             cleanup_error = cleanup_error or (None if cleanup.bounded else "unbounded cleanup")
     exit_code = process.returncode if process.returncode is not None else -1
 
@@ -264,6 +280,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         "outputExceeded": output_exceeded,
         "descendantsTerminated": descendants,
         "streamFailed": stream_failed,
+        "cleanupFailed": cleanup_failed,
         "durationMs": int((time.monotonic() - started) * 1000),
         "stdout": stdout_digest.summary(),
         "stderr": stderr_digest.summary(),
@@ -325,8 +342,20 @@ def run_profile(
     failed = next((report for report in reports if report["status"] == "failed"), None)
     if failed is not None:
         assert failed_position is not None
+        if (
+            failed["timedOut"]
+            or failed["outputExceeded"]
+            or failed["streamFailed"]
+            or failed.get("cleanupFailed", False)
+        ):
+            failure_kind = "execution-condition"
+        elif failed["exitCode"] != 0:
+            failure_kind = "command-failure"
+        else:
+            failure_kind = "unknown"
         result["diagnostic"] = {
             "kind": "selective-check-reproduction",
+            "descriptorVersion": 1,
             "profile": profile,
             "check": failed["id"],
             "position": failed_position,
@@ -338,5 +367,7 @@ def run_profile(
                 "--check-position",
                 str(failed_position),
             ],
+            "failureKind": failure_kind,
+            "failure": dict(failed),
         }
     return result

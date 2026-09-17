@@ -45,6 +45,26 @@ change status when a change already exists, then route exactly one current phase
 7. blocked: stop. The current contract cannot merge; the owner may narrow or
    supersede it, but no correction-limit stop can waive independent review.
 
+If implementation finds candidate paths outside the frozen plan, the lifecycle records
+the paths as a `plan-scope` blocker and stops before verification or approval. Do not
+edit the accepted plan, widen a directory to satisfy the check, or retry the same
+operation. The owner may preserve the accepted outcome by preparing a new current-v1
+contract with `supersedes: {"changeId": "...", "reason": "missing-plan-boundary"}`;
+`change start` then records the prior run's path/digest and exact comparison base. The
+new plan must cover the complete inherited candidate diff. Prior findings, approvals,
+verification, and correction limits are never copied; a changed outcome needs a fresh
+owner decision and ordinary new contract.
+
+A failed required command is a different condition. Its report remains attached to the
+same run and exposes only safe structured execution metadata and the fixed selective
+reproduction descriptor. `change explain` labels that diagnostic `current`, `stale`, or
+`unavailable`; `change verify --remaining` does not retry a failed profile on the same
+candidate and input identity. Use an explicit profile refresh only after a concrete
+consumer/input action, and keep its result distinct from reused evidence. A spawn or
+other execution-condition error records the missing consumer action without persisting
+raw process errors. Blockers in the lifecycle are separate from consumer failures and
+from correction limits or any goal/coordination harness state.
+
 When changing this process itself, first use **process-improve** to prove the request
 came from a real consumer incident or need; the change still follows the same six
 phases afterward.

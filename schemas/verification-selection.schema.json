@@ -4,7 +4,7 @@
   "title": "Verification selection explanation",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "changeId", "phase", "status", "checkpoint", "requirements", "executeProfiles", "reuseProfiles", "inapplicableProfiles", "blockedProfiles"],
+  "required": ["schemaVersion", "changeId", "phase", "status", "checkpoint", "requirements", "executeProfiles", "reuseProfiles", "inapplicableProfiles", "blockedProfiles", "diagnostics"],
   "properties": {
     "schemaVersion": {"const": 1},
     "changeId": {"$ref": "#/$defs/id"},
@@ -20,6 +20,11 @@
     "reuseProfiles": {"$ref": "#/$defs/profileList"},
     "inapplicableProfiles": {"$ref": "#/$defs/profileList"},
     "blockedProfiles": {"$ref": "#/$defs/profileList"},
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/diagnostic"}
+    },
     "assuranceProfiles": {"$ref": "#/$defs/profileList"},
     "assuranceSelectionDigest": {"$ref": "#/$defs/digest"},
     "assurancePolicyDigest": {"$ref": "#/$defs/digest"}
@@ -75,7 +80,23 @@
         "action": {"enum": ["execute", "reuse", "skip", "blocked"]},
         "mode": {"enum": ["full", "impact-assurance"]},
         "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "evidence": {"$ref": "#/$defs/evidence"}
+        "evidence": {"$ref": "#/$defs/evidence"},
+        "diagnostic": {"$ref": "#/$defs/diagnostic"}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "status", "reportDigest", "runPath", "cycle", "checkpoint", "recordedAt", "reason"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["current", "stale", "unavailable"]},
+        "reportDigest": {"$ref": "#/$defs/digest"},
+        "runPath": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "cycle": {"type": "integer", "minimum": 1},
+        "checkpoint": {"$ref": "#/$defs/checkpoint"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000}
       }
     }
   }
