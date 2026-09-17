@@ -46,10 +46,11 @@ class CliTests(unittest.TestCase):
 
     def test_verify_accepts_an_explicit_diagnostic_check(self) -> None:
         args = build_parser().parse_args(
-            ["verify", "--profile", "rust", "--check-position", "2"]
+            ["verify", "--profile", "rust", "--check-position", "2", "--progress"]
         )
         self.assertEqual("rust", args.profile)
         self.assertEqual(2, args.check_position)
+        self.assertTrue(args.progress)
 
     def test_change_verify_supports_remaining_and_explain_commands(self) -> None:
         remaining = build_parser().parse_args(
@@ -66,11 +67,76 @@ class CliTests(unittest.TestCase):
         )
         self.assertTrue(affected.affected)
         self.assertEqual(["development"], affected.affected_profile)
+        self.assertTrue(
+            build_parser().parse_args(
+                ["change", "verify", "--change-id", "sample-change", "--remaining", "--progress"]
+            ).progress
+        )
         impact = build_parser().parse_args(
             ["change", "explain", "--change-id", "sample-change", "--impact", "--profile", "development"]
         )
         self.assertTrue(impact.impact)
         self.assertEqual("development", impact.profile)
+
+    def test_progress_stays_on_stderr_while_json_result_remains_parseable(self) -> None:
+        checkpoint = {
+            "head": "a" * 40,
+            "fingerprint": "sha256:" + "b" * 64,
+            "fileCount": 1,
+            "byteCount": 1,
+        }
+
+        def fake_run_profile(*_args, progress_sink=None, **_kwargs):
+            if progress_sink is not None:
+                progress_sink.publish(
+                    {
+                        "phase": "running",
+                        "status": "running",
+                        "profile": "development",
+                        "check": "unit",
+                        "position": 1,
+                        "elapsedMs": 10,
+                        "timeoutSeconds": 60,
+                        "lastObservedAt": "2026-09-17T00:00:00Z",
+                        "runnerActive": True,
+                        "runnerResponsive": True,
+                        "progress": "unknown",
+                        "outputBytes": 0,
+                        "stdout": "secret-child-output",
+                    }
+                )
+            return {
+                "profile": "development",
+                "status": "passed",
+                "durationMs": 10,
+                "scope": {"kind": "profile"},
+                "checks": [],
+            }
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), patch(
+            "engineering_process.cli.load_project",
+            return_value={"profiles": {"development": []}},
+        ), patch(
+            "engineering_process.cli.repository_snapshot",
+            side_effect=[checkpoint, checkpoint],
+        ), patch(
+            "engineering_process.cli.run_profile",
+            side_effect=fake_run_profile,
+        ):
+            code = main(
+                ["verify", "--profile", "development", "--progress", "--json"]
+            )
+
+        self.assertEqual(0, code)
+        result = json.loads(stdout.getvalue())
+        self.assertEqual("passed", result["status"])
+        progress = json.loads(stderr.getvalue().strip())
+        self.assertEqual("verification progress", progress["command"])
+        self.assertEqual("unknown", progress["progress"])
+        self.assertNotIn("stdout", progress)
+        self.assertNotIn("secret-child-output", stderr.getvalue())
 
     def test_remaining_command_propagates_failed_execution(self) -> None:
         state = {
@@ -104,6 +170,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("failed", result["status"])
         self.assertEqual(["development"], result["failures"])
+
+    def test_explicit_change_verify_reports_failed_profile_as_failed(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=False,
+            profile="development",
+            affected=False,
+            affected_profile=[],
+            progress=False,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_change",
+            return_value=(state, {"status": "failed"}),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("failed", result["profileStatus"])
 
     def test_remaining_command_fails_when_lifecycle_is_still_incomplete(self) -> None:
         state = {

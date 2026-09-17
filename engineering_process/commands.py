@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sys
@@ -18,8 +19,8 @@ from .supervision import process_supervisor
 
 DEFAULT_OUTPUT_BYTES = 1_000_000
 TERMINATION_SECONDS = 2
+OBSERVATION_INTERVAL_SECONDS = 1.0
 _EXECUTION_LOCK = threading.Lock()
-
 
 class ExecutionError(ProcessError):
     """A bounded command could not produce a check report."""
@@ -163,7 +164,100 @@ class _StreamDigest:
         }
 
 
-def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
+def _progress_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class ProgressSink:
+    """Bounded, data-only status sink with terminal-event retention."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sequence = 0
+        self._latest: dict[str, Any] | None = None
+        self._terminal: dict[str, Any] | None = None
+
+    def publish(self, event: dict[str, Any]) -> None:
+        """Store status without invoking caller code or blocking on I/O."""
+        with self._lock:
+            self._sequence += 1
+            self._latest = dict(event)
+            if event.get("phase") == "completed":
+                self._terminal = dict(event)
+
+    def read(self, after_sequence: int = 0) -> tuple[int, dict[str, Any] | None]:
+        """Return the newest status after a sequence number, if available."""
+        with self._lock:
+            if self._sequence <= after_sequence:
+                return self._sequence, None
+            event = self._latest
+            return self._sequence, (dict(event) if event is not None else None)
+
+
+class _ScopedProgressSink:
+    """Add profile/position context without adding another side-effect owner."""
+
+    def __init__(self, sink: ProgressSink, profile: str, position: int) -> None:
+        self._sink = sink
+        self._profile = profile
+        self._position = position
+
+    def publish(self, event: dict[str, Any]) -> None:
+        projected = dict(event)
+        projected["profile"] = self._profile
+        projected["position"] = self._position
+        self._sink.publish(projected)
+
+
+def scoped_progress_sink(
+    sink: ProgressSink,
+    profile: str,
+    position: int,
+) -> _ScopedProgressSink:
+    return _ScopedProgressSink(sink, profile, position)
+
+
+def _progress_event(
+    *,
+    check: dict[str, Any],
+    started: float,
+    timeout: float,
+    phase: str,
+    status: str,
+    runner_active: bool,
+    runner_responsive: bool,
+    last_observed_at: str | None,
+    output_bytes: int,
+) -> dict[str, Any]:
+    """Return the closed, non-content execution status projection."""
+    return {
+        "check": check["id"],
+        "elapsedMs": max(0, int((time.monotonic() - started) * 1000)),
+        "lastObservedAt": last_observed_at or _progress_timestamp(),
+        "outputBytes": max(0, output_bytes),
+        "phase": phase,
+        "progress": "unknown" if phase == "running" else "not-running",
+        "runnerActive": runner_active,
+        "runnerResponsive": runner_responsive,
+        "status": status,
+        "timeoutSeconds": timeout,
+    }
+
+
+def _publish_progress(
+    sink: ProgressSink | _ScopedProgressSink | None,
+    event: dict[str, Any],
+) -> None:
+    if sink is not None:
+        sink.publish(event)
+
+
+def _run_check(
+    project_root: Path,
+    check: dict[str, Any],
+    *,
+    progress_sink: ProgressSink | _ScopedProgressSink | None = None,
+) -> dict[str, Any]:
     command = check["run"]
     if not isinstance(command, list) or not command:
         raise ProcessError(f"check {check.get('id')!r} has no command")
@@ -218,9 +312,31 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
     cleanup_error: str | None = None
     cleanup_failed = False
     deadline = started + timeout
+    next_progress = started
+    runner_responsive = False
+    last_observed_at: str | None = None
     try:
         while process.poll() is None:
             supervisor.observe(process)
+            runner_responsive = True
+            last_observed_at = _progress_timestamp()
+            now = time.monotonic()
+            if now >= next_progress:
+                _publish_progress(
+                    progress_sink,
+                    _progress_event(
+                        check=check,
+                        started=started,
+                        timeout=timeout,
+                        phase="running",
+                        status="running",
+                        runner_active=process.poll() is None,
+                        runner_responsive=runner_responsive,
+                        last_observed_at=last_observed_at,
+                        output_bytes=stdout_digest.bytes + stderr_digest.bytes,
+                    ),
+                )
+                next_progress = now + OBSERVATION_INTERVAL_SECONDS
             if budget.exceeded.is_set():
                 output_exceeded = True
                 cleanup = supervisor.terminate(
@@ -272,7 +388,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         and not output_exceeded
         and not stream_failed
     )
-    return {
+    result = {
         "id": check["id"],
         "status": "passed" if passed else "failed",
         "exitCode": exit_code,
@@ -285,11 +401,35 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         "stdout": stdout_digest.summary(),
         "stderr": stderr_digest.summary(),
     }
+    _publish_progress(
+        progress_sink,
+        _progress_event(
+            check=check,
+            started=started,
+            timeout=timeout,
+            phase="completed",
+            status=result["status"],
+            runner_active=False,
+            runner_responsive=runner_responsive,
+            last_observed_at=last_observed_at,
+            output_bytes=stdout_digest.bytes + stderr_digest.bytes,
+        ),
+    )
+    return result
 
 
-def run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
+def run_check(
+    project_root: Path,
+    check: dict[str, Any],
+    *,
+    progress_sink: ProgressSink | _ScopedProgressSink | None = None,
+) -> dict[str, Any]:
     with _EXECUTION_LOCK:
-        return _run_check(project_root, check)
+        return _run_check(
+            project_root,
+            check,
+            progress_sink=progress_sink,
+        )
 
 
 def run_profile(
@@ -298,6 +438,7 @@ def run_profile(
     profile: str,
     *,
     check_position: int | None = None,
+    progress_sink: ProgressSink | None = None,
 ) -> dict[str, Any]:
     configured_checks = project["profiles"].get(profile)
     if configured_checks is None:
@@ -316,7 +457,14 @@ def run_profile(
     reports: list[dict[str, Any]] = []
     failed_position: int | None = None
     for position, check in zip(positions, checks, strict=True):
-        report = run_check(project_root, check)
+        if progress_sink is None:
+            report = run_check(project_root, check)
+        else:
+            report = run_check(
+                project_root,
+                check,
+                progress_sink=_ScopedProgressSink(progress_sink, profile, position),
+            )
         reports.append(report)
         if report["status"] != "passed":
             failed_position = position

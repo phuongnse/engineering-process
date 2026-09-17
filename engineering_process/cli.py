@@ -7,13 +7,14 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import threading
 from typing import Any, Callable
 
 from . import VERSION
 from .adoption import apply_adoption, check_adoption
 from .automation_name import render_name
 from .artifact_standards import MAX_DOCUMENT_BYTES, read_document, resolve_standard
-from .commands import run_check, run_profile
+from .commands import ProgressSink, run_check, run_profile
 from .contracts import (
     CONTRACT_KINDS,
     ProcessError,
@@ -66,6 +67,21 @@ from .source_publication import branch_issues, commit_issues, validate_range
 
 
 Result = tuple[dict[str, Any], int]
+
+_PROGRESS_FIELDS = (
+    "check",
+    "elapsedMs",
+    "lastObservedAt",
+    "outputBytes",
+    "phase",
+    "position",
+    "profile",
+    "progress",
+    "runnerActive",
+    "runnerResponsive",
+    "status",
+    "timeoutSeconds",
+)
 
 
 def _root(value: str) -> Path:
@@ -124,6 +140,64 @@ def _emit(value: dict[str, Any], *, as_json: bool) -> None:
         else:
             rendered = str(item)
         print(f"  {key}: {rendered}")
+
+
+def _emit_progress(event: dict[str, Any]) -> None:
+    """Write only the runner's safe status projection to stderr."""
+    safe = {
+        key: event[key]
+        for key in _PROGRESS_FIELDS
+        if key in event
+    }
+    print(
+        json.dumps(
+            {"command": "verification progress", **safe},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _run_with_progress(
+    operation: Callable[[ProgressSink], Result],
+) -> Result:
+    """Run verification separately so rendering never shares the runner loop."""
+    sink = ProgressSink()
+    result: Result | None = None
+    failure: BaseException | None = None
+
+    def execute() -> None:
+        nonlocal result, failure
+        try:
+            result = operation(sink)
+        except BaseException as error:  # propagate through the CLI thread
+            failure = error
+
+    worker = threading.Thread(target=execute, name="process-verification", daemon=False)
+    worker.start()
+    sequence = 0
+    while worker.is_alive():
+        sequence, event = sink.read(sequence)
+        if event is not None:
+            try:
+                _emit_progress(event)
+            except Exception:
+                pass
+        worker.join(timeout=0.05)
+    worker.join()
+    sequence, event = sink.read(sequence)
+    if event is not None:
+        try:
+            _emit_progress(event)
+        except Exception:
+            pass
+    if failure is not None:
+        raise failure
+    if result is None:
+        raise RuntimeError("verification worker returned no result")
+    return result
 
 
 def command_project_validate(args: argparse.Namespace) -> Result:
@@ -236,7 +310,10 @@ def command_setup(args: argparse.Namespace) -> Result:
     ), (0 if status == "passed" else 1)
 
 
-def command_verify(args: argparse.Namespace) -> Result:
+def _command_verify(
+    args: argparse.Namespace,
+    progress_sink: ProgressSink | None = None,
+) -> Result:
     process_root = _process_root(args)
     project = load_project(args.project_root, process_root)
     before = repository_snapshot(args.project_root)
@@ -245,6 +322,7 @@ def command_verify(args: argparse.Namespace) -> Result:
         project,
         args.profile,
         check_position=args.check_position,
+        progress_sink=progress_sink,
     )
     after = repository_snapshot(args.project_root)
     if not same_checkpoint(before, after):
@@ -254,6 +332,12 @@ def command_verify(args: argparse.Namespace) -> Result:
     return _result("verify", status=report["status"], report=report), (
         0 if report["status"] == "passed" else 1
     )
+
+
+def command_verify(args: argparse.Namespace) -> Result:
+    if getattr(args, "progress", False):
+        return _run_with_progress(lambda sink: _command_verify(args, sink))
+    return _command_verify(args)
 
 
 def command_adoption_apply(args: argparse.Namespace) -> Result:
@@ -321,7 +405,10 @@ def command_change_implement(args: argparse.Namespace) -> Result:
     return _state_result("change implement", state), 0
 
 
-def command_change_verify(args: argparse.Namespace) -> Result:
+def _command_change_verify(
+    args: argparse.Namespace,
+    progress_sink: ProgressSink | None = None,
+) -> Result:
     process_root = _process_root(args)
     if getattr(args, "affected", False):
         selected_profiles = tuple(getattr(args, "affected_profile", []) or []) or None
@@ -331,6 +418,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
             {},
             args.change_id,
             profiles=selected_profiles,
+            progress_sink=progress_sink,
         )
         execution_status = executions[0]["status"] if executions else None
         status = (
@@ -354,7 +442,11 @@ def command_change_verify(args: argparse.Namespace) -> Result:
     project = load_project(args.project_root, process_root)
     if args.remaining:
         state, selection = verify_remaining(
-            args.project_root, process_root, project, args.change_id
+            args.project_root,
+            process_root,
+            project,
+            args.change_id,
+            progress_sink=progress_sink,
         )
         executions = []
         failures = []
@@ -402,12 +494,27 @@ def command_change_verify(args: argparse.Namespace) -> Result:
             failures=failures,
         ), (0 if complete and not failures else 1)
     state, report = verify_change(
-        args.project_root, process_root, project, args.change_id, args.profile
+        args.project_root,
+        process_root,
+        project,
+        args.change_id,
+        args.profile,
+        progress_sink=progress_sink,
     )
     code = 0 if report["status"] == "passed" else 1
     return _state_result(
-        "change verify", state, profile=args.profile, profileStatus=report["status"]
+        "change verify",
+        state,
+        status=report["status"],
+        profile=args.profile,
+        profileStatus=report["status"],
     ), code
+
+
+def command_change_verify(args: argparse.Namespace) -> Result:
+    if getattr(args, "progress", False):
+        return _run_with_progress(lambda sink: _command_change_verify(args, sink))
+    return _command_change_verify(args)
 
 
 def command_change_explain(args: argparse.Namespace) -> Result:
@@ -682,6 +789,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify = _leaf(commands, "verify", command_verify, help="Run a project verification profile")
     verify.add_argument("--profile", required=True)
     verify.add_argument("--check-position", type=_check_position)
+    verify.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit safe bounded execution status to stderr",
+    )
     adoption = commands.add_parser("adoption", help="Apply or check managed adoption")
     adoption_commands = adoption.add_subparsers(dest="adoption_command", required=True)
     for name, handler in (("apply", command_adoption_apply), ("check", command_adoption_check)):
@@ -713,6 +825,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="limit --affected to one or more accepted profiles",
+    )
+    change_verify.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit safe bounded execution status to stderr",
     )
 
     change_explain = _leaf(change_commands, "explain", command_change_explain)

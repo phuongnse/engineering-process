@@ -14,7 +14,14 @@ from pathlib import Path
 import time
 from typing import Any
 
-from .commands import ExecutionError, run_check, run_profile, verification_lock
+from .commands import (
+    ExecutionError,
+    ProgressSink,
+    run_check,
+    run_profile,
+    scoped_progress_sink,
+    verification_lock,
+)
 from .contracts import (
     ProcessError,
     digest_json,
@@ -1270,6 +1277,7 @@ def verify_change(
     profile: str,
     *,
     request_kind: str = "explicit-profile",
+    progress_sink: ProgressSink | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     initial = _load_state(project_root, process_root, change_id)
     _require_phase(initial, "implementing")
@@ -1305,7 +1313,15 @@ def verify_change(
             authority_digest=authority_digest,
         )
         try:
-            report = run_profile(project_root, project, profile)
+            if progress_sink is None:
+                report = run_profile(project_root, project, profile)
+            else:
+                report = run_profile(
+                    project_root,
+                    project,
+                    profile,
+                    progress_sink=progress_sink,
+                )
         except ExecutionError as error:
             _record_execution_blocker(
                 project_root,
@@ -1337,6 +1353,7 @@ def verify_impact_change(
     selection: dict[str, Any],
     *,
     request_kind: str = "remaining",
+    progress_sink: ProgressSink | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run a consumer-opted final impact assurance profile."""
     initial = _load_state(project_root, process_root, change_id)
@@ -1388,11 +1405,16 @@ def verify_impact_change(
         if not selected_units:
             raise ProcessError(f"final impact assurance selected no units for profile {profile}")
         try:
-            report = run_profile(
-                project_root,
-                {"profiles": {profile: selected_units}},
-                profile,
-            )
+            selected_project = {"profiles": {profile: selected_units}}
+            if progress_sink is None:
+                report = run_profile(project_root, selected_project, profile)
+            else:
+                report = run_profile(
+                    project_root,
+                    selected_project,
+                    profile,
+                    progress_sink=progress_sink,
+                )
         except ExecutionError as error:
             _record_execution_blocker(
                 project_root,
@@ -1536,6 +1558,8 @@ def verify_remaining(
     process_root: Path,
     project: dict[str, Any],
     change_id: str,
+    *,
+    progress_sink: ProgressSink | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Execute only unresolved work and retain valid prior profile evidence."""
     initial = _load_state(project_root, process_root, change_id)
@@ -1611,6 +1635,7 @@ def verify_remaining(
                         change_id,
                         profile,
                         selection,
+                        progress_sink=progress_sink,
                     )
                 else:
                     state, report = verify_change(
@@ -1620,6 +1645,7 @@ def verify_remaining(
                         change_id,
                         profile,
                         request_kind="remaining",
+                        progress_sink=progress_sink,
                     )
                 executed.append(profile)
                 if report["status"] != "passed":
@@ -1660,6 +1686,7 @@ def verify_affected(
     change_id: str,
     *,
     profiles: tuple[str, ...] | None = None,
+    progress_sink: ProgressSink | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     """Run only resolved impact units as non-completion feedback evidence."""
     initial = _load_state(project_root, process_root, change_id)
@@ -1725,10 +1752,21 @@ def verify_affected(
         lookup = impact_unit_lookup(project, selection)
         started = time.monotonic()
         executions: list[dict[str, Any]] = []
-        for selected in selection["selectedUnits"]:
+        for position, selected in enumerate(selection["selectedUnits"], start=1):
             unit = lookup[(selected["profile"], selected["id"])]
             try:
-                report = run_check(project_root, unit)
+                if progress_sink is None:
+                    report = run_check(project_root, unit)
+                else:
+                    report = run_check(
+                        project_root,
+                        unit,
+                        progress_sink=scoped_progress_sink(
+                            progress_sink,
+                            selected["profile"],
+                            position,
+                        ),
+                    )
             except ExecutionError as error:
                 _record_execution_blocker(
                     project_root,

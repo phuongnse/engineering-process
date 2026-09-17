@@ -11,7 +11,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from engineering_process.commands import run_profile
+from engineering_process.commands import ProgressSink, run_profile
 from engineering_process.contracts import ProcessError, digest_json
 from engineering_process.artifact_standards import resolve_standard
 from engineering_process.distribution import distribution_digest
@@ -1477,6 +1477,32 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("failed", report["status"])
         self.assertEqual("implementing", state["phase"])
         self.assertEqual(["profile-failed"], process_improvement_signals(state))
+
+    def test_lifecycle_verification_forwards_progress_without_recording_it_as_evidence(self) -> None:
+        self.begin()
+        sink = ProgressSink()
+        with patch(
+            "engineering_process.lifecycle.run_profile", wraps=run_profile
+        ) as runner:
+            state, report = verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                "sample-change",
+                "development",
+                progress_sink=sink,
+            )
+
+        self.assertEqual("passed", report["status"])
+        self.assertEqual("implementing", state["phase"])
+        _sequence, event = sink.read()
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual("development", event["profile"])
+        self.assertEqual("completed", event["phase"])
+        self.assertNotIn("progress", report)
+        self.assertNotIn("progress", state["verification"]["development"])
+        self.assertIs(runner.call_args.kwargs["progress_sink"], sink)
 
     def test_failed_profile_diagnostic_is_current_and_remaining_does_not_retry(self) -> None:
         secret = "TOPSECRET-LIFECYCLE-DIAGNOSTIC"
