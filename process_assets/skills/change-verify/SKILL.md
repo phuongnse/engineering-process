@@ -181,7 +181,11 @@ For a publication-enabled consumer, treat source or PR metadata as a separate
 evidence boundary. A code candidate change must produce fresh code evidence; a
 title/body-only PR edit may reuse code evidence only while the exact head and all
 code inputs remain unchanged, and must run the consumer's publication check against
-the current base/head/title/body. A skipped, missing, cancelled or out-of-order
-provider check is not a pass. If the event wiring cannot show which current
-candidate and metadata a check evaluated, leave the PR blocked and report that
-unknown rather than refreshing an unrelated heavy profile.
+the current base/head/title/body. For this consumer, retained code evidence is an
+immutable versioned artifact linked by the provider to a successful `ci.yml`
+workflow run; its exact artifact protocol name plus provider run metadata binds the
+base/head/branch/matrix record. A skipped,
+missing, expired, cancelled, failed, stale or out-of-order provider record is not a
+pass. If the event wiring cannot show which current candidate and metadata a check
+evaluated, leave the PR blocked and report that unknown rather than refreshing an
+unrelated heavy profile.

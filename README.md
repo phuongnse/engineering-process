@@ -724,12 +724,17 @@ events and keeps the policy/publication job on all PR metadata events. The latte
 supplies actual PR metadata and the base/head commit range to the installed
 publication adapters. A title/body or draft-state edit therefore rechecks
 publication without skipping the required matrix jobs: each matrix job checks for a
-successful retained run on the exact unchanged PR head, and fails if no such evidence
-exists. A head change or a base edit starts the full matrix again. A changed base is
-still a publication and freshness input and must not be treated as evidence from the
-old candidate. Keep the existing required contexts (`Verify (...)`, `Policy
-verification / Shared policy`, and `Adopted public process`) aligned with these job
-owners; skipped, missing, cancelled or stale checks are not evidence. These
+successful retained provider artifact from the exact unchanged PR head and base, and
+fails if no such evidence exists. Full matrix legs upload only a small immutable
+versioned artifact after their checks pass; its exact name is a consumer-owned v1
+protocol for matrix leg, base, head, run and attempt, and the retained path verifies
+that artifact plus its successful source workflow run, branch, head, matrix leg and
+expiry through the Actions API. It does not use job-summary Markdown as evidence. A
+head change or a base edit starts the full matrix again. A
+changed base is still a publication and freshness input and must not be treated as
+evidence from the old candidate. Keep the existing required contexts (`Verify (...)`,
+`Policy verification / Shared policy`, and `Adopted public process`) aligned with
+these job owners; skipped, missing, cancelled or stale checks are not evidence. These
 publication choices belong to this consumer; the shared lifecycle does not impose a
 naming policy.
 
