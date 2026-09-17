@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: read
-  checks: read
+  actions: read
 
 jobs:
   policy-verification:
@@ -136,81 +136,116 @@ jobs:
       - name: Validate reviewed release contents
         if: steps.classify.outputs.mode == 'full'
         run: python verification/render_release_notes.py --check RELEASE_NOTES.md
+      - name: Build and install the distribution
+        if: steps.classify.outputs.mode == 'full' && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        run: python verification/verify_distribution.py
       - name: Verify retained code evidence for metadata-only update
         if: steps.classify.outputs.mode == 'retained'
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUIRED_CHECK_NAME: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_PYTHON: ${{ matrix.python }}
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           import os
+          from urllib.parse import urlencode
           from urllib.request import Request, urlopen
+
+          API_RESPONSE_LIMIT = 256 * 1024
+          MAX_ARTIFACT_CANDIDATES = 16
 
           api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
           repository = os.environ["GITHUB_REPOSITORY"]
           head = os.environ["PR_HEAD"]
           base = os.environ["PR_BASE_SHA"]
-          base_marker = f"- Base: `{base}`"
-          request = Request(
-              f"{api}/repos/{repository}/commits/{head}/check-runs?per_page=100",
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-              },
-          )
-          with urlopen(request, timeout=30) as response:
-              payload = json.load(response)
-          matches = [
-              item["id"]
-              for item in payload.get("check_runs", [])
-              if item.get("name") == os.environ["REQUIRED_CHECK_NAME"]
-              and item.get("head_sha") == head
-              and item.get("status") == "completed"
-              and item.get("conclusion") == "success"
-              and (item.get("app") or {}).get("slug") == "github-actions"
-              and base_marker in ((item.get("output") or {}).get("summary") or "")
-          ]
-          if not matches:
-              raise SystemExit(
-                  f"No successful retained {os.environ['REQUIRED_CHECK_NAME']} "
-                  f"exists for PR head {head}"
+          branch = os.environ["PR_BRANCH"]
+          matrix_os = os.environ["MATRIX_OS"]
+          matrix_python = os.environ["MATRIX_PYTHON"]
+          token = os.environ["GH_TOKEN"]
+
+          def read_response(url: str) -> bytes:
+              request = Request(
+                  url,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                  },
               )
-          print(
-              f"Retained successful check run(s) for "
-              f"{os.environ['REQUIRED_CHECK_NAME']}: {', '.join(map(str, matches))}"
+              with urlopen(request, timeout=30) as response:
+                  data = response.read(API_RESPONSE_LIMIT + 1)
+              if len(data) > API_RESPONSE_LIMIT:
+                  raise SystemExit("provider evidence response exceeded its bound")
+              return data
+
+          def read_json(url: str) -> dict[str, object]:
+              try:
+                  value = json.loads(read_response(url).decode("utf-8"))
+              except (OSError, UnicodeError, TypeError, ValueError) as error:
+                  raise SystemExit("provider evidence response was unavailable or invalid") from error
+              if not isinstance(value, dict):
+                  raise SystemExit("provider evidence response was not an object")
+              return value
+
+          artifact_name = f"code-evidence-v1-{matrix_os}-{matrix_python}-{base}-{head}"
+          artifact_query = urlencode({"name": artifact_name, "per_page": "100"})
+          artifacts_payload = read_json(
+              f"{api}/repos/{repository}/actions/artifacts?{artifact_query}"
+          )
+          artifacts = artifacts_payload.get("artifacts")
+          if not isinstance(artifacts, list):
+              raise SystemExit("provider artifact response was not a list")
+
+          for artifact in artifacts[:MAX_ARTIFACT_CANDIDATES]:
+              if not isinstance(artifact, dict):
+                  continue
+              if artifact.get("name") != artifact_name or artifact.get("expired") is not False:
+                  continue
+              if not isinstance(artifact.get("size_in_bytes"), int) or artifact["size_in_bytes"] > 8 * 1024:
+                  continue
+              artifact_run = artifact.get("workflow_run")
+              if not isinstance(artifact_run, dict) or not isinstance(artifact_run.get("id"), int):
+                  continue
+              run_id = artifact_run["id"]
+              if artifact_run.get("head_sha") != head or artifact_run.get("head_branch") != branch:
+                  continue
+              run = read_json(f"{api}/repos/{repository}/actions/runs/{run_id}")
+              if (
+                  run.get("id") != run_id
+                  or run.get("path") != ".github/workflows/ci.yml"
+                  or run.get("event") != "pull_request"
+                  or run.get("status") != "completed"
+                  or run.get("conclusion") != "success"
+                  or run.get("head_sha") != head
+                  or run.get("head_branch") != branch
+              ):
+                  continue
+              print(f"Retained provider artifact {artifact.get('id')} from workflow run {run_id}")
+              raise SystemExit(0)
+
+          raise SystemExit(
+              f"No successful current-base code assurance artifact exists for PR head {head}"
           )
           PY
-      - name: Record retained code evidence boundary
-        if: steps.classify.outputs.mode == 'retained'
-        env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            echo "Code evidence boundary"
-            echo "- Base: \`$PR_BASE_SHA\`"
-            echo "- Head: \`$PR_HEAD_SHA\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Record code evidence boundary
+      - name: Prepare code assurance artifact
         if: steps.classify.outputs.mode == 'full' && github.event_name == 'pull_request'
         env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CODE_EVIDENCE_FILE: ${{ runner.temp }}/code-evidence-boundary-${{ matrix.os }}-${{ matrix.python }}.txt
         shell: bash
         run: |
           set -euo pipefail
-          {
-            echo "Code evidence boundary"
-            echo "- Base: \`$PR_BASE_SHA\`"
-            echo "- Head: \`$PR_HEAD_SHA\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Build and install the distribution
-        if: steps.classify.outputs.mode == 'full' && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
-        run: python verification/verify_distribution.py
+          printf 'code-assurance-v1\n' > "$CODE_EVIDENCE_FILE"
+      - name: Publish code assurance artifact
+        if: steps.classify.outputs.mode == 'full' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: code-evidence-v1-${{ matrix.os }}-${{ matrix.python }}-${{ github.event.pull_request.base.sha }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/code-evidence-boundary-${{ matrix.os }}-${{ matrix.python }}.txt
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90

@@ -278,7 +278,7 @@ class AutomationTests(unittest.TestCase):
             "    branches: [main]\n",
             events,
         )
-        self.assertIn("  checks: read\n", workflow)
+        self.assertIn("  actions: read\n", workflow)
         self.assertIn(
             "name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})", workflow
         )
@@ -339,16 +339,32 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("Verify retained code evidence for metadata-only update", test_job)
         self.assertIn("PR_EVENT_ACTION: ${{ github.event.action }}", test_job)
         self.assertIn("PR_BASE_CHANGED: ${{ github.event.changes.base && 'true' || 'false' }}", test_job)
-        self.assertIn('check-runs?per_page=100', test_job)
-        self.assertIn('item.get("head_sha") == head', test_job)
-        self.assertIn('item.get("conclusion") == "success"', test_job)
-        self.assertIn('item.get("status") == "completed"', test_job)
-        self.assertIn('item.get("app") or {}', test_job)
+        self.assertIn('actions: read', workflow)
+        self.assertIn('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02', test_job)
+        self.assertIn('actions/artifacts?{artifact_query}', test_job)
+        self.assertIn('actions/runs/{run_id}', test_job)
+        self.assertIn('run.get("path") != ".github/workflows/ci.yml"', test_job)
+        self.assertIn('run.get("head_sha") != head', test_job)
+        self.assertIn('run.get("conclusion") != "success"', test_job)
+        self.assertIn('artifact.get("expired") is not False', test_job)
+        self.assertIn('artifact_name = f"code-evidence-v1-{matrix_os}-{matrix_python}-{base}-{head}"', test_job)
+        self.assertIn('artifact.get("name") != artifact_name', test_job)
+        self.assertIn('not isinstance(artifact_run.get("id"), int)', test_job)
+        self.assertIn('artifact_run.get("head_sha") != head', test_job)
+        self.assertIn('artifact["size_in_bytes"] > 8 * 1024', test_job)
+        self.assertNotIn('check-runs?per_page=100', test_job)
         self.assertIn('PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}', test_job)
-        self.assertIn('base_marker = f"- Base: `{base}`"', test_job)
-        self.assertIn('base_marker in ((item.get("output") or {}).get("summary") or "")', test_job)
-        self.assertIn('Record code evidence boundary', test_job)
-        self.assertIn('Record retained code evidence boundary', test_job)
+        self.assertIn('Prepare code assurance artifact', test_job)
+        self.assertIn('Publish code assurance artifact', test_job)
+        self.assertNotIn('GITHUB_STEP_SUMMARY', test_job)
+        self.assertLess(
+            test_job.index("Build and install the distribution"),
+            test_job.index("Prepare code assurance artifact"),
+        )
+        self.assertLess(
+            test_job.index("Prepare code assurance artifact"),
+            test_job.index("Publish code assurance artifact"),
+        )
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-pr.yml"
@@ -455,28 +471,41 @@ class AutomationTests(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertIn("unsupported verification event", result.stderr)
 
-    def test_ci_retained_check_filter_rejects_stale_or_failed_runs(self) -> None:
+    def test_ci_retained_artifact_query_rejects_stale_or_failed_runs(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
         marker = "      - name: Verify retained code evidence for metadata-only update\n"
         start = workflow.index("        run: |\n", workflow.index(marker)) + len("        run: |\n")
-        end = workflow.index("\n      - name: Record retained code evidence boundary", start)
+        end = workflow.index("\n      - name: Prepare code assurance artifact", start)
         script = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
         bash = self._git_bash()
         if bash is None:
-            self.skipTest("Git Bash is required to execute the retained-check workflow step")
+            self.skipTest("Git Bash is required to execute the retained-artifact workflow step")
 
         head = "a" * 40
         base_one = "b" * 40
         base_two = "c" * 40
-        check_name = "Verify (ubuntu-latest, Python 3.11)"
-        payload = {"check_runs": []}
+        branch = "fix/evidence-consistent-delivery-v2"
+        payload: dict[str, object] = {
+            "artifacts": [],
+            "runs": {},
+        }
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
-                body = json.dumps(payload).encode("utf-8")
-                self.send_response(200)
+                path = self.path.split("?", 1)[0]
+                status = 200
+                if path.endswith("/actions/artifacts"):
+                    body_value: object = {"artifacts": payload["artifacts"]}
+                elif "/actions/runs/" in path:
+                    run_id = path.split("/actions/runs/", 1)[1].split("/", 1)[0]
+                    body_value = payload["runs"].get(run_id, {"message": "not found"})  # type: ignore[union-attr]
+                else:
+                    status = 404
+                    body_value = {"message": "not found"}
+                body = json.dumps(body_value).encode("utf-8")
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -486,13 +515,16 @@ class AutomationTests(unittest.TestCase):
                 del format, args
 
         server = HTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
         try:
             def run_step(
-                records: list[dict[str, object]], base: str,
+                runs: list[dict[str, object]],
+                artifacts: list[dict[str, object]],
+                base: str,
             ) -> subprocess.CompletedProcess[str]:
-                payload["check_runs"] = records
-                worker = threading.Thread(target=server.handle_request, daemon=True)
-                worker.start()
+                payload["runs"] = {str(run["id"]): run for run in runs}
+                payload["artifacts"] = artifacts
                 environment = os.environ.copy()
                 environment.update(
                     {
@@ -501,7 +533,9 @@ class AutomationTests(unittest.TestCase):
                         "GH_TOKEN": "test-token",
                         "PR_HEAD": head,
                         "PR_BASE_SHA": base,
-                        "REQUIRED_CHECK_NAME": check_name,
+                        "PR_BRANCH": branch,
+                        "MATRIX_OS": "ubuntu-latest",
+                        "MATRIX_PYTHON": "3.11",
                         "NO_PROXY": "127.0.0.1,localhost",
                         "no_proxy": "127.0.0.1,localhost",
                         "PATH": str(ROOT / ".venv" / "Scripts") + os.pathsep + os.environ["PATH"],
@@ -515,43 +549,151 @@ class AutomationTests(unittest.TestCase):
                     text=True,
                     timeout=10,
                 )
-                worker.join(timeout=5)
-                self.assertFalse(worker.is_alive(), result.stderr + result.stdout)
                 return result
 
-            valid = {
-                "id": 11,
-                "name": check_name,
-                "head_sha": head,
-                "status": "completed",
-                "conclusion": "success",
-                "app": {"slug": "github-actions"},
-            }
-            valid["output"] = {"summary": f"Code evidence boundary\n- Base: `{base_one}`\n- Head: `{head}`\n"}
-            stale = {**valid, "id": 12, "head_sha": "b" * 40}
-            failed = {**valid, "id": 13, "conclusion": "failure"}
-            wrong_app = {**valid, "id": 14, "app": {"slug": "other-app"}}
-            accepted = run_step([stale, failed, wrong_app, valid], base_one)
+            def make_run(
+                run_id: int,
+                *,
+                path: str = ".github/workflows/ci.yml",
+                run_head: str = head,
+                run_branch: str = branch,
+                status: str = "completed",
+                conclusion: str = "success",
+                attempt: int = 1,
+            ) -> dict[str, object]:
+                return {
+                    "id": run_id,
+                    "path": path,
+                    "event": "pull_request",
+                    "status": status,
+                    "conclusion": conclusion,
+                    "head_sha": run_head,
+                    "head_branch": run_branch,
+                    "run_attempt": attempt,
+                }
+
+            def make_artifact(
+                artifact_id: int,
+                run_id: int,
+                base: str,
+                *,
+                expired: bool = False,
+                artifact_head: str = head,
+                artifact_branch: str = branch,
+            ) -> dict[str, object]:
+                name = f"code-evidence-v1-ubuntu-latest-3.11-{base}-{head}"
+                return {
+                    "id": artifact_id,
+                    "name": name,
+                    "expired": expired,
+                    "size_in_bytes": 128,
+                    "workflow_run": {
+                        "id": run_id,
+                        "head_sha": artifact_head,
+                        "head_branch": artifact_branch,
+                    },
+                }
+
+            run_one = make_run(101)
+            artifact_one = make_artifact(11, 101, base_one)
+            accepted = run_step(
+                [run_one],
+                [artifact_one],
+                base_one,
+            )
             self.assertEqual(0, accepted.returncode, accepted.stderr)
-            self.assertIn("11", accepted.stdout)
-            self.assertNotIn("12", accepted.stdout)
+            self.assertIn("provider artifact 11", accepted.stdout)
 
-            rejected = run_step([valid], base_two)
+            rejected = run_step(
+                [run_one],
+                [artifact_one],
+                base_two,
+            )
             self.assertNotEqual(0, rejected.returncode)
-            self.assertIn("No successful retained", rejected.stderr)
+            self.assertIn("No successful current-base", rejected.stderr)
 
-            failed_base_two = {**valid, "id": 15, "output": {"summary": f"Code evidence boundary\n- Base: `{base_two}`\n- Head: `{head}`\n"}, "conclusion": "failure"}
-            missing_base_two = run_step([failed_base_two], base_two)
-            self.assertNotEqual(0, missing_base_two.returncode)
+            run_two = make_run(102, conclusion="failure")
+            failed_base_two = run_step([run_two], [], base_two)
+            self.assertNotEqual(0, failed_base_two.returncode)
 
-            later_metadata = run_step([valid], base_two)
+            run_three = make_run(103)
+            expired = make_artifact(13, 103, base_two, expired=True)
+            expired_result = run_step(
+                [run_three],
+                [expired],
+                base_two,
+            )
+            self.assertNotEqual(0, expired_result.returncode)
+
+            wrong_source_run = make_run(104, path=".github/workflows/other.yml")
+            wrong_source = make_artifact(14, 104, base_two)
+            wrong_source_result = run_step(
+                [wrong_source_run],
+                [wrong_source],
+                base_two,
+            )
+            self.assertNotEqual(0, wrong_source_result.returncode)
+
+            wrong_marker_run = make_run(105)
+            wrong_marker = make_artifact(
+                15, 105, base_two, artifact_head="d" * 40
+            )
+            wrong_marker_result = run_step(
+                [wrong_marker_run],
+                [wrong_marker],
+                base_two,
+            )
+            self.assertNotEqual(0, wrong_marker_result.returncode)
+
+            later_metadata = run_step(
+                [run_one],
+                [artifact_one],
+                base_two,
+            )
             self.assertNotEqual(0, later_metadata.returncode)
 
-            valid_base_two = {**valid, "id": 16, "output": {"summary": f"Code evidence boundary\n- Base: `{base_two}`\n- Head: `{head}`\n"}}
-            current_base = run_step([valid_base_two], base_two)
+            run_six = make_run(106)
+            valid_base_two = make_artifact(16, 106, base_two)
+            current_base = run_step(
+                [run_one, run_six],
+                [artifact_one, valid_base_two],
+                base_two,
+            )
             self.assertEqual(0, current_base.returncode, current_base.stderr)
         finally:
+            server.shutdown()
+            server_thread.join(timeout=5)
             server.server_close()
+
+    def test_ci_assurance_artifact_writer_emits_only_bounded_sentinel(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "      - name: Prepare code assurance artifact\n"
+        start = workflow.index("        run: |\n", workflow.index(marker)) + len("        run: |\n")
+        end = workflow.index("\n      - name: Publish code assurance artifact", start)
+        script = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
+        bash = self._git_bash()
+        if bash is None:
+            self.skipTest("Git Bash is required to execute the assurance artifact writer")
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            output = Path(directory) / "code-evidence.txt"
+            output_value = output.as_posix()
+            if os.name == "nt":
+                output_value = f"/{output_value[0].lower()}{output_value[2:]}"
+            environment = os.environ.copy()
+            environment["CODE_EVIDENCE_FILE"] = output_value
+            result = subprocess.run(
+                [bash, "-c", script],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(b"code-assurance-v1\n", output.read_bytes())
 
     def test_release_metadata_compare_preserves_trailing_newlines(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release-pr.yml").read_text(
