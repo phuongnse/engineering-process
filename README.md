@@ -353,7 +353,7 @@ process release is required to continue consumer development.
 Pin the process in requirements/process.in:
 
     --only-binary :all:
-    engineering-process==2.7.0
+    engineering-process==3.0.0
 
 Generate requirements/process.txt with hashes, install that lock, then run:
 
