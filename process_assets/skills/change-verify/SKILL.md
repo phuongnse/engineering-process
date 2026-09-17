@@ -24,6 +24,16 @@ An explicit profile request is an unconditional refresh:
 
     processctl change verify --change-id ID --profile PROFILE
 
+For a long-running command, add `--progress` to the explicit, `--remaining`, or
+`--affected` verification request. The opt-in status stream is written to stderr at a
+bounded cadence and reports only the profile/check position, elapsed time, declared
+timeout, last successful runner observation, runner responsiveness, and captured byte
+count. It must report internal progress as `unknown` when the consumer command exposes
+no trusted progress signal; output growth is not treated as proof of test progress.
+It never invents percentages, current test names, remaining time, or a passing result.
+The stream is operational context, not lifecycle evidence, review approval, or merge
+eligibility, and the normal JSON result on stdout remains unchanged.
+
 For a continuation request, inspect the decision first and then execute only
 unsatisfied required profiles:
 

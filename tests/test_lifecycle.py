@@ -1478,6 +1478,30 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("implementing", state["phase"])
         self.assertEqual(["profile-failed"], process_improvement_signals(state))
 
+    def test_lifecycle_verification_forwards_progress_without_recording_it_as_evidence(self) -> None:
+        self.begin()
+        events: list[dict[str, object]] = []
+        with patch(
+            "engineering_process.lifecycle.run_profile", wraps=run_profile
+        ) as runner:
+            state, report = verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                "sample-change",
+                "development",
+                progress_callback=events.append,
+            )
+
+        self.assertEqual("passed", report["status"])
+        self.assertEqual("implementing", state["phase"])
+        self.assertTrue(events)
+        self.assertEqual("development", events[-1]["profile"])
+        self.assertEqual("completed", events[-1]["phase"])
+        self.assertNotIn("progress", report)
+        self.assertNotIn("progress", state["verification"]["development"])
+        self.assertTrue(callable(runner.call_args.kwargs["progress_callback"]))
+
     def test_failed_profile_diagnostic_is_current_and_remaining_does_not_retry(self) -> None:
         secret = "TOPSECRET-LIFECYCLE-DIAGNOSTIC"
         self.project["profiles"]["development"] = [

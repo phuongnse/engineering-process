@@ -241,6 +241,18 @@ required full-profile run, or count as lifecycle verification evidence. Maintain
 who need semantic tool output must use a tool-owned structured report or run the
 consumer command in an appropriately trusted environment.
 
+For a long-running check, opt into safe in-progress status with
+`processctl verify --profile PROFILE --progress` or
+`processctl change verify --change-id ID --profile PROFILE --progress` (also supported
+for `--remaining` and `--affected`). Status is written to stderr at a bounded cadence,
+so `--json` stdout remains one machine-readable result. It identifies the profile,
+check position, elapsed time, timeout, last runner observation, response state and
+captured byte count. A responsive runner is not proof that the suite is making
+progress: when the command exposes no trusted internal signal, progress is explicitly
+`unknown`; the status never invents a percentage, current test or remaining time. The
+status stream is operational context only and cannot satisfy verification, review or
+merge conditions.
+
 ### Production readiness
 
 A consumer declares `.process/readiness.json` with production as its direction, its

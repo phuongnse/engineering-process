@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sys
 import threading
 import time
-from typing import Any, BinaryIO, Iterator
+from typing import Any, BinaryIO, Callable, Iterator
 
 from .contracts import ProcessError
 from .evidence import child_environment, execution_identity as _execution_identity
@@ -18,7 +19,10 @@ from .supervision import process_supervisor
 
 DEFAULT_OUTPUT_BYTES = 1_000_000
 TERMINATION_SECONDS = 2
+OBSERVATION_INTERVAL_SECONDS = 1.0
 _EXECUTION_LOCK = threading.Lock()
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 class ExecutionError(ProcessError):
@@ -163,7 +167,58 @@ class _StreamDigest:
         }
 
 
-def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
+def _progress_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _notify_progress(
+    callback: ProgressCallback | None,
+    event: dict[str, Any],
+) -> None:
+    """Notify an optional observer without changing command outcome semantics."""
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception:
+        # Observability is deliberately best effort. A broken consumer-side
+        # renderer must not turn a command result into a different result.
+        return
+
+
+def _progress_event(
+    *,
+    check: dict[str, Any],
+    started: float,
+    timeout: float,
+    phase: str,
+    status: str,
+    runner_active: bool,
+    runner_responsive: bool,
+    last_observed_at: str | None,
+    output_bytes: int,
+) -> dict[str, Any]:
+    """Return the closed, non-content execution status projection."""
+    return {
+        "check": check["id"],
+        "elapsedMs": max(0, int((time.monotonic() - started) * 1000)),
+        "lastObservedAt": last_observed_at or _progress_timestamp(),
+        "outputBytes": max(0, output_bytes),
+        "phase": phase,
+        "progress": "unknown" if phase == "running" else "not-running",
+        "runnerActive": runner_active,
+        "runnerResponsive": runner_responsive,
+        "status": status,
+        "timeoutSeconds": timeout,
+    }
+
+
+def _run_check(
+    project_root: Path,
+    check: dict[str, Any],
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
     command = check["run"]
     if not isinstance(command, list) or not command:
         raise ProcessError(f"check {check.get('id')!r} has no command")
@@ -218,9 +273,31 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
     cleanup_error: str | None = None
     cleanup_failed = False
     deadline = started + timeout
+    next_progress = started
+    runner_responsive = False
+    last_observed_at: str | None = None
     try:
         while process.poll() is None:
             supervisor.observe(process)
+            runner_responsive = True
+            last_observed_at = _progress_timestamp()
+            now = time.monotonic()
+            if now >= next_progress:
+                _notify_progress(
+                    progress_callback,
+                    _progress_event(
+                        check=check,
+                        started=started,
+                        timeout=timeout,
+                        phase="running",
+                        status="running",
+                        runner_active=process.poll() is None,
+                        runner_responsive=runner_responsive,
+                        last_observed_at=last_observed_at,
+                        output_bytes=stdout_digest.bytes + stderr_digest.bytes,
+                    ),
+                )
+                next_progress = now + OBSERVATION_INTERVAL_SECONDS
             if budget.exceeded.is_set():
                 output_exceeded = True
                 cleanup = supervisor.terminate(
@@ -272,7 +349,7 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         and not output_exceeded
         and not stream_failed
     )
-    return {
+    result = {
         "id": check["id"],
         "status": "passed" if passed else "failed",
         "exitCode": exit_code,
@@ -285,11 +362,35 @@ def _run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
         "stdout": stdout_digest.summary(),
         "stderr": stderr_digest.summary(),
     }
+    _notify_progress(
+        progress_callback,
+        _progress_event(
+            check=check,
+            started=started,
+            timeout=timeout,
+            phase="completed",
+            status=result["status"],
+            runner_active=False,
+            runner_responsive=runner_responsive,
+            last_observed_at=last_observed_at,
+            output_bytes=stdout_digest.bytes + stderr_digest.bytes,
+        ),
+    )
+    return result
 
 
-def run_check(project_root: Path, check: dict[str, Any]) -> dict[str, Any]:
+def run_check(
+    project_root: Path,
+    check: dict[str, Any],
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
     with _EXECUTION_LOCK:
-        return _run_check(project_root, check)
+        return _run_check(
+            project_root,
+            check,
+            progress_callback=progress_callback,
+        )
 
 
 def run_profile(
@@ -298,6 +399,7 @@ def run_profile(
     profile: str,
     *,
     check_position: int | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     configured_checks = project["profiles"].get(profile)
     if configured_checks is None:
@@ -316,7 +418,19 @@ def run_profile(
     reports: list[dict[str, Any]] = []
     failed_position: int | None = None
     for position, check in zip(positions, checks, strict=True):
-        report = run_check(project_root, check)
+        def observe(event: dict[str, Any]) -> None:
+            if progress_callback is None:
+                return
+            progress_event = dict(event)
+            progress_event["profile"] = profile
+            progress_event["position"] = position
+            progress_callback(progress_event)
+
+        report = run_check(
+            project_root,
+            check,
+            progress_callback=observe if progress_callback is not None else None,
+        )
         reports.append(report)
         if report["status"] != "passed":
             failed_position = position

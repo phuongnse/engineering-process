@@ -67,6 +67,21 @@ from .source_publication import branch_issues, commit_issues, validate_range
 
 Result = tuple[dict[str, Any], int]
 
+_PROGRESS_FIELDS = (
+    "check",
+    "elapsedMs",
+    "lastObservedAt",
+    "outputBytes",
+    "phase",
+    "position",
+    "profile",
+    "progress",
+    "runnerActive",
+    "runnerResponsive",
+    "status",
+    "timeoutSeconds",
+)
+
 
 def _root(value: str) -> Path:
     path = Path(value).resolve()
@@ -124,6 +139,24 @@ def _emit(value: dict[str, Any], *, as_json: bool) -> None:
         else:
             rendered = str(item)
         print(f"  {key}: {rendered}")
+
+
+def _emit_progress(event: dict[str, Any]) -> None:
+    """Write only the runner's safe status projection to stderr."""
+    safe = {
+        key: event[key]
+        for key in _PROGRESS_FIELDS
+        if key in event
+    }
+    print(
+        json.dumps(
+            {"command": "verification progress", **safe},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def command_project_validate(args: argparse.Namespace) -> Result:
@@ -245,6 +278,7 @@ def command_verify(args: argparse.Namespace) -> Result:
         project,
         args.profile,
         check_position=args.check_position,
+        progress_callback=_emit_progress if getattr(args, "progress", False) else None,
     )
     after = repository_snapshot(args.project_root)
     if not same_checkpoint(before, after):
@@ -331,6 +365,7 @@ def command_change_verify(args: argparse.Namespace) -> Result:
             {},
             args.change_id,
             profiles=selected_profiles,
+            progress_callback=_emit_progress if getattr(args, "progress", False) else None,
         )
         execution_status = executions[0]["status"] if executions else None
         status = (
@@ -354,7 +389,11 @@ def command_change_verify(args: argparse.Namespace) -> Result:
     project = load_project(args.project_root, process_root)
     if args.remaining:
         state, selection = verify_remaining(
-            args.project_root, process_root, project, args.change_id
+            args.project_root,
+            process_root,
+            project,
+            args.change_id,
+            progress_callback=_emit_progress if getattr(args, "progress", False) else None,
         )
         executions = []
         failures = []
@@ -402,7 +441,12 @@ def command_change_verify(args: argparse.Namespace) -> Result:
             failures=failures,
         ), (0 if complete and not failures else 1)
     state, report = verify_change(
-        args.project_root, process_root, project, args.change_id, args.profile
+        args.project_root,
+        process_root,
+        project,
+        args.change_id,
+        args.profile,
+        progress_callback=_emit_progress if getattr(args, "progress", False) else None,
     )
     code = 0 if report["status"] == "passed" else 1
     return _state_result(
@@ -682,6 +726,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify = _leaf(commands, "verify", command_verify, help="Run a project verification profile")
     verify.add_argument("--profile", required=True)
     verify.add_argument("--check-position", type=_check_position)
+    verify.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit safe bounded execution status to stderr",
+    )
     adoption = commands.add_parser("adoption", help="Apply or check managed adoption")
     adoption_commands = adoption.add_subparsers(dest="adoption_command", required=True)
     for name, handler in (("apply", command_adoption_apply), ("check", command_adoption_check)):
@@ -713,6 +762,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="limit --affected to one or more accepted profiles",
+    )
+    change_verify.add_argument(
+        "--progress",
+        action="store_true",
+        help="emit safe bounded execution status to stderr",
     )
 
     change_explain = _leaf(change_commands, "explain", command_change_explain)

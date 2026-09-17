@@ -297,6 +297,100 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(report["stdout"]["truncated"])
         self.assertRegex(report["stdout"]["sha256"], r"^sha256:[0-9a-f]{64}$")
 
+    def test_progress_observer_reports_silent_runner_without_claiming_progress(self) -> None:
+        events: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "engineering_process.commands.OBSERVATION_INTERVAL_SECONDS", 0.02
+        ):
+            report = run_check(
+                Path(directory),
+                {
+                    "id": "silent",
+                    "run": [sys.executable, "-c", "import time; time.sleep(0.15)"],
+                    "timeoutSeconds": 10,
+                },
+                progress_callback=events.append,
+            )
+
+        self.assertEqual("passed", report["status"])
+        running = [event for event in events if event["phase"] == "running"]
+        self.assertTrue(running)
+        self.assertTrue(running[0]["runnerActive"])
+        self.assertTrue(running[0]["runnerResponsive"])
+        self.assertEqual("unknown", running[0]["progress"])
+        self.assertEqual(0, running[0]["outputBytes"])
+        self.assertEqual(10, running[0]["timeoutSeconds"])
+        self.assertIsInstance(running[0]["elapsedMs"], int)
+        self.assertIsInstance(running[0]["lastObservedAt"], str)
+        completed = events[-1]
+        self.assertEqual("completed", completed["phase"])
+        self.assertFalse(completed["runnerActive"])
+        self.assertEqual("passed", completed["status"])
+        for event in events:
+            self.assertNotIn("stdout", event)
+            self.assertNotIn("stderr", event)
+            self.assertNotIn("command", event)
+            self.assertNotIn("cwd", event)
+            self.assertNotIn("remainingSeconds", event)
+            self.assertNotIn("percent", event)
+
+    def test_profile_progress_adds_authoritative_profile_and_position(self) -> None:
+        events: list[dict[str, object]] = []
+        project = {
+            "profiles": {
+                "development": [
+                    {
+                        "id": "quick",
+                        "run": [sys.executable, "-c", "pass"],
+                        "timeoutSeconds": 10,
+                    },
+                    {
+                        "id": "silent",
+                        "run": [sys.executable, "-c", "import time; time.sleep(0.12)"],
+                        "timeoutSeconds": 10,
+                    },
+                ]
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "engineering_process.commands.OBSERVATION_INTERVAL_SECONDS", 0.02
+        ):
+            report = run_profile(
+                Path(directory),
+                project,
+                "development",
+                progress_callback=events.append,
+            )
+
+        self.assertEqual("passed", report["status"])
+        running = next(
+            event
+            for event in events
+            if event["phase"] == "running" and event["check"] == "silent"
+        )
+        self.assertEqual("development", running["profile"])
+        self.assertEqual(2, running["position"])
+        self.assertEqual("silent", running["check"])
+
+    def test_progress_observer_failure_does_not_change_command_result(self) -> None:
+        def broken_observer(_event: dict[str, object]) -> None:
+            raise RuntimeError("observer-secret")
+
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "engineering_process.commands.OBSERVATION_INTERVAL_SECONDS", 0.01
+        ):
+            report = run_check(
+                Path(directory),
+                {
+                    "id": "observer-failure",
+                    "run": [sys.executable, "-c", "import time; time.sleep(0.03)"],
+                    "timeoutSeconds": 10,
+                },
+                progress_callback=broken_observer,
+            )
+
+        self.assertEqual("passed", report["status"])
+
     def test_profile_stops_at_first_failure(self) -> None:
         project = {
             "profiles": {
