@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+from queue import Empty, Full, Queue
 import sys
 import threading
 import time
@@ -20,6 +21,7 @@ from .supervision import process_supervisor
 DEFAULT_OUTPUT_BYTES = 1_000_000
 TERMINATION_SECONDS = 2
 OBSERVATION_INTERVAL_SECONDS = 1.0
+PROGRESS_DRAIN_SECONDS = 0.05
 _EXECUTION_LOCK = threading.Lock()
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -186,6 +188,68 @@ def _notify_progress(
         return
 
 
+_PROGRESS_STOP = object()
+
+
+class _ProgressDispatcher:
+    """Keep observer work off the bounded child-supervision thread."""
+
+    def __init__(self, callback: ProgressCallback | None) -> None:
+        self._callback = callback
+        self._queue: Queue[dict[str, Any] | object] = Queue(maxsize=1)
+        self._thread: threading.Thread | None = None
+        if callback is not None:
+            self._thread = threading.Thread(
+                target=self._run,
+                name="process-progress-observer",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            event = self._queue.get()
+            try:
+                if event is _PROGRESS_STOP:
+                    return
+                assert self._callback is not None
+                try:
+                    self._callback(event)
+                except Exception:
+                    # An observer is best effort and must not affect execution.
+                    pass
+            finally:
+                self._queue.task_done()
+
+    def notify(self, event: dict[str, Any]) -> None:
+        try:
+            self._queue.put_nowait(event)
+        except Full:
+            # A slow observer may lose an intermediate status, but it cannot
+            # back-pressure the runner or accumulate unbounded notifications.
+            return
+
+    def close(self) -> None:
+        if self._thread is None:
+            return
+        deadline = time.monotonic() + PROGRESS_DRAIN_SECONDS
+        while self._queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.001)
+        try:
+            self._queue.put_nowait(_PROGRESS_STOP)
+        except Full:
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except Empty:
+                pass
+            try:
+                self._queue.put_nowait(_PROGRESS_STOP)
+            except Full:
+                pass
+        self._thread.join(timeout=PROGRESS_DRAIN_SECONDS)
+
+
 def _progress_event(
     *,
     check: dict[str, Any],
@@ -213,7 +277,7 @@ def _progress_event(
     }
 
 
-def _run_check(
+def _run_check_with_progress(
     project_root: Path,
     check: dict[str, Any],
     *,
@@ -377,6 +441,25 @@ def _run_check(
         ),
     )
     return result
+
+
+def _run_check(
+    project_root: Path,
+    check: dict[str, Any],
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    dispatcher = _ProgressDispatcher(progress_callback)
+    try:
+        return _run_check_with_progress(
+            project_root,
+            check,
+            progress_callback=(
+                dispatcher.notify if progress_callback is not None else None
+            ),
+        )
+    finally:
+        dispatcher.close()
 
 
 def run_check(

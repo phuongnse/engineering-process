@@ -391,6 +391,33 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual("passed", report["status"])
 
+    def test_blocking_progress_observer_cannot_extend_timeout(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_observer(_event: dict[str, object]) -> None:
+            entered.set()
+            release.wait(5)
+
+        started = time.monotonic()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                report = run_check(
+                    Path(directory),
+                    {
+                        "id": "blocking-observer",
+                        "run": [sys.executable, "-c", "import time; time.sleep(5)"],
+                        "timeoutSeconds": 0.05,
+                    },
+                    progress_callback=blocking_observer,
+                )
+        finally:
+            release.set()
+
+        self.assertTrue(entered.wait(1))
+        self.assertTrue(report["timedOut"])
+        self.assertLess(time.monotonic() - started, 1.0)
+
     def test_profile_stops_at_first_failure(self) -> None:
         project = {
             "profiles": {
