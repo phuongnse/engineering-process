@@ -789,6 +789,24 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(
             (self.root / ".process" / "receipts" / "sample-change.json").exists()
         )
+        failures = [event for event in state["history"] if event["event"] == "publication-failed"]
+        self.assertEqual(1, len(failures))
+        self.assertEqual("source-validation-failed", failures[0]["details"]["reason"])
+        self.assertEqual(state["comparisonBaseCommit"], failures[0]["details"]["comparisonBaseCommit"])
+        self.assertEqual(state["comparisonBaseCommit"] + ".." + state["reviewAssignment"]["checkpoint"]["head"], failures[0]["details"]["range"])
+        self.assertIn("publication-failed", process_improvement_signals(state))
+
+        with self.assertRaisesRegex(ProcessError, "publication checks failed"):
+            finish_change(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="coordinator",
+                context_id="finish-context",
+                kind="agent",
+            )
+        repeated = [event for event in lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["history"] if event["event"] == "publication-failed"]
+        self.assertEqual(1, len(repeated))
 
     def test_publication_rejects_empty_range_before_profiles_then_committed_candidate_finishes(self) -> None:
         self.prepare_publication_candidate()
@@ -806,7 +824,12 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(ProcessError, "at least one commit.*before change verify"):
                 verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
             runner.assert_not_called()
-        self.assertEqual(before, state_path.read_bytes())
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual("source-validation-failed", next(
+            event["details"]["reason"]
+            for event in state["history"]
+            if event["event"] == "publication-failed"
+        ))
 
         git(self.root, "add", "product.txt")
         git(self.root, "commit", "-qm", "fix: commit corrected candidate")
@@ -832,7 +855,12 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
                 verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
             runner.assert_not_called()
-        self.assertEqual(before, state_path.read_bytes())
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertTrue(any(
+            event["event"] == "publication-failed"
+            and event["details"]["reason"] == "uncommitted-candidate"
+            for event in state["history"]
+        ))
 
     def test_publication_review_rechecks_branch_without_assigning_reviewer(self) -> None:
         self.prepare_publication_candidate()
@@ -844,7 +872,13 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "publication checks failed"):
             start_review(self.root, PROCESS_ROOT, "sample-change",
                          actor_id="reviewer", context_id="review-context", kind="agent")
-        self.assertEqual(before, state_path.read_bytes())
+        state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertIsNone(state["reviewAssignment"])
+        self.assertTrue(any(
+            event["event"] == "publication-failed"
+            and event["details"]["reason"] == "source-validation-failed"
+            for event in state["history"]
+        ))
 
     def test_publication_verify_rejects_changes_hidden_by_index_flags(self) -> None:
         self.prepare_publication_candidate()
@@ -859,7 +893,12 @@ class LifecycleTests(unittest.TestCase):
                     with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
                         verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
                     runner.assert_not_called()
-                self.assertEqual(before, state_path.read_bytes())
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertTrue(any(
+                    event["event"] == "publication-failed"
+                    and event["details"]["reason"] == "uncommitted-candidate"
+                    for event in state["history"]
+                ))
                 git(self.root, "update-index", "--no-assume-unchanged", "product.txt")
                 git(self.root, "update-index", "--no-skip-worktree", "product.txt")
 
@@ -879,7 +918,12 @@ class LifecycleTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProcessError, "repository changed while publication"):
                     verify_change(self.root, PROCESS_ROOT, self.project, "sample-change", "development")
                 runner.assert_not_called()
-        self.assertEqual(before, state_path.read_bytes())
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertTrue(any(
+            event["event"] == "publication-failed"
+            and event["details"]["reason"] == "candidate-mutated-during-preflight"
+            for event in state["history"]
+        ))
 
     def test_publication_review_rejects_dirty_verification(self) -> None:
         self.prepare_publication_candidate()
@@ -893,7 +937,12 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessError, "committed candidate changes"):
             start_review(self.root, PROCESS_ROOT, "sample-change",
                          actor_id="reviewer", context_id="review-context", kind="agent")
-        self.assertEqual(before, state_path.read_bytes())
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertTrue(any(
+            event["event"] == "publication-failed"
+            and event["details"]["reason"] == "uncommitted-candidate"
+            for event in state["history"]
+        ))
 
     def test_metadata_only_commit_still_invalidates_verification(self) -> None:
         self.prepare_publication_candidate()

@@ -38,6 +38,12 @@ _SAFE_REASON = {
     "runtime-changed",
     "comparison-base-changed",
     "verification-repetition",
+    "missing-comparison-base",
+    "source-inspection-failed",
+    "candidate-head-mismatch",
+    "source-validation-failed",
+    "uncommitted-candidate",
+    "candidate-mutated-during-preflight",
 }
 
 CLOSED_TAXONOMY = (
@@ -139,7 +145,7 @@ def _public_details(incident: Incident) -> dict[str, Any]:
         "execution-boundary": {"profile", "checkId"},
         "governance-thrashing": {"cycleCount"},
         "invariant-violation": {"invariant"},
-        "publication-boundary": {"reason"},
+        "publication-boundary": {"reason", "issueCount", "issueDigest"},
         "explicit-review-signal": set(),
     }.get(incident.kind, set())
     public: dict[str, Any] = {}
@@ -154,10 +160,11 @@ def _public_details(incident: Incident) -> dict[str, Any]:
         elif key in {
             "recordedInputDigest", "currentInputDigest",
             "recordedCheckpointFingerprint", "currentCheckpointFingerprint", "digest",
+            "issueDigest",
         }:
             if _SAFE_DIGEST.fullmatch(value or ""):
                 public[key] = value
-        elif key in {"cycle", "verificationCount", "invalidationCount", "cycleCount"}:
+        elif key in {"cycle", "verificationCount", "invalidationCount", "cycleCount", "issueCount"}:
             if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2048:
                 public[key] = value
     return public

@@ -251,7 +251,7 @@ class AutomationTests(unittest.TestCase):
         self.assertLess(reset, push)
         self.assertLess(push, edit)
         self.assertNotIn("2>/dev/null", workflow)
-        self.assertEqual(2, workflow.count("--body-file .github/release-pr-body.md"))
+        self.assertEqual(3, workflow.count("--body-file .github/release-pr-body.md"))
         create = workflow.split("            gh pr create \\\n", maxsplit=1)[1]
         self.assertIn("              --draft \\\n", create)
         self.assertNotIn("--body \"Generated from", workflow)
@@ -273,6 +273,10 @@ class AutomationTests(unittest.TestCase):
             "    branches: [main]\n",
             events,
         )
+        self.assertIn("  checks: read\n", workflow)
+        self.assertIn(
+            "name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})", workflow
+        )
         policy_job = "  policy-verification:\n" + workflow.split(
             "  policy-verification:\n", maxsplit=1
         )[1].split("\n  adopted-process:\n", maxsplit=1)[0]
@@ -287,9 +291,6 @@ class AutomationTests(unittest.TestCase):
             "policy-verification.yml@"
             "38d952b8c94604df10fadc48b6c830a144ea1137\n",
             policy_job,
-        )
-        self.assertIn(
-            "name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})", workflow
         )
         self.assertIn(
             "  adopted-process:\n    name: Adopted public process\n", workflow
@@ -321,9 +322,15 @@ class AutomationTests(unittest.TestCase):
         self.assertNotIn("github.event.action", adopted_job)
 
         test_job = workflow.split("  test:\n", maxsplit=1)[1]
-        self.assertIn("github.event_name == 'push'", test_job)
-        self.assertIn("github.event.action != 'edited' || github.event.changes.base", test_job)
-        self.assertIn("github.event.action != 'converted_to_draft'", test_job)
+        self.assertNotIn("if:", test_job.split("runs-on:", maxsplit=1)[0])
+        self.assertIn("Verify retained code evidence for metadata-only update", test_job)
+        self.assertIn("github.event.action == 'converted_to_draft'", test_job)
+        self.assertIn("github.event.action == 'edited' && github.event.changes.base", test_job)
+        self.assertIn('check-runs?per_page=100', test_job)
+        self.assertIn('item.get("head_sha") == head', test_job)
+        self.assertIn('item.get("conclusion") == "success"', test_job)
+        self.assertIn('item.get("status") == "completed"', test_job)
+        self.assertNotIn("name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})", adopted_job)
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-pr.yml"
@@ -332,6 +339,10 @@ class AutomationTests(unittest.TestCase):
         self.assertIn(
             "  prepare:\n    name: Prepare release pull request\n", release_workflow
         )
+        self.assertIn("python processctl.py publication validate-pr", release_workflow)
+        self.assertIn('python processctl.py publication validate-range', release_workflow)
+        self.assertIn('edit_metadata=false', release_workflow)
+        self.assertIn('if [ "$edit_metadata" = true ]; then', release_workflow)
 
     def test_readiness_sidecar_preserves_the_adopted_authority_bootstrap(self) -> None:
         project = json.loads((ROOT / ".process" / "project.json").read_text(encoding="utf-8"))

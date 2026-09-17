@@ -719,11 +719,19 @@ an open-ended vocabulary of names or labels.
 This producer's local `review` profile runs `verification/verify_publication.py`
 against the actual Git branch. `main` is the consumer's integration branch, not a
 proposal; detached local checkouts require explicit PR context instead of a guessed
-branch name. In CI, the `Adopted public process` job supplies actual PR metadata and
-the base/head commit range to the installed publication adapters. Metadata edits and
-draft-state changes rerun CI. Maintainers must keep this existing job in `main`'s
-required status checks alongside the other required checks. These publication choices
-belong to this consumer; the shared lifecycle does not impose a naming policy.
+branch name. CI keeps the required code matrix in `ci.yml` for candidate-changing PR
+events and keeps the policy/publication job on all PR metadata events. The latter
+supplies actual PR metadata and the base/head commit range to the installed
+publication adapters. A title/body or draft-state edit therefore rechecks
+publication without skipping the required matrix jobs: each matrix job checks for a
+successful retained run on the exact unchanged PR head, and fails if no such evidence
+exists. A head change or a base edit starts the full matrix again. A changed base is
+still a publication and freshness input and must not be treated as evidence from the
+old candidate. Keep the existing required contexts (`Verify (...)`, `Policy
+verification / Shared policy`, and `Adopted public process`) aligned with these job
+owners; skipped, missing, cancelled or stale checks are not evidence. These
+publication choices belong to this consumer; the shared lifecycle does not impose a
+naming policy.
 
 At any point:
 

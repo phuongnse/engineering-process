@@ -55,6 +55,15 @@ Use actual current PR metadata and the selected consumer root. Keep the PR draft
 when a check fails, and repeat the same checks in required CI/branch protection.
 Custom publication policy uses consumer-owned commands at the same boundary.
 
+For the first complete PR, prepare the one body/title/branch/base/head candidate
+before calling the provider, then validate that same candidate before `gh pr create`
+or the equivalent API. For the packaged standard, the normal sequence is
+`artifact prepare-pr-data`, render the selected body, the four publication validators
+above, and only then provider creation. An existing PR is edited only when the
+current title/body actually differs; metadata repair is not a CI-refresh workaround.
+Keep a draft when evidence or metadata is incomplete. A successful publication
+check, auto-merge request, or merge request is not itself a merge result.
+
 Completion does not itself grant merge, deployment, or release authority; those
 remain project-owned operations. Never report completion from prose alone.
 

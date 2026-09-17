@@ -176,3 +176,12 @@ is valid only when all evidence named by that capability passes on this same sna
 
 When all required profiles pass on the same snapshot, the lifecycle becomes verified;
 route to **change-review**.
+
+For a publication-enabled consumer, treat source or PR metadata as a separate
+evidence boundary. A code candidate change must produce fresh code evidence; a
+title/body-only PR edit may reuse code evidence only while the exact head and all
+code inputs remain unchanged, and must run the consumer's publication check against
+the current base/head/title/body. A skipped, missing, cancelled or out-of-order
+provider check is not a pass. If the event wiring cannot show which current
+candidate and metadata a check evaluated, leave the PR blocked and report that
+unknown rather than refreshing an unrelated heavy profile.
