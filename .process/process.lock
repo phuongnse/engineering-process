@@ -23,12 +23,12 @@
     ".process/adopt-process.py"
   ],
   "process": {
-    "digest": "sha256:bd7e9eaa727f14c4899546ea6d478292cdb6bb1b74a67c8d4e740ecd8e73b3d7",
+    "digest": "sha256:23764829197c87eaa99c6ff6b91ae01a18d23e38ddcb7a42519eaf1342500235",
     "package": "engineering-process",
-    "version": "2.7.0"
+    "version": "3.0.0"
   },
-  "requirementsDigest": "sha256:8b656ca7147382de2643dbdc1de96ee2b2745749d061604fd7afa521ef7295db",
-  "schemaVersion": 2,
+  "requirementsDigest": "sha256:80d0acb5241b2bd015979429f2f3b07405516a5bae4c3b4a155c4987891ceb3d",
+  "schemaVersion": 1,
   "skills": [
     "change-complete",
     "change-implement",
