@@ -80,6 +80,7 @@ MAX_RECOVERY_MEASUREMENTS = 1024
 RECOVERY_METRIC_DEFAULTS = {
     "remainingBlockedAttempts": 0,
     "failedProfileRefreshes": 0,
+    "remainingInvalidationExecutions": 0,
     "profileExecutions": 0,
     "checkLaunches": 0,
 }
@@ -93,6 +94,8 @@ def _recovery_metrics(state: dict[str, Any]) -> dict[str, int]:
     metrics = state.setdefault(
         "recoveryMetrics", dict(RECOVERY_METRIC_DEFAULTS)
     )
+    for name, value in RECOVERY_METRIC_DEFAULTS.items():
+        metrics.setdefault(name, value)
     return metrics
 
 
@@ -494,14 +497,20 @@ def _failure_diagnostic(
             and failure[stream].get("truncated") is True
             for stream in ("stdout", "stderr")
         )
-        reason = (
-            "the descriptor belongs to this run's current candidate and input identity; "
-            "bounded output was truncated and raw detail is unavailable"
-            if truncated
-            else "the selected impact unit is current; its command text is intentionally unavailable and only its digest is recorded"
-            if report["diagnostic"].get("kind") == "impact-unit-failure"
-            else "the descriptor belongs to this run's current candidate and input identity"
-        )
+        if truncated:
+            reason = (
+                "the descriptor belongs to this run's current candidate and input "
+                "identity; bounded output was truncated and raw detail is unavailable"
+            )
+        elif report["diagnostic"].get("kind") == "impact-unit-failure":
+            reason = (
+                "the selected impact unit is current; its command text is intentionally "
+                "unavailable and only its digest is recorded"
+            )
+        else:
+            reason = (
+                "the descriptor belongs to this run's current candidate and input identity"
+            )
 
     diagnostic: dict[str, Any] = {
         "profile": profile,
@@ -1259,6 +1268,8 @@ def verify_change(
     project: dict[str, Any],
     change_id: str,
     profile: str,
+    *,
+    request_kind: str = "explicit-profile",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     initial = _load_state(project_root, process_root, change_id)
     _require_phase(initial, "implementing")
@@ -1307,7 +1318,13 @@ def verify_change(
             )
             raise
         return _record_verification(
-            project_root, process_root, change_id, state["cycle"], before, report
+            project_root,
+            process_root,
+            change_id,
+            state["cycle"],
+            before,
+            report,
+            request_kind=request_kind,
         )
 
 
@@ -1318,6 +1335,8 @@ def verify_impact_change(
     change_id: str,
     profile: str,
     selection: dict[str, Any],
+    *,
+    request_kind: str = "remaining",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run a consumer-opted final impact assurance profile."""
     initial = _load_state(project_root, process_root, change_id)
@@ -1407,7 +1426,13 @@ def verify_impact_change(
         report["executionMode"] = "impact-assurance"
         report["selectionDigest"] = digest_json(selection)
         return _record_verification(
-            project_root, process_root, change_id, state["cycle"], before, report
+            project_root,
+            process_root,
+            change_id,
+            state["cycle"],
+            before,
+            report,
+            request_kind=request_kind,
         )
 
 
@@ -1589,7 +1614,12 @@ def verify_remaining(
                     )
                 else:
                     state, report = verify_change(
-                        project_root, process_root, project, change_id, profile
+                        project_root,
+                        process_root,
+                        project,
+                        change_id,
+                        profile,
+                        request_kind="remaining",
                     )
                 executed.append(profile)
                 if report["status"] != "passed":
@@ -1808,6 +1838,8 @@ def _record_verification(
     cycle: int,
     before: dict[str, Any],
     report: dict[str, Any],
+    *,
+    request_kind: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     # Profiles run outside the lock. Reload so their publication cannot erase
     # participants or evidence recorded by another command while they ran.
@@ -1815,6 +1847,8 @@ def _record_verification(
     _require_phase(state, "implementing")
     if state["cycle"] != cycle:
         raise ProcessError("implementation cycle changed while verification was running")
+    if request_kind not in {"explicit-profile", "remaining"}:
+        raise ProcessError(f"unsupported verification request kind: {request_kind}")
     project = load_project(project_root, process_root)
     runtime = execution_identity()
     after = repository_snapshot(project_root)
@@ -1835,6 +1869,21 @@ def _record_verification(
     failed_profile_refresh = (
         isinstance(previous_report_for_profile, dict)
         and previous_report_for_profile.get("status") == "failed"
+    )
+    failed_report_relation = (
+        _verification_report_input_relation(
+            project_root,
+            process_root,
+            project,
+            state,
+            report["profile"],
+            previous_report_for_profile,
+            before,
+            runtime=runtime,
+            authority_digest=authority_digest,
+        )
+        if failed_profile_refresh
+        else None
     )
     retained_verification: dict[str, Any] = {}
     actor = (
@@ -1940,8 +1989,16 @@ def _record_verification(
     _increment_recovery_metric(
         state, "checkLaunches", len(report.get("checks", []))
     )
-    if failed_profile_refresh:
+    if failed_profile_refresh and request_kind == "explicit-profile":
         _increment_recovery_metric(state, "failedProfileRefreshes")
+    elif (
+        failed_profile_refresh
+        and request_kind == "remaining"
+        and failed_report_relation is False
+    ):
+        _increment_recovery_metric(
+            state, "remainingInvalidationExecutions"
+        )
     if (
         state.get("blocker", {}).get("kind") == "verification-execution"
         and state["blocker"].get("profile") == profile

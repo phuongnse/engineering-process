@@ -1546,20 +1546,7 @@ class LifecycleTests(unittest.TestCase):
         )
         path = self.root / ".process" / "runs" / "sample-change" / "run.json"
         state = json.loads(path.read_text(encoding="utf-8"))
-        state["verification"]["development"]["diagnostic"] = {
-            "kind": "selective-check-reproduction",
-            "profile": "development",
-            "check": "unit",
-            "position": 1,
-            "command": [
-                "processctl",
-                "verify",
-                "--profile",
-                "development",
-                "--check-position",
-                "1",
-            ],
-        }
+        state["verification"]["development"]["diagnostic"].pop("descriptorVersion")
         write_json(path, state)
 
         selection = resolve_verification_work(
@@ -1607,6 +1594,52 @@ class LifecycleTests(unittest.TestCase):
         runner.assert_not_called()
         measured = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
         self.assertEqual(1, measured["recoveryMetrics"]["remainingBlockedAttempts"])
+
+    def test_recovery_measurements_separate_remaining_invalidation_from_explicit_refresh(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(17)",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(0)",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        state, _selection = verify_remaining(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        self.assertEqual("verified", state["phase"])
+        self.assertEqual(0, state["recoveryMetrics"]["failedProfileRefreshes"])
+        self.assertEqual(1, state["recoveryMetrics"]["remainingInvalidationExecutions"])
+
+    def test_explicit_refresh_records_failed_report_replacement(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(17)",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        state, _report = verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        self.assertEqual(1, state["recoveryMetrics"]["failedProfileRefreshes"])
+        self.assertEqual(0, state["recoveryMetrics"]["remainingInvalidationExecutions"])
+        self.assertEqual(
+            "explicit-refresh",
+            state["history"][-2]["details"]["reason"],
+        )
 
     def test_spawn_failure_records_execution_blocker_without_retry(self) -> None:
         self.project["profiles"]["development"][0]["run"] = [

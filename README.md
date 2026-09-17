@@ -604,9 +604,9 @@ lifecycle blockers are distinct from consumer behavior, owner decisions, and any
 harness retry counter.
 
 `change status` also reports bounded recovery measurements: blocked remaining attempts,
-full-profile executions after a failure, total profile executions, and check launches.
-They support before/after acceptance scenarios without introducing telemetry or turning
-diagnostic/module runs into required evidence.
+explicit failed-report refreshes, remaining executions after invalidation, total profile
+executions, and check launches. They support before/after acceptance scenarios without
+introducing telemetry or turning diagnostic/module runs into required evidence.
 
 For fast feedback, consumers may declare the current `impactProfiles` policy in
 `.process/project.json` and run only units related to the candidate paths:

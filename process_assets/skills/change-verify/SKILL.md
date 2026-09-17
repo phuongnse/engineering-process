@@ -58,10 +58,11 @@ becomes required evidence.
 
 `change status` exposes bounded run measurements: `remainingBlockedAttempts` counts
 non-progress remaining requests, `failedProfileRefreshes` counts explicit full-profile
-executions after a failed report, and `profileExecutions`/`checkLaunches` count the
-actual lifecycle work needed by the run. These counters are scenario evidence, not a
-latency target or a new telemetry system, and selective diagnostics outside the
-lifecycle do not become required evidence.
+refreshes after a failed report, `remainingInvalidationExecutions` counts remaining
+work launched after a failed report became stale, and `profileExecutions`/`checkLaunches`
+count the actual lifecycle work needed by the run. These counters are scenario
+evidence, not a latency target or a new telemetry system, and selective diagnostics
+outside the lifecycle do not become required evidence.
 
 The stage reuse map is deliberately narrow:
 

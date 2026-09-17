@@ -215,14 +215,22 @@
       }
     },
     "failureSummary": {
-      "allOf": [
-        {"$ref": "#/$defs/checkReport"},
-        {
-          "type": "object",
-          "required": ["cleanupFailed"],
-          "properties": {"status": {"const": "failed"}}
-        }
-      ]
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "exitCode", "timedOut", "outputExceeded", "descendantsTerminated", "streamFailed", "cleanupFailed", "durationMs", "stdout", "stderr"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "status": {"const": "failed"},
+        "exitCode": {"type": "integer"},
+        "timedOut": {"type": "boolean"},
+        "outputExceeded": {"type": "boolean"},
+        "descendantsTerminated": {"type": "boolean"},
+        "streamFailed": {"type": "boolean"},
+        "cleanupFailed": {"type": "boolean"},
+        "durationMs": {"type": "integer", "minimum": 0},
+        "stdout": {"$ref": "#/$defs/stream"},
+        "stderr": {"$ref": "#/$defs/stream"}
+      }
     },
     "legacyDiagnostic": {
       "type": "object",
@@ -246,7 +254,9 @@
             {"type": "string", "pattern": "^(?:[1-9]|[12][0-9]|3[0-2])$"}
           ],
           "items": false
-        }
+        },
+        "failureKind": {"enum": ["command-failure", "execution-condition", "unknown"]},
+        "failure": {"$ref": "#/$defs/failureSummary"}
       },
       "not": {"required": ["descriptorVersion"]}
     },
@@ -353,6 +363,7 @@
       "properties": {
         "remainingBlockedAttempts": {"type": "integer", "minimum": 0, "maximum": 1024},
         "failedProfileRefreshes": {"type": "integer", "minimum": 0, "maximum": 1024},
+        "remainingInvalidationExecutions": {"type": "integer", "minimum": 0, "maximum": 1024},
         "profileExecutions": {"type": "integer", "minimum": 0, "maximum": 1024},
         "checkLaunches": {"type": "integer", "minimum": 0, "maximum": 1024}
       }
