@@ -1,11 +1,11 @@
 name: Consumer process improvement
 description: Report a concrete consumer incident, adoption failure, repeated friction, or missing shared capability.
-title: "[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT] "
+title: "[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND] "
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form only after mitigating or safely blocking the consumer incident under its current authority. Replace the title placeholders with the same stable key entered below and search open issues for that complete key before submitting. Reuse an existing issue instead of creating a duplicate. Do not include secrets, credentials, private source, raw private logs, media, tokens, or production-only metadata. A public sanitized issue may reference private consumer evidence.
+        Use this form only after mitigating or safely blocking the consumer incident under its current authority. Replace the title placeholders with the same stable key entered below and search open and closed issues for that complete key before submitting. Reuse an existing issue instead of creating a duplicate. Do not include secrets, credentials, private source, raw private logs, media, tokens, or production-only metadata. A public sanitized issue may reference private consumer evidence.
   - type: input
     id: consumer
     attributes:
@@ -26,8 +26,8 @@ body:
     id: stable_key
     attributes:
       label: Stable deduplication key
-      description: Use the non-sensitive title key `[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT]` and search open issues for this exact value.
-      placeholder: "[consumer-process][lyric-rail][1.1.0][conditional-security-routing]"
+      description: Use the non-sensitive title key `[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]`. Keep ASCII letters, digits, dots, and hyphens in CONSUMER-KEY; encode every other UTF-8 byte as `_hh` (for example, `phuongnse/lyric-rail` becomes `phuongnse_2flyric-rail`). Search open and closed issues for this exact value.
+      placeholder: "[consumer-process][phuongnse_2flyric-rail][1.1.0][conditional-security-routing][explicit-review-signal]"
     validations:
       required: true
   - type: dropdown
@@ -91,7 +91,7 @@ body:
     attributes:
       label: Disclosure and authority confirmation
       options:
-        - label: I searched open engineering-process issues for the complete stable key and will reuse an existing issue instead of submitting a duplicate.
+        - label: I searched open and closed engineering-process issues for the complete stable key and will reuse an existing issue instead of submitting a duplicate.
           required: true
         - label: I removed secrets, credentials, tokens, raw private logs, media, private source, and production-only metadata.
           required: true

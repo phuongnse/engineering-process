@@ -139,6 +139,9 @@ class SkillTests(unittest.TestCase):
                 "new immutable pack version",
                 "pending review",
                 "never\nself-publishes or self-merges",
+                "complete current title key",
+                "Search failure is a failure result",
+                "result already recorded for the same\nkey is reused",
             ),
         }
         for skill, fragments in required.items():

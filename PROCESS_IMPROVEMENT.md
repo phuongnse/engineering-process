@@ -45,9 +45,12 @@ never a consumer-CI responsibility and never a reason to grant a consumer or Ren
 token write access to this repository.
 
 Both CLI and manual submission use the same non-sensitive
-`[consumer-process][CONSUMER][PROCESS-VERSION][INVARIANT]` title key. Without `gh`,
-search all open and closed issues for that complete key before the form, reuse an existing
-issue when present, and replace every title placeholder before submitting. If no issue
+`[consumer-process][CONSUMER-KEY][PROCESS-VERSION][INVARIANT][INCIDENT-KIND]` title key.
+`CONSUMER-KEY` is the runtime's injective encoding: ASCII letters, digits, dots, and
+hyphens stay unchanged; every other UTF-8 byte becomes `_hh` (`phuongnse/lyric-rail`
+becomes `phuongnse_2flyric-rail`).
+Without `gh`, search all open and closed issues for that complete key before the form,
+reuse an existing issue when present, and replace every title placeholder before submitting. If no issue
 URL is available yet, a pending review remains `review-pending` awaiting owner creation;
 draft files or search queries cannot serve as the required `recordUrl`.
 
@@ -56,6 +59,15 @@ invariant, publishable evidence, current mitigation, reusable rationale, and dis
 confirmation. Private consumers must omit private source, raw logs, media, credentials,
 tokens, and production metadata; a public issue may reference separately authorized
 private evidence.
+
+Finish-time automated intake collects only the same structured taxonomy. It performs
+tracker I/O only when the consumer's process-change policy supplies an accepted issue
+namespace; the process-producer recursion breaker suppresses its own writes. Search
+errors, malformed matches, invalid writer URLs, and budget exhaustion are recorded as
+bounded failures or suppressions, never treated as an empty search. A recorded result
+for the same key is reused before another tracker call. The generated body contains
+only allow-listed identifiers, counts, and full digests; reviewer rationale and arbitrary
+runtime details are not published.
 
 Accepted intake becomes the process change `source` and `consumerEvidence`. The issue
 does not authorize implementation or block the consumer, and it closes only after a
