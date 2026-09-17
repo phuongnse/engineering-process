@@ -426,11 +426,14 @@ def run_profile(
             progress_event["position"] = position
             progress_callback(progress_event)
 
-        report = run_check(
-            project_root,
-            check,
-            progress_callback=observe if progress_callback is not None else None,
-        )
+        if progress_callback is None:
+            report = run_check(project_root, check)
+        else:
+            report = run_check(
+                project_root,
+                check,
+                progress_callback=observe,
+            )
         reports.append(report)
         if report["status"] != "passed":
             failed_position = position

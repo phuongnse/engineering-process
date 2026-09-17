@@ -1312,12 +1312,15 @@ def verify_change(
             authority_digest=authority_digest,
         )
         try:
-            report = run_profile(
-                project_root,
-                project,
-                profile,
-                progress_callback=progress_callback,
-            )
+            if progress_callback is None:
+                report = run_profile(project_root, project, profile)
+            else:
+                report = run_profile(
+                    project_root,
+                    project,
+                    profile,
+                    progress_callback=progress_callback,
+                )
         except ExecutionError as error:
             _record_execution_blocker(
                 project_root,
@@ -1401,12 +1404,16 @@ def verify_impact_change(
         if not selected_units:
             raise ProcessError(f"final impact assurance selected no units for profile {profile}")
         try:
-            report = run_profile(
-                project_root,
-                {"profiles": {profile: selected_units}},
-                profile,
-                progress_callback=progress_callback,
-            )
+            selected_project = {"profiles": {profile: selected_units}}
+            if progress_callback is None:
+                report = run_profile(project_root, selected_project, profile)
+            else:
+                report = run_profile(
+                    project_root,
+                    selected_project,
+                    profile,
+                    progress_callback=progress_callback,
+                )
         except ExecutionError as error:
             _record_execution_blocker(
                 project_root,
@@ -1755,11 +1762,14 @@ def verify_affected(
                 progress_callback(progress_event)
 
             try:
-                report = run_check(
-                    project_root,
-                    unit,
-                    progress_callback=observe if progress_callback is not None else None,
-                )
+                if progress_callback is None:
+                    report = run_check(project_root, unit)
+                else:
+                    report = run_check(
+                        project_root,
+                        unit,
+                        progress_callback=observe,
+                    )
             except ExecutionError as error:
                 _record_execution_blocker(
                     project_root,
