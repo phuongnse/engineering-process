@@ -17,6 +17,20 @@ from .repository import same_checkpoint
 
 
 SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "PRIVATE_KEY")
+MANAGED_ENVIRONMENT_NAMES = frozenset({
+    "PATH",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "SYSTEMROOT",
+    "SystemRoot",
+    "COMSPEC",
+    "PATHEXT",
+})
 
 
 def child_environment(
@@ -43,6 +57,15 @@ def child_environment(
                 continue
             # Empty bindings remain meaningful to an explicitly broad caller.
             environment[name] = value
+    else:
+        # These variables define runtime resolution and temporary/platform
+        # behavior for the bounded command boundary; arbitrary ambient values do
+        # not cross it.
+        environment.update({
+            name: source_values[name]
+            for name in MANAGED_ENVIRONMENT_NAMES
+            if name in source_values
+        })
     runtime_executable = Path(
         sys.executable if executable is None else executable
     ).absolute()
