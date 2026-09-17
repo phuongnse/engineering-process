@@ -7,7 +7,6 @@
           "engineering_process/lifecycle.py",
           "tests/test_incidents.py",
           "tests/test_lifecycle.py",
-          "tests/test_contracts.py",
           "tests/test_automation.py",
           "tests/test_skills.py",
           ".github/ISSUE_TEMPLATE/consumer-process-improvement.yml",
