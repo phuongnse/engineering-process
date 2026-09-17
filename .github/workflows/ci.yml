@@ -142,6 +142,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REQUIRED_CHECK_NAME: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -153,6 +154,8 @@ jobs:
           api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
           repository = os.environ["GITHUB_REPOSITORY"]
           head = os.environ["PR_HEAD"]
+          base = os.environ["PR_BASE_SHA"]
+          base_marker = f"- Base: `{base}`"
           request = Request(
               f"{api}/repos/{repository}/commits/{head}/check-runs?per_page=100",
               headers={
@@ -170,6 +173,7 @@ jobs:
               and item.get("status") == "completed"
               and item.get("conclusion") == "success"
               and (item.get("app") or {}).get("slug") == "github-actions"
+              and base_marker in ((item.get("output") or {}).get("summary") or "")
           ]
           if not matches:
               raise SystemExit(
@@ -181,6 +185,32 @@ jobs:
               f"{os.environ['REQUIRED_CHECK_NAME']}: {', '.join(map(str, matches))}"
           )
           PY
+      - name: Record retained code evidence boundary
+        if: steps.classify.outputs.mode == 'retained'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "Code evidence boundary"
+            echo "- Base: \`$PR_BASE_SHA\`"
+            echo "- Head: \`$PR_HEAD_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record code evidence boundary
+        if: steps.classify.outputs.mode == 'full' && github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "Code evidence boundary"
+            echo "- Base: \`$PR_BASE_SHA\`"
+            echo "- Head: \`$PR_HEAD_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Build and install the distribution
         if: steps.classify.outputs.mode == 'full' && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         run: python verification/verify_distribution.py
