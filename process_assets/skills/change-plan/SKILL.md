@@ -5,6 +5,14 @@ description: Plan the registered change and its verification boundary when deliv
 
 # Plan a change
 
+## Route card
+
+**State:** `specified`. **Do:** inspect the accepted boundary and register one plan
+whose work items name literal affected paths, causal mechanism, risks, and invariant
+evidence. **Evidence:** the unchanged contract digest, current source behavior, and
+plan digest. **Next:** `change implement`; unresolved product choices remain with the
+owner.
+
 Read the registered contract and inspect the affected code. Describe one coherent
 approach, bounded work items with owned paths, and concrete risks with mitigations.
 The plan must bind the exact contract digest and must not add behavior that the

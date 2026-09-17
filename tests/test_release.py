@@ -91,13 +91,36 @@ class ReleaseTests(unittest.TestCase):
         notes = notes_renderer.render_release_notes(release)
         self.assertIn("**Select necessary work**", notes)
         self.assertIn("([#205](https://github.com/phuongnse/engineering-process/issues/205))", notes)
-        for label in ("Problem", "What changed", "Where", "Apply", "Compatibility", "Notes"):
+        for label in ("What changed", "Apply", "Compatibility"):
             self.assertIn(f"**{label}:", notes)
-        self.assertIn("`engineering_process/lifecycle.py`", notes)
+        self.assertNotIn("**Problem:", notes)
+        self.assertNotIn("**Where:", notes)
+        self.assertNotIn("**Notes:", notes)
+        self.assertNotIn("`engineering_process/lifecycle.py`", notes)
         self.assertIn("No breaking changes are included.", notes)
         release["changes"][0]["details"]["apply"] = "pending"
         with self.assertRaisesRegex(ProcessError, "unresolved value"):
             notes_renderer.render_release_notes(release)
+
+    def test_detail_projection_matches_change_reader_need(self) -> None:
+        notes = notes_renderer.render_release_notes(
+            _current_release([
+                {"id": "ordinary", "type": "fix", "summary": "Ordinary fix", "source": "fix-1"},
+                {"id": "feature", "type": "capability", "summary": "New capability", "source": "feature-1"},
+                {"id": "break", "type": "breaking", "summary": "Breaking boundary", "source": "break-1"},
+            ])
+        )
+        ordinary = notes[notes.index("**Ordinary fix**"):notes.index("**New capability**")]
+        capability = notes[notes.index("**New capability**"):notes.index("**Breaking boundary**")]
+        breaking = notes[notes.index("**Breaking boundary**"):notes.index("## Upgrade")]
+        self.assertIn("**What changed:**", ordinary)
+        self.assertIn("**Compatibility:**", ordinary)
+        self.assertNotIn("**Where:**", ordinary)
+        self.assertNotIn("**Notes:**", ordinary)
+        self.assertIn("**Apply:**", capability)
+        self.assertIn("**Problem:**", breaking)
+        self.assertIn("**Apply:**", breaking)
+        self.assertIn("**Compatibility:**", breaking)
 
     def test_notes_treat_metadata_as_text_and_do_not_invent_source_links(self) -> None:
         release = _current_release([
@@ -334,7 +357,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual([], list((target / "release-changes").glob("*.json")))
             generated_notes = notes_renderer.render_release_notes(prepared).encode("utf-8")
             self.assertEqual(generated_notes, (target / "RELEASE_NOTES.md").read_bytes())
-            self.assertIn(b"**Problem:**", generated_notes)
+            self.assertIn(b"**What changed:**", generated_notes)
             self.assertIn(
                 f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )

@@ -32,7 +32,7 @@ class AutomationTests(unittest.TestCase):
     def test_renovate_preset_rejects_an_incomplete_public_contract(self) -> None:
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
         with self.assertRaises(ProcessError):
-            generate_preset(template.replace("## Completion gate", "## Other"))
+            generate_preset(template.replace("## Review and completion", "## Other"))
 
     def test_renovate_generator_rejects_changed_bytes_and_recovers(self) -> None:
         template = (ROOT / "templates" / "PULL_REQUEST_TEMPLATE.md").read_bytes()
@@ -66,11 +66,9 @@ class AutomationTests(unittest.TestCase):
             encoding="utf-8"
         )
         expected_sections = [
-            "## Summary",
-            "## Contract and risk",
-            "## Verification",
-            "## Independent review",
-            "## Completion gate",
+            "## Result",
+            "## Contract and evidence",
+            "## Review and completion",
         ]
         self.assertEqual(
             expected_sections,
@@ -82,7 +80,6 @@ class AutomationTests(unittest.TestCase):
             "Source",
             "Risk",
             "Compatibility",
-            "Stack",
             "Profiles",
             "Snapshot",
             "Completion receipt",
@@ -94,12 +91,9 @@ class AutomationTests(unittest.TestCase):
             self.assertIn(f"- {field}:", template)
         self.assertIn("Keep reviewer actor/context IDs", template)
         self.assertNotIn("Record the independent reviewer", template)
-        self.assertIn("accepted-risk and", template)
-        self.assertIn("tracked-follow-up entries need an owner", template)
-        self.assertLess(
-            template.index("## Independent review"),
-            template.index("## Completion gate"),
-        )
+        self.assertIn("accepted-risk", template)
+        self.assertIn("tracked-follow-up", template)
+        self.assertIn("## Review and completion", template)
         self.assertIn("Every non-blocking finding has a recorded disposition.", template)
         self.assertIn("Final verified consumer adoption only", template)
         self.assertIn("Closes ISSUE, closes OWNER/REPOSITORY#NUMBER", template)

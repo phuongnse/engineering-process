@@ -5,6 +5,14 @@ description: Review the exact verified snapshot from an independent actor and co
 
 # Review a change
 
+## Route card
+
+**State:** `verified` or `review-pending`. **Do:** hand the exact snapshot, contract,
+plan, and reports to a genuinely independent reviewer; inspect the complete diff and
+causal evidence. **Evidence:** reviewer-native assignment, invariant assessments,
+finding identities, and dispositions. **Next:** `change complete` only after approval;
+requested changes return to implementation with the same reviewer.
+
 The reviewer must not share either actor identity or execution context with an
 implementer in the current cycle. An implementer must hand off this phase to an
 actual reviewer, not perform it under another identity.

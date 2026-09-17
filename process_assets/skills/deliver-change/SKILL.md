@@ -5,6 +5,24 @@ description: Drive a repository change through the governed engineering lifecycl
 
 # Deliver a change
 
+## Route card
+
+Use `processctl change status --change-id ID` as the state authority. The phase tells
+you the only next lifecycle command; the accepted contract and plan tell you the
+scope and evidence boundary.
+
+| Current state | Do now | Evidence consumed or produced | Next |
+| --- | --- | --- | --- |
+| no run | start | accepted contract, consumer evidence, readiness | `specified` → plan |
+| specified | plan | contract digest, affected paths, invariant assessments | `planned` → implement |
+| planned / changes-requested | implement | implementation identity and in-scope diff | `implementing` → verify |
+| implementing | verify | required profiles on one unchanged candidate | `verified` → independent review |
+| verified / review-pending | review | fresh independent reviewer, exact checkpoint, dispositions | `approved` or correction |
+| approved | complete | current checkpoint, profiles, review, receipt | owner-controlled release/adoption |
+
+If the candidate is outside the frozen plan, stop and supersede the contract or plan;
+do not widen a directory or replace missing evidence with prose.
+
 Use this as the only entry point for delivery work. Run `processctl project validate
 --json` first. When readiness is present, report its stage, immutable pack versions,
 enforced floor, and planned gaps. Planned gaps guide future work but do not become the

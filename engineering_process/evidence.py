@@ -78,10 +78,22 @@ def execution_identity(
     runtime_executable = Path(
         sys.executable if executable is None else executable
     ).absolute()
+    # Consumer commands receive this exact projected environment. Keep only its
+    # digest in the identity so a relevant environment change cannot reuse a
+    # report, while secrets and raw host values never enter lifecycle evidence.
+    projected_environment = child_environment(
+        executable=runtime_executable,
+        source=source,
+    )
     return {
         "executable": str(runtime_executable),
         "python": sys.version,
         "platform": platform.platform(),
+        "environment": {
+            "known": True,
+            "count": len(projected_environment),
+            "digest": digest_json(projected_environment),
+        },
         "dependencies": dependency_identity,
     }
 

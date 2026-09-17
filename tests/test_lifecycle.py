@@ -1912,14 +1912,15 @@ class LifecycleTests(unittest.TestCase):
 
         run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
         state = json.loads(run_path.read_text(encoding="utf-8"))
-        state["history"].append(
-            {
-                "event": "evidence-invalidated",
-                "at": "2026-09-16T00:00:00Z",
-                "actor": {"actorId": "test", "contextId": "test", "kind": "agent"},
-                "details": {"profile": "development", "reason": "input-digest-mismatch"},
-            }
-        )
+        for _ in range(2):
+            state["history"].append(
+                {
+                    "event": "evidence-invalidated",
+                    "at": "2026-09-16T00:00:00Z",
+                    "actor": {"actorId": "test", "contextId": "test", "kind": "agent"},
+                    "details": {"profile": "development", "reason": "input-digest-mismatch"},
+                }
+            )
         write_json(run_path, state)
 
         state, receipt = finish_change(

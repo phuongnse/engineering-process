@@ -5,6 +5,14 @@ description: Turn an accepted request into a bounded change contract when delive
 
 # Start a change
 
+## Route card
+
+**State:** no run. **Do:** validate readiness, inspect the consumer, and register a
+bounded contract with real consumer evidence. **Evidence:** contract digest,
+comparison base, acceptance outcomes, affected capabilities, and required profiles.
+**Next:** `change plan`; do not edit implementation before the lifecycle reports
+`specified`.
+
 Read the owning project specification, relevant repository instructions, and current
 behavior. Write a change contract containing the source request, comparison base,
 risk, affected projects, observable acceptance criteria, and required verification

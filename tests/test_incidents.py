@@ -95,6 +95,41 @@ class IncidentIntakeTests(unittest.TestCase):
         self.assertEqual("evidence-integrity", incidents[0].kind)
         self.assertEqual("development", incidents[0].invariant)
 
+    def test_expected_current_cycle_invalidation_is_not_a_process_incident(self) -> None:
+        state = {
+            "history": [
+                {"event": "implementation-started", "details": {"cycle": 1}},
+                {
+                    "event": "evidence-invalidated",
+                    "details": {"profile": "development", "reason": "input-digest-mismatch"},
+                },
+            ],
+            "verification": {},
+            "cycle": 1,
+        }
+        self.assertEqual([], collect_incidents(Path.cwd(), Path.cwd(), state))
+
+    def test_repeated_invalidation_before_rerun_is_an_incident(self) -> None:
+        state = {
+            "history": [
+                {"event": "implementation-started", "details": {"cycle": 1}},
+                {
+                    "event": "evidence-invalidated",
+                    "details": {"profile": "development", "reason": "input-digest-mismatch"},
+                },
+                {
+                    "event": "evidence-invalidated",
+                    "details": {"profile": "development", "reason": "input-digest-mismatch"},
+                },
+            ],
+            "verification": {},
+            "cycle": 1,
+        }
+        incidents = collect_incidents(Path.cwd(), Path.cwd(), state)
+        self.assertEqual(1, len(incidents))
+        self.assertEqual("development", incidents[0].invariant)
+        self.assertEqual(2, incidents[0].details["invalidationCount"])
+
     def test_collect_incidents_detects_redundant_verification_in_same_cycle(self) -> None:
         state = {
             "history": [
@@ -107,9 +142,7 @@ class IncidentIntakeTests(unittest.TestCase):
         }
         incidents = collect_incidents(Path.cwd(), Path.cwd(), state)
         kinds = [i.kind for i in incidents]
-        self.assertIn("evidence-integrity", kinds)
-        repetition = next(i for i in incidents if i.invariant == "verification-repetition")
-        self.assertEqual(2, repetition.details["verificationCount"])
+        self.assertNotIn("evidence-integrity", kinds)
 
     def test_collect_incidents_detects_execution_boundary_failures(self) -> None:
         state = {
@@ -153,10 +186,15 @@ class IncidentIntakeTests(unittest.TestCase):
         state = {
             "cycle": 3,
             "history": [
+                {"event": "implementation-started", "details": {"cycle": 3}},
                 {
                     "event": "review-assignment-replaced",
                     "details": {"previousReviewer": "agent-1", "newReviewer": "agent-2"},
                 }
+            ],
+            "reviewHistory": [
+                {"cycle": 3, "document": {"verdict": "changes-requested"}},
+                {"cycle": 3, "document": {"verdict": "changes-requested"}},
             ],
             "verification": {},
         }
@@ -164,6 +202,21 @@ class IncidentIntakeTests(unittest.TestCase):
         invariants = {i.invariant for i in incidents}
         self.assertIn("excessive-review-cycles", invariants)
         self.assertIn("reviewer-context-replaced", invariants)
+
+    def test_one_correction_or_reopened_history_is_not_thrashing(self) -> None:
+        state = {
+            "cycle": 2,
+            "history": [
+                {"event": "implementation-started", "details": {"cycle": 2}},
+            ],
+            "reviewHistory": [
+                {"cycle": 2, "document": {"verdict": "changes-requested"}},
+                {"cycle": 1, "document": {"verdict": "changes-requested"}},
+            ],
+            "verification": {},
+        }
+        invariants = {i.invariant for i in collect_incidents(Path.cwd(), Path.cwd(), state)}
+        self.assertNotIn("excessive-review-cycles", invariants)
 
     def test_collect_incidents_detects_invariant_violation_and_signals(self) -> None:
         state = {

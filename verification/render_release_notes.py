@@ -34,11 +34,11 @@ def release_notes_data(release: dict) -> dict:
     ]
     if any(change["type"] == "breaking" for change in release["changes"]):
         upgrade.append(
-            "Breaking changes are listed above; read each change's Compatibility and Notes entry before adopting."
+            "Breaking changes are listed above; review each item's Compatibility and Apply guidance before adopting."
         )
     else:
         upgrade.append(
-            "No breaking changes are included. Read each change's Apply, Compatibility and Notes entry before adopting."
+            "No breaking changes are included. Review each item's Compatibility and follow any shown Apply guidance before adopting."
         )
     upgrade.append(
         f"See [versioning and compatibility]({REPOSITORY}/blob/v{version}/VERSIONING.md) and [adoption guidance]({REPOSITORY}/blob/v{version}/SELF_HOSTING.md)."

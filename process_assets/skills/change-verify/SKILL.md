@@ -5,6 +5,14 @@ description: Run the project-owned verification profiles on one unchanged reposi
 
 # Verify a change
 
+## Route card
+
+**State:** `implementing`. **Do:** inspect `change explain`, then execute only the
+accepted required profiles that are not validly reusable; use the exact consumer
+commands and fail closed on scope, mutation, timeout, or unknown identity. **Evidence:**
+passed reports bound to one checkpoint and input identity. **Next:** independent
+review; profiles are not rerun by review or finish.
+
 Read the registered acceptance criteria and .process/project.json. When publication
 is required, commit the complete candidate on a valid publication branch before final
 verification. The lifecycle rejects uncommitted candidate changes or an invalid or

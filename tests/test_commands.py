@@ -162,6 +162,22 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual(2, identity["dependencies"]["count"])
 
+    def test_runtime_identity_tracks_projected_environment_without_publishing_values(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"CONSUMER_INPUT": "first", "SERVICE_TOKEN": "secret-value"},
+            clear=False,
+        ):
+            first = execution_identity()
+        with patch.dict(os.environ, {"CONSUMER_INPUT": "second"}, clear=False):
+            second = execution_identity()
+
+        self.assertNotEqual(
+            first["environment"]["digest"], second["environment"]["digest"]
+        )
+        self.assertTrue(first["environment"]["known"])
+        self.assertNotIn("secret-value", json.dumps(first))
+
     def test_runtime_identity_matches_bounded_child(self) -> None:
         with patch.dict(os.environ, {"EMPTY_BINDING": ""}, clear=False):
             parent = execution_identity()

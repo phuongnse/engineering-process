@@ -5,6 +5,14 @@ description: Implement the accepted plan or resolve blocking review findings whe
 
 # Implement a change
 
+## Route card
+
+**State:** `planned` or `changes-requested`. **Do:** register every mutating actor,
+implement only the accepted plan, and add behavioral regressions for the reported
+failure mode. **Evidence:** in-scope diff, implementation participants, and focused
+checks; no implicit contract expansion. **Next:** `change verify` on a committed,
+unchanged candidate.
+
 Register the implementation identity before editing:
 
     processctl change implement --change-id ID --actor ACTOR --context CONTEXT

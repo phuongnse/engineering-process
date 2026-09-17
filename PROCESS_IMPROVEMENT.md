@@ -60,14 +60,19 @@ confirmation. Private consumers must omit private source, raw logs, media, crede
 tokens, and production metadata; a public issue may reference separately authorized
 private evidence.
 
-Finish-time automated intake collects only the same structured taxonomy. It performs
-tracker I/O only when the consumer's process-change policy supplies an accepted issue
-namespace; the process-producer recursion breaker suppresses its own writes. Search
-errors, malformed matches, invalid writer URLs, and budget exhaustion are recorded as
-bounded failures or suppressions, never treated as an empty search. A recorded result
-for the same key is reused before another tracker call. The generated body contains
-only allow-listed identifiers, counts, and full digests; reviewer rationale and arbitrary
-runtime details are not published.
+Finish-time automated intake collects only the same structured taxonomy. Expected
+activity is not enough to open a process signal: one correct evidence invalidation,
+explicit refresh, rerun after correction, reopened completed change, or ordinary
+review correction remains lifecycle history. Evidence-integrity requires repeated
+invalidation before a successful rerun; governance-thrashing requires at least two
+`changes-requested` reviews in the current implementation cycle or reviewer-context
+replacement. The process-producer recursion breaker suppresses its own writes.
+Tracker I/O occurs only when the consumer's process-change policy supplies an accepted
+issue namespace; search errors, malformed matches, invalid writer URLs, and budget
+exhaustion are bounded failures or suppressions, never an empty search. A recorded
+result for the same key is reused before another tracker call. The generated body
+contains only allow-listed identifiers, counts, and full digests; reviewer rationale
+and arbitrary runtime details are not published.
 
 Accepted intake becomes the process change `source` and `consumerEvidence`. The issue
 does not authorize implementation or block the consumer, and it closes only after a
