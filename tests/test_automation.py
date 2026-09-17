@@ -250,11 +250,11 @@ class AutomationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         query = workflow.index('gh pr list --head "$branch" --state open')
         reset = workflow.index('gh pr ready "$pr_number" --undo')
-        push = workflow.index('git push --force-with-lease origin "$branch"')
         edit = workflow.index('gh pr edit "$pr_number"')
+        push = workflow.index('git push --force-with-lease origin "$branch"')
         self.assertLess(query, reset)
-        self.assertLess(reset, push)
-        self.assertLess(push, edit)
+        self.assertLess(reset, edit)
+        self.assertLess(edit, push)
         self.assertNotIn("2>/dev/null", workflow)
         self.assertEqual(3, workflow.count("--body-file .github/release-pr-body.md"))
         create = workflow.split("created_pr_url=\"$(gh pr create \\\n", maxsplit=1)[1]
@@ -262,6 +262,77 @@ class AutomationTests(unittest.TestCase):
         self.assertNotIn("--body \"Generated from", workflow)
         self.assertIn("release.json release-changes RELEASE_NOTES.md", workflow)
         self.assertIn("RELEASE_NOTES.md", body)
+
+    def test_release_metadata_update_is_observed_by_the_single_head_push_event(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "release-pr.yml"
+        ).read_text(encoding="utf-8")
+        start = workflow.index(
+            '          if [ -n "$pr_number" ] && [ "$edit_metadata" = true ]; then\n'
+        )
+        end = workflow.index(
+            '\n          git push --force-with-lease origin "$branch"', start
+        )
+        metadata_update = "\n".join(
+            line[10:] for line in workflow[start:end].splitlines()
+        ) + "\n"
+        bash = self._git_bash()
+        if bash is None:
+            self.skipTest("Git Bash is required to execute the release event sequence")
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            event_log = root / "events.log"
+            pr_state = root / "pr-state"
+            event_payload = root / "push-event-payload"
+            script = (
+                "set -euo pipefail\n"
+                "gh() {\n"
+                "  title=''\n"
+                "  body_file=''\n"
+                "  while [ $# -gt 0 ]; do\n"
+                "    case \"$1\" in\n"
+                "      --title) title=\"$2\"; shift 2 ;;\n"
+                "      --body-file) body_file=\"$2\"; shift 2 ;;\n"
+                "      *) shift ;;\n"
+                "    esac\n"
+                "  done\n"
+                "  printf 'edit\\n' >> \"$EVENT_LOG\"\n"
+                "  { printf 'title=%s\\n' \"$title\"; printf 'body='; cat \"$body_file\"; } > \"$PR_STATE\"\n"
+                "}\n"
+                "git() {\n"
+                "  [ \"${1:-}\" = push ]\n"
+                "  printf 'push\\n' >> \"$EVENT_LOG\"\n"
+                "  cp \"$PR_STATE\" \"$EVENT_PAYLOAD\"\n"
+                "}\n"
+                "pr_number=42\n"
+                "edit_metadata=true\n"
+                "desired_title='chore(release): v1.2.3'\n"
+                "branch='automation/release/v1.2.3'\n"
+                + metadata_update
+                + "git push --force-with-lease origin \"$branch\"\n"
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "EVENT_LOG": event_log.as_posix(),
+                    "PR_STATE": pr_state.as_posix(),
+                    "EVENT_PAYLOAD": event_payload.as_posix(),
+                }
+            )
+            result = subprocess.run(
+                [bash, "-c", script],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(["edit", "push"], event_log.read_text(encoding="utf-8").splitlines())
+            payload = event_payload.read_bytes()
+            self.assertTrue(payload.startswith(b"title=chore(release): v1.2.3\nbody="))
+            self.assertTrue(payload.endswith((ROOT / ".github" / "release-pr-body.md").read_bytes()))
 
     def test_ci_checks_the_adopted_hash_locked_distribution_separately(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
@@ -376,7 +447,10 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("python processctl.py publication validate-pr", release_workflow)
         self.assertIn('python processctl.py publication validate-range', release_workflow)
         self.assertIn('edit_metadata=false', release_workflow)
-        self.assertIn('if [ "$edit_metadata" = true ]; then', release_workflow)
+        self.assertIn(
+            'if [ -n "$pr_number" ] && [ "$edit_metadata" = true ]; then',
+            release_workflow,
+        )
         for field in ("baseRefName", "baseRefOid", "headRefName", "headRefOid"):
             self.assertIn(field, release_workflow)
         self.assertIn("expected_base=", release_workflow)
@@ -490,10 +564,21 @@ class AutomationTests(unittest.TestCase):
         payload: dict[str, object] = {
             "artifacts": [],
             "runs": {},
+            "oversized": False,
         }
+        requests: list[str] = []
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
+                requests.append(self.path)
+                if payload["oversized"]:
+                    body = b"x" * (256 * 1024 + 1)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 path = self.path.split("?", 1)[0]
                 status = 200
                 if path.endswith("/actions/artifacts"):
@@ -522,9 +607,13 @@ class AutomationTests(unittest.TestCase):
                 runs: list[dict[str, object]],
                 artifacts: list[dict[str, object]],
                 base: str,
+                *,
+                oversized: bool = False,
             ) -> subprocess.CompletedProcess[str]:
                 payload["runs"] = {str(run["id"]): run for run in runs}
                 payload["artifacts"] = artifacts
+                payload["oversized"] = oversized
+                requests.clear()
                 environment = os.environ.copy()
                 environment.update(
                     {
@@ -603,6 +692,16 @@ class AutomationTests(unittest.TestCase):
             )
             self.assertEqual(0, accepted.returncode, accepted.stderr)
             self.assertIn("provider artifact 11", accepted.stdout)
+            self.assertTrue(
+                any(
+                    request.endswith(
+                        f"/actions/artifacts?name=code-evidence-v1-ubuntu-latest-3.11-"
+                        f"{base_one}-{head}&per_page=100"
+                    )
+                    for request in requests
+                )
+            )
+            self.assertTrue(any(request.endswith("/actions/runs/101") for request in requests))
 
             rejected = run_step(
                 [run_one],
@@ -613,8 +712,32 @@ class AutomationTests(unittest.TestCase):
             self.assertIn("No successful current-base", rejected.stderr)
 
             run_two = make_run(102, conclusion="failure")
-            failed_base_two = run_step([run_two], [], base_two)
+            failed_artifact = make_artifact(12, 102, base_two)
+            failed_base_two = run_step([run_two], [failed_artifact], base_two)
             self.assertNotEqual(0, failed_base_two.returncode)
+            self.assertTrue(any(request.endswith("/actions/runs/102") for request in requests))
+
+            cancelled_run = make_run(107, conclusion="cancelled")
+            cancelled_artifact = make_artifact(17, 107, base_two)
+            cancelled_result = run_step(
+                [cancelled_run], [cancelled_artifact], base_two
+            )
+            self.assertNotEqual(0, cancelled_result.returncode)
+            self.assertTrue(any(request.endswith("/actions/runs/107") for request in requests))
+
+            in_progress_run = make_run(
+                108, status="in_progress", conclusion=None
+            )
+            in_progress_artifact = make_artifact(18, 108, base_two)
+            in_progress_result = run_step(
+                [in_progress_run], [in_progress_artifact], base_two
+            )
+            self.assertNotEqual(0, in_progress_result.returncode)
+            self.assertTrue(any(request.endswith("/actions/runs/108") for request in requests))
+
+            oversized_result = run_step([], [], base_two, oversized=True)
+            self.assertNotEqual(0, oversized_result.returncode)
+            self.assertIn("exceeded its bound", oversized_result.stderr)
 
             run_three = make_run(103)
             expired = make_artifact(13, 103, base_two, expired=True)
