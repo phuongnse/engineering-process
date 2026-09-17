@@ -344,6 +344,11 @@ class AutomationTests(unittest.TestCase):
         self.assertIn('item.get("conclusion") == "success"', test_job)
         self.assertIn('item.get("status") == "completed"', test_job)
         self.assertIn('item.get("app") or {}', test_job)
+        self.assertIn('PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}', test_job)
+        self.assertIn('base_marker = f"- Base: `{base}`"', test_job)
+        self.assertIn('base_marker in ((item.get("output") or {}).get("summary") or "")', test_job)
+        self.assertIn('Record code evidence boundary', test_job)
+        self.assertIn('Record retained code evidence boundary', test_job)
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-pr.yml"
@@ -456,13 +461,15 @@ class AutomationTests(unittest.TestCase):
         )
         marker = "      - name: Verify retained code evidence for metadata-only update\n"
         start = workflow.index("        run: |\n", workflow.index(marker)) + len("        run: |\n")
-        end = workflow.index("\n      - name: Build and install the distribution", start)
+        end = workflow.index("\n      - name: Record retained code evidence boundary", start)
         script = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
         bash = self._git_bash()
         if bash is None:
             self.skipTest("Git Bash is required to execute the retained-check workflow step")
 
         head = "a" * 40
+        base_one = "b" * 40
+        base_two = "c" * 40
         check_name = "Verify (ubuntu-latest, Python 3.11)"
         payload = {"check_runs": []}
 
@@ -480,7 +487,9 @@ class AutomationTests(unittest.TestCase):
 
         server = HTTPServer(("127.0.0.1", 0), Handler)
         try:
-            def run_step(records: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
+            def run_step(
+                records: list[dict[str, object]], base: str,
+            ) -> subprocess.CompletedProcess[str]:
                 payload["check_runs"] = records
                 worker = threading.Thread(target=server.handle_request, daemon=True)
                 worker.start()
@@ -491,6 +500,7 @@ class AutomationTests(unittest.TestCase):
                         "GITHUB_REPOSITORY": "example/repository",
                         "GH_TOKEN": "test-token",
                         "PR_HEAD": head,
+                        "PR_BASE_SHA": base,
                         "REQUIRED_CHECK_NAME": check_name,
                         "NO_PROXY": "127.0.0.1,localhost",
                         "no_proxy": "127.0.0.1,localhost",
@@ -517,17 +527,29 @@ class AutomationTests(unittest.TestCase):
                 "conclusion": "success",
                 "app": {"slug": "github-actions"},
             }
+            valid["output"] = {"summary": f"Code evidence boundary\n- Base: `{base_one}`\n- Head: `{head}`\n"}
             stale = {**valid, "id": 12, "head_sha": "b" * 40}
             failed = {**valid, "id": 13, "conclusion": "failure"}
             wrong_app = {**valid, "id": 14, "app": {"slug": "other-app"}}
-            accepted = run_step([stale, failed, wrong_app, valid])
+            accepted = run_step([stale, failed, wrong_app, valid], base_one)
             self.assertEqual(0, accepted.returncode, accepted.stderr)
             self.assertIn("11", accepted.stdout)
             self.assertNotIn("12", accepted.stdout)
 
-            rejected = run_step([stale, failed, wrong_app])
+            rejected = run_step([valid], base_two)
             self.assertNotEqual(0, rejected.returncode)
             self.assertIn("No successful retained", rejected.stderr)
+
+            failed_base_two = {**valid, "id": 15, "output": {"summary": f"Code evidence boundary\n- Base: `{base_two}`\n- Head: `{head}`\n"}, "conclusion": "failure"}
+            missing_base_two = run_step([failed_base_two], base_two)
+            self.assertNotEqual(0, missing_base_two.returncode)
+
+            later_metadata = run_step([valid], base_two)
+            self.assertNotEqual(0, later_metadata.returncode)
+
+            valid_base_two = {**valid, "id": 16, "output": {"summary": f"Code evidence boundary\n- Base: `{base_two}`\n- Head: `{head}`\n"}}
+            current_base = run_step([valid_base_two], base_two)
+            self.assertEqual(0, current_base.returncode, current_base.stderr)
         finally:
             server.server_close()
 
