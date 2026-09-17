@@ -22,7 +22,7 @@ _EXECUTION_LOCK = threading.Lock()
 
 
 def _child_environment() -> dict[str, str]:
-    return child_environment(executable=sys.executable)
+    return child_environment(executable=sys.executable, managed_only=True)
 
 
 def execution_identity() -> dict[str, Any]:

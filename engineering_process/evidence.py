@@ -23,22 +23,31 @@ def child_environment(
     *,
     executable: str | Path | None = None,
     source: Mapping[str, str] | None = None,
+    managed_only: bool = False,
 ) -> dict[str, str]:
-    """Project the exact sanitized environment used by consumer checks."""
+    """Project the environment used by consumer checks.
+
+    The managed boundary passes only runtime resolution inputs and the process
+    marker. The legacy ``managed_only=False`` projection remains available for
+    callers that explicitly need the broader sanitized mapping, but lifecycle
+    verification and tracker commands use the managed boundary.
+    """
+    source_values = os.environ if source is None else source
     environment: dict[str, str] = {}
-    for name, value in (os.environ if source is None else source).items():
-        upper = name.upper()
-        if name in {"PYTHONHOME", "PYTHONPATH"}:
-            continue
-        if any(marker in upper for marker in SECRET_MARKERS):
-            continue
-        # Empty bindings remain meaningful inputs to a consumer command.
-        environment[name] = value
+    if not managed_only:
+        for name, value in source_values.items():
+            upper = name.upper()
+            if name in {"PYTHONHOME", "PYTHONPATH"}:
+                continue
+            if any(marker in upper for marker in SECRET_MARKERS):
+                continue
+            # Empty bindings remain meaningful to an explicitly broad caller.
+            environment[name] = value
     runtime_executable = Path(
         sys.executable if executable is None else executable
     ).absolute()
     runtime_directory = str(runtime_executable.parent)
-    inherited_path = environment.get("PATH", "")
+    inherited_path = source_values.get("PATH", "")
     path_entries = [entry for entry in inherited_path.split(os.pathsep) if entry]
     runtime_is_first = bool(path_entries) and (
         os.path.normcase(os.path.normpath(path_entries[0]))
@@ -84,6 +93,7 @@ def execution_identity(
     projected_environment = child_environment(
         executable=runtime_executable,
         source=source,
+        managed_only=True,
     )
     return {
         "executable": str(runtime_executable),

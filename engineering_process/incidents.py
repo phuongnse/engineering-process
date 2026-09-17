@@ -306,6 +306,12 @@ def collect_incidents(
         ):
             cycle_start = index
     current_history = history[cycle_start + 1:]
+    lineage_start = -1
+    for index in range(cycle_start - 1, -1, -1):
+        if history[index].get("event") == "finished":
+            lineage_start = index
+            break
+    active_lineage = history[lineage_start + 1:]
 
     # 1. Evidence-integrity: repeated invalidation before a successful rerun.
     # One invalidation is expected when a candidate, policy, runtime, or input
@@ -405,29 +411,29 @@ def collect_incidents(
                     )
                 )
 
-    # 3. Governance-thrashing: repeated corrections in this cycle or reviewer replacement.
-    # A single normal correction, or reopening a completed change, is not
-    # sufficient evidence of process thrashing.
-    current_corrections = sum(
-        item.get("cycle") == current_cycle
-        and item.get("document", {}).get("verdict") == "changes-requested"
-        for item in state.get("reviewHistory", [])
+    # 3. Governance-thrashing: repeated corrections in the active change lineage
+    # or reviewer replacement. Review corrections advance implementation cycles,
+    # so cycle equality cannot identify the repeated sequence.
+    correction_count = sum(
+        event.get("event") == "review-submitted"
+        and event.get("details", {}).get("verdict") == "changes-requested"
+        for event in active_lineage
     )
-    if current_corrections >= 2:
+    if correction_count >= 2:
         _add(
             Incident(
                 kind="governance-thrashing",
                 invariant="excessive-review-cycles",
                 summary=(
-                    f"Change received {current_corrections} changes-requested reviews "
-                    f"in implementation cycle {current_cycle}"
+                    f"Change received {correction_count} changes-requested reviews "
+                    "in the active implementation lineage"
                 ),
-                details={"cycleCount": current_corrections},
+                details={"cycleCount": correction_count},
                 severity="medium",
             )
         )
 
-    for event in current_history:
+    for event in active_lineage:
         if event.get("event") == "review-assignment-replaced":
             _add(
                 Incident(
@@ -538,7 +544,7 @@ def _run_tracker_command(
         process = supervisor.spawn(
             tuple(command),
             working_directory=Path.cwd(),
-            environment=child_environment(),
+            environment=child_environment(managed_only=True),
         )
         if process.stdout is None or process.stderr is None:
             raise ProcessError("tracker process did not expose output streams")

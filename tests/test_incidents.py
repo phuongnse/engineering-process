@@ -186,15 +186,15 @@ class IncidentIntakeTests(unittest.TestCase):
         state = {
             "cycle": 3,
             "history": [
+                {"event": "implementation-started", "details": {"cycle": 1}},
+                {"event": "review-submitted", "details": {"verdict": "changes-requested"}},
+                {"event": "implementation-started", "details": {"cycle": 2}},
+                {"event": "review-submitted", "details": {"verdict": "changes-requested"}},
                 {"event": "implementation-started", "details": {"cycle": 3}},
                 {
                     "event": "review-assignment-replaced",
                     "details": {"previousReviewer": "agent-1", "newReviewer": "agent-2"},
                 }
-            ],
-            "reviewHistory": [
-                {"cycle": 3, "document": {"verdict": "changes-requested"}},
-                {"cycle": 3, "document": {"verdict": "changes-requested"}},
             ],
             "verification": {},
         }
@@ -207,11 +207,10 @@ class IncidentIntakeTests(unittest.TestCase):
         state = {
             "cycle": 2,
             "history": [
+                {"event": "implementation-started", "details": {"cycle": 1}},
+                {"event": "review-submitted", "details": {"verdict": "changes-requested"}},
+                {"event": "finished", "details": {}},
                 {"event": "implementation-started", "details": {"cycle": 2}},
-            ],
-            "reviewHistory": [
-                {"cycle": 2, "document": {"verdict": "changes-requested"}},
-                {"cycle": 1, "document": {"verdict": "changes-requested"}},
             ],
             "verification": {},
         }

@@ -82,6 +82,25 @@ allowed only before a mutation/concurrency boundary. Impact feedback and generat
 documents remain derived artifacts and never replace final required profiles or
 independent review.
 
+### Performance evidence for the 3.0.0 follow-up
+
+The measurements below were taken on 2026-09-17 with the same Windows workspace
+runtime and checked-in commands. They are observations, not a speed target:
+
+| Scenario | Baseline `7dd2125` | Candidate `07e5b01` | Interpretation |
+| --- | ---: | ---: | --- |
+| Development profile (`run_test_suite.py`) | 341.098s; 314 tests | 332.007s; 319 tests | Assurance changed because five regressions were added; no performance improvement is claimed. |
+| Four review checks | 38.576s, direct commands | 37.484s, lifecycle profile | Close but not identical wrapper paths; no process-overhead improvement is claimed. |
+| Continuation/reuse fixture | 5.803s | 5.996s | Same one-test fixture; no meaningful change. |
+| Correction-cycle fixture | 3.992s | 4.061s | Same one-test fixture; no meaningful change. |
+| Adoption convergence fixture | 1.185s | 1.147s | Same one-test fixture; no meaningful change. |
+
+The candidate lifecycle recorded 367.344s for development and 37.484s for review;
+the development value includes the bounded lifecycle runner around the consumer
+suite. The process does not add a cache or telemetry system. These measurements
+prove the compared observations and limits only; host variance, cache state, and the
+different test count prevent a stronger end-to-end optimization claim.
+
 Consumers that can prove complete changed-path coverage may opt selected required
 profiles into final impact assurance with `impactProfiles.schemaVersion: 1` and
 `finalProfiles`. Each opted profile must declare an explicit global unit whose paths
