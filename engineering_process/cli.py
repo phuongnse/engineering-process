@@ -450,7 +450,11 @@ def command_change_verify(args: argparse.Namespace) -> Result:
     )
     code = 0 if report["status"] == "passed" else 1
     return _state_result(
-        "change verify", state, profile=args.profile, profileStatus=report["status"]
+        "change verify",
+        state,
+        status=report["status"],
+        profile=args.profile,
+        profileStatus=report["status"],
     ), code
 
 

@@ -171,6 +171,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual("failed", result["status"])
         self.assertEqual(["development"], result["failures"])
 
+    def test_explicit_change_verify_reports_failed_profile_as_failed(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+            remaining=False,
+            profile="development",
+            affected=False,
+            affected_profile=[],
+            progress=False,
+        )
+        with patch("engineering_process.cli.load_project", return_value={}), patch(
+            "engineering_process.cli.verify_change",
+            return_value=(state, {"status": "failed"}),
+        ):
+            result, code = command_change_verify(args)
+        self.assertEqual(1, code)
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("failed", result["profileStatus"])
+
     def test_remaining_command_fails_when_lifecycle_is_still_incomplete(self) -> None:
         state = {
             "changeId": "sample-change",
