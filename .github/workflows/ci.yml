@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
 
 jobs:
   policy-verification:
@@ -70,11 +71,6 @@ jobs:
 
   test:
     name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' &&
-       (github.event.action != 'edited' || github.event.changes.base) &&
-       github.event.action != 'converted_to_draft')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -90,11 +86,25 @@ jobs:
             python: "3.14"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: >-
+          github.event_name == 'push' ||
+          github.event.action == 'opened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review' ||
+          (github.event.action == 'edited' && github.event.changes.base)
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install source and test dependencies
+        if: >-
+          github.event_name == 'push' ||
+          github.event.action == 'opened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review' ||
+          (github.event.action == 'edited' && github.event.changes.base)
         run: >-
           python -m pip install
           -r engineering_process/requirements-runtime.txt
@@ -102,13 +112,96 @@ jobs:
           -r engineering_process/requirements-build.txt
           --editable .
       - name: Test runtime and contracts
+        if: >-
+          github.event_name == 'push' ||
+          github.event.action == 'opened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review' ||
+          (github.event.action == 'edited' && github.event.changes.base)
         run: python verification/run_test_suite.py
       - name: Validate the complete skill graph
+        if: >-
+          github.event_name == 'push' ||
+          github.event.action == 'opened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review' ||
+          (github.event.action == 'edited' && github.event.changes.base)
         run: python processctl.py skills validate --root process_assets/skills
       - name: Validate release identity
+        if: >-
+          github.event_name == 'push' ||
+          github.event.action == 'opened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review' ||
+          (github.event.action == 'edited' && github.event.changes.base)
         run: python processctl.py release validate
       - name: Validate reviewed release contents
+        if: >-
+          github.event_name == 'push' ||
+          github.event.action == 'opened' ||
+          github.event.action == 'synchronize' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review' ||
+          (github.event.action == 'edited' && github.event.changes.base)
         run: python verification/render_release_notes.py --check RELEASE_NOTES.md
+      - name: Verify retained code evidence for metadata-only update
+        if: >-
+          github.event_name == 'pull_request' &&
+          (github.event.action == 'converted_to_draft' ||
+           (github.event.action == 'edited' && !github.event.changes.base))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_CHECK_NAME: Verify (${{ matrix.os }}, Python ${{ matrix.python }})
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from urllib.request import Request, urlopen
+
+          api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+          repository = os.environ["GITHUB_REPOSITORY"]
+          head = os.environ["PR_HEAD"]
+          request = Request(
+              f"{api}/repos/{repository}/commits/{head}/check-runs?per_page=100",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+              },
+          )
+          with urlopen(request, timeout=30) as response:
+              payload = json.load(response)
+          matches = [
+              item["id"]
+              for item in payload.get("check_runs", [])
+              if item.get("name") == os.environ["REQUIRED_CHECK_NAME"]
+              and item.get("head_sha") == head
+              and item.get("status") == "completed"
+              and item.get("conclusion") == "success"
+              and (item.get("app") or {}).get("slug") == "github-actions"
+          ]
+          if not matches:
+              raise SystemExit(
+                  f"No successful retained {os.environ['REQUIRED_CHECK_NAME']} "
+                  f"exists for PR head {head}"
+              )
+          print(
+              f"Retained successful check run(s) for "
+              f"{os.environ['REQUIRED_CHECK_NAME']}: {', '.join(map(str, matches))}"
+          )
+          PY
       - name: Build and install the distribution
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        if: >-
+          (github.event_name == 'push' ||
+           github.event.action == 'opened' ||
+           github.event.action == 'synchronize' ||
+           github.event.action == 'reopened' ||
+           github.event.action == 'ready_for_review' ||
+           (github.event.action == 'edited' && github.event.changes.base)) &&
+          matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         run: python verification/verify_distribution.py

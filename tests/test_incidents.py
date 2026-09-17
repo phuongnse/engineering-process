@@ -95,6 +95,34 @@ class IncidentIntakeTests(unittest.TestCase):
         self.assertEqual("evidence-integrity", incidents[0].kind)
         self.assertEqual("development", incidents[0].invariant)
 
+    def test_collect_incidents_preserves_bounded_publication_failure_provenance(self) -> None:
+        state = {
+            "history": [
+                {
+                    "event": "publication-failed",
+                    "details": {
+                        "reason": "source-validation-failed",
+                        "candidateHead": "a" * 40,
+                        "comparisonBaseCommit": "b" * 40,
+                        "range": "b" * 40 + ".." + "a" * 40,
+                        "issueCount": 2,
+                        "issueDigest": "sha256:" + "c" * 64,
+                    },
+                }
+            ],
+            "verification": {},
+            "cycle": 1,
+        }
+        incidents = collect_incidents(Path.cwd(), Path.cwd(), state)
+        self.assertEqual(1, len(incidents))
+        self.assertEqual("publication-boundary", incidents[0].kind)
+        self.assertEqual("publication", incidents[0].invariant)
+        self.assertEqual(2, incidents[0].details["issueCount"])
+        body = render_sanitized_issue_body("org/repo", VERSION, incidents[0], state)
+        self.assertIn("source-validation-failed", body)
+        self.assertIn('"issueCount": 2', body)
+        self.assertNotIn("candidateHead", body)
+
     def test_expected_current_cycle_invalidation_is_not_a_process_incident(self) -> None:
         state = {
             "history": [

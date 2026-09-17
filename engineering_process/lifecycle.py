@@ -84,6 +84,16 @@ NEXT_COMMAND = {
 }
 MAX_REVIEW_CORRECTION_CYCLES = 2
 MAX_RECOVERY_MEASUREMENTS = 1024
+PUBLICATION_FAILURE_REASONS = frozenset(
+    {
+        "missing-comparison-base",
+        "source-inspection-failed",
+        "candidate-head-mismatch",
+        "source-validation-failed",
+        "uncommitted-candidate",
+        "candidate-mutated-during-preflight",
+    }
+)
 RECOVERY_METRIC_DEFAULTS = {
     "remainingBlockedAttempts": 0,
     "failedProfileRefreshes": 0,
@@ -347,6 +357,8 @@ def process_improvement_signals(state: dict[str, Any]) -> list[str]:
             signals.add("verification-execution-blocked")
         elif item["event"] == "review-assignment-replaced":
             signals.add("review-assignment-replaced")
+        elif item["event"] == "publication-failed":
+            signals.add("publication-failed")
     return sorted(signals)
 
 
@@ -1189,29 +1201,138 @@ def begin_implementation(
 
 def _publication_preflight(
     project_root: Path,
+    process_root: Path,
     project: dict[str, Any],
     state: dict[str, Any],
     checkpoint: dict[str, Any],
 ) -> dict[str, Any] | None:
     if not publication_required(project):
         return None
-    if not (comparison_base := state.get("comparisonBaseCommit")):
+    comparison_base = state.get("comparisonBaseCommit")
+    if not comparison_base:
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "missing-comparison-base",
+        )
         raise ProcessError("publication requires a pinned comparison base")
-    publication = validate_current_source(project_root, comparison_base)
+    try:
+        publication = validate_current_source(project_root, comparison_base)
+    except ProcessError:
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "source-inspection-failed",
+        )
+        raise
     if publication["range"] != f"{comparison_base}..{checkpoint['head']}":
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "candidate-head-mismatch",
+        )
         raise ProcessError("publication validation does not match the candidate HEAD")
     if publication["issues"]:
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "source-validation-failed",
+            issues=publication["issues"],
+        )
         raise ProcessError(
             "publication checks failed: "
             + "; ".join(publication["issues"])
             + "; commit the candidate on a valid publication branch before change verify"
         )
-    require_committed_candidate(project_root, checkpoint["head"])
-    after = repository_snapshot(project_root)
-    if (not same_checkpoint(checkpoint, after)
-            or current_branch(project_root) != publication["branch"]):
+    try:
+        require_committed_candidate(project_root, checkpoint["head"])
+    except ProcessError:
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "uncommitted-candidate",
+        )
+        raise
+    try:
+        after = repository_snapshot(project_root)
+        branch = current_branch(project_root)
+    except ProcessError:
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "source-inspection-failed",
+        )
+        raise
+    if not same_checkpoint(checkpoint, after) or branch != publication["branch"]:
+        _record_publication_failure(
+            project_root,
+            process_root,
+            state,
+            checkpoint,
+            "candidate-mutated-during-preflight",
+        )
         raise ProcessError("repository changed while publication validation was running")
     return publication
+
+
+def _record_publication_failure(
+    project_root: Path,
+    process_root: Path,
+    state: dict[str, Any],
+    checkpoint: dict[str, Any],
+    reason: str,
+    *,
+    issues: list[str] | None = None,
+) -> None:
+    """Keep one bounded, candidate-bound source-preflight failure observable."""
+    if reason not in PUBLICATION_FAILURE_REASONS:
+        raise ProcessError("unsupported publication failure reason")
+    comparison_base = state.get("comparisonBaseCommit")
+    if not isinstance(comparison_base, str):
+        comparison_base = "unknown"
+    range_spec = f"{comparison_base}..{checkpoint.get('head')}"
+    issue_values = issues if isinstance(issues, list) else []
+    signature = (reason, checkpoint.get("head"), comparison_base)
+    for event in reversed(state.get("history", [])):
+        if event.get("event") != "publication-failed":
+            continue
+        details = event.get("details", {})
+        if (
+            details.get("reason"),
+            details.get("candidateHead"),
+            details.get("comparisonBaseCommit"),
+        ) == signature:
+            return
+    implementation = state.get("currentImplementation")
+    actor = (
+        implementation.get("actor")
+        if isinstance(implementation, dict)
+        and isinstance(implementation.get("actor"), dict)
+        else {"actorId": "coordinator", "contextId": "publication-preflight", "kind": "agent"}
+    )
+    details: dict[str, Any] = {
+        "reason": reason,
+        "candidateHead": checkpoint.get("head"),
+        "comparisonBaseCommit": comparison_base,
+        "range": range_spec,
+        "issueCount": len(issue_values),
+    }
+    if issue_values:
+        details["issueDigest"] = digest_json(issue_values)
+    _event(state, "publication-failed", actor, **details)
+    _save_state(project_root, process_root, state)
 
 
 def _record_execution_blocker(
@@ -1300,7 +1421,7 @@ def verify_change(
                 + ", ".join(uncovered)
                 + "; owner decision required before recovery"
             )
-        _publication_preflight(project_root, project, state, before)
+        _publication_preflight(project_root, process_root, project, state, before)
         runtime = execution_identity()
         authority_digest = distribution_digest(process_root)
         input_digest = _verification_input_digest(
@@ -1385,7 +1506,7 @@ def verify_impact_change(
             raise ProcessError("final impact assurance selection is stale")
         if selection.get("assurancePolicyDigest") != digest_json(project.get("impactProfiles", {})):
             raise ProcessError("final impact assurance policy changed after selection")
-        _publication_preflight(project_root, project, state, before)
+        _publication_preflight(project_root, process_root, project, state, before)
 
         impact_selection = resolve_impact_selection(
             project_root,
@@ -2151,7 +2272,7 @@ def start_review(
     ):
         raise ProcessError("repository changed after the reused review assignment")
     _publication_preflight(
-        project_root, project, state, checkpoint
+        project_root, process_root, project, state, checkpoint
     )
     state["reviewAssignment"] = {
         "reviewer": reviewer,
@@ -2321,7 +2442,9 @@ def finish_change(
     _require_current_baseline(project, state)
     _require_planned_scope(project_root, state)
     checkpoint = repository_snapshot(project_root)
-    publication = _publication_preflight(project_root, project, state, checkpoint)
+    publication = _publication_preflight(
+        project_root, process_root, project, state, checkpoint
+    )
     if not same_checkpoint(checkpoint, state["reviewAssignment"]["checkpoint"]):
         raise ProcessError("repository changed after approval")
     if not _required_verification_matches_inputs(
