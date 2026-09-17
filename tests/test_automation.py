@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -252,7 +257,7 @@ class AutomationTests(unittest.TestCase):
         self.assertLess(push, edit)
         self.assertNotIn("2>/dev/null", workflow)
         self.assertEqual(3, workflow.count("--body-file .github/release-pr-body.md"))
-        create = workflow.split("            gh pr create \\\n", maxsplit=1)[1]
+        create = workflow.split("created_pr_url=\"$(gh pr create \\\n", maxsplit=1)[1]
         self.assertIn("              --draft \\\n", create)
         self.assertNotIn("--body \"Generated from", workflow)
         self.assertIn("release.json release-changes RELEASE_NOTES.md", workflow)
@@ -323,14 +328,22 @@ class AutomationTests(unittest.TestCase):
 
         test_job = workflow.split("  test:\n", maxsplit=1)[1]
         self.assertNotIn("if:", test_job.split("runs-on:", maxsplit=1)[0])
+        self.assertIn("Classify candidate verification", test_job)
+        self.assertEqual(
+            1,
+            test_job.count('case "$GITHUB_EVENT_NAME:$PR_EVENT_ACTION:$PR_BASE_CHANGED"'),
+        )
+        self.assertEqual(1, test_job.count("cache: pip"))
+        self.assertIn("if: steps.classify.outputs.mode == 'full'", test_job)
+        self.assertIn("if: steps.classify.outputs.mode == 'retained'", test_job)
         self.assertIn("Verify retained code evidence for metadata-only update", test_job)
-        self.assertIn("github.event.action == 'converted_to_draft'", test_job)
-        self.assertIn("github.event.action == 'edited' && github.event.changes.base", test_job)
+        self.assertIn("PR_EVENT_ACTION: ${{ github.event.action }}", test_job)
+        self.assertIn("PR_BASE_CHANGED: ${{ github.event.changes.base && 'true' || 'false' }}", test_job)
         self.assertIn('check-runs?per_page=100', test_job)
         self.assertIn('item.get("head_sha") == head', test_job)
         self.assertIn('item.get("conclusion") == "success"', test_job)
         self.assertIn('item.get("status") == "completed"', test_job)
-        self.assertNotIn("name: Verify (${{ matrix.os }}, Python ${{ matrix.python }})", adopted_job)
+        self.assertIn('item.get("app") or {}', test_job)
 
         release_workflow = (
             ROOT / ".github" / "workflows" / "release-pr.yml"
@@ -343,6 +356,324 @@ class AutomationTests(unittest.TestCase):
         self.assertIn('python processctl.py publication validate-range', release_workflow)
         self.assertIn('edit_metadata=false', release_workflow)
         self.assertIn('if [ "$edit_metadata" = true ]; then', release_workflow)
+        for field in ("baseRefName", "baseRefOid", "headRefName", "headRefOid"):
+            self.assertIn(field, release_workflow)
+        self.assertIn("expected_base=", release_workflow)
+        self.assertIn("expected_head=", release_workflow)
+        self.assertIn("jq -j '.body // \"\"'", release_workflow)
+        self.assertIn('cmp -s "$body_path"', release_workflow)
+
+    @staticmethod
+    def _git_bash() -> str | None:
+        if os.name == "nt":
+            candidates = [
+                Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+                / "Git"
+                / "bin"
+                / "bash.exe",
+                Path(r"C:\Program Files\Git\bin\bash.exe"),
+            ]
+            return next((str(path) for path in candidates if path.is_file()), None)
+        return shutil.which("bash")
+
+    def test_ci_classifier_executes_representative_event_fixtures(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "      - name: Classify candidate verification\n"
+        start = workflow.index("        run: |\n", workflow.index(marker)) + len("        run: |\n")
+        end = workflow.index("\n      - uses: actions/checkout", start)
+        script = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
+        bash = self._git_bash()
+        if bash is None:
+            self.skipTest("Git Bash is required to execute the workflow classifier")
+
+        fixtures = (
+            ("push", "", "false", "full"),
+            ("pull_request", "opened", "false", "full"),
+            ("pull_request", "synchronize", "false", "full"),
+            ("pull_request", "reopened", "false", "full"),
+            ("pull_request", "ready_for_review", "false", "full"),
+            ("pull_request", "edited", "true", "full"),
+            ("pull_request", "edited", "false", "retained"),
+            ("pull_request", "converted_to_draft", "false", "retained"),
+        )
+        for event_name, action, base_changed, expected in fixtures:
+            with self.subTest(event_name=event_name, action=action, base_changed=base_changed):
+                with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+                    output = Path(directory) / "github-output"
+                    output_value = output.as_posix()
+                    if os.name == "nt":
+                        output_value = f"/{output_value[0].lower()}{output_value[2:]}"
+                    environment = os.environ.copy()
+                    environment.update(
+                        {
+                            "GITHUB_EVENT_NAME": event_name,
+                            "PR_EVENT_ACTION": action,
+                            "PR_BASE_CHANGED": base_changed,
+                            "GITHUB_OUTPUT": output_value,
+                        }
+                    )
+                    result = subprocess.run(
+                        [bash, "-c", script],
+                        cwd=ROOT,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertEqual(f"mode={expected}", output.read_text(encoding="utf-8").strip())
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            output = Path(directory) / "github-output"
+            output_value = output.as_posix()
+            if os.name == "nt":
+                output_value = f"/{output_value[0].lower()}{output_value[2:]}"
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "PR_EVENT_ACTION": "unexpected",
+                    "PR_BASE_CHANGED": "false",
+                    "GITHUB_OUTPUT": output_value,
+                }
+            )
+            result = subprocess.run(
+                [bash, "-c", script],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("unsupported verification event", result.stderr)
+
+    def test_ci_retained_check_filter_rejects_stale_or_failed_runs(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "      - name: Verify retained code evidence for metadata-only update\n"
+        start = workflow.index("        run: |\n", workflow.index(marker)) + len("        run: |\n")
+        end = workflow.index("\n      - name: Build and install the distribution", start)
+        script = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
+        bash = self._git_bash()
+        if bash is None:
+            self.skipTest("Git Bash is required to execute the retained-check workflow step")
+
+        head = "a" * 40
+        check_name = "Verify (ubuntu-latest, Python 3.11)"
+        payload = {"check_runs": []}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                del format, args
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        try:
+            def run_step(records: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
+                payload["check_runs"] = records
+                worker = threading.Thread(target=server.handle_request, daemon=True)
+                worker.start()
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "GITHUB_API_URL": f"http://127.0.0.1:{server.server_port}",
+                        "GITHUB_REPOSITORY": "example/repository",
+                        "GH_TOKEN": "test-token",
+                        "PR_HEAD": head,
+                        "REQUIRED_CHECK_NAME": check_name,
+                        "NO_PROXY": "127.0.0.1,localhost",
+                        "no_proxy": "127.0.0.1,localhost",
+                        "PATH": str(ROOT / ".venv" / "Scripts") + os.pathsep + os.environ["PATH"],
+                    }
+                )
+                result = subprocess.run(
+                    [bash, "-c", script],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive(), result.stderr + result.stdout)
+                return result
+
+            valid = {
+                "id": 11,
+                "name": check_name,
+                "head_sha": head,
+                "status": "completed",
+                "conclusion": "success",
+                "app": {"slug": "github-actions"},
+            }
+            stale = {**valid, "id": 12, "head_sha": "b" * 40}
+            failed = {**valid, "id": 13, "conclusion": "failure"}
+            wrong_app = {**valid, "id": 14, "app": {"slug": "other-app"}}
+            accepted = run_step([stale, failed, wrong_app, valid])
+            self.assertEqual(0, accepted.returncode, accepted.stderr)
+            self.assertIn("11", accepted.stdout)
+            self.assertNotIn("12", accepted.stdout)
+
+            rejected = run_step([stale, failed, wrong_app])
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("No successful retained", rejected.stderr)
+        finally:
+            server.server_close()
+
+    def test_release_metadata_compare_preserves_trailing_newlines(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release-pr.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "          metadata_changed() {\n"
+        start = workflow.index(marker)
+        end = workflow.index("\n          existing_pr=", start)
+        function = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
+        bash = self._git_bash()
+        if bash is None:
+            self.skipTest("Git Bash is required to execute the release metadata comparison")
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_jq = fake_bin / "jq"
+            fake_jq.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$2\" == *'.title'* ]]; then\n"
+                "  printf '%s\\n' \"$FAKE_TITLE\"\n"
+                "elif [[ \"$2\" == *'.body'* ]]; then\n"
+                "  cat \"$FAKE_BODY_FILE\"\n"
+                "else\n"
+                "  exit 1\n"
+                "fi\n",
+                encoding="utf-8",
+                newline="",
+            )
+            os.chmod(fake_jq, 0o755)
+            desired = root / "desired.md"
+            current = root / "current.md"
+            desired.write_bytes(b"release body\n")
+            body_path = current.as_posix()
+            if os.name == "nt":
+                body_path = f"/{body_path[0].lower()}{body_path[2:]}"
+            fake_bin_path = fake_bin.as_posix()
+            if os.name == "nt":
+                fake_bin_path = f"/{fake_bin_path[0].lower()}{fake_bin_path[2:]}"
+            script = (
+                "set -euo pipefail\n"
+                + function
+                + "if metadata_changed '{}' 'chore(release): v1.2.3' \"$DESIRED_BODY\"; then\n"
+                + "  echo changed\n"
+                + "else\n"
+                + "  echo same\n"
+                + "fi\n"
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": fake_bin_path + ":" + environment["PATH"],
+                    "FAKE_TITLE": "chore(release): v1.2.3",
+                    "FAKE_BODY_FILE": body_path,
+                    "DESIRED_BODY": desired.as_posix()
+                    if os.name != "nt"
+                    else f"/{desired.as_posix()[0].lower()}{desired.as_posix()[2:]}",
+                }
+            )
+            current.write_bytes(b"release body\n")
+            same = subprocess.run(
+                [bash, "-c", script], cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(0, same.returncode, same.stderr)
+            self.assertEqual("same", same.stdout.strip())
+
+            current.write_bytes(b"release body\n\n")
+            changed = subprocess.run(
+                [bash, "-c", script], cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(0, changed.returncode, changed.stderr)
+            self.assertEqual("changed", changed.stdout.strip())
+
+    def test_release_pr_binding_rejects_wrong_base_and_accepts_exact_candidate(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release-pr.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "          validate_pr_binding() {\n"
+        start = workflow.index(marker)
+        end = workflow.index("\n          metadata_changed()", start)
+        function = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
+        bash = self._git_bash()
+        if bash is None:
+            self.skipTest("Git Bash is required to execute the release PR binding")
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            root = Path(directory)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            fake_jq = fake_bin / "jq"
+            fake_jq.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$2\" in\n"
+                "  *.baseRefName*) printf '%s\\n' \"$FAKE_BASE_REF\" ;;\n"
+                "  *.baseRefOid*) printf '%s\\n' \"$FAKE_BASE_OID\" ;;\n"
+                "  *.headRefName*) printf '%s\\n' \"$FAKE_HEAD_REF\" ;;\n"
+                "  *.headRefOid*) printf '%s\\n' \"$FAKE_HEAD_OID\" ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+                newline="",
+            )
+            os.chmod(fake_jq, 0o755)
+            fake_bin_path = fake_bin.as_posix()
+            if os.name == "nt":
+                fake_bin_path = f"/{fake_bin_path[0].lower()}{fake_bin_path[2:]}"
+            branch = "automation/release/v1.2.3"
+            base = "b" * 40
+            head = "a" * 40
+            script = (
+                "set -euo pipefail\n"
+                f"branch='{branch}'\n"
+                f"expected_base='{base}'\n"
+                + function
+                + "validate_pr_binding '{}' '"
+                + head
+                + "'\n"
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": fake_bin_path + ":" + environment["PATH"],
+                    "FAKE_BASE_REF": "release",
+                    "FAKE_BASE_OID": base,
+                    "FAKE_HEAD_REF": branch,
+                    "FAKE_HEAD_OID": head,
+                }
+            )
+            wrong_base = subprocess.run(
+                [bash, "-c", script], cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertNotEqual(0, wrong_base.returncode)
+            self.assertIn("does not bind the prepared base/head", wrong_base.stderr)
+
+            environment["FAKE_BASE_REF"] = "main"
+            exact = subprocess.run(
+                [bash, "-c", script], cwd=ROOT, env=environment,
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(0, exact.returncode, exact.stderr)
 
     def test_readiness_sidecar_preserves_the_adopted_authority_bootstrap(self) -> None:
         project = json.loads((ROOT / ".process" / "project.json").read_text(encoding="utf-8"))
