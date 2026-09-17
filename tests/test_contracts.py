@@ -251,6 +251,7 @@ class ContractTests(unittest.TestCase):
         report["scope"] = {"kind": "profile"}
         report["diagnostic"] = {
             "kind": "selective-check-reproduction",
+            "descriptorVersion": 1,
             "profile": "rust",
             "check": "rust-tests",
             "position": 1,
@@ -264,6 +265,7 @@ class ContractTests(unittest.TestCase):
             ],
             "failureKind": "command-failure",
             "failure": {
+                "id": "rust-tests",
                 "status": "failed",
                 "exitCode": 101,
                 "timedOut": False,

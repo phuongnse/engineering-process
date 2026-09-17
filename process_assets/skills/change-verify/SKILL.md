@@ -42,7 +42,8 @@ A failed full-profile report is not evidence for any required profile. The same 
 retains its failed check, one-based position, exit result, timeout/output/stream and
 cleanup indicators, bounded stream counts/hashes, safe reproduction arguments, report
 digest, recorded time, and candidate checkpoint. `change explain` exposes these facts
-with a `current`, `stale`, or `unavailable` label. It never includes raw stdout,
+through a typed reference with a `current`, `stale`, or `unavailable` label; read its
+relative run path for the schema-owned descriptor. It never includes raw stdout,
 stderr, traceback, secrets, or a guessed test failure; if the consumer command has no
 safe structured failure report, that limit is explicit. Historical or partial reports
 are not treated as the current candidate.
@@ -54,6 +55,13 @@ or deliberately request the explicit full-profile refresh. A later pass proves o
 that later execution passed; it does not by itself explain or prove the earlier
 failure was fixed. A selective check/module/command run remains diagnostic and never
 becomes required evidence.
+
+`change status` exposes bounded run measurements: `remainingBlockedAttempts` counts
+non-progress remaining requests, `failedProfileRefreshes` counts explicit full-profile
+executions after a failed report, and `profileExecutions`/`checkLaunches` count the
+actual lifecycle work needed by the run. These counters are scenario evidence, not a
+latency target or a new telemetry system, and selective diagnostics outside the
+lifecycle do not become required evidence.
 
 The stage reuse map is deliberately narrow:
 

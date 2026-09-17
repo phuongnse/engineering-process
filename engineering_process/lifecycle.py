@@ -76,10 +76,31 @@ NEXT_COMMAND = {
     "blocked": None,
 }
 MAX_REVIEW_CORRECTION_CYCLES = 2
+MAX_RECOVERY_MEASUREMENTS = 1024
+RECOVERY_METRIC_DEFAULTS = {
+    "remainingBlockedAttempts": 0,
+    "failedProfileRefreshes": 0,
+    "profileExecutions": 0,
+    "checkLaunches": 0,
+}
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _recovery_metrics(state: dict[str, Any]) -> dict[str, int]:
+    metrics = state.setdefault(
+        "recoveryMetrics", dict(RECOVERY_METRIC_DEFAULTS)
+    )
+    return metrics
+
+
+def _increment_recovery_metric(
+    state: dict[str, Any], name: str, amount: int = 1
+) -> None:
+    metrics = _recovery_metrics(state)
+    metrics[name] = min(MAX_RECOVERY_MEASUREMENTS, metrics[name] + amount)
 
 
 def _actor(actor_id: str, context_id: str, kind: str) -> dict[str, str]:
@@ -424,17 +445,12 @@ def _verification_report_input_relation(
 
 def _diagnostic_descriptor_complete(report: dict[str, Any]) -> bool:
     descriptor = report.get("diagnostic")
-    return isinstance(descriptor, dict) and all(
-        key in descriptor
-        for key in (
-            "kind",
-            "profile",
-            "check",
-            "position",
-            "command",
-            "failureKind",
-            "failure",
-        )
+    return (
+        isinstance(descriptor, dict)
+        and descriptor.get("descriptorVersion") == 1
+        and descriptor.get("profile") == report.get("profile")
+        and descriptor.get("kind")
+        in {"selective-check-reproduction", "impact-unit-failure"}
     )
 
 
@@ -482,6 +498,8 @@ def _failure_diagnostic(
             "the descriptor belongs to this run's current candidate and input identity; "
             "bounded output was truncated and raw detail is unavailable"
             if truncated
+            else "the selected impact unit is current; its command text is intentionally unavailable and only its digest is recorded"
+            if report["diagnostic"].get("kind") == "impact-unit-failure"
             else "the descriptor belongs to this run's current candidate and input identity"
         )
 
@@ -495,18 +513,6 @@ def _failure_diagnostic(
         "recordedAt": report.get("recordedAt", _now()),
         "reason": reason,
     }
-    descriptor = report.get("diagnostic")
-    if isinstance(descriptor, dict):
-        for key in (
-            "kind",
-            "check",
-            "position",
-            "command",
-            "failureKind",
-            "failure",
-        ):
-            if key in descriptor:
-                diagnostic[key] = deepcopy(descriptor[key])
     return diagnostic
 
 
@@ -916,6 +922,24 @@ def start_change(
             raise ProcessError(
                 "superseding recovery requires a recorded plan-scope blocker"
             )
+        previous_contract = previous_state["contract"]["document"]
+        changed_contract_fields = [
+            field
+            for field in (
+                "summary",
+                "source",
+                "risk",
+                "affectedProjects",
+                "acceptanceCriteria",
+                "requiredProfiles",
+            )
+            if contract[field] != previous_contract[field]
+        ]
+        if changed_contract_fields:
+            raise ProcessError(
+                "superseding recovery must preserve accepted contract fields: "
+                + ", ".join(changed_contract_fields)
+            )
         if (
             previous_state.get("plan") is None
             or previous_state.get("reviewAssignment") is not None
@@ -982,6 +1006,7 @@ def start_change(
         "contract": {"digest": digest_json(contract), "document": contract},
         "comparisonBaseCommit": comparison_base,
         "plan": None,
+        "recoveryMetrics": dict(RECOVERY_METRIC_DEFAULTS),
         "implementations": [],
         "currentImplementation": None,
         "verification": {},
@@ -1208,6 +1233,26 @@ def _record_execution_blocker(
     _save_state(project_root, process_root, state)
 
 
+def _record_remaining_blocked(
+    project_root: Path,
+    process_root: Path,
+    state: dict[str, Any],
+    selection: dict[str, Any],
+) -> None:
+    metrics = _recovery_metrics(state)
+    if metrics["remainingBlockedAttempts"] >= MAX_RECOVERY_MEASUREMENTS:
+        return
+    _increment_recovery_metric(state, "remainingBlockedAttempts")
+    _event(
+        state,
+        "remaining-work-blocked",
+        state["currentImplementation"]["actor"],
+        blockedProfiles=selection["blockedProfiles"],
+        selectionDigest=digest_json(selection),
+    )
+    _save_state(project_root, process_root, state)
+
+
 def verify_change(
     project_root: Path,
     process_root: Path,
@@ -1342,6 +1387,23 @@ def verify_impact_change(
                 error,
             )
             raise
+        if report["status"] == "failed" and isinstance(report.get("diagnostic"), dict):
+            diagnostic = report["diagnostic"]
+            position = diagnostic.get("position")
+            if isinstance(position, int) and 1 <= position <= len(selected_units):
+                failed_unit = selected_units[position - 1]
+                report["diagnostic"] = {
+                    "kind": "impact-unit-failure",
+                    "descriptorVersion": 1,
+                    "profile": profile,
+                    "check": failed_unit["id"],
+                    "unit": failed_unit["id"],
+                    "unitPosition": position,
+                    "commandDigest": digest_json(failed_unit["run"]),
+                    "commandAvailable": False,
+                    "failureKind": diagnostic.get("failureKind", "unknown"),
+                    "failure": deepcopy(diagnostic["failure"]),
+                }
         report["executionMode"] = "impact-assurance"
         report["selectionDigest"] = digest_json(selection)
         return _record_verification(
@@ -1478,6 +1540,9 @@ def verify_remaining(
             project = load_project(project_root, process_root)
             selection = _verification_selection(project_root, process_root, project, state)
             if selection["status"] == "blocked":
+                _record_remaining_blocked(
+                    project_root, process_root, state, selection
+                )
                 raise ProcessError(
                     "verification selection is blocked: "
                     + ", ".join(selection["blockedProfiles"])
@@ -1540,6 +1605,9 @@ def verify_remaining(
             state,
         )
         if final_selection["status"] == "blocked" and not executed:
+            _record_remaining_blocked(
+                project_root, process_root, state, final_selection
+            )
             raise ProcessError(
                 "verification selection is blocked: "
                 + ", ".join(final_selection["blockedProfiles"])
@@ -1763,6 +1831,11 @@ def _record_verification(
         )
         for name in {*state["verification"], report["profile"]}
     }
+    previous_report_for_profile = state["verification"].get(report["profile"])
+    failed_profile_refresh = (
+        isinstance(previous_report_for_profile, dict)
+        and previous_report_for_profile.get("status") == "failed"
+    )
     retained_verification: dict[str, Any] = {}
     actor = (
         state["currentImplementation"]["actor"]
@@ -1771,6 +1844,9 @@ def _record_verification(
     )
     for name, previous in state["verification"].items():
         if previous.get("status") == "failed":
+            if name != report["profile"]:
+                retained_verification[name] = previous
+                continue
             relation = _verification_report_input_relation(
                 project_root,
                 process_root,
@@ -1860,6 +1936,12 @@ def _record_verification(
         report["status"] = "failed"
         report["reason"] = "repository changed while verification was running"
     state["verification"][profile] = report
+    _increment_recovery_metric(state, "profileExecutions")
+    _increment_recovery_metric(
+        state, "checkLaunches", len(report.get("checks", []))
+    )
+    if failed_profile_refresh:
+        _increment_recovery_metric(state, "failedProfileRefreshes")
     if (
         state.get("blocker", {}).get("kind") == "verification-execution"
         and state["blocker"].get("profile") == profile

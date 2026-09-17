@@ -274,7 +274,6 @@ class LifecycleTests(unittest.TestCase):
         new_contract.update(
             {
                 "id": "recovery-change",
-                "summary": "Continue the accepted outcome after a plan boundary decision",
                 "comparisonBase": old_run["comparisonBaseCommit"],
                 "supersedes": {
                     "changeId": "sample-change",
@@ -458,6 +457,44 @@ class LifecycleTests(unittest.TestCase):
         path = self.root / ".process" / "inputs" / "wrong-base-recovery.json"
         write_json(path, contract)
         with self.assertRaisesRegex(ProcessError, "retain the prior comparison base"):
+            start_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                path,
+                actor_id="owner",
+                context_id="recovery-owner",
+                kind="human",
+            )
+
+    def test_superseding_recovery_rejects_a_changed_accepted_outcome(self) -> None:
+        self.plan["workItems"][0]["affectedPaths"] = ["product.txt"]
+        write_json(self.plan_path, self.plan)
+        self.begin()
+        (self.root / "output.txt").write_text("inherited\n", encoding="utf-8")
+        with self.assertRaises(ProcessError):
+            verify_change(
+                self.root,
+                PROCESS_ROOT,
+                self.project,
+                "sample-change",
+                "development",
+            )
+
+        contract = deepcopy(self.contract)
+        contract.update(
+            {
+                "id": "changed-outcome-recovery",
+                "supersedes": {
+                    "changeId": "sample-change",
+                    "reason": "missing-plan-boundary",
+                },
+            }
+        )
+        contract["acceptanceCriteria"][0]["outcome"] = "Deliver a different outcome."
+        path = self.root / ".process" / "inputs" / "changed-outcome-recovery.json"
+        write_json(path, contract)
+        with self.assertRaisesRegex(ProcessError, "accepted contract fields: acceptanceCriteria"):
             start_change(
                 self.root,
                 PROCESS_ROOT,
@@ -1480,10 +1517,9 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("blocked", selection["status"])
         self.assertEqual("blocked", requirement["action"])
         self.assertEqual("current", requirement["diagnostic"]["status"])
-        self.assertEqual("tests", requirement["diagnostic"]["check"])
-        self.assertEqual(
-            requirement["diagnostic"], selection["diagnostics"][0]
-        )
+        self.assertEqual("tests", report["diagnostic"]["check"])
+        self.assertEqual(digest_json(report), requirement["diagnostic"]["reportDigest"])
+        self.assertEqual(requirement["diagnostic"], selection["diagnostics"][0])
         persisted = (
             self.root / ".process" / "runs" / "sample-change" / "run.json"
         ).read_text(encoding="utf-8")
@@ -1510,7 +1546,20 @@ class LifecycleTests(unittest.TestCase):
         )
         path = self.root / ".process" / "runs" / "sample-change" / "run.json"
         state = json.loads(path.read_text(encoding="utf-8"))
-        state["verification"]["development"].pop("diagnostic")
+        state["verification"]["development"]["diagnostic"] = {
+            "kind": "selective-check-reproduction",
+            "profile": "development",
+            "check": "unit",
+            "position": 1,
+            "command": [
+                "processctl",
+                "verify",
+                "--profile",
+                "development",
+                "--check-position",
+                "1",
+            ],
+        }
         write_json(path, state)
 
         selection = resolve_verification_work(
@@ -1523,6 +1572,41 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual("blocked", requirement["action"])
         self.assertEqual("unavailable", requirement["diagnostic"]["status"])
         self.assertIn("not recorded", requirement["diagnostic"]["reason"])
+
+    def test_failed_report_survives_refresh_of_another_profile(self) -> None:
+        self.project["profiles"]["development"][0]["run"] = [
+            sys.executable,
+            "-c",
+            "raise SystemExit(17)",
+        ]
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+        verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "development"
+        )
+        state, report = verify_change(
+            self.root, PROCESS_ROOT, self.project, "sample-change", "review"
+        )
+        self.assertEqual("passed", report["status"])
+        self.assertEqual({"development", "review"}, set(state["verification"]))
+        self.assertEqual("failed", state["verification"]["development"]["status"])
+        selection = resolve_verification_work(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        development = next(
+            item for item in selection["requirements"] if item["profile"] == "development"
+        )
+        self.assertEqual("blocked", selection["status"])
+        self.assertEqual("blocked", development["action"])
+        self.assertEqual(2, state["recoveryMetrics"]["profileExecutions"])
+        with patch("engineering_process.lifecycle.run_profile") as runner:
+            with self.assertRaisesRegex(ProcessError, "verification selection is blocked"):
+                verify_remaining(
+                    self.root, PROCESS_ROOT, self.project, "sample-change"
+                )
+        runner.assert_not_called()
+        measured = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual(1, measured["recoveryMetrics"]["remainingBlockedAttempts"])
 
     def test_spawn_failure_records_execution_blocker_without_retry(self) -> None:
         self.project["profiles"]["development"][0]["run"] = [
@@ -1761,6 +1845,46 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual("impact-assurance", report["executionMode"])
             self.assertTrue(report["selectionDigest"].startswith("sha256:"))
             self.assertEqual(f"final-{profile}", report["checks"][0]["id"])
+
+    def test_impact_failure_diagnostic_identifies_the_selected_unit(self) -> None:
+        self.project["impactProfiles"] = {
+            "schemaVersion": 1,
+            "finalProfiles": ["development", "review"],
+            "profiles": {
+                "development": [
+                    {
+                        "id": "impact-development",
+                        "run": [sys.executable, "-c", "raise SystemExit(17)"],
+                        "timeoutSeconds": 10,
+                        "scope": "global",
+                        "paths": ["**"],
+                    }
+                ],
+                "review": [
+                    {
+                        "id": "impact-review",
+                        "run": [sys.executable, "-c", "raise SystemExit(0)"],
+                        "timeoutSeconds": 10,
+                        "scope": "global",
+                        "paths": ["**"],
+                    }
+                ],
+            },
+        }
+        write_json(self.root / ".process" / "project.json", self.project)
+        self.begin()
+
+        state, _selection = verify_remaining(
+            self.root, PROCESS_ROOT, self.project, "sample-change"
+        )
+        report = state["verification"]["development"]
+        self.assertEqual("failed", report["status"])
+        self.assertEqual("impact-assurance", report["executionMode"])
+        self.assertEqual("impact-unit-failure", report["diagnostic"]["kind"])
+        self.assertEqual("impact-development", report["diagnostic"]["unit"])
+        self.assertEqual(1, report["diagnostic"]["unitPosition"])
+        self.assertFalse(report["diagnostic"]["commandAvailable"])
+        self.assertRegex(report["diagnostic"]["commandDigest"], r"^sha256:[0-9a-f]{64}$")
 
     def test_unresolved_final_impact_assurance_blocks_remaining_verification(self) -> None:
         self.project["impactProfiles"] = {

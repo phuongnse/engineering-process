@@ -96,53 +96,7 @@
         "cycle": {"type": "integer", "minimum": 1},
         "checkpoint": {"$ref": "#/$defs/checkpoint"},
         "recordedAt": {"type": "string", "format": "date-time"},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "kind": {"const": "selective-check-reproduction"},
-        "check": {"$ref": "#/$defs/id"},
-        "position": {"type": "integer", "minimum": 1, "maximum": 32},
-        "command": {
-          "type": "array",
-          "minItems": 6,
-          "maxItems": 6,
-          "prefixItems": [
-            {"const": "processctl"},
-            {"const": "verify"},
-            {"const": "--profile"},
-            {"$ref": "#/$defs/id"},
-            {"const": "--check-position"},
-            {"type": "string", "pattern": "^(?:[1-9]|[12][0-9]|3[0-2])$"}
-          ],
-          "items": false
-        },
-        "failureKind": {"enum": ["command-failure", "execution-condition", "unknown"]},
-        "failure": {"$ref": "#/$defs/failureSummary"}
-      }
-    },
-    "stream": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["bytes", "sha256", "truncated"],
-      "properties": {
-        "bytes": {"type": "integer", "minimum": 0},
-        "sha256": {"$ref": "#/$defs/digest"},
-        "truncated": {"type": "boolean"}
-      }
-    },
-    "failureSummary": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "exitCode", "timedOut", "outputExceeded", "descendantsTerminated", "streamFailed", "durationMs", "stdout", "stderr"],
-      "properties": {
-        "status": {"const": "failed"},
-        "exitCode": {"type": "integer"},
-        "timedOut": {"type": "boolean"},
-        "outputExceeded": {"type": "boolean"},
-        "descendantsTerminated": {"type": "boolean"},
-        "streamFailed": {"type": "boolean"},
-        "cleanupFailed": {"type": "boolean"},
-        "durationMs": {"type": "integer", "minimum": 0},
-        "stdout": {"$ref": "#/$defs/stream"},
-        "stderr": {"$ref": "#/$defs/stream"}
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000}
       }
     }
   }

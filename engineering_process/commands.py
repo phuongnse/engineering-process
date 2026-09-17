@@ -355,6 +355,7 @@ def run_profile(
             failure_kind = "unknown"
         result["diagnostic"] = {
             "kind": "selective-check-reproduction",
+            "descriptorVersion": 1,
             "profile": profile,
             "check": failed["id"],
             "position": failed_position,
@@ -367,21 +368,6 @@ def run_profile(
                 str(failed_position),
             ],
             "failureKind": failure_kind,
-            "failure": {
-                key: failed[key]
-                for key in (
-                    "status",
-                    "exitCode",
-                    "timedOut",
-                    "outputExceeded",
-                    "descendantsTerminated",
-                    "streamFailed",
-                    "cleanupFailed",
-                    "durationMs",
-                    "stdout",
-                    "stderr",
-                )
-                if key in failed
-            },
+            "failure": dict(failed),
         }
     return result

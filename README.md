@@ -594,13 +594,19 @@ outcome changes, use a fresh accepted contract and decision instead.
 Failed required verification is kept in the same run. Its safe diagnostic identifies
 the profile/check and position, exit result, timeout/output/stream/cleanup indicators,
 bounded stream metadata, fixed reproduction arguments, report digest, recorded time,
-and candidate checkpoint. `change explain` labels the descriptor current, stale, or
-unavailable; it never persists raw output or guesses a test failure. Remaining-work
+and candidate checkpoint. `change explain` gives a typed reference to the run and
+labels the descriptor current, stale, or unavailable; the run path exposes the
+schema-owned descriptor. It never persists raw output or guesses a test failure. Remaining-work
 execution blocks a failed report on the same candidate/input identity, while changed
 inputs or a deliberate explicit profile refresh remain separate from evidence reuse.
 Spawn and other execution-condition failures record the missing consumer action. These
 lifecycle blockers are distinct from consumer behavior, owner decisions, and any goal
 harness retry counter.
+
+`change status` also reports bounded recovery measurements: blocked remaining attempts,
+full-profile executions after a failure, total profile executions, and check launches.
+They support before/after acceptance scenarios without introducing telemetry or turning
+diagnostic/module runs into required evidence.
 
 For fast feedback, consumers may declare the current `impactProfiles` policy in
 `.process/project.json` and run only units related to the candidate paths:
