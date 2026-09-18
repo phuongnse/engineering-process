@@ -3,7 +3,7 @@
   "id": "publication-reference-tolerance",
   "type": "fix",
   "summary": "Allow optional terminal punctuation in pull request issue references.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/214",
+  "source": "https://github.com/phuongnse/engineering-process/pull/239",
   "details": {
     "problem": "The publication validator required a final period on an otherwise complete Refs or Closes issue reference, blocking a self-consumer pull request even when its issue identity and required evidence were present.",
     "changes": "Accept valid Refs and Closes references with or without a terminal period while retaining the complete issue-target grammar, checklist placement, uniqueness, and draft/ready restrictions; align the README and pull request template guidance.",
