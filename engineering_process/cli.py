@@ -588,6 +588,26 @@ def command_change_finish(args: argparse.Namespace) -> Result:
 def _status_review(state: dict[str, Any]) -> dict[str, Any]:
     assignment = state.get("reviewAssignment")
     review = state.get("review")
+    document = review.get("document", {}) if isinstance(review, dict) else {}
+    blocking_findings = []
+    for finding in document.get("findings", []):
+        if finding.get("severity") != "blocking":
+            continue
+        blocking_findings.append(
+            {
+                key: finding[key]
+                for key in (
+                    "id",
+                    "severity",
+                    "priority",
+                    "criterionId",
+                    "origin",
+                    "summary",
+                    "location",
+                )
+                if key in finding
+            }
+        )
     return {
         "status": (
             "not-started"
@@ -604,7 +624,109 @@ def _status_review(state: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
         "historyCount": len(state.get("reviewHistory", [])),
+        "blockingFindings": blocking_findings,
     }
+
+
+def _status_diagnostic(
+    requirement: dict[str, Any],
+    report: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    descriptor = requirement.get("diagnostic")
+    report_descriptor = report.get("diagnostic") if isinstance(report, dict) else None
+    if not isinstance(descriptor, dict) and not isinstance(report_descriptor, dict):
+        return None
+
+    result: dict[str, Any] = {}
+    if isinstance(descriptor, dict):
+        for key in (
+            "profile",
+            "status",
+            "reportDigest",
+            "runPath",
+            "cycle",
+            "checkpoint",
+            "recordedAt",
+            "reason",
+        ):
+            if key in descriptor:
+                result[key] = descriptor[key]
+
+    if isinstance(report_descriptor, dict):
+        for key in (
+            "kind",
+            "descriptorVersion",
+            "profile",
+            "check",
+            "position",
+            "command",
+            "failureKind",
+            "unit",
+            "unitPosition",
+            "commandDigest",
+            "commandAvailable",
+        ):
+            if key in report_descriptor:
+                result[key] = report_descriptor[key]
+        failure = report_descriptor.get("failure")
+        if isinstance(failure, dict):
+            result["failure"] = {
+                key: failure[key]
+                for key in (
+                    "id",
+                    "status",
+                    "exitCode",
+                    "timedOut",
+                    "outputExceeded",
+                    "descendantsTerminated",
+                    "streamFailed",
+                    "cleanupFailed",
+                    "durationMs",
+                    "stdout",
+                    "stderr",
+                )
+                if key in failure
+            }
+
+    return result
+
+
+def _status_diagnostics(
+    state: dict[str, Any],
+    selection: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if selection is None:
+        return []
+    diagnostics = []
+    for requirement in selection.get("requirements", []):
+        diagnostic = _status_diagnostic(
+            requirement,
+            state.get("verification", {}).get(requirement.get("profile")),
+        )
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+    return diagnostics
+
+
+def _status_identity_arguments(
+    state: dict[str, Any], role: str, *, reuse_current: bool = False
+) -> tuple[str, list[str]]:
+    implementation = state.get("currentImplementation")
+    actor = implementation.get("actor") if isinstance(implementation, dict) else None
+    if (
+        reuse_current
+        and isinstance(actor, dict)
+        and actor.get("actorId")
+        and actor.get("contextId")
+    ):
+        return (
+            f"--actor {actor['actorId']} --context {actor['contextId']}",
+            [],
+        )
+    return (
+        f"--actor <{role.upper()}_ACTOR> --context <{role.upper()}_CONTEXT>",
+        ["actor", "context"],
+    )
 
 
 def _status_next_action(
@@ -619,7 +741,7 @@ def _status_next_action(
             "reason": "the current verification selection is unavailable; validate the consumer policy before interpreting evidence",
             "ownerDecisionRequired": False,
         }
-    if selection is not None and selection.get("status") == "blocked":
+    if selection.get("status") == "blocked":
         blocked = [
             item
             for item in selection.get("requirements", [])
@@ -642,7 +764,7 @@ def _status_next_action(
 
     phase = state["phase"]
     if phase == "completed":
-        current_completion = selection is None or (
+        current_completion = (
             selection.get("status") == "ready"
             and all(
                 item.get("status") in {"satisfied", "inapplicable"}
@@ -650,11 +772,17 @@ def _status_next_action(
             )
         )
         if not current_completion:
+            identity, required_inputs = _status_identity_arguments(
+                state, "implementation", reuse_current=True
+            )
             return {
                 "route": "change implement",
-                "command": f"processctl change implement --change-id {change_id}",
+                "command": (
+                    f"processctl change implement --change-id {change_id} {identity}"
+                ),
                 "reason": "the current candidate no longer matches the completed receipt; owner-controlled continuation must open a new implementation cycle",
                 "ownerDecisionRequired": False,
+                "requiredInputs": required_inputs,
             }
         return {
             "route": "completed",
@@ -670,9 +798,45 @@ def _status_next_action(
             "reason": "the lifecycle is terminal and requires owner-controlled recovery",
             "ownerDecisionRequired": True,
         }
+    required_inputs: list[str] = []
     if phase == "implementing":
         command = f"processctl change verify --change-id {change_id} --remaining"
         reason = "execute the unresolved required profiles on the current candidate"
+    elif phase == "specified":
+        identity, required_inputs = _status_identity_arguments(state, "plan")
+        command = (
+            f"processctl change plan --change-id {change_id} {identity} "
+            "--plan <PLAN_PATH>"
+        )
+        required_inputs.append("plan")
+        reason = "register the accepted plan with its contract digest"
+    elif phase in {"planned", "changes-requested"}:
+        identity, required_inputs = _status_identity_arguments(
+            state, "implementation", reuse_current=True
+        )
+        command = (
+            f"processctl change implement --change-id {change_id} {identity}"
+        )
+        reason = (
+            "register the correction implementation identity and address the active review findings"
+            if phase == "changes-requested"
+            else "register the implementation identity for the accepted plan"
+        )
+    elif phase == "verified":
+        identity, required_inputs = _status_identity_arguments(state, "reviewer")
+        command = f"processctl change review start --change-id {change_id} {identity}"
+        reason = "assign an independent reviewer for the verified candidate"
+    elif phase == "review-pending":
+        report_path = f".process/runs/{change_id}/review-{state['cycle']}.json"
+        command = (
+            f"processctl change review submit --change-id {change_id} "
+            f"--review {report_path}"
+        )
+        reason = "submit the assigned reviewer's report for the exact candidate"
+    elif phase == "approved":
+        identity, required_inputs = _status_identity_arguments(state, "coordinator")
+        command = f"processctl change finish --change-id {change_id} {identity}"
+        reason = "write the completion receipt after the approved candidate remains current"
     else:
         command = f"processctl {route} --change-id {change_id}"
         reason = f"continue the {route} lifecycle phase with its required inputs"
@@ -681,6 +845,7 @@ def _status_next_action(
         "command": command,
         "reason": reason,
         "ownerDecisionRequired": False,
+        **({"requiredInputs": required_inputs} if required_inputs else {}),
     }
 
 
@@ -717,7 +882,15 @@ def command_change_status(args: argparse.Namespace) -> Result:
         if selection is not None
         else {}
     )
+    review = _status_review(state)
     blocker = state.get("blocker")
+    if blocker is None and review["blockingFindings"]:
+        blocker = {
+            "kind": "review-findings",
+            "action": "implement-correction",
+            "reason": "the independent review has blocking findings that must remain open until resolved",
+            "findings": review["blockingFindings"],
+        }
     if blocker is None and selection is not None and selection["status"] == "blocked":
         blocked = [
             item
@@ -752,10 +925,12 @@ def command_change_status(args: argparse.Namespace) -> Result:
         ),
         candidate=(selection["checkpoint"] if selection is not None else None),
         readiness=(readiness_summary(project) if project is not None else None),
-        review=_status_review(state),
-        verification=current,
+        review=review,
+        verification=recorded,
+        currentVerification=current,
         recordedVerification=recorded,
         evidence=evidence,
+        diagnostics=_status_diagnostics(state, selection),
         nextAction=_status_next_action(state, selection),
     ), 0
 

@@ -74,8 +74,14 @@ review state, and the schema-validated verification selection. Use
 `blocked` needs a consumer or owner action, and `inapplicable` is an unselected
 optional profile. `recordedVerification` is historical report status only; a recorded
 `passed` report is not a current pass until the selection says `satisfied`. The
-`nextAction` field gives the route and reason. For the complete route and vocabulary,
-read [deliver-change](process_assets/skills/deliver-change/SKILL.md) first; it is the
+`verification` field remains the historical report-status projection for compatibility;
+`currentVerification` and `evidence` expose the current selection. Review state shows
+active blocking findings. `diagnostics` exposes only the validated failed check,
+failure class, bounded execution facts, and fixed selective reproduction command.
+The `nextAction` field gives an executable route with required handoff inputs, using
+explicit placeholders when the caller must choose an actor, context, plan, or report.
+For the complete route and vocabulary, read
+[deliver-change](process_assets/skills/deliver-change/SKILL.md) first; it is the
 single guidance source for interpreting lifecycle state.
 
 Verification keeps two caller intents explicit. `change verify --profile PROFILE`

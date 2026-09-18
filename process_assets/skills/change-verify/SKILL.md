@@ -22,9 +22,14 @@ The status projection is the reader-facing summary. `evidence.requirements` is t
 current decision for each profile; `recordedVerification` only describes what was
 stored previously. A stored `passed` value is not reusable evidence until the current
 selection marks that profile `satisfied`. The projection also shows the candidate
-checkpoint, contract/plan digests, review state, readiness summary, safe diagnostic
-reference, and one next action. It is read-only and does not refresh, reuse, or
-advance lifecycle state.
+checkpoint, contract/plan digests, review state including active blocking findings,
+readiness summary, safe diagnostic reference, and one next action. The legacy
+`verification` field retains stored report statuses; `currentVerification` and
+`evidence` carry the current selection states. `diagnostics` adds only the validated
+failed check identity, failure class, bounded execution facts, and fixed selective
+reproduction command. It is read-only and does not refresh, reuse, or advance
+lifecycle state. Commands in `nextAction` include all required handoff flags; any
+caller-selected actor, context, plan, or report path is shown as an explicit input.
 
 Read the registered acceptance criteria and .process/project.json. When publication
 is required, commit the complete candidate on a valid publication branch before final

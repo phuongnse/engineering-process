@@ -22,8 +22,14 @@ operator route. Read `evidence.requirements` rather than the recorded report sta
 optional profile was not selected. A stored `passed` report is not a current pass
 until the selection says `satisfied`. `recordedVerification` is historical detail
 only. If a profile is failed, `evidence.diagnostics` gives its current/stale/
-unavailable classification and safe reproduction boundary; it never authorizes a
-retry or substitutes for the required profile.
+unavailable classification and `diagnostics` gives the validated failed check,
+failure class, bounded execution facts, and fixed selective reproduction command;
+it never authorizes a retry or substitutes for the required profile. The existing
+`verification` field keeps its report-status meaning (`passed` or `failed`);
+`currentVerification` is the additive projection of the current selection. Review
+state includes any active blocking findings, and `nextAction` includes the required
+actor/context/plan/report inputs or an explicit placeholder when the caller must
+choose them.
 
 Use these terms precisely when explaining a result:
 

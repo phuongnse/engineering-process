@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process.cli import (
+    _status_next_action,
     build_parser,
     command_change_review_start,
     command_change_status,
@@ -145,7 +146,8 @@ class CliTests(unittest.TestCase):
             result, code = command_change_status(args)
 
         self.assertEqual(0, code)
-        self.assertEqual("remaining", result["verification"]["development"])
+        self.assertEqual("passed", result["verification"]["development"])
+        self.assertEqual("remaining", result["currentVerification"]["development"])
         self.assertEqual("passed", result["recordedVerification"]["development"])
         self.assertEqual("remaining", result["evidence"]["requirements"][0]["status"])
         self.assertEqual(
@@ -172,7 +174,43 @@ class CliTests(unittest.TestCase):
             "verification": {
                 "development": {
                     "status": "failed",
-                    "diagnostic": {"failure": {"stdout": "secret"}},
+                    "diagnostic": {
+                        "kind": "selective-check-reproduction",
+                        "descriptorVersion": 1,
+                        "profile": "development",
+                        "check": "unit",
+                        "position": 1,
+                        "command": [
+                            "processctl",
+                            "verify",
+                            "--profile",
+                            "development",
+                            "--check-position",
+                            "1",
+                        ],
+                        "failureKind": "command-failure",
+                        "failure": {
+                            "id": "unit",
+                            "status": "failed",
+                            "exitCode": 1,
+                            "timedOut": False,
+                            "outputExceeded": False,
+                            "descendantsTerminated": False,
+                            "streamFailed": False,
+                            "cleanupFailed": False,
+                            "durationMs": 12,
+                            "stdout": {
+                                "bytes": 12,
+                                "sha256": "sha256:" + "f" * 64,
+                                "truncated": False,
+                            },
+                            "stderr": {
+                                "bytes": 6,
+                                "sha256": "sha256:" + "0" * 64,
+                                "truncated": False,
+                            },
+                        },
+                    },
                 }
             },
             "reviewAssignment": None,
@@ -239,14 +277,122 @@ class CliTests(unittest.TestCase):
             result, code = command_change_status(args)
 
         self.assertEqual(0, code)
-        self.assertEqual("blocked", result["verification"]["development"])
+        self.assertEqual("failed", result["verification"]["development"])
+        self.assertEqual("blocked", result["currentVerification"]["development"])
         self.assertEqual("verification-selection", result["blocker"]["kind"])
         self.assertEqual(
             "processctl change explain --change-id sample-change",
             result["nextAction"]["command"],
         )
+        self.assertEqual("unit", result["diagnostics"][0]["check"])
+        self.assertEqual("command-failure", result["diagnostics"][0]["failureKind"])
+        self.assertEqual(
+            ["processctl", "verify", "--profile", "development", "--check-position", "1"],
+            result["diagnostics"][0]["command"],
+        )
+        self.assertEqual(1, result["diagnostics"][0]["failure"]["exitCode"])
         serialized = json.dumps(result)
         self.assertNotIn("secret", serialized)
+
+    def test_change_status_surfaces_active_review_findings(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "changes-requested",
+            "cycle": 1,
+            "nextCommand": "change implement",
+            "comparisonBaseCommit": "a" * 40,
+            "contract": {
+                "digest": "sha256:" + "b" * 64,
+                "document": {
+                    "source": "https://github.com/example/process/issues/1",
+                    "summary": "Keep findings visible.",
+                },
+            },
+            "plan": {"digest": "sha256:" + "c" * 64},
+            "verification": {},
+            "reviewAssignment": {
+                "reviewer": {
+                    "actorId": "reviewer",
+                    "contextId": "review-context",
+                    "kind": "agent",
+                },
+                "checkpoint": {},
+            },
+            "review": {
+                "document": {
+                    "verdict": "changes-requested",
+                    "findings": [
+                        {
+                            "id": "status-verification-compat",
+                            "severity": "blocking",
+                            "priority": "P1",
+                            "criterionId": "state",
+                            "origin": "contract",
+                            "summary": "Preserve the existing status field.",
+                            "location": "engineering_process/cli.py",
+                        }
+                    ],
+                }
+            },
+            "reviewHistory": [],
+            "recoveryMetrics": {},
+        }
+        selection = {
+            "schemaVersion": 1,
+            "changeId": "sample-change",
+            "phase": "changes-requested",
+            "status": "ready",
+            "checkpoint": {
+                "head": "a" * 40,
+                "fingerprint": "sha256:" + "d" * 64,
+                "fileCount": 1,
+                "byteCount": 1,
+            },
+            "requirements": [],
+            "executeProfiles": [],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+            "blockedProfiles": [],
+            "diagnostics": [],
+        }
+        args = argparse.Namespace(process_root=ROOT, project_root=ROOT, change_id="sample-change")
+        with patch("engineering_process.cli.lifecycle_status", return_value=state), patch(
+            "engineering_process.cli.load_project",
+            return_value={"profiles": {"development": []}},
+        ), patch("engineering_process.cli.resolve_verification_work", return_value=selection):
+            result, code = command_change_status(args)
+
+        self.assertEqual(0, code)
+        self.assertEqual("review-findings", result["blocker"]["kind"])
+        self.assertEqual(
+            "status-verification-compat",
+            result["blocker"]["findings"][0]["id"],
+        )
+        self.assertEqual("P1", result["review"]["blockingFindings"][0]["priority"])
+        self.assertIn("--actor", result["nextAction"]["command"])
+        self.assertIn("--context", result["nextAction"]["command"])
+
+    def test_status_next_actions_include_required_handoff_inputs(self) -> None:
+        selection = {"status": "ready", "requirements": []}
+        base = {"changeId": "sample-change", "cycle": 1, "currentImplementation": None}
+        cases = {
+            "specified": ("change plan", "--plan <PLAN_PATH>"),
+            "planned": ("change implement", "--actor <IMPLEMENTATION_ACTOR>"),
+            "verified": ("change review start", "--actor <REVIEWER_ACTOR>"),
+            "approved": ("change finish", "--actor <COORDINATOR_ACTOR>"),
+        }
+        for phase, (route, expected) in cases.items():
+            with self.subTest(phase=phase):
+                action = _status_next_action(
+                    {**base, "phase": phase, "nextCommand": route}, selection
+                )
+                self.assertIn(expected, action["command"])
+                self.assertIn("requiredInputs", action)
+        pending = _status_next_action(
+            {**base, "phase": "review-pending", "nextCommand": "change review submit"},
+            selection,
+        )
+        self.assertIn("--review .process/runs/sample-change/review-1.json", pending["command"])
 
     def test_progress_stays_on_stderr_while_json_result_remains_parseable(self) -> None:
         checkpoint = {
