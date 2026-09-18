@@ -3,115 +3,102 @@
     {
       "details": {
         "affectedPaths": [
-          ".github/workflows/ci.yml",
-          ".github/workflows/release-pr.yml",
-          "engineering_process/incidents.py",
-          "engineering_process/lifecycle.py",
-          "process_assets/skills/change-complete/SKILL.md",
-          "process_assets/skills/change-verify/SKILL.md",
-          "tests/test_automation.py",
-          "tests/test_incidents.py",
-          "tests/test_lifecycle.py",
-          "README.md"
-        ],
-        "apply": "Adopt the v3.1.0 package and exact hash, regenerate managed workflow guidance and current configuration, recreate active process artifacts, and rerun required profiles; consumer CI must retain its provider-bound evidence checks.",
-        "changes": "Record candidate-bound publication failures and make metadata-only events retain code-check evidence only through provider-bound workflow and artifact relationships, with exact base/head freshness and ordered release-PR metadata refresh.",
-        "compatibility": "Non-breaking correction to the current delivery and publication evidence boundary. Existing release and adoption authorities remain in place, while stale or incomplete metadata evidence is rejected instead of treated as a pass.",
-        "notes": "The correction relies on typed provider/workflow relationships and exact snapshot identity, not summary text or a heuristic event label. It does not make release, merge, adoption, or issue closure automatic.",
-        "problem": "Metadata-only CI and release-PR refresh paths could retain evidence without proving that the current candidate base, head, and publication metadata were the ones actually checked."
-      },
-      "id": "candidate-bound-delivery-evidence",
-      "source": "https://github.com/phuongnse/engineering-process/pull/235",
-      "summary": "Bind delivery evidence to the exact candidate and provider state.",
-      "type": "fix"
-    },
-    {
-      "details": {
-        "affectedPaths": [
-          "engineering_process/artifact_standards.py",
-          "engineering_process/evidence.py",
-          "engineering_process/incidents.py",
-          "engineering_process/release_notes.py",
-          "process_assets/standards",
-          "process_assets/skills",
-          "schemas/artifact-standard.schema.json",
-          "templates/PULL_REQUEST_TEMPLATE.md",
-          "templates/renovate.json",
-          "tests/test_artifact_standards.py",
-          "tests/test_commands.py",
-          "tests/test_incidents.py",
-          "tests/test_lifecycle.py",
-          "tests/test_publication.py",
-          "tests/test_release.py",
-          "verification/render_release_notes.py",
+          "README.md",
+          "docs/",
+          "process_assets/skills/",
+          "process_assets/standards/pull-request.v1.json",
+          "templates/",
           "ARTIFACT_STANDARDS.md",
           "PROCESS_IMPROVEMENT.md",
-          "README.md",
+          "SELF_HOSTING.md",
+          "VERSIONING.md",
           "RELEASING.md"
         ],
-        "apply": "Adopt the v3.1.0 package and exact hash, regenerate current managed and selected artifacts, recreate active process artifacts under the current v1 contract, and rerun each consumer's required profiles.",
-        "changes": "Tighten evidence and incident boundaries, align current version-1 artifact standards and renderers, and streamline reader-facing process outputs while retaining lifecycle, adoption, and publication guarantees.",
-        "compatibility": "Non-breaking correction within the current version-1 process contract. Consumers must refresh process-owned generated outputs at the adoption boundary; no legacy reader, migration adapter, or cross-release artifact reuse is promised.",
-        "notes": "The release manifest remains the complete contents authority and rendered release notes remain a generated projection. Consumer product behavior, merge authority, and publication policy remain consumer-owned.",
-        "problem": "Evidence reuse, incident classification, and process-owned PR, issue, release-note, guidance, and publication outputs had inconsistent boundaries and presentation that made current behavior harder to inspect and maintain."
+        "apply": "Adopt the released process package, regenerate managed skills, instructions, and PR-template outputs, recreate unsupported active process artifacts under the current contract, and rerun the consumer's required profiles. Keep consumer product documentation in its existing organization and update it only when the consumer change affects durable reader knowledge.",
+        "changes": "Make README a reader map, add focused consumer setup, delivery, and documentation-quality routes, align source skills and generated guidance, and verify links and source-derived outputs.",
+        "compatibility": "Non-breaking guidance capability within the current version-1 process contracts. The lifecycle and consumer ownership boundaries remain unchanged; the currently adopted 3.1.0 managed surfaces remain authoritative until the consumer adopts the release containing this correction.",
+        "notes": "Documentation checks prove links and source-derived output consistency only. Independent review must still assess accuracy, findability, and usefulness for representative readers. No new lifecycle, schema, document registry, or universal documentation checklist is introduced.",
+        "problem": "The process's reader routes, lifecycle guidance, generated outputs, and adoption boundaries were spread across long or overlapping documents, making it hard to know what to read, where a rule was authoritative, and when a consumer document should change."
       },
-      "id": "evidence-output-boundaries",
-      "source": "https://github.com/phuongnse/engineering-process/pull/232",
-      "summary": "Tighten evidence reuse and reader-facing process outputs.",
-      "type": "fix"
-    },
-    {
-      "details": {
-        "affectedPaths": [
-          "engineering_process/cli.py",
-          "engineering_process/commands.py",
-          "engineering_process/lifecycle.py",
-          "schemas/change.schema.json",
-          "schemas/run.schema.json",
-          "schemas/verification-selection.schema.json",
-          "process_assets/skills",
-          "tests/test_commands.py",
-          "tests/test_contracts.py",
-          "tests/test_lifecycle.py",
-          "tests/test_skills.py",
-          "README.md"
-        ],
-        "apply": "Adopt the v3.1.0 package and exact hash, regenerate managed skills and current project configuration, recreate active process artifacts under the current v1 contract, and rerun required profiles before using the new recovery commands.",
-        "changes": "Add owner-approved superseding recovery for plan-scope blockers, preserve failed reports with identity-bound diagnostics, distinguish explicit refresh from remaining work after invalidation, and record bounded recovery measurements without weakening lifecycle safeguards.",
-        "compatibility": "Backward-compatible additive current-v1 lifecycle behavior. Existing contracts and normal six-phase transitions remain valid; consumers must not retry unchanged failed remaining work or bypass owner-controlled recovery and review.",
-        "notes": "Recovery preserves the accepted outcome and comparison base, rejects unsupported superseding inputs, keeps the same independent-review boundary, and exposes only bounded diagnostic metadata rather than raw command output.",
-        "problem": "A frozen plan-scope boundary or failed required verification could stop delivery without a typed owner-approved recovery path or a safe, current diagnostic handoff."
-      },
-      "id": "governed-recovery-paths",
-      "source": "https://github.com/phuongnse/engineering-process/pull/233",
-      "summary": "Add governed recovery for plan and verification blockers.",
+      "id": "documentation-quality",
+      "source": "documentation-quality (issue #214)",
+      "summary": "Make process guidance easy to find and teach consumer documentation care in ordinary delivery work.",
       "type": "capability"
     },
     {
       "details": {
         "affectedPaths": [
-          "engineering_process/cli.py",
-          "engineering_process/commands.py",
-          "engineering_process/lifecycle.py",
-          "process_assets/skills/change-verify/SKILL.md",
-          "tests/test_cli.py",
-          "tests/test_commands.py",
-          "tests/test_lifecycle.py",
-          "README.md"
+          "engineering_process/pr_description.py",
+          "tests/test_publication.py",
+          "README.md",
+          "process_assets/standards/pull-request.v1.json",
+          "templates/PULL_REQUEST_TEMPLATE.md"
         ],
-        "apply": "Adopt the v3.1.0 package and exact hash, regenerate managed verification guidance and current configuration, recreate active process artifacts, and rerun required profiles; enable --progress only when bounded status is useful.",
-        "changes": "Add opt-in progress status for verification commands, emitted at a bounded cadence with profile/check position, elapsed time, timeout, byte counts, runner responsiveness, and explicit unknown internal progress while keeping JSON results, timeout, output, cleanup, evidence, and lifecycle semantics unchanged.",
-        "compatibility": "Backward-compatible additive current-v1 CLI behavior. Existing callers without --progress remain unchanged, progress is not lifecycle evidence, and consumers retain their own command and output policies.",
-        "notes": "Progress writes allow-listed status metadata to stderr, never child stdout/stderr, secrets, traceback text, private paths, percentages, test names, or invented remaining time. A blocked renderer cannot delay the child deadline or cleanup.",
-        "problem": "Long-running or silent checks gave operators no safe indication that the bounded runner was still responsive, while internal suite progress was not a trusted process signal."
+        "apply": "Adopt the published package or source change and rerun the consumer's normal publication checks; apply the managed template update through the normal later adoption PR, with no migration required and existing references with a final period remaining valid.",
+        "changes": "Accept valid Refs and Closes references with or without a terminal period while retaining the complete issue-target grammar, checklist placement, uniqueness, and draft/ready restrictions; align the README, canonical standard, and generated next-distribution template guidance while leaving the currently adopted managed template unchanged until its adoption PR.",
+        "compatibility": "Non-breaking current-v1 compatibility expansion: both existing references with a final period and valid references without one are accepted; incomplete, malformed, duplicated, misplaced, or draft-closing references remain rejected.",
+        "notes": "Only the terminal period is optional. The complete keyword/reference syntax and the requirement that the reference follow the checklist remain unchanged. Managed consumer guidance follows the adopted package's release timing.",
+        "problem": "The publication validator required a final period on an otherwise complete Refs or Closes issue reference, blocking a self-consumer pull request even when its issue identity and required evidence were present."
       },
-      "id": "safe-verification-progress",
-      "source": "https://github.com/phuongnse/engineering-process/pull/234",
-      "summary": "Add opt-in bounded verification progress status.",
+      "id": "publication-reference-tolerance",
+      "source": "https://github.com/phuongnse/engineering-process/pull/239",
+      "summary": "Allow optional terminal punctuation in pull request issue references.",
+      "type": "fix"
+    },
+    {
+      "details": {
+        "affectedPaths": [
+          "engineering_process/cli.py",
+          "process_assets/skills/deliver-change/SKILL.md",
+          "process_assets/skills/change-verify/SKILL.md",
+          "README.md",
+          "tests/test_cli.py",
+          "tests/test_lifecycle.py",
+          "tests/test_commands.py",
+          "tests/test_release.py"
+        ],
+        "apply": "Adopt the published package and exact hash, regenerate managed skills and current process-owned guidance, recreate active process artifacts under the current v1 contract, and rerun consumer-required profiles. Continue treating evidence selection and independent review as the assurance authority.",
+        "changes": "Add a read-only status projection of the current verification selection, candidate and control identities, readiness and review blockers, bounded diagnostics, and one actionable next route while preserving the existing verification report-status field; clarify the direct vocabulary and reader entry point in the delivery guidance.",
+        "compatibility": "Non-breaking current-v1 lifecycle correction: existing lifecycle transitions, verification commands, and the verification report-status field remain authoritative, while consumers can use currentVerification, evidence.requirements, diagnostics, review blockers, and nextAction; no migration layer or automatic retry is provided.",
+        "notes": "The status projection never reruns checks, promotes stale reports, or exposes raw stdout/stderr. Runtime fingerprints describe reuse inputs; bounded execution containment and independent review remain separate boundaries. Release guidance distinguishes breaking and non-breaking pending fragments.",
+        "problem": "Change status exposed stored profile results without showing whether those reports were reusable for the current candidate and inputs, so stale, failed, and runtime-invalidated evidence required manual reconstruction from lifecycle files and several route documents."
+      },
+      "id": "reader-facing-evidence-state",
+      "source": "https://github.com/phuongnse/engineering-process/issues/214",
+      "summary": "Make lifecycle evidence and next actions understandable from change status.",
+      "type": "fix"
+    },
+    {
+      "details": {
+        "affectedPaths": [
+          "engineering_process/cli.py",
+          "engineering_process/contracts.py",
+          "engineering_process/lifecycle.py",
+          "engineering_process/pr_description.py",
+          "engineering_process/project.py",
+          "engineering_process/repository.py",
+          "schemas/handoff.schema.json",
+          "schemas/project.schema.json",
+          "schemas/receipt.schema.json",
+          "process_assets/skills",
+          "tests/test_lifecycle.py",
+          "tests/test_repository.py",
+          "README.md",
+          "PROCESS_IMPROVEMENT.md"
+        ],
+        "apply": "Adopt the updated process assets and run the repository verification profiles; use change handoff export/import for sequential workspace transfer and change storage or change purge --confirm for retention maintenance.",
+        "changes": "Adds resumable handoff export/import, validated bounded receipts, retry-safe owner-scoped cleanup, post-cleanup status and PR readers, storage measurement and guarded purge, and lifecycle acceptance coverage.",
+        "compatibility": "Non-breaking for current v1 consumers. Existing project and receipt documents remain valid; no distributed service or extra approval or identity gate is introduced. Consumers continue using their owned commands and review policy.",
+        "notes": "Successful finish retains only bounded result receipts and removes change-owned active runtime artifacts; incomplete or blocked history remains available for diagnosis subject to configured limits. Independent review and evidence freshness rules remain enforced.",
+        "problem": "A change runtime could remain tied to one workspace and leave active artifacts after finish, making handoff, retry, isolation, and retention difficult."
+      },
+      "id": "runtime-lifecycle-cleanup-handoff",
+      "source": "runtime-lifecycle-cleanup-handoff (issue #214)",
+      "summary": "Make change runtimes resumable, handoffable, and cleanup-safe.",
       "type": "capability"
     }
   ],
-  "previousVersion": "3.0.0",
+  "previousVersion": "3.1.0",
   "schemaVersion": 1,
-  "version": "3.1.0"
+  "version": "3.2.0"
 }
