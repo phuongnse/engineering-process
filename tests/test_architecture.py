@@ -239,11 +239,11 @@ class ArchitectureTests(unittest.TestCase):
         for child in ast.walk(fn_node):
             if isinstance(child, ast.Attribute) and child.attr == "environ":
                 self.fail(
-                    "execution_identity must not access os.environ; Zero-List architecture forbids ambient environment identity"
+                    "execution_identity must not access os.environ; execution identity inputs must be explicit, not ambient"
                 )
             if isinstance(child, ast.Name) and child.id == "environ":
                 self.fail(
-                    "execution_identity must not access environ; Zero-List architecture forbids ambient environment identity"
+                    "execution_identity must not access environ; execution identity inputs must be explicit, not ambient"
                 )
 
 
