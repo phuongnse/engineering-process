@@ -23,10 +23,12 @@ from engineering_process.lifecycle import (
     finish_change,
     import_handoff,
     lifecycle_status,
+    purge_completed_receipt,
     process_improvement_signals,
     register_plan,
     start_change,
     start_review,
+    storage_status,
     submit_review,
     resolve_verification_work,
     reuse_verifications,
@@ -823,6 +825,260 @@ class LifecycleTests(unittest.TestCase):
             )
         finally:
             shutil.rmtree(transport, ignore_errors=True)
+
+    def test_handoff_round_trip_preserves_review_assignment(self) -> None:
+        self.begin()
+        (self.root / "product.txt").write_text("review handoff\n", encoding="utf-8")
+        git(self.root, "add", ".process/inputs", "product.txt")
+        git(self.root, "commit", "-qm", "fix: review handoff candidate")
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+
+        transport = Path(tempfile.mkdtemp(dir=self.root.parent))
+        try:
+            package = transport / "review-pending.handoff.json"
+            source_state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+            export_handoff(
+                self.root,
+                PROCESS_ROOT,
+                load_project(self.root, PROCESS_ROOT),
+                "sample-change",
+                package,
+            )
+            destination = transport / "destination"
+            git(
+                self.root.parent,
+                "clone",
+                "--quiet",
+                "--no-local",
+                str(self.root),
+                str(destination),
+            )
+            imported = import_handoff(
+                destination,
+                PROCESS_ROOT,
+                load_project(destination, PROCESS_ROOT),
+                package,
+            )
+            restored = lifecycle_status(destination, PROCESS_ROOT, "sample-change")
+            self.assertEqual("imported", imported["status"])
+            self.assertEqual("review-pending", restored["phase"])
+            self.assertEqual(source_state["reviewAssignment"], restored["reviewAssignment"])
+            self.assertIsNone(restored["review"])
+            self.assertEqual(
+                repository_snapshot(self.root)["fingerprint"],
+                repository_snapshot(destination)["fingerprint"],
+            )
+        finally:
+            shutil.rmtree(transport, ignore_errors=True)
+
+    def test_handoff_round_trip_preserves_approved_review_and_findings(self) -> None:
+        self.begin()
+        (self.root / "product.txt").write_text("approved handoff\n", encoding="utf-8")
+        git(self.root, "add", ".process/inputs", "product.txt")
+        git(self.root, "commit", "-qm", "fix: approved handoff candidate")
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review = self.review_document("approved")
+        finding = self.non_blocking_finding()
+        finding["disposition"] = {
+            "status": "resolved",
+            "rationale": "The bounded follow-up is resolved in the reviewed candidate.",
+        }
+        review["findings"] = [finding]
+        review_path = self.root.parent / "approved-handoff-review.json"
+        write_json(review_path, review)
+        try:
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+            source_state = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+            transport = Path(tempfile.mkdtemp(dir=self.root.parent))
+            try:
+                package = transport / "approved.handoff.json"
+                export_handoff(
+                    self.root,
+                    PROCESS_ROOT,
+                    load_project(self.root, PROCESS_ROOT),
+                    "sample-change",
+                    package,
+                )
+                destination = transport / "destination"
+                git(
+                    self.root.parent,
+                    "clone",
+                    "--quiet",
+                    "--no-local",
+                    str(self.root),
+                    str(destination),
+                )
+                import_handoff(
+                    destination,
+                    PROCESS_ROOT,
+                    load_project(destination, PROCESS_ROOT),
+                    package,
+                )
+                restored = lifecycle_status(destination, PROCESS_ROOT, "sample-change")
+                self.assertEqual("approved", restored["phase"])
+                self.assertEqual(source_state["reviewAssignment"], restored["reviewAssignment"])
+                self.assertEqual(source_state["review"], restored["review"])
+                self.assertEqual(source_state["reviewHistory"], restored["reviewHistory"])
+            finally:
+                shutil.rmtree(transport, ignore_errors=True)
+        finally:
+            review_path.unlink(missing_ok=True)
+
+    def test_finish_one_change_preserves_another_active_change(self) -> None:
+        self.begin()
+        second_contract = deepcopy(self.contract)
+        second_contract["id"] = "second-change"
+        second_contract["summary"] = "Keep a second change active"
+        second_contract_path = self.root / ".process" / "inputs" / "second-change.json"
+        write_json(second_contract_path, second_contract)
+        second_plan = deepcopy(self.plan)
+        second_plan["changeId"] = "second-change"
+        second_plan["contractDigest"] = digest_json(second_contract)
+        second_plan_path = self.root / ".process" / "inputs" / "second-plan.json"
+        write_json(second_plan_path, second_plan)
+        (self.root / "product.txt").write_text("isolated finish\n", encoding="utf-8")
+        git(self.root, "add", ".process/inputs", "product.txt")
+        git(self.root, "commit", "-qm", "fix: isolate active changes")
+        start_change(
+            self.root,
+            PROCESS_ROOT,
+            self.project,
+            second_contract_path,
+            actor_id="author-b",
+            context_id="author-b-context",
+            kind="agent",
+        )
+        register_plan(
+            self.root,
+            PROCESS_ROOT,
+            "second-change",
+            second_plan_path,
+            actor_id="author-b",
+            context_id="author-b-context",
+            kind="agent",
+        )
+        begin_implementation(
+            self.root,
+            PROCESS_ROOT,
+            "second-change",
+            actor_id="implementer-b",
+            context_id="implementation-b-context",
+            kind="agent",
+        )
+        second_runtime = self.root / ".process" / "runs" / "second-change" / "run.json"
+        before_runtime = second_runtime.read_bytes()
+        before_product = (self.root / "product.txt").read_bytes()
+        before_project = (self.root / ".process" / "project.json").read_bytes()
+
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root.parent / "isolated-finish-review.json"
+        write_json(review_path, self.review_document("approved"))
+        try:
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+            finish_change(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="coordinator",
+                context_id="finish-context",
+                kind="agent",
+            )
+        finally:
+            review_path.unlink(missing_ok=True)
+
+        self.assertFalse((self.root / ".process" / "runs" / "sample-change").exists())
+        self.assertTrue(second_runtime.is_file())
+        self.assertEqual(before_runtime, second_runtime.read_bytes())
+        self.assertEqual(before_product, (self.root / "product.txt").read_bytes())
+        self.assertEqual(before_project, (self.root / ".process" / "project.json").read_bytes())
+
+    def test_storage_measurement_and_explicit_clean_receipt_purge(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root.parent / "storage-review.json"
+        write_json(review_path, self.review_document("approved"))
+        try:
+            submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+            finish_change(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="coordinator",
+                context_id="finish-context",
+                kind="agent",
+            )
+        finally:
+            review_path.unlink(missing_ok=True)
+
+        measured = storage_status(self.root, self.project)
+        self.assertEqual(1, measured["retention"]["completedReceiptCount"])
+        self.assertGreater(measured["retention"]["completedReceiptBytes"], 0)
+        self.assertEqual(
+            measured["usage"]["runs"]["byteCount"]
+            + measured["usage"]["receipts"]["byteCount"],
+            measured["usage"]["total"]["byteCount"],
+        )
+        with self.assertRaisesRegex(ProcessError, "requires --confirm"):
+            purge_completed_receipt(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                confirm=False,
+            )
+
+        active = self.root / ".process" / "runs" / "sample-change"
+        active.mkdir(parents=True)
+        (active / "sentinel").write_text("active\n", encoding="utf-8")
+        with self.assertRaisesRegex(ProcessError, "active runtime"):
+            purge_completed_receipt(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                confirm=True,
+            )
+        shutil.rmtree(active)
+        purged = purge_completed_receipt(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            confirm=True,
+        )
+        self.assertEqual("purged", purged["status"])
+        self.assertFalse(
+            (self.root / ".process" / "receipts" / "sample-change.json").exists()
+        )
 
     def test_completed_change_reopens_after_a_new_candidate_commit(self) -> None:
         self.begin()
