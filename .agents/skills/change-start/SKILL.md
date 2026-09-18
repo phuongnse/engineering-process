@@ -25,6 +25,15 @@ conflict, establish which is authoritative and which is current or superseded. A
   missing entry point or necessary explanation calls for a focused repair, not a broad
   documentation rewrite.
 
+Before writing the contract, identify which reader groups could be affected: users,
+operators, developers, or maintainers. Name the changed knowledge and the
+consumer-owned authoritative source that should carry it. Add a documentation
+outcome only when the accepted behavior changes something a future reader must
+know or do; a reasoned no-impact decision is valid. Do not require a new document,
+an empty section, or a universal documentation inventory. For process-owned
+guidance, distinguish the source skill or standard from generated and adopted
+outputs so the contract does not make a current consumer drift from its package.
+
 When the work produces an issue record, PR description, release notes or an automation name, inspect the consumer's
 selected artifact standard and existing publication checks. The consumer may override
 the packaged defaults. Keep document-format choices separate from lifecycle approval.
@@ -81,3 +90,13 @@ also runs the existing read-only publication branch validator against the curren
 checkout branch before creating `.process/runs/ID`. A rejected branch leaves no new
 run state. The branch convention remains consumer-owned; the opt-in only makes the
   consumer's existing publication rule a lifecycle preflight.
+
+When a change arrives from another workspace, import its explicit handoff before
+routing the phase:
+
+    processctl change handoff import --handoff HANDOFF_PATH
+
+Import validates the process distribution, project, comparison base, candidate
+checkpoint, changed paths, and existing change id. It does not merge source changes,
+overwrite a conflicting run, or create a completed receipt; continue through the
+ordinary lifecycle with the imported state.
