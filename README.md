@@ -727,10 +727,11 @@ structure. Completion checkboxes belong only to the Review and completion sectio
 pull requests must have every checkbox checked and no unresolved default placeholder
 values; drafts may retain pending fields and unchecked work. The author/coordinator
 replaces them with actual evidence before ready/merge; the reviewer supplies the verdict.
-One trailing `Refs ISSUE.` line remains optional. A ready, contract-identified final
-consumer adoption may instead use `Closes ISSUE, closes OWNER/REPOSITORY#NUMBER.` with
-the complete keyword/reference syntax repeated for every issue; drafts cannot close
-issues. Producer and intermediate pull requests do not close release-source issues.
+One trailing `Refs ISSUE` line remains optional, and its final period is optional. A
+ready, contract-identified final consumer adoption may instead use `Closes ISSUE, closes
+OWNER/REPOSITORY#NUMBER`, also with an optional final period, with the complete
+keyword/reference syntax repeated for every issue; drafts cannot close issues. Producer
+and intermediate pull requests do not close release-source issues.
 The managed template never solicits execution identity,
 and authors plus independent review keep it out of free-form values. The validator is
 a positive grammar for public fields; it deliberately does not guess identities from
