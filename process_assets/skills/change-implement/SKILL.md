@@ -47,6 +47,14 @@ decisions. Replaced material is updated, removed, or visibly marked historical o
 superseded when retaining it is useful. Explain enough for the intended reader and
 accepted work, in a logical order, with references that clarify relevant relationships.
 
+Apply the documentation decision while implementing the behavior, not as a final
+status line. Update the consumer-owned source that a future reader will use,
+preserve the consumer's document organization, and add a focused page only when
+an existing source cannot carry the information. If a template, standard, or
+other output is derived, fix its source and regenerate the output; do not hand
+patch one copy. A change with no reader impact needs no documentation artifact,
+but the plan's reasoning must remain true after implementation.
+
 If review requested changes,
 resolve every blocking finding in the next cycle without renaming or dropping it.
 Follow every applicable **production-engineering** assessment and make its named work

@@ -1,5 +1,11 @@
 # Release changes
 
+Add a fragment for every externally meaningful change, including a process
+guidance change that requires consumers to regenerate or adopt a managed output.
+Read [README.md](../README.md) for the consumer route and
+[docs/documentation.md](../docs/documentation.md) for source-versus-derived
+documentation boundaries.
+
 Add one JSON file per externally meaningful change. If one pull request resolves
 several issues, use one fragment per issue or independently adoptable behavior; do
 not replace those records with an issue range:

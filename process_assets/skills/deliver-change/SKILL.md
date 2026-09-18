@@ -34,6 +34,14 @@ For a completed change, `cleanup.status` is part of the result boundary: `clean`
 terminal for the process, while `pending` or `failed` routes back through `change
 finish` so cleanup can be retried without recreating implementation evidence.
 
+For the documentation route, use the repository's reader map and
+docs/documentation.md. Documentation impact is part of the ordinary phase work:
+identify affected readers and the authoritative source at start/plan, update
+consumer-owned knowledge during implementation when needed, verify usable output,
+and review accuracy and findability. Do not create a second documentation
+lifecycle, a universal document inventory, or a checkbox that says only that
+documentation was updated.
+
 Use these terms precisely when explaining a result:
 
 - A candidate checkpoint is the source state being assured (head plus bounded file
