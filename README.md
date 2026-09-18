@@ -64,6 +64,20 @@ but cannot establish native conversation freshness or inspect removed history,
 other clones or other repositories. Keep native creation, non-inherited dispatch
 and effective settings evidence in the existing handoff.
 
+### Read a change at a glance
+
+Use `processctl change status --change-id ID --json` before opening lifecycle files.
+The result combines the current candidate checkpoint, contract/plan digests, readiness,
+review state, and the schema-validated verification selection. Use
+`evidence.requirements` for the current decision: `satisfied` is reusable evidence,
+`remaining` requires execution, `unknown` lacks a trustworthy input identity,
+`blocked` needs a consumer or owner action, and `inapplicable` is an unselected
+optional profile. `recordedVerification` is historical report status only; a recorded
+`passed` report is not a current pass until the selection says `satisfied`. The
+`nextAction` field gives the route and reason. For the complete route and vocabulary,
+read [deliver-change](process_assets/skills/deliver-change/SKILL.md) first; it is the
+single guidance source for interpreting lifecycle state.
+
 Verification keeps two caller intents explicit. `change verify --profile PROFILE`
 always refreshes the named profile. `change explain` is read-only; it shows the
 accepted required profiles, valid prior evidence, remaining work, inapplicable

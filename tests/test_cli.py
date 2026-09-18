@@ -12,6 +12,7 @@ from unittest.mock import patch
 from engineering_process.cli import (
     build_parser,
     command_change_review_start,
+    command_change_status,
     command_change_verify,
     main,
 )
@@ -77,6 +78,175 @@ class CliTests(unittest.TestCase):
         )
         self.assertTrue(impact.impact)
         self.assertEqual("development", impact.profile)
+
+    def test_change_status_uses_current_selection_not_recorded_pass(self) -> None:
+        checkpoint = {
+            "head": "a" * 40,
+            "fingerprint": "sha256:" + "b" * 64,
+            "fileCount": 2,
+            "byteCount": 12,
+        }
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+            "nextCommand": "change verify",
+            "comparisonBaseCommit": "c" * 40,
+            "contract": {
+                "digest": "sha256:" + "d" * 64,
+                "document": {
+                    "source": "https://github.com/example/process/issues/1",
+                    "summary": "Keep evidence readable.",
+                },
+            },
+            "plan": {"digest": "sha256:" + "e" * 64},
+            "verification": {"development": {"status": "passed"}},
+            "reviewAssignment": None,
+            "review": None,
+            "reviewHistory": [],
+            "recoveryMetrics": {},
+        }
+        selection = {
+            "schemaVersion": 1,
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "status": "ready",
+            "checkpoint": checkpoint,
+            "requirements": [
+                {
+                    "id": "development",
+                    "profile": "development",
+                    "status": "remaining",
+                    "action": "execute",
+                    "mode": "full",
+                    "reason": "runtime identity changed",
+                }
+            ],
+            "executeProfiles": ["development"],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+            "blockedProfiles": [],
+            "diagnostics": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+        )
+        with patch(
+            "engineering_process.cli.lifecycle_status", return_value=state
+        ), patch(
+            "engineering_process.cli.load_project",
+            return_value={"profiles": {"development": []}},
+        ), patch(
+            "engineering_process.cli.resolve_verification_work",
+            return_value=selection,
+        ):
+            result, code = command_change_status(args)
+
+        self.assertEqual(0, code)
+        self.assertEqual("remaining", result["verification"]["development"])
+        self.assertEqual("passed", result["recordedVerification"]["development"])
+        self.assertEqual("remaining", result["evidence"]["requirements"][0]["status"])
+        self.assertEqual(
+            "processctl change verify --change-id sample-change --remaining",
+            result["nextAction"]["command"],
+        )
+        self.assertEqual(checkpoint, result["candidate"])
+
+    def test_change_status_surfaces_blocked_diagnostic_without_raw_output(self) -> None:
+        state = {
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "cycle": 1,
+            "nextCommand": "change verify",
+            "comparisonBaseCommit": "a" * 40,
+            "contract": {
+                "digest": "sha256:" + "b" * 64,
+                "document": {
+                    "source": "https://github.com/example/process/issues/1",
+                    "summary": "Keep failures actionable.",
+                },
+            },
+            "plan": {"digest": "sha256:" + "c" * 64},
+            "verification": {
+                "development": {
+                    "status": "failed",
+                    "diagnostic": {"failure": {"stdout": "secret"}},
+                }
+            },
+            "reviewAssignment": None,
+            "review": None,
+            "reviewHistory": [],
+            "recoveryMetrics": {},
+        }
+        selection = {
+            "schemaVersion": 1,
+            "changeId": "sample-change",
+            "phase": "implementing",
+            "status": "blocked",
+            "checkpoint": {
+                "head": "a" * 40,
+                "fingerprint": "sha256:" + "d" * 64,
+                "fileCount": 1,
+                "byteCount": 1,
+            },
+            "requirements": [
+                {
+                    "id": "development",
+                    "profile": "development",
+                    "status": "blocked",
+                    "action": "blocked",
+                    "mode": "full",
+                    "reason": "the failed report matches the current input; inspect the diagnostic before an explicit refresh",
+                    "diagnostic": {
+                        "profile": "development",
+                        "status": "current",
+                        "reportDigest": "sha256:" + "e" * 64,
+                        "runPath": ".process/runs/sample-change/run.json",
+                        "cycle": 1,
+                        "checkpoint": {
+                            "head": "a" * 40,
+                            "fingerprint": "sha256:" + "d" * 64,
+                            "fileCount": 1,
+                            "byteCount": 1,
+                        },
+                        "recordedAt": "2026-09-18T00:00:00Z",
+                        "reason": "the descriptor belongs to this run's current candidate and input identity",
+                    },
+                }
+            ],
+            "executeProfiles": [],
+            "reuseProfiles": [],
+            "inapplicableProfiles": [],
+            "blockedProfiles": ["development"],
+            "diagnostics": [],
+        }
+        args = argparse.Namespace(
+            process_root=ROOT,
+            project_root=ROOT,
+            change_id="sample-change",
+        )
+        with patch(
+            "engineering_process.cli.lifecycle_status", return_value=state
+        ), patch(
+            "engineering_process.cli.load_project",
+            return_value={"profiles": {"development": []}},
+        ), patch(
+            "engineering_process.cli.resolve_verification_work",
+            return_value=selection,
+        ):
+            result, code = command_change_status(args)
+
+        self.assertEqual(0, code)
+        self.assertEqual("blocked", result["verification"]["development"])
+        self.assertEqual("verification-selection", result["blocker"]["kind"])
+        self.assertEqual(
+            "processctl change explain --change-id sample-change",
+            result["nextAction"]["command"],
+        )
+        serialized = json.dumps(result)
+        self.assertNotIn("secret", serialized)
 
     def test_progress_stays_on_stderr_while_json_result_remains_parseable(self) -> None:
         checkpoint = {

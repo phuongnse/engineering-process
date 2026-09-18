@@ -585,19 +585,178 @@ def command_change_finish(args: argparse.Namespace) -> Result:
     ), 0
 
 
+def _status_review(state: dict[str, Any]) -> dict[str, Any]:
+    assignment = state.get("reviewAssignment")
+    review = state.get("review")
+    return {
+        "status": (
+            "not-started"
+            if assignment is None
+            else "submitted"
+            if review is not None
+            else "assigned"
+        ),
+        "reviewer": assignment.get("reviewer") if isinstance(assignment, dict) else None,
+        "checkpoint": assignment.get("checkpoint") if isinstance(assignment, dict) else None,
+        "verdict": (
+            review.get("document", {}).get("verdict")
+            if isinstance(review, dict)
+            else None
+        ),
+        "historyCount": len(state.get("reviewHistory", [])),
+    }
+
+
+def _status_next_action(
+    state: dict[str, Any],
+    selection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    change_id = state["changeId"]
+    if selection is None:
+        return {
+            "route": "project validate",
+            "command": "processctl project validate --json",
+            "reason": "the current verification selection is unavailable; validate the consumer policy before interpreting evidence",
+            "ownerDecisionRequired": False,
+        }
+    if selection is not None and selection.get("status") == "blocked":
+        blocked = [
+            item
+            for item in selection.get("requirements", [])
+            if item.get("action") == "blocked"
+        ]
+        first = blocked[0] if blocked else None
+        return {
+            "route": "change explain",
+            "command": f"processctl change explain --change-id {change_id}",
+            "reason": (
+                first["reason"]
+                if first is not None
+                else "the current verification selection is blocked"
+            ),
+            "profiles": [item["profile"] for item in blocked],
+            "ownerDecisionRequired": any(
+                item.get("action") == "blocked" for item in blocked
+            ),
+        }
+
+    phase = state["phase"]
+    if phase == "completed":
+        current_completion = selection is None or (
+            selection.get("status") == "ready"
+            and all(
+                item.get("status") in {"satisfied", "inapplicable"}
+                for item in selection.get("requirements", [])
+            )
+        )
+        if not current_completion:
+            return {
+                "route": "change implement",
+                "command": f"processctl change implement --change-id {change_id}",
+                "reason": "the current candidate no longer matches the completed receipt; owner-controlled continuation must open a new implementation cycle",
+                "ownerDecisionRequired": False,
+            }
+        return {
+            "route": "completed",
+            "command": None,
+            "reason": "the completion receipt is current for the recorded candidate",
+            "ownerDecisionRequired": False,
+        }
+    route = state.get("nextCommand")
+    if route is None:
+        return {
+            "route": phase,
+            "command": None,
+            "reason": "the lifecycle is terminal and requires owner-controlled recovery",
+            "ownerDecisionRequired": True,
+        }
+    if phase == "implementing":
+        command = f"processctl change verify --change-id {change_id} --remaining"
+        reason = "execute the unresolved required profiles on the current candidate"
+    else:
+        command = f"processctl {route} --change-id {change_id}"
+        reason = f"continue the {route} lifecycle phase with its required inputs"
+    return {
+        "route": route,
+        "command": command,
+        "reason": reason,
+        "ownerDecisionRequired": False,
+    }
+
+
+def _status_selection(
+    args: argparse.Namespace,
+    process_root: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    try:
+        project = load_project(args.project_root, process_root)
+        selection = resolve_verification_work(
+            args.project_root, process_root, project, args.change_id
+        )
+    except ProcessError as error:
+        return None, {
+            "status": "unavailable",
+            "reason": str(error),
+            "nextCommand": "processctl project validate --json",
+        }
+    return selection, project
+
+
 def command_change_status(args: argparse.Namespace) -> Result:
     process_root = _process_root(args)
     state = lifecycle_status(args.project_root, process_root, args.change_id)
+    selection, project = _status_selection(args, process_root)
+    recorded = {
+        name: report["status"] for name, report in state["verification"].items()
+    }
+    current = (
+        {
+            item["profile"]: item["status"]
+            for item in selection["requirements"]
+        }
+        if selection is not None
+        else {}
+    )
+    blocker = state.get("blocker")
+    if blocker is None and selection is not None and selection["status"] == "blocked":
+        blocked = [
+            item
+            for item in selection["requirements"]
+            if item["action"] == "blocked"
+        ]
+        if blocked:
+            blocker = {
+                "kind": "verification-selection",
+                "action": "inspect",
+                "profiles": [item["profile"] for item in blocked],
+                "reason": blocked[0]["reason"],
+            }
+    evidence = selection if selection is not None else project
     return _state_result(
         "change status",
         state,
         nextCommand=state["nextCommand"],
-        blocker=state.get("blocker"),
+        lifecycleStatus=state["phase"],
+        blocker=blocker,
         supersedes=state.get("supersedes"),
         recoveryMetrics=state.get("recoveryMetrics"),
-        verification={
-            name: report["status"] for name, report in state["verification"].items()
+        contract={
+            "digest": state["contract"]["digest"],
+            "source": state["contract"]["document"]["source"],
+            "summary": state["contract"]["document"]["summary"],
         },
+        plan=(
+            {"digest": state["plan"]["digest"]}
+            if state.get("plan") is not None
+            else None
+        ),
+        candidate=(selection["checkpoint"] if selection is not None else None),
+        readiness=(readiness_summary(project) if project is not None else None),
+        review=_status_review(state),
+        verification=current,
+        recordedVerification=recorded,
+        evidence=evidence,
+        nextAction=_status_next_action(state, selection),
     ), 0
 
 

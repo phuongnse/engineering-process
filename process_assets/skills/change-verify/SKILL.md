@@ -8,10 +8,23 @@ description: Run the project-owned verification profiles on one unchanged reposi
 ## Route card
 
 **State:** `implementing` (or a recorded execution blocker). **Do:** inspect `change
-explain`, then execute only the accepted required profiles that are not validly
-reusable; use the exact consumer commands and fail closed on scope, mutation, timeout,
-or unknown identity. **Evidence:** passed reports bound to one checkpoint and input
-identity. **Next:** independent review; profiles are not rerun by review or finish.
+status` and `change explain`, then execute only the accepted required profiles that
+are not validly reusable; use the exact consumer commands and fail closed on scope,
+mutation, timeout, or unknown identity. **Evidence:** passed reports bound to one
+checkpoint and input identity. **Next:** independent review; profiles are not rerun
+by review or finish.
+
+Begin with:
+
+    processctl change status --change-id ID --json
+
+The status projection is the reader-facing summary. `evidence.requirements` is the
+current decision for each profile; `recordedVerification` only describes what was
+stored previously. A stored `passed` value is not reusable evidence until the current
+selection marks that profile `satisfied`. The projection also shows the candidate
+checkpoint, contract/plan digests, review state, readiness summary, safe diagnostic
+reference, and one next action. It is read-only and does not refresh, reuse, or
+advance lifecycle state.
 
 Read the registered acceptance criteria and .process/project.json. When publication
 is required, commit the complete candidate on a valid publication branch before final
