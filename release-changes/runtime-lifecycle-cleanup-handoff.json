@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "runtime-lifecycle-cleanup-handoff",
+  "type": "capability",
+  "summary": "Make change runtimes resumable, handoffable, and cleanup-safe.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/214",
+  "details": {
+    "problem": "A change runtime could remain tied to one workspace and leave active artifacts after finish, making handoff, retry, isolation, and retention difficult.",
+    "changes": "Adds resumable handoff export/import, validated bounded receipts, retry-safe owner-scoped cleanup, post-cleanup status and PR readers, storage measurement and guarded purge, and lifecycle acceptance coverage.",
+    "affectedPaths": [
+      "engineering_process/cli.py",
+      "engineering_process/contracts.py",
+      "engineering_process/lifecycle.py",
+      "engineering_process/pr_description.py",
+      "engineering_process/project.py",
+      "engineering_process/repository.py",
+      "schemas/handoff.schema.json",
+      "schemas/project.schema.json",
+      "schemas/receipt.schema.json",
+      "process_assets/skills",
+      "tests/test_lifecycle.py",
+      "tests/test_repository.py",
+      "README.md",
+      "PROCESS_IMPROVEMENT.md"
+    ],
+    "apply": "Adopt the updated process assets and run the repository verification profiles; use change handoff export/import for sequential workspace transfer and change storage or change purge --confirm for retention maintenance.",
+    "compatibility": "Non-breaking for current v1 consumers. Existing project and receipt documents remain valid; no distributed service or extra approval or identity gate is introduced. Consumers continue using their owned commands and review policy.",
+    "notes": "Successful finish retains only bounded result receipts and removes change-owned active runtime artifacts; incomplete or blocked history remains available for diagnosis subject to configured limits. Independent review and evidence freshness rules remain enforced."
+  }
+}
