@@ -62,6 +62,12 @@ When the phase is `review-pending`, resume the existing assignment; do not run
 existing report path, `.process/runs/ID/review-CYCLE.json`. If that reviewer is
 unavailable, use this authoritative decision table:
 
+An active review assignment may be moved sequentially with the explicit handoff
+package before completion. Import it into the matching committed candidate and
+resume the recorded assignment; do not create a new run, replace a valid reviewer,
+or treat the package as approval. After finish removes the runtime, review readers
+must use the retained receipt and its recorded independent-review result.
+
 | Situation | Condition | Required action | Prohibited action |
 | --- | --- | --- | --- |
 | 1. Reachable valid reviewer | Assigned reviewer session is active and reachable | Resume the assigned session using the existing assignment | Do not start a new reviewer or alter identities |
@@ -136,6 +142,17 @@ or missing/misleading connection and its consequence for the work. A different f
 heading, or style preference is insufficient. Consumer checks can prove properties
 such as valid links, runnable examples, parseable structure, or rendering; presence,
 length, formatting, and resolving links do not establish semantic usefulness or truth.
+
+Exercise at least one representative reader path for each material documentation
+claim: a new consumer starting, a person performing the change, or a user,
+operator, developer, or maintainer using the changed knowledge. Do so without
+adding context from the implementation conversation. Confirm that the source is
+current or clearly marked as generated, adopted, or historical, and that the
+reader can act. If no documentation change is warranted, check that the plan's
+no-impact reasoning still matches the completed behavior. Do not block on a
+preferred folder, heading, number of pages, or a documentation checkbox; a
+finding must identify wrong, missing, hard-to-find, or hard-to-use information
+and its concrete consequence.
 
 Assess whether material test expectations follow the accepted contract, important
 claimed risks are actually exercised, and the execution boundary could detect the
