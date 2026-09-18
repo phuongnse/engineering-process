@@ -56,6 +56,45 @@
         "verdict": {"const": "approved"}
       }
     },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "cycle", "comparisonBaseCommit", "contract", "plan", "verification", "reviewAssignment", "review", "reviewHistory", "implementations", "currentImplementation", "requiredPlanSchemaVersion", "requiredReviewSchemaVersion", "controlPaths", "history"],
+      "properties": {
+        "phase": {"const": "completed"},
+        "cycle": {"type": "integer", "minimum": 1},
+        "comparisonBaseCommit": {"$ref": "#/$defs/commit"},
+        "contract": {"$ref": "#/$defs/boundDocument"},
+        "plan": {"$ref": "#/$defs/boundDocument"},
+        "verification": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": {"$ref": "#/$defs/resultVerification"}
+        },
+        "reviewAssignment": {"type": ["object", "null"]},
+        "review": {"type": ["object", "null"]},
+        "reviewHistory": {"type": "array", "maxItems": 64, "items": {"type": "object"}},
+        "implementations": {"type": "array", "maxItems": 256, "items": {"type": "object"}},
+        "currentImplementation": {"type": ["object", "null"]},
+        "requiredPlanSchemaVersion": {"const": 1},
+        "requiredReviewSchemaVersion": {"const": 1},
+        "controlPaths": {"type": "array", "maxItems": 32, "items": {"type": "string"}},
+        "history": {"type": "array", "maxItems": 2048, "items": {"type": "object"}}
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "attempts", "runtimePath", "removedArtifacts", "remainingArtifacts"],
+      "properties": {
+        "status": {"enum": ["pending", "clean", "failed"]},
+        "attempts": {"type": "integer", "minimum": 0, "maximum": 1024},
+        "runtimePath": {"type": "string", "minLength": 1, "maxLength": 512},
+        "removedArtifacts": {"type": "integer", "minimum": 0},
+        "remainingArtifacts": {"type": "integer", "minimum": 0},
+        "errorCode": {"enum": ["cleanup-failed", "receipt-write-failed", "interrupted"]}
+      }
+    },
     "publication": {"$ref": "#/$defs/publication"}
   },
   "$defs": {
@@ -66,6 +105,86 @@
       "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
     },
     "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes", "sha256", "truncated"],
+      "properties": {
+        "bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "truncated": {"type": "boolean"}
+      }
+    },
+    "boundDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "document"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/digest"},
+        "document": {"type": "object"}
+      }
+    },
+    "resultVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "status", "checks", "checkpoint", "recordedAt"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/id"},
+        "status": {"const": "passed"},
+        "durationMs": {"type": "integer", "minimum": 0},
+        "inputDigest": {"$ref": "#/$defs/digest"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "checkpoint": {"$ref": "#/$defs/checkpoint"},
+        "executionMode": {"enum": ["full", "impact-assurance"]},
+        "selectionDigest": {"$ref": "#/$defs/digest"},
+        "scope": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "properties": {"kind": {"const": "profile"}}
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "check", "position"],
+              "properties": {
+                "kind": {"const": "check"},
+                "check": {"$ref": "#/$defs/id"},
+                "position": {"type": "integer", "minimum": 1, "maximum": 32}
+              }
+            }
+          ]
+        },
+        "diagnostic": {"type": "object"},
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "status", "exitCode", "timedOut", "outputExceeded", "descendantsTerminated", "streamFailed", "cleanupFailed", "durationMs", "stdout", "stderr"],
+            "properties": {
+              "id": {"$ref": "#/$defs/id"},
+              "status": {"const": "passed"},
+              "exitCode": {"const": 0},
+              "timedOut": {"type": "boolean"},
+              "outputExceeded": {"type": "boolean"},
+              "descendantsTerminated": {"type": "boolean"},
+              "streamFailed": {"type": "boolean"},
+              "cleanupFailed": {"type": "boolean"},
+              "durationMs": {"type": "integer", "minimum": 0},
+              "stdout": {"$ref": "#/$defs/stream"},
+              "stderr": {"$ref": "#/$defs/stream"}
+            }
+          }
+        }
+      }
+    },
     "actor": {
       "type": "object",
       "additionalProperties": false,

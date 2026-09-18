@@ -57,6 +57,7 @@ dev = {file = ["engineering_process/requirements-dev.txt"]}
   "schemas/artifact-standard.schema.json",
   "schemas/automation-name-data.schema.json",
   "schemas/issue-data.schema.json",
+  "schemas/handoff.schema.json",
   "schemas/change.schema.json",
   "schemas/plan.schema.json",
   "schemas/process-graph.schema.json",

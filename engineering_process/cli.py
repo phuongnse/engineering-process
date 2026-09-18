@@ -32,12 +32,16 @@ from .distribution import (
 )
 from .lifecycle import (
     begin_implementation,
+    export_handoff,
     finish_change,
+    import_handoff,
     lifecycle_status,
+    purge_completed_receipt,
     process_improvement_signals,
     register_plan,
     start_change,
     start_review,
+    storage_status,
     submit_review,
     resolve_impact_work,
     resolve_verification_work,
@@ -585,6 +589,51 @@ def command_change_finish(args: argparse.Namespace) -> Result:
     ), 0
 
 
+def command_change_handoff_export(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    project = load_project(args.project_root, process_root)
+    details = export_handoff(
+        args.project_root,
+        process_root,
+        project,
+        args.change_id,
+        args.output,
+    )
+    return _result("change handoff export", **details), 0
+
+
+def command_change_handoff_import(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    project = load_project(args.project_root, process_root)
+    details = import_handoff(
+        args.project_root,
+        process_root,
+        project,
+        args.handoff_path,
+    )
+    return _result("change handoff import", **details), 0
+
+
+def command_change_storage(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    project = load_project(args.project_root, process_root)
+    return _result(
+        "change storage",
+        **storage_status(args.project_root, project),
+    ), 0
+
+
+def command_change_purge(args: argparse.Namespace) -> Result:
+    process_root = _process_root(args)
+    details = purge_completed_receipt(
+        args.project_root,
+        process_root,
+        args.change_id,
+        confirm=args.confirm,
+    )
+    return _result("change purge", **details), 0
+
+
 def _status_review(state: dict[str, Any]) -> dict[str, Any]:
     assignment = state.get("reviewAssignment")
     review = state.get("review")
@@ -740,6 +789,22 @@ def _status_next_action(
             "command": "processctl project validate --json",
             "reason": "the current verification selection is unavailable; validate the consumer policy before interpreting evidence",
             "ownerDecisionRequired": False,
+        }
+    cleanup = state.get("cleanup") if isinstance(state.get("cleanup"), dict) else {}
+    if state["phase"] == "completed" and cleanup.get("status") != "clean":
+        identity, required_inputs = _status_identity_arguments(
+            state, "coordinator"
+        )
+        cleanup_status = cleanup.get("status", "unknown")
+        return {
+            "route": "change finish",
+            "command": f"processctl change finish --change-id {change_id} {identity}",
+            "reason": (
+                f"the completion result is durable but runtime cleanup is {cleanup_status}; "
+                "retry finish to complete the bounded cleanup"
+            ),
+            "ownerDecisionRequired": False,
+            "requiredInputs": required_inputs,
         }
     if selection.get("status") == "blocked":
         blocked = [
@@ -926,6 +991,7 @@ def command_change_status(args: argparse.Namespace) -> Result:
         candidate=(selection["checkpoint"] if selection is not None else None),
         readiness=(readiness_summary(project) if project is not None else None),
         review=review,
+        cleanup=state.get("cleanup"),
         verification=recorded,
         currentVerification=current,
         recordedVerification=recorded,
@@ -998,12 +1064,16 @@ def command_artifact(args: argparse.Namespace) -> Result:
                 if args.data_file is not None
                 else None
             )
+            reader_state = lifecycle_status(
+                args.project_root, process_root, args.change_id
+            )
             data = build_pr_description_data(
                 args.project_root,
                 process_root,
                 args.change_id,
                 overrides=overrides,
                 standard=standard,
+                state=reader_state,
             )
         elif args.data_file is not None:
             data = load_and_validate(
@@ -1056,6 +1126,7 @@ def command_artifact_prepare_pr_data(args: argparse.Namespace) -> Result:
         args.change_id,
         overrides=overrides,
         standard=standard,
+        state=lifecycle_status(args.project_root, process_root, args.change_id),
     )
     payload = formatted_json_bytes(data)
     details: dict[str, Any] = {
@@ -1189,6 +1260,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     change_status = _leaf(change_commands, "status", command_change_status)
     change_status.add_argument("--change-id", required=True)
+
+    handoff = change_commands.add_parser(
+        "handoff", help="Export or import one sequential lifecycle handoff"
+    )
+    handoff_commands = handoff.add_subparsers(dest="handoff_command", required=True)
+    handoff_export = _leaf(
+        handoff_commands, "export", command_change_handoff_export
+    )
+    handoff_export.add_argument("--change-id", required=True)
+    handoff_export.add_argument("--output", "--path", dest="output", type=Path, required=True)
+    handoff_import = _leaf(
+        handoff_commands, "import", command_change_handoff_import
+    )
+    handoff_import.add_argument(
+        "--handoff", "--input", "--path", dest="handoff_path", type=Path, required=True
+    )
+
+    change_storage = _leaf(change_commands, "storage", command_change_storage)
+    change_purge = _leaf(change_commands, "purge", command_change_purge)
+    change_purge.add_argument("--change-id", required=True)
+    change_purge.add_argument("--confirm", action="store_true")
 
     release = commands.add_parser("release", help="Validate release identity")
     release_commands = release.add_subparsers(dest="release_command", required=True)

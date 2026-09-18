@@ -81,3 +81,13 @@ also runs the existing read-only publication branch validator against the curren
 checkout branch before creating `.process/runs/ID`. A rejected branch leaves no new
 run state. The branch convention remains consumer-owned; the opt-in only makes the
   consumer's existing publication rule a lifecycle preflight.
+
+When a change arrives from another workspace, import its explicit handoff before
+routing the phase:
+
+    processctl change handoff import --handoff HANDOFF_PATH
+
+Import validates the process distribution, project, comparison base, candidate
+checkpoint, changed paths, and existing change id. It does not merge source changes,
+overwrite a conflicting run, or create a completed receipt; continue through the
+ordinary lifecycle with the imported state.

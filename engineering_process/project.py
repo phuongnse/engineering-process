@@ -10,6 +10,10 @@ from .distribution import schemas_root
 
 
 PROJECT_SCHEMA_VERSION = 1
+DEFAULT_RETENTION = {
+    "maxCompletedReceipts": 256,
+    "maxCompletedReceiptBytes": 64 * 1024 * 1024,
+}
 PACK_CAPABILITIES = {
     ("desktop-media", 1): set("application-correctness authoritative-input-integrity cross-platform-portability dependency-audit dependency-security incident-recovery independent-security-review key-custody linux-release-security media-pipeline-integrity package-security recovery-integrity recovery-mechanism-integrity release-integrity runtime-delivery-integrity update-integrity workspace-security".split()),
     ("library-cli", 1): set("adoption-integrity compatibility correctness distribution-integrity installability portability runtime-safety".split()),
@@ -162,6 +166,15 @@ def require_consumer_evidence(project: dict[str, Any]) -> bool:
 def publication_required(project: dict[str, Any]) -> bool:
     policy = project["lifecycle"].get("publication", {})
     return bool(policy.get("required", False))
+
+
+def retention_policy(project: dict[str, Any]) -> dict[str, int]:
+    """Return the consumer-owned bounds for retained completion receipts."""
+    configured = project.get("lifecycle", {}).get("retention", {})
+    return {
+        name: int(configured.get(name, default))
+        for name, default in DEFAULT_RETENTION.items()
+    }
 
 
 def accepted_issue_url_prefix(project: dict[str, Any]) -> str | None:

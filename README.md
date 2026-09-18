@@ -37,10 +37,24 @@ The distribution has four live parts:
 4. One adoption transaction that synchronizes managed skills and configuration from
    an exact hash-locked package.
 
-Lifecycle state is local under .process/runs and completion creates one bounded receipt
-under .process/receipts. Both paths are ignored by Git. Verification evidence is bound
-to HEAD plus a fingerprint of tracked and non-ignored untracked files. Any relevant
-mutation invalidates it.
+Active lifecycle state is local and change-owned under `.process/runs`. Successful
+finish first writes one bounded, schema-validated completion receipt under
+`.process/receipts`, then removes only that change's runtime directory. The receipt's
+durable result retains the contract, plan, verification, independent review, history,
+and cleanup outcome needed by readers after runtime deletion. Both storage roots are
+ignored by Git. Verification evidence is bound to HEAD plus a fingerprint of tracked
+and non-ignored untracked files. Any relevant mutation invalidates it.
+
+An active run can move sequentially between workspaces with an explicit package:
+
+    processctl change handoff export --change-id change-123 --output /tmp/change-123.handoff.json
+    processctl change handoff import --handoff /tmp/change-123.handoff.json
+
+The package binds the process authority, comparison base, candidate checkpoint, and
+changed-path set; import refuses a conflicting run or checkout. `change finish` is
+retryable when cleanup or the final receipt write is interrupted. Inspect local
+retention with `processctl change storage --json` and explicitly purge only a clean
+receipt with `processctl change purge --change-id ID --confirm`.
 
 Neither the reviewer actor nor reviewer context may have implemented the current
 cycle. An agent reviewer context also cannot be recorded in another accepted change
@@ -78,7 +92,9 @@ optional profile. `recordedVerification` is historical report status only; a rec
 `currentVerification` and `evidence` expose the current selection. Review state shows
 active blocking findings. `diagnostics` exposes only the validated failed check,
 failure class, bounded execution facts, and fixed selective reproduction command.
-The `nextAction` field gives an executable route with required handoff inputs, using
+`cleanup` reports whether the durable completion result is still pending cleanup;
+when it is not clean, `nextAction` routes back to `change finish` for a retry. The
+`nextAction` field gives an executable route with required handoff inputs, using
 explicit placeholders when the caller must choose an actor, context, plan, or report.
 For the complete route and vocabulary, read
 [deliver-change](process_assets/skills/deliver-change/SKILL.md) first; it is the

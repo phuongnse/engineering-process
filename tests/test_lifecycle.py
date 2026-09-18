@@ -19,7 +19,9 @@ from engineering_process.lifecycle import (
     _scope_candidate_path,
     _scope_path,
     begin_implementation,
+    export_handoff,
     finish_change,
+    import_handoff,
     lifecycle_status,
     process_improvement_signals,
     register_plan,
@@ -31,7 +33,7 @@ from engineering_process.lifecycle import (
     verify_remaining,
     verify_change,
 )
-from engineering_process.project import normalize_project
+from engineering_process.project import load_project, normalize_project
 from engineering_process.production_engineering import load_invariant_floor
 from engineering_process.repository import repository_snapshot
 from engineering_process.source_publication import validate_current_source
@@ -715,7 +717,112 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(
             (self.root / ".process" / "receipts" / "sample-change.json").is_file()
         )
-        self.assertIsNone(lifecycle_status(self.root, PROCESS_ROOT, "sample-change")["nextCommand"])
+        self.assertFalse(
+            (self.root / ".process" / "runs" / "sample-change").exists()
+        )
+        self.assertEqual("clean", receipt["cleanup"]["status"])
+        self.assertEqual(
+            "finished", receipt["result"]["history"][-1]["event"]
+        )
+        status = lifecycle_status(self.root, PROCESS_ROOT, "sample-change")
+        self.assertEqual("clean", status["cleanup"]["status"])
+        self.assertIsNone(status["nextCommand"])
+
+    def test_cleanup_failure_preserves_result_and_finish_retries_cleanup_only(self) -> None:
+        self.begin()
+        self.verify_all()
+        start_review(
+            self.root,
+            PROCESS_ROOT,
+            "sample-change",
+            actor_id="reviewer",
+            context_id="review-context",
+            kind="agent",
+        )
+        review_path = self.root / ".process" / "runs" / "review-input.json"
+        write_json(review_path, self.review_document("approved"))
+        submit_review(self.root, PROCESS_ROOT, "sample-change", review_path)
+
+        with patch(
+            "engineering_process.lifecycle.remove_owned_runtime",
+            side_effect=ProcessError("simulated cleanup failure"),
+        ):
+            with self.assertRaisesRegex(ProcessError, "rerun change finish"):
+                finish_change(
+                    self.root,
+                    PROCESS_ROOT,
+                    "sample-change",
+                    actor_id="coordinator",
+                    context_id="finish-context",
+                    kind="agent",
+                )
+
+        receipt_path = self.root / ".process" / "receipts" / "sample-change.json"
+        failed = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual("failed", failed["cleanup"]["status"])
+        self.assertTrue(
+            (self.root / ".process" / "runs" / "sample-change" / "run.json").is_file()
+        )
+        with patch(
+            "engineering_process.lifecycle.remove_owned_runtime",
+            return_value={"removedArtifacts": 1, "remainingArtifacts": 0},
+        ):
+            state, receipt = finish_change(
+                self.root,
+                PROCESS_ROOT,
+                "sample-change",
+                actor_id="coordinator",
+                context_id="finish-context",
+                kind="agent",
+            )
+        self.assertEqual("completed", state["phase"])
+        self.assertEqual("clean", receipt["cleanup"]["status"])
+        self.assertEqual(2, receipt["cleanup"]["attempts"])
+
+    def test_active_run_handoff_round_trip_preserves_the_current_candidate(self) -> None:
+        self.begin()
+        (self.root / "product.txt").write_text("handoff implementation\n", encoding="utf-8")
+        git(self.root, "add", ".process/inputs", "product.txt")
+        git(self.root, "commit", "-qm", "fix: handoff candidate")
+
+        transport = Path(tempfile.mkdtemp(dir=self.root.parent))
+        try:
+            package = transport / "sample-change.handoff.json"
+            exported = export_handoff(
+                self.root,
+                PROCESS_ROOT,
+                load_project(self.root, PROCESS_ROOT),
+                "sample-change",
+                package,
+            )
+            self.assertEqual("implementing", exported["phase"])
+
+            destination = transport / "destination"
+            git(
+                self.root.parent,
+                "clone",
+                "--quiet",
+                "--no-local",
+                str(self.root),
+                str(destination),
+            )
+            imported = import_handoff(
+                destination,
+                PROCESS_ROOT,
+                load_project(destination, PROCESS_ROOT),
+                package,
+            )
+            self.assertEqual("imported", imported["status"])
+            restored = lifecycle_status(
+                destination, PROCESS_ROOT, "sample-change"
+            )
+            self.assertEqual("implementing", restored["phase"])
+            self.assertEqual(
+                "implementation-context",
+                restored["currentImplementation"]["actor"]["contextId"],
+            )
+        finally:
+            shutil.rmtree(transport, ignore_errors=True)
 
     def test_completed_change_reopens_after_a_new_candidate_commit(self) -> None:
         self.begin()

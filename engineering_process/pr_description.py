@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import re
 from typing import Any
 
 from .artifact_standards import ArtifactStandard, MAX_DOCUMENT_BYTES, resolve_standard
-from .contracts import ProcessError, validate_document
+from .contracts import (
+    ProcessError,
+    digest_json,
+    load_and_validate,
+    read_json,
+    validate_document,
+)
 from .distribution import distribution_digest, distribution_root, schemas_root
 from .evidence import execution_identity, verification_report_matches_inputs
 from .project import load_project
@@ -346,16 +353,70 @@ def build_pr_description_data(
     *,
     overrides: dict[str, Any] | None = None,
     standard: ArtifactStandard | None = None,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from .contracts import digest_json, load_and_validate, read_json
     from .repository import repository_snapshot, same_checkpoint
 
     dist_root = distribution_root(process_root)
     run_path = project_root / ".process" / "runs" / change_id / "run.json"
-    state = load_and_validate(run_path, "run", schema_root=schemas_root(dist_root))
+    if state is None:
+        if run_path.is_symlink():
+            raise ProcessError(f"{run_path}: lifecycle runtime cannot be a symbolic link")
+        if run_path.exists():
+            state = load_and_validate(
+                run_path, "run", schema_root=schemas_root(dist_root)
+            )
+            if state.get("changeId") != change_id:
+                raise ProcessError(f"{run_path}: change identity mismatch")
+            validate_current_run_documents(state, dist_root)
+        else:
+            receipt_path = project_root / ".process" / "receipts" / f"{change_id}.json"
+            if receipt_path.is_symlink():
+                raise ProcessError(
+                    f"{receipt_path}: completion receipts cannot be symbolic links"
+                )
+            receipt = load_and_validate(
+                receipt_path,
+                "receipt",
+                schema_root=schemas_root(dist_root),
+            )
+            result = receipt.get("result")
+            if not isinstance(result, dict):
+                raise ProcessError(
+                    f"completion receipt for {change_id} has no durable lifecycle result"
+                )
+            state = {
+                "schemaVersion": 1,
+                "changeId": change_id,
+                "phase": result["phase"],
+                "cycle": result["cycle"],
+                "contract": deepcopy(result["contract"]),
+                "comparisonBaseCommit": result["comparisonBaseCommit"],
+                "plan": deepcopy(result["plan"]),
+                "implementations": deepcopy(result["implementations"]),
+                "currentImplementation": deepcopy(result["currentImplementation"]),
+                "verification": deepcopy(result["verification"]),
+                "reviewAssignment": deepcopy(result["reviewAssignment"]),
+                "review": deepcopy(result["review"]),
+                "reviewHistory": deepcopy(result["reviewHistory"]),
+                "receipt": {
+                    "path": str(receipt_path.relative_to(project_root)),
+                    "digest": digest_json(receipt),
+                },
+                "requiredPlanSchemaVersion": result["requiredPlanSchemaVersion"],
+                "requiredReviewSchemaVersion": result["requiredReviewSchemaVersion"],
+                "controlPaths": deepcopy(result["controlPaths"]),
+                "history": deepcopy(result["history"]),
+            }
+            validate_document(
+                state,
+                "run",
+                schema_root=schemas_root(dist_root),
+                source="durable completion result",
+            )
+            validate_current_run_documents(state, dist_root)
     if state.get("changeId") != change_id:
-        raise ProcessError(f"{run_path}: change identity mismatch")
-    validate_current_run_documents(state, dist_root)
+        raise ProcessError("lifecycle state change identity mismatch")
     current_checkpoint = repository_snapshot(project_root)
     project = load_project(project_root, dist_root)
     runtime = execution_identity()
@@ -468,6 +529,8 @@ def build_pr_description_data(
                 and receipt.get("review", {}).get("digest")
                 == state.get("review", {}).get("digest")
                 and receipt.get("review", {}).get("verdict") == "approved"
+                and receipt.get("cleanup", {}).get("status") == "clean"
+                and receipt.get("result", {}).get("phase") == "completed"
             ):
                 receipt_val = f"`{expected['digest']}`"
         except Exception:

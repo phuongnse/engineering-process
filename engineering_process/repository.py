@@ -253,3 +253,156 @@ def same_checkpoint(left: dict[str, Any], right: dict[str, Any]) -> bool:
         left.get("head") == right.get("head")
         and left.get("fingerprint") == right.get("fingerprint")
     )
+
+
+def _owned_runtime_path(project_root: Path, change_id: str) -> Path:
+    """Resolve one canonical change-owned runtime path without accepting traversal."""
+    if (
+        not change_id
+        or change_id in {".", ".."}
+        or "/" in change_id
+        or "\\" in change_id
+    ):
+        raise ProcessError("change id cannot identify a runtime path")
+    return project_root.resolve() / ".process" / "runs" / change_id
+
+
+def _measure_tree(path: Path) -> dict[str, int]:
+    """Measure a process-owned tree without following filesystem links."""
+    result = {
+        "fileCount": 0,
+        "directoryCount": 0,
+        "symlinkCount": 0,
+        "byteCount": 0,
+        "artifactCount": 0,
+    }
+    if not os.path.lexists(path):
+        return result
+
+    def visit(current: Path) -> None:
+        try:
+            info = current.lstat()
+        except OSError as error:
+            raise ProcessError(f"cannot measure runtime path {current}: {error}") from error
+        if stat.S_ISLNK(info.st_mode):
+            result["symlinkCount"] += 1
+            result["byteCount"] += len(os.fsencode(os.readlink(current)))
+            return
+        if stat.S_ISDIR(info.st_mode):
+            result["directoryCount"] += 1
+            try:
+                children = sorted(current.iterdir(), key=lambda item: item.name)
+            except OSError as error:
+                raise ProcessError(f"cannot inspect runtime path {current}: {error}") from error
+            for child in children:
+                visit(child)
+            return
+        result["fileCount"] += 1
+        result["byteCount"] += info.st_size
+
+    visit(path)
+    result["artifactCount"] = result["fileCount"] + result["symlinkCount"]
+    return result
+
+
+def runtime_storage_usage(project_root: Path) -> dict[str, Any]:
+    """Return bounded aggregate measurements for process-owned local data."""
+    process_root = project_root.resolve() / ".process"
+
+    def measure_child(name: str) -> dict[str, int]:
+        try:
+            process_info = process_root.lstat()
+        except FileNotFoundError:
+            return _measure_tree(process_root / name)
+        except OSError as error:
+            raise ProcessError(
+                f"cannot inspect process storage root {process_root}: {error}"
+            ) from error
+        if stat.S_ISLNK(process_info.st_mode) or not stat.S_ISDIR(process_info.st_mode):
+            raise ProcessError("process storage root is not a real directory")
+        child = process_root / name
+        try:
+            child_info = child.lstat()
+        except FileNotFoundError:
+            return _measure_tree(child)
+        except OSError as error:
+            raise ProcessError(
+                f"cannot inspect process storage path {child}: {error}"
+            ) from error
+        if stat.S_ISLNK(child_info.st_mode) or not stat.S_ISDIR(child_info.st_mode):
+            raise ProcessError(f"process storage path is not a real directory: {child}")
+        return _measure_tree(child)
+
+    runs = measure_child("runs")
+    receipts = measure_child("receipts")
+    return {
+        "runs": runs,
+        "receipts": receipts,
+        "total": {
+            "artifactCount": runs["artifactCount"] + receipts["artifactCount"],
+            "byteCount": runs["byteCount"] + receipts["byteCount"],
+            "directoryCount": runs["directoryCount"] + receipts["directoryCount"],
+        },
+    }
+
+
+def remove_owned_runtime(project_root: Path, change_id: str) -> dict[str, int]:
+    """Remove exactly one change runtime without following links outside its root."""
+    target = _owned_runtime_path(project_root, change_id)
+    process_directory = target.parent.parent
+    runs_root = target.parent
+    for container in (process_directory, runs_root):
+        try:
+            container_info = container.lstat()
+        except FileNotFoundError:
+            if container is runs_root:
+                return {"removedArtifacts": 0, "remainingArtifacts": 0}
+            raise ProcessError(f"owned runtime parent is missing: {container}")
+        except OSError as error:
+            raise ProcessError(f"cannot inspect owned runtime parent {container}: {error}") from error
+        if stat.S_ISLNK(container_info.st_mode) or not stat.S_ISDIR(container_info.st_mode):
+            raise ProcessError("owned runtime parent is not a real directory; cleanup refused")
+    if not os.path.lexists(target):
+        return {"removedArtifacts": 0, "remainingArtifacts": 0}
+    try:
+        target_info = target.lstat()
+    except OSError as error:
+        raise ProcessError(f"cannot inspect owned runtime {target}: {error}") from error
+    if not stat.S_ISDIR(target_info.st_mode) or stat.S_ISLNK(target_info.st_mode):
+        raise ProcessError("owned runtime path is not a real directory; cleanup refused")
+
+    removed = 0
+
+    def remove(current: Path) -> None:
+        nonlocal removed
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise ProcessError(f"cannot inspect owned runtime {current}: {error}") from error
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            try:
+                current.unlink()
+            except OSError as error:
+                raise ProcessError(f"cleanup could not remove {current}: {error}") from error
+            removed += 1
+            return
+        try:
+            children = sorted(current.iterdir(), key=lambda item: item.name)
+        except OSError as error:
+            raise ProcessError(f"cleanup could not inspect {current}: {error}") from error
+        for child in children:
+            remove(child)
+        try:
+            current.rmdir()
+        except OSError as error:
+            raise ProcessError(f"cleanup could not remove directory {current}: {error}") from error
+
+    remove(target)
+    try:
+        if not any(runs_root.iterdir()):
+            runs_root.rmdir()
+    except OSError as error:
+        raise ProcessError(f"cleanup could not remove empty runtime root {runs_root}: {error}") from error
+    return {"removedArtifacts": removed, "remainingArtifacts": 0}

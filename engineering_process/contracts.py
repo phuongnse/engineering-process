@@ -21,6 +21,7 @@ CONTRACT_KINDS = (
     "artifact-standard",
     "automation-name-data",
     "issue-data",
+    "handoff",
     "change",
     "plan",
     "process-graph",

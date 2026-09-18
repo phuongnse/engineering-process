@@ -30,6 +30,9 @@ it never authorizes a retry or substitutes for the required profile. The existin
 state includes any active blocking findings, and `nextAction` includes the required
 actor/context/plan/report inputs or an explicit placeholder when the caller must
 choose them.
+For a completed change, `cleanup.status` is part of the result boundary: `clean` is
+terminal for the process, while `pending` or `failed` routes back through `change
+finish` so cleanup can be retried without recreating implementation evidence.
 
 Use these terms precisely when explaining a result:
 
@@ -79,6 +82,18 @@ change status when a change already exists, then route exactly one current phase
    **change-implement**.
 7. blocked: stop. The current contract cannot merge; the owner may narrow or
    supersede it, but no correction-limit stop can waive independent review.
+
+An active run can be handed to a sequential workspace only through the explicit
+package commands below. Export requires a committed candidate; import validates the
+same process authority, comparison base, checkpoint, changed paths, and change id and
+never overwrites conflicting runtime state:
+
+    processctl change handoff export --change-id ID --output HANDOFF_PATH
+    processctl change handoff import --handoff HANDOFF_PATH
+
+The package is a transport boundary, not a second lifecycle or evidence store. It
+preserves the active run for implementation, review, or approved coordination; the
+normal independent reviewer and freshness rules still apply after import.
 
 If implementation finds candidate paths outside the frozen plan, the lifecycle records
 the paths as a `plan-scope` blocker and stops before verification or approval. Do not

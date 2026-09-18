@@ -62,6 +62,12 @@ When the phase is `review-pending`, resume the existing assignment; do not run
 existing report path, `.process/runs/ID/review-CYCLE.json`. If that reviewer is
 unavailable, use this authoritative decision table:
 
+An active review assignment may be moved sequentially with the explicit handoff
+package before completion. Import it into the matching committed candidate and
+resume the recorded assignment; do not create a new run, replace a valid reviewer,
+or treat the package as approval. After finish removes the runtime, review readers
+must use the retained receipt and its recorded independent-review result.
+
 | Situation | Condition | Required action | Prohibited action |
 | --- | --- | --- | --- |
 | 1. Reachable valid reviewer | Assigned reviewer session is active and reachable | Resume the assigned session using the existing assignment | Do not start a new reviewer or alter identities |

@@ -24,6 +24,7 @@ from .commands import (
 )
 from .contracts import (
     ProcessError,
+    formatted_json_bytes,
     digest_json,
     load_and_validate,
     read_json,
@@ -47,6 +48,7 @@ from .project import (
     load_project,
     publication_required,
     require_consumer_evidence,
+    retention_policy,
     required_profiles,
 )
 from .production_engineering import (
@@ -61,6 +63,8 @@ from .repository import (
     changed_paths,
     repository_snapshot,
     require_committed_candidate,
+    remove_owned_runtime,
+    runtime_storage_usage,
     resolve_commit,
     same_checkpoint,
 )
@@ -299,19 +303,223 @@ def _receipt_path(project_root: Path, change_id: str) -> Path:
     return project_root / ".process" / "receipts" / f"{change_id}.json"
 
 
+def _load_receipt(
+    project_root: Path,
+    process_root: Path,
+    change_id: str,
+) -> dict[str, Any]:
+    path = _receipt_path(project_root, change_id)
+    if path.is_symlink():
+        raise ProcessError(f"{path}: completion receipts cannot be symbolic links")
+    receipts_root = path.parent
+    process_directory = receipts_root.parent
+    for directory in (process_directory, receipts_root):
+        if directory.exists() and directory.is_symlink():
+            raise ProcessError(f"{directory}: completion receipt directories cannot be symbolic links")
+    receipt = load_and_validate(path, "receipt", schema_root=schemas_root(process_root))
+    if receipt.get("changeId") != change_id:
+        raise ProcessError(f"{path}: completion receipt identity mismatch")
+    return receipt
+
+
+def _state_from_receipt(
+    project_root: Path,
+    process_root: Path,
+    change_id: str,
+    receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Rebuild the reader/lifecycle projection from a validated durable result."""
+    result = receipt.get("result")
+    if not isinstance(result, dict):
+        raise ProcessError(
+            f"completion receipt for {change_id} has no durable lifecycle result; "
+            "the run cannot be safely reconstructed"
+        )
+    state: dict[str, Any] = {
+        "schemaVersion": 1,
+        "changeId": change_id,
+        "phase": result["phase"],
+        "cycle": result["cycle"],
+        "contract": deepcopy(result["contract"]),
+        "comparisonBaseCommit": result["comparisonBaseCommit"],
+        "plan": deepcopy(result["plan"]),
+        "implementations": deepcopy(result["implementations"]),
+        "currentImplementation": deepcopy(result["currentImplementation"]),
+        "verification": deepcopy(result["verification"]),
+        "reviewAssignment": deepcopy(result["reviewAssignment"]),
+        "review": deepcopy(result["review"]),
+        "reviewHistory": deepcopy(result["reviewHistory"]),
+        "receipt": {
+            "path": str(_receipt_path(project_root, change_id).relative_to(project_root)),
+            "digest": digest_json(receipt),
+        },
+        "requiredPlanSchemaVersion": result["requiredPlanSchemaVersion"],
+        "requiredReviewSchemaVersion": result["requiredReviewSchemaVersion"],
+        "controlPaths": deepcopy(result["controlPaths"]),
+        "history": deepcopy(result["history"]),
+    }
+    validate_document(
+        state,
+        "run",
+        schema_root=schemas_root(process_root),
+        source="durable completion result",
+    )
+    validate_current_run_documents(state, process_root)
+    return state
+
+
 def _load_state(
     project_root: Path,
     process_root: Path,
     change_id: str,
 ) -> dict[str, Any]:
     path = _run_path(project_root, change_id)
-    state = load_and_validate(path, "run", schema_root=schemas_root(process_root))
+    if path.is_symlink():
+        raise ProcessError(f"{path}: lifecycle runtime cannot be a symbolic link")
+    runs_root = path.parent.parent
+    process_directory = runs_root.parent
+    for directory in (process_directory, runs_root, path.parent):
+        if directory.exists() and directory.is_symlink():
+            raise ProcessError(f"{directory}: lifecycle runtime directories cannot be symbolic links")
+    if path.exists():
+        state = load_and_validate(path, "run", schema_root=schemas_root(process_root))
+    else:
+        receipt_path = _receipt_path(project_root, change_id)
+        if not receipt_path.exists():
+            raise ProcessError(f"change {change_id} has no active runtime or completion receipt")
+        state = _state_from_receipt(
+            project_root, process_root, change_id, _load_receipt(project_root, process_root, change_id)
+        )
     if state["changeId"] != change_id:
         raise ProcessError(f"{path}: change identity mismatch")
     validate_current_run_documents(state, process_root)
     if state["plan"] is not None and not _has_plan_scope_policy(state):
         raise ProcessError("lifecycle state is missing the current plan scope binding")
     return state
+
+
+def _completion_result(state: dict[str, Any]) -> dict[str, Any]:
+    """Select the bounded lifecycle facts needed after active runtime cleanup."""
+    if state.get("plan") is None or state.get("review") is None:
+        raise ProcessError("cannot retain a completion result without plan and review")
+    return {
+        "phase": "completed",
+        "cycle": state["cycle"],
+        "comparisonBaseCommit": state["comparisonBaseCommit"],
+        "contract": deepcopy(state["contract"]),
+        "plan": deepcopy(state["plan"]),
+        "verification": deepcopy(state["verification"]),
+        "reviewAssignment": deepcopy(state["reviewAssignment"]),
+        "review": deepcopy(state["review"]),
+        "reviewHistory": deepcopy(state["reviewHistory"]),
+        "implementations": deepcopy(state["implementations"]),
+        "currentImplementation": deepcopy(state["currentImplementation"]),
+        "requiredPlanSchemaVersion": state["requiredPlanSchemaVersion"],
+        "requiredReviewSchemaVersion": state["requiredReviewSchemaVersion"],
+        "controlPaths": list(state.get("controlPaths", [])),
+        "history": deepcopy(state["history"]),
+    }
+
+
+def _receipt_document(
+    state: dict[str, Any],
+    checkpoint: dict[str, Any],
+    publication: dict[str, Any] | None,
+    *,
+    completed_at: str,
+    cleanup: dict[str, Any],
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {}
+    for name, report in sorted(state["verification"].items()):
+        evidence[name] = {
+            "status": report["status"],
+            "checkpoint": report["checkpoint"],
+            **(
+                {"executionMode": report["executionMode"]}
+                if report.get("executionMode")
+                else {}
+            ),
+            **(
+                {"selectionDigest": report["selectionDigest"]}
+                if report.get("selectionDigest")
+                else {}
+            ),
+            "checks": [
+                {
+                    "id": check["id"],
+                    "status": check["status"],
+                    "exitCode": check["exitCode"],
+                    "stdoutSha256": check["stdout"]["sha256"],
+                    "stderrSha256": check["stderr"]["sha256"],
+                }
+                for check in report["checks"]
+            ],
+        }
+    receipt: dict[str, Any] = {
+        "schemaVersion": 1,
+        "changeId": state["changeId"],
+        "cycle": state["cycle"],
+        "completedAt": completed_at,
+        "checkpoint": checkpoint,
+        "contractDigest": state["contract"]["digest"],
+        "planDigest": state["plan"]["digest"],
+        "verification": evidence,
+        "review": {
+            "reviewer": state["reviewAssignment"]["reviewer"],
+            "digest": state["review"]["digest"],
+            "verdict": state["review"]["document"]["verdict"],
+        },
+        "result": _completion_result(state),
+        "cleanup": cleanup,
+    }
+    if publication is not None:
+        receipt["publication"] = {
+            "branch": publication["branch"],
+            "subject": publication["subject"],
+            "range": publication["range"],
+        }
+    return receipt
+
+
+def _write_receipt(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    receipt: dict[str, Any],
+) -> dict[str, Any]:
+    validate_document(
+        receipt,
+        "receipt",
+        schema_root=schemas_root(process_root),
+        source="completion receipt",
+    )
+    path = _receipt_path(project_root, receipt["changeId"])
+    if path.is_symlink():
+        raise ProcessError(f"{path}: completion receipts cannot be symbolic links")
+    receipts_root = path.parent
+    process_directory = receipts_root.parent
+    if process_directory.exists() and process_directory.is_symlink():
+        raise ProcessError(f"{process_directory}: process directory cannot be a symbolic link")
+    if receipts_root.exists() and receipts_root.is_symlink():
+        raise ProcessError(f"{receipts_root}: receipt directory cannot be a symbolic link")
+    usage = runtime_storage_usage(project_root)["receipts"]
+    current_bytes = path.stat().st_size if path.is_file() else 0
+    current_count = 1 if path.is_file() else 0
+    projected_bytes = usage["byteCount"] - current_bytes + len(formatted_json_bytes(receipt))
+    projected_count = usage["fileCount"] - current_count + 1
+    policy = retention_policy(project)
+    if projected_count > policy["maxCompletedReceipts"]:
+        raise ProcessError(
+            "completed receipt retention limit reached; purge an explicitly selected "
+            "clean receipt with change purge before finishing this change"
+        )
+    if projected_bytes > policy["maxCompletedReceiptBytes"]:
+        raise ProcessError(
+            "completed receipt byte limit reached; purge an explicitly selected "
+            "clean receipt with change purge before finishing this change"
+        )
+    write_json_atomic(path, receipt)
+    return receipt
 
 
 def _save_state(
@@ -930,8 +1138,11 @@ def start_change(
     )
     change_id = contract["id"]
     path = _run_path(project_root, change_id)
-    if path.exists():
-        raise ProcessError(f"change {change_id} already exists; resume it with status")
+    receipt_path = _receipt_path(project_root, change_id)
+    if os.path.lexists(path) or os.path.lexists(receipt_path):
+        raise ProcessError(
+            f"change {change_id} already exists; resume it with status or purge its clean receipt"
+        )
 
     supersedes = contract.get("supersedes")
     previous_state: dict[str, Any] | None = None
@@ -2433,12 +2644,32 @@ def finish_change(
     kind: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = _load_state(project_root, process_root, change_id)
+    actor = _actor(actor_id, context_id, kind)
+    project = load_project(project_root, process_root)
+
+    if state["phase"] == "completed":
+        receipt = _load_receipt(project_root, process_root, change_id)
+        return _finish_cleanup_only(
+            project_root, process_root, project, state, receipt, actor
+        )
+
     _require_phase(state, "approved")
+    existing_path = _receipt_path(project_root, change_id)
+    if existing_path.exists() and state.get("receipt") is None:
+        existing = _load_receipt(project_root, process_root, change_id)
+        if (
+            existing.get("cycle") == state["cycle"]
+            and existing.get("contractDigest") == state["contract"]["digest"]
+            and existing.get("planDigest") == state["plan"]["digest"]
+            and existing.get("cleanup", {}).get("status") in {"pending", "failed"}
+        ):
+            return _finish_cleanup_only(
+                project_root, process_root, project, state, existing, actor
+            )
+
     require_unreused_context(
         project_root, process_root, state, state["reviewAssignment"]["reviewer"]
     )
-    actor = _actor(actor_id, context_id, kind)
-    project = load_project(project_root, process_root)
     _require_current_baseline(project, state)
     _require_planned_scope(project_root, state)
     checkpoint = repository_snapshot(project_root)
@@ -2457,33 +2688,6 @@ def finish_change(
     ):
         raise ProcessError("verification evidence is stale or incomplete")
 
-    evidence: dict[str, Any] = {}
-    for name, report in sorted(state["verification"].items()):
-        evidence[name] = {
-            "status": report["status"],
-            "checkpoint": report["checkpoint"],
-            **(
-                {"executionMode": report["executionMode"]}
-                if report.get("executionMode")
-                else {}
-            ),
-            **(
-                {"selectionDigest": report["selectionDigest"]}
-                if report.get("selectionDigest")
-                else {}
-            ),
-            "checks": [
-                {
-                    "id": check["id"],
-                    "status": check["status"],
-                    "exitCode": check["exitCode"],
-                    "stdoutSha256": check["stdout"]["sha256"],
-                    "stderrSha256": check["stderr"]["sha256"],
-                }
-                for check in report["checks"]
-            ],
-        }
-
     try:
         from .incidents import process_improvement_intake
         process_improvement_intake(
@@ -2498,43 +2702,334 @@ def finish_change(
             errorCode="process-improvement-intake-failed",
         )
 
-    receipt = {
-        "schemaVersion": 1,
-        "changeId": change_id,
-        "cycle": state["cycle"],
-        "completedAt": _now(),
-        "checkpoint": checkpoint,
-        "contractDigest": state["contract"]["digest"],
-        "planDigest": state["plan"]["digest"],
-        "verification": evidence,
-        "review": {
-            "reviewer": state["reviewAssignment"]["reviewer"],
-            "digest": state["review"]["digest"],
-            "verdict": state["review"]["document"]["verdict"],
-        },
-    }
-    if publication is not None:
-        receipt["publication"] = {
-            "branch": publication["branch"],
-            "subject": publication["subject"],
-            "range": publication["range"],
-        }
-    validate_document(
-        receipt,
-        "receipt",
-        schema_root=schemas_root(process_root),
-        source="completion receipt",
-    )
-    receipt_path = _receipt_path(project_root, change_id)
-    write_json_atomic(receipt_path, receipt)
     state["phase"] = "completed"
+    _event(state, "completion-recorded", actor)
+    receipt = _receipt_document(
+        state,
+        checkpoint,
+        publication,
+        completed_at=_now(),
+        cleanup={
+            "status": "pending",
+            "attempts": 0,
+            "runtimePath": f".process/runs/{change_id}",
+            "removedArtifacts": 0,
+            "remainingArtifacts": 1,
+        },
+    )
+    _write_receipt(project_root, process_root, project, receipt)
+    receipt_path = _receipt_path(project_root, change_id)
     state["receipt"] = {
         "path": str(receipt_path.relative_to(project_root)),
         "digest": digest_json(receipt),
     }
-    _event(state, "finished", actor)
     _save_state(project_root, process_root, state)
-    return state, receipt
+    return _finish_cleanup_only(
+        project_root, process_root, project, state, receipt, actor
+    )
+
+
+def _finish_cleanup_only(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    state: dict[str, Any],
+    receipt: dict[str, Any],
+    actor: dict[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Retry only owned-runtime cleanup after the durable result exists."""
+    cleanup = receipt.get("cleanup")
+    if not isinstance(cleanup, dict):
+        raise ProcessError(
+            "completion result has no cleanup state; refusing to delete runtime without a durable retry contract"
+        )
+    if (
+        cleanup.get("status") == "clean"
+        and not os.path.lexists(_run_path(project_root, state["changeId"]).parent)
+    ):
+        return (
+            _state_from_receipt(
+                project_root,
+                process_root,
+                state["changeId"],
+                receipt,
+            ),
+            receipt,
+        )
+    cleanup = deepcopy(cleanup)
+    cleanup["attempts"] = min(1024, int(cleanup.get("attempts", 0)) + 1)
+    cleanup["status"] = "pending"
+    try:
+        removed = remove_owned_runtime(project_root, state["changeId"])
+    except ProcessError as error:
+        cleanup["status"] = "failed"
+        cleanup["errorCode"] = "cleanup-failed"
+        cleanup["remainingArtifacts"] = 1 if os.path.lexists(
+            _run_path(project_root, state["changeId"]).parent
+        ) else 0
+        receipt["cleanup"] = cleanup
+        if os.path.lexists(_run_path(project_root, state["changeId"])):
+            state["receipt"] = {
+                "path": str(_receipt_path(project_root, state["changeId"]).relative_to(project_root)),
+                "digest": digest_json(receipt),
+            }
+            _event(
+                state,
+                "cleanup-failed",
+                actor,
+                errorCode="cleanup-failed",
+                attempt=cleanup["attempts"],
+            )
+            receipt["result"] = _completion_result(state)
+        try:
+            _write_receipt(project_root, process_root, project, receipt)
+        except ProcessError:
+            pass
+        if os.path.lexists(_run_path(project_root, state["changeId"])):
+            _save_state(project_root, process_root, state)
+        raise ProcessError(
+            "change completed but runtime cleanup failed; rerun change finish to continue cleanup"
+        ) from error
+
+    cleanup["status"] = "clean"
+    cleanup.pop("errorCode", None)
+    cleanup["removedArtifacts"] = max(
+        int(cleanup.get("removedArtifacts", 0)),
+        int(cleanup.get("removedArtifacts", 0)) + removed["removedArtifacts"],
+    )
+    cleanup["remainingArtifacts"] = 0
+    receipt["cleanup"] = cleanup
+    try:
+        _write_receipt(project_root, process_root, project, receipt)
+    except ProcessError as error:
+        raise ProcessError(
+            "change completed and runtime was removed, but the final cleanup receipt could not be persisted; rerun change finish"
+        ) from error
+    final_receipt = _load_receipt(project_root, process_root, state["changeId"])
+    final_state = _state_from_receipt(
+        project_root, process_root, state["changeId"], final_receipt
+    )
+    _event(final_state, "finished", actor)
+    receipt["result"] = _completion_result(final_state)
+    _write_receipt(project_root, process_root, project, receipt)
+    final_receipt = _load_receipt(project_root, process_root, state["changeId"])
+    final_state = _state_from_receipt(
+        project_root, process_root, state["changeId"], final_receipt
+    )
+    return final_state, final_receipt
+
+
+def _handoff_output_path(project_root: Path, output_path: Path) -> Path:
+    target = output_path.absolute()
+    try:
+        target.resolve().relative_to(project_root.resolve())
+    except ValueError:
+        pass
+    else:
+        raise ProcessError(
+            "handoff output must be outside the project; copy the explicit package to the receiving workspace"
+        )
+    if target.is_symlink():
+        raise ProcessError("handoff output cannot be a symbolic link")
+    return target
+
+
+@history_transaction
+def export_handoff(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    change_id: str,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Export one stable, committed-candidate handoff package."""
+    state = _load_state(project_root, process_root, change_id)
+    if state["phase"] == "completed":
+        raise ProcessError(
+            "completed changes use the retained receipt; only an active run can be handed off"
+        )
+    try:
+        require_committed_candidate(project_root)
+    except ProcessError as error:
+        raise ProcessError(
+            "handoff refused because source or documents are uncommitted; commit the candidate or explicitly transfer it before retrying"
+        ) from error
+    checkpoint = repository_snapshot(project_root)
+    changed = list(changed_paths(project_root, state["comparisonBaseCommit"]))
+    package: dict[str, Any] = {
+        "schemaVersion": 1,
+        "kind": "change-handoff",
+        "changeId": change_id,
+        "project": {
+            "name": project["project"],
+            "comparisonBaseCommit": state["comparisonBaseCommit"],
+        },
+        "authority": {
+            "distributionDigest": distribution_digest(process_root),
+            "runSchemaVersion": 1,
+            "handoffSchemaVersion": 1,
+        },
+        "candidate": checkpoint,
+        "changedPaths": changed,
+        "state": deepcopy(state),
+        "exportedAt": _now(),
+    }
+    output = _handoff_output_path(project_root, output_path)
+    validate_document(
+        package["state"],
+        "run",
+        schema_root=schemas_root(process_root),
+        source="handoff state",
+    )
+    validate_document(
+        package,
+        "handoff",
+        schema_root=schemas_root(process_root),
+        source="handoff package",
+    )
+    write_json_atomic(output, package)
+    return {
+        "path": str(output),
+        "changeId": change_id,
+        "phase": state["phase"],
+        "candidate": checkpoint,
+        "changedPaths": changed,
+        "packageDigest": digest_json(package),
+    }
+
+
+@history_transaction
+def import_handoff(
+    project_root: Path,
+    process_root: Path,
+    project: dict[str, Any],
+    handoff_path: Path,
+) -> dict[str, Any]:
+    """Import one compatible handoff without overwriting a conflicting run."""
+    package = load_and_validate(
+        handoff_path,
+        "handoff",
+        schema_root=schemas_root(process_root),
+    )
+    state = package["state"]
+    validate_document(
+        state,
+        "run",
+        schema_root=schemas_root(process_root),
+        source="handoff state",
+    )
+    validate_current_run_documents(state, process_root)
+    change_id = package["changeId"]
+    if state["changeId"] != change_id:
+        raise ProcessError("handoff change identity does not match its state")
+    if state["phase"] == "completed":
+        raise ProcessError("completed changes must be transferred through their retained receipt")
+    if package["project"]["name"] != project["project"]:
+        raise ProcessError("handoff belongs to a different consumer project")
+    if package["authority"]["distributionDigest"] != distribution_digest(process_root):
+        raise ProcessError(
+            "handoff process authority differs; use the same process distribution before importing"
+        )
+    if package["project"]["comparisonBaseCommit"] != state["comparisonBaseCommit"]:
+        raise ProcessError("handoff comparison base is internally inconsistent")
+    current = repository_snapshot(project_root)
+    if not same_checkpoint(current, package["candidate"]):
+        raise ProcessError(
+            "handoff candidate does not match this checkout; transfer the committed candidate or checkout the recorded head before retrying"
+        )
+    if list(changed_paths(project_root, state["comparisonBaseCommit"])) != package["changedPaths"]:
+        raise ProcessError(
+            "handoff changed-path set does not match this checkout; source transfer is incomplete"
+        )
+    run_path = _run_path(project_root, change_id)
+    receipt_path = _receipt_path(project_root, change_id)
+    if receipt_path.exists():
+        raise ProcessError("a completion receipt already owns this change id; refusing conflicting handoff state")
+    if run_path.is_symlink():
+        raise ProcessError("handoff runtime file cannot be a symbolic link")
+    if run_path.exists():
+        current_state = _load_state(project_root, process_root, change_id)
+        if digest_json(current_state) != digest_json(state):
+            raise ProcessError("an active run with the same change id has conflicting state")
+        return {
+            "changeId": change_id,
+            "phase": current_state["phase"],
+            "status": "already-present",
+            "candidate": current,
+        }
+    runtime_root = run_path.parent
+    process_directory = runtime_root.parent.parent
+    for directory in (process_directory, runtime_root, run_path.parent):
+        if directory.exists() and directory.is_symlink():
+            raise ProcessError("handoff runtime parent cannot be a symbolic link")
+    write_json_atomic(run_path, state)
+    restored = _load_state(project_root, process_root, change_id)
+    return {
+        "changeId": change_id,
+        "phase": restored["phase"],
+        "status": "imported",
+        "candidate": current,
+    }
+
+
+def storage_status(
+    project_root: Path,
+    project: dict[str, Any],
+) -> dict[str, Any]:
+    """Report aggregate process-owned storage and the consumer retention policy."""
+    usage = runtime_storage_usage(project_root)
+    policy = retention_policy(project)
+    return {
+        "policy": policy,
+        "usage": usage,
+        "retention": {
+            "completedReceiptCount": usage["receipts"]["fileCount"],
+            "completedReceiptBytes": usage["receipts"]["byteCount"],
+            "limitStatus": (
+                "exceeded"
+                if usage["receipts"]["fileCount"] > policy["maxCompletedReceipts"]
+                or usage["receipts"]["byteCount"] > policy["maxCompletedReceiptBytes"]
+                else "within-policy"
+            ),
+        },
+    }
+
+
+@history_transaction
+def purge_completed_receipt(
+    project_root: Path,
+    process_root: Path,
+    change_id: str,
+    *,
+    confirm: bool,
+) -> dict[str, Any]:
+    """Explicitly remove one clean retained result, never an active runtime."""
+    if not confirm:
+        raise ProcessError("receipt purge requires --confirm")
+    run_path = _run_path(project_root, change_id)
+    process_directory = run_path.parent.parent.parent
+    runs_root = run_path.parent.parent
+    if process_directory.exists() and process_directory.is_symlink():
+        raise ProcessError("process directory cannot be a symbolic link")
+    if runs_root.exists() and runs_root.is_symlink():
+        raise ProcessError("runtime directory cannot be a symbolic link")
+    if os.path.lexists(run_path.parent):
+        raise ProcessError("cannot purge a change that still has active runtime state")
+    receipt_path = _receipt_path(project_root, change_id)
+    receipt = _load_receipt(project_root, process_root, change_id)
+    if receipt.get("cleanup", {}).get("status") != "clean":
+        raise ProcessError("only a receipt with confirmed clean runtime may be purged")
+    try:
+        receipt_path.unlink()
+    except OSError as error:
+        raise ProcessError(f"cannot purge completion receipt: {error}") from error
+    parent = receipt_path.parent
+    try:
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError as error:
+        raise ProcessError(f"cannot remove empty receipt directory: {error}") from error
+    return {"changeId": change_id, "status": "purged"}
 
 
 def lifecycle_status(
@@ -2543,6 +3038,9 @@ def lifecycle_status(
     change_id: str,
 ) -> dict[str, Any]:
     state = deepcopy(_load_state(project_root, process_root, change_id))
+    if state["phase"] == "completed":
+        receipt = _load_receipt(project_root, process_root, change_id)
+        state["cleanup"] = deepcopy(receipt.get("cleanup"))
     state["nextCommand"] = NEXT_COMMAND[state["phase"]]
     return state
 

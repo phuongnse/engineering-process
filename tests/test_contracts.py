@@ -49,6 +49,7 @@ class ContractTests(unittest.TestCase):
             "artifact-selection",
             "artifact-standard",
             "automation-name-data",
+            "handoff",
             "issue-data",
             "change",
             "plan",
