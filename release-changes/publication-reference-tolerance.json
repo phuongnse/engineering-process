@@ -6,17 +6,16 @@
   "source": "https://github.com/phuongnse/engineering-process/pull/239",
   "details": {
     "problem": "The publication validator required a final period on an otherwise complete Refs or Closes issue reference, blocking a self-consumer pull request even when its issue identity and required evidence were present.",
-    "changes": "Accept valid Refs and Closes references with or without a terminal period while retaining the complete issue-target grammar, checklist placement, uniqueness, and draft/ready restrictions; align the README and pull request template guidance.",
+    "changes": "Accept valid Refs and Closes references with or without a terminal period while retaining the complete issue-target grammar, checklist placement, uniqueness, and draft/ready restrictions; align the README, canonical standard, and generated next-distribution template guidance while leaving the currently adopted managed template unchanged until its adoption PR.",
     "affectedPaths": [
       "engineering_process/pr_description.py",
       "tests/test_publication.py",
       "README.md",
-      ".github/PULL_REQUEST_TEMPLATE.md",
       "process_assets/standards/pull-request.v1.json",
       "templates/PULL_REQUEST_TEMPLATE.md"
     ],
-    "apply": "Adopt the published package or source change and rerun the consumer's normal publication checks; no migration is required, and existing references with a final period remain valid.",
+    "apply": "Adopt the published package or source change and rerun the consumer's normal publication checks; apply the managed template update through the normal later adoption PR, with no migration required and existing references with a final period remaining valid.",
     "compatibility": "Non-breaking current-v1 compatibility expansion: both existing references with a final period and valid references without one are accepted; incomplete, malformed, duplicated, misplaced, or draft-closing references remain rejected.",
-    "notes": "Only the terminal period is optional. The complete keyword/reference syntax and the requirement that the reference follow the checklist remain unchanged."
+    "notes": "Only the terminal period is optional. The complete keyword/reference syntax and the requirement that the reference follow the checklist remain unchanged. Managed consumer guidance follows the adopted package's release timing."
   }
 }
