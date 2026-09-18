@@ -64,6 +64,26 @@ but cannot establish native conversation freshness or inspect removed history,
 other clones or other repositories. Keep native creation, non-inherited dispatch
 and effective settings evidence in the existing handoff.
 
+### Read a change at a glance
+
+Use `processctl change status --change-id ID --json` before opening lifecycle files.
+The result combines the current candidate checkpoint, contract/plan digests, readiness,
+review state, and the schema-validated verification selection. Use
+`evidence.requirements` for the current decision: `satisfied` is reusable evidence,
+`remaining` requires execution, `unknown` lacks a trustworthy input identity,
+`blocked` needs a consumer or owner action, and `inapplicable` is an unselected
+optional profile. `recordedVerification` is historical report status only; a recorded
+`passed` report is not a current pass until the selection says `satisfied`. The
+`verification` field remains the historical report-status projection for compatibility;
+`currentVerification` and `evidence` expose the current selection. Review state shows
+active blocking findings. `diagnostics` exposes only the validated failed check,
+failure class, bounded execution facts, and fixed selective reproduction command.
+The `nextAction` field gives an executable route with required handoff inputs, using
+explicit placeholders when the caller must choose an actor, context, plan, or report.
+For the complete route and vocabulary, read
+[deliver-change](process_assets/skills/deliver-change/SKILL.md) first; it is the
+single guidance source for interpreting lifecycle state.
+
 Verification keeps two caller intents explicit. `change verify --profile PROFILE`
 always refreshes the named profile. `change explain` is read-only; it shows the
 accepted required profiles, valid prior evidence, remaining work, inapplicable
@@ -707,10 +727,11 @@ structure. Completion checkboxes belong only to the Review and completion sectio
 pull requests must have every checkbox checked and no unresolved default placeholder
 values; drafts may retain pending fields and unchecked work. The author/coordinator
 replaces them with actual evidence before ready/merge; the reviewer supplies the verdict.
-One trailing `Refs ISSUE.` line remains optional. A ready, contract-identified final
-consumer adoption may instead use `Closes ISSUE, closes OWNER/REPOSITORY#NUMBER.` with
-the complete keyword/reference syntax repeated for every issue; drafts cannot close
-issues. Producer and intermediate pull requests do not close release-source issues.
+One trailing `Refs ISSUE` line remains optional, and its final period is optional. A
+ready, contract-identified final consumer adoption may instead use `Closes ISSUE, closes
+OWNER/REPOSITORY#NUMBER`, also with an optional final period, with the complete
+keyword/reference syntax repeated for every issue; drafts cannot close issues. Producer
+and intermediate pull requests do not close release-source issues.
 The managed template never solicits execution identity,
 and authors plus independent review keep it out of free-form values. The validator is
 a positive grammar for public fields; it deliberately does not guess identities from

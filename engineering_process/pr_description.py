@@ -19,7 +19,7 @@ FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 NON_MARKDOWN_LINE_SEPARATOR = re.compile("[\v\f\x85\u2028\u2029]")
 ISSUE_TARGET = r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[1-9][0-9]*"
 ISSUE_REFERENCE = re.compile(
-    rf"^(?:Refs {ISSUE_TARGET}|Closes {ISSUE_TARGET}(?:, closes {ISSUE_TARGET})*)\.$"
+    rf"^(?:Refs {ISSUE_TARGET}|Closes {ISSUE_TARGET}(?:, closes {ISSUE_TARGET})*)\.?$"
 )
 CANONICAL_PR_FIELDS = frozenset({
     "source",

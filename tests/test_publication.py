@@ -276,8 +276,10 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual([], self.validate_body(technical))
 
     def test_optional_issue_reference_follows_the_checklist(self) -> None:
-        referenced = f"{CANONICAL_BODY}\nRefs #123.\n"
-        self.assertEqual([], self.validate_body(referenced))
+        for reference in ("Refs #123", "Refs #123."):
+            with self.subTest(reference=reference):
+                referenced = f"{CANONICAL_BODY}\n{reference}\n"
+                self.assertEqual([], self.validate_body(referenced))
 
         misplaced = CANONICAL_BODY.replace(
             "## Result", "Refs #123.\n\n## Result", 1
@@ -299,9 +301,18 @@ class PublicationTests(unittest.TestCase):
             "Closes example/process#123, closes #456, closes other/repository#789.\n"
         )
         self.assertEqual([], self.validate_body(closing))
+        closing_without_period = (
+            f"{CANONICAL_BODY}\n"
+            "Closes example/process#123, closes #456, closes other/repository#789\n"
+        )
+        self.assertEqual([], self.validate_body(closing_without_period))
         self.assertIn(
             "draft pull request cannot close issues",
             self.validate_body(closing, state="draft"),
+        )
+        self.assertIn(
+            "draft pull request cannot close issues",
+            self.validate_body(closing_without_period, state="draft"),
         )
 
         unchecked = closing.replace(
@@ -314,9 +325,13 @@ class PublicationTests(unittest.TestCase):
 
         for malformed in (
             "Closes example/process#123, #456.",
+            "Closes example/process#123, #456",
             "Closes example/process#123, Closes #456.",
+            "Closes example/process#123, Closes #456",
             "Fixes example/process#123.",
+            "Fixes example/process#123",
             "Closes example/process#0.",
+            "Closes example/process#0",
         ):
             with self.subTest(malformed=malformed):
                 issues = self.validate_body(f"{CANONICAL_BODY}\n{malformed}\n")

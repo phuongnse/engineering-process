@@ -8,10 +8,28 @@ description: Run the project-owned verification profiles on one unchanged reposi
 ## Route card
 
 **State:** `implementing` (or a recorded execution blocker). **Do:** inspect `change
-explain`, then execute only the accepted required profiles that are not validly
-reusable; use the exact consumer commands and fail closed on scope, mutation, timeout,
-or unknown identity. **Evidence:** passed reports bound to one checkpoint and input
-identity. **Next:** independent review; profiles are not rerun by review or finish.
+status` and `change explain`, then execute only the accepted required profiles that
+are not validly reusable; use the exact consumer commands and fail closed on scope,
+mutation, timeout, or unknown identity. **Evidence:** passed reports bound to one
+checkpoint and input identity. **Next:** independent review; profiles are not rerun
+by review or finish.
+
+Begin with:
+
+    processctl change status --change-id ID --json
+
+The status projection is the reader-facing summary. `evidence.requirements` is the
+current decision for each profile; `recordedVerification` only describes what was
+stored previously. A stored `passed` value is not reusable evidence until the current
+selection marks that profile `satisfied`. The projection also shows the candidate
+checkpoint, contract/plan digests, review state including active blocking findings,
+readiness summary, safe diagnostic reference, and one next action. The legacy
+`verification` field retains stored report statuses; `currentVerification` and
+`evidence` carry the current selection states. `diagnostics` adds only the validated
+failed check identity, failure class, bounded execution facts, and fixed selective
+reproduction command. It is read-only and does not refresh, reuse, or advance
+lifecycle state. Commands in `nextAction` include all required handoff flags; any
+caller-selected actor, context, plan, or report path is shown as an explicit input.
 
 Read the registered acceptance criteria and .process/project.json. When publication
 is required, commit the complete candidate on a valid publication branch before final

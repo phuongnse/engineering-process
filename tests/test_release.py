@@ -279,7 +279,10 @@ class ReleaseTests(unittest.TestCase):
         notes = notes_renderer.render_release_notes(release)
         for source in sources:
             self.assertIn(source, notes)
-        self.assertIn("Breaking changes are listed above", notes)
+        if any(fragment["type"] == "breaking" for fragment in fragments):
+            self.assertIn("Breaking changes are listed above", notes)
+        else:
+            self.assertIn("No breaking changes are included", notes)
         self.assertNotIn("#197-#205", notes)
 
     def test_semver_is_derived_from_change_classification(self) -> None:
