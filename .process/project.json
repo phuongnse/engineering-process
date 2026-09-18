@@ -7,10 +7,6 @@
     "publication": {
       "required": true
     },
-    "retention": {
-      "maxCompletedReceipts": 256,
-      "maxCompletedReceiptBytes": 67108864
-    },
     "requiredProfiles": [
       "development",
       "review"
