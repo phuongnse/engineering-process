@@ -23,6 +23,7 @@ MANAGED_ENVIRONMENT_NAMES = frozenset({
     "TMP",
     "TMPDIR",
     "HOME",
+    "LOCALAPPDATA",
     "USERPROFILE",
     "HOMEDRIVE",
     "HOMEPATH",

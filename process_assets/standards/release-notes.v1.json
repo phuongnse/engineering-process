@@ -30,6 +30,14 @@
         "heading": "Upgrade and compatibility"
       }
     ],
+    "detailLabels": {
+      "problem": "Why it matters",
+      "changes": "Result",
+      "affectedPaths": "Surfaces",
+      "apply": "Adopt",
+      "compatibility": "Impact",
+      "notes": "Caveats"
+    },
     "detailFields": {
       "breaking": ["problem", "changes", "apply", "compatibility"],
       "capability": ["changes", "apply", "compatibility"],

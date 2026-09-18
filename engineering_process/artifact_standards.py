@@ -103,6 +103,21 @@ def _validate_relations(document: dict[str, Any]) -> None:
                 raise ProcessError(
                     f"release detailFields for {change_type} contains an unsupported field"
                 )
+        if "detailLabels" in rules:
+            labels = rules["detailLabels"]
+            missing_labels = sorted(
+                {
+                    field
+                    for fields in detail_fields.values()
+                    for field in fields
+                    if field not in labels
+                }
+            )
+            if missing_labels:
+                raise ProcessError(
+                    "release detailLabels must define every selected field: "
+                    + ", ".join(missing_labels)
+                )
     elif document["adapter"] == "issue":
         for state, definition in rules["states"].items():
             sections = definition["sections"]

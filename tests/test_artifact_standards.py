@@ -201,6 +201,8 @@ class ArtifactStandardsTests(unittest.TestCase):
         document["rules"]["groups"].reverse()
         document["rules"]["groups"][0]["heading"] = "Corrections"
         document["rules"]["sections"].append({"id": "security", "heading": "Security impact"})
+        document["rules"]["detailLabels"]["changes"] = "Delivered"
+        document["rules"]["detailLabels"]["compatibility"] = "Impact"
         self.select(document)
         details = {
             "problem": "A current release needs actionable detail.",
@@ -210,12 +212,14 @@ class ArtifactStandardsTests(unittest.TestCase):
             "compatibility": "No breaking change.",
             "notes": "The consumer owns the release action.",
         }
-        data = {"schemaVersion": 1, "title": "Example v1.1.0", "introduction": "Changes since v1.0.0.", "changes": [{"type": "fix", "summary": "Keep literal *text* and 1. markers.", "source": "issue #10", "details": deepcopy(details)}, {"type": "capability", "summary": "Add the requested behavior.", "source": "https://example.com/issues/12", "details": deepcopy(details)}], "sections": {"upgrade": "No additional consumer action.", "security": "No security behavior changed."}}
+        data = {"schemaVersion": 1, "title": "Example v1.1.0", "introduction": "Changes since v1.0.0.", "changes": [{"type": "fix", "summary": "Keep literal *text* and 1. markers.", "source": "https://example.com/issues/10", "details": deepcopy(details)}, {"type": "capability", "summary": "Add the requested behavior.", "source": "https://example.com/issues/12", "details": deepcopy(details)}], "sections": {"upgrade": "No additional consumer action.", "security": "No security behavior changed."}}
         data_path = self.write("release-data.json", data)
         path = self.root / "notes.md"
         code, rendered = self.cli("render", "--artifact", "release-notes", "--data-file", str(data_path), "--output", str(path))
         self.assertEqual(0, code, rendered)
         self.assertIn(b"## Corrections", path.read_bytes())
+        self.assertIn(b"**Delivered:**", path.read_bytes())
+        self.assertIn(b"**Impact:**", path.read_bytes())
         self.assertNotIn(b"\r", path.read_bytes())
         code, verified = self.cli("validate", "--artifact", "release-notes", "--data-file", str(data_path), "--body-file", str(path))
         self.assertEqual(0, code, verified)
@@ -403,7 +407,7 @@ class ArtifactStandardsTests(unittest.TestCase):
 
     def test_release_ready_requires_resolved_values_and_known_change_types(self) -> None:
         standard = resolve_standard(None, ROOT, "release-notes")
-        data = {"schemaVersion": 1, "title": "Example", "introduction": "Changes in this release.", "changes": [{"type": "fix", "summary": "Correct the behavior.", "source": "issue-1", "details": {"problem": "The current behavior is incomplete.", "changes": "Correct the behavior.", "affectedPaths": ["src/owner.py"], "apply": "pending", "compatibility": "No breaking change.", "notes": "Current contract fixture."}}], "sections": {"upgrade": "pending"}}
+        data = {"schemaVersion": 1, "title": "Example", "introduction": "Changes in this release.", "changes": [{"type": "fix", "summary": "Correct the behavior.", "source": "https://example.com/issues/1", "details": {"problem": "The current behavior is incomplete.", "changes": "Correct the behavior.", "affectedPaths": ["src/owner.py"], "apply": "pending", "compatibility": "No breaking change.", "notes": "Current contract fixture."}}], "sections": {"upgrade": "pending"}}
         self.assertIn("pending", render_notes(standard, data, state="draft"))
         with self.assertRaisesRegex(ProcessError, "unresolved"):
             render_notes(standard, data)

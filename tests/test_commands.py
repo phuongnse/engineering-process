@@ -146,6 +146,22 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("", environment["PATH"].split(os.pathsep))
         self.assertNotIn("EMPTY_BINDING", environment)
 
+    def test_child_environment_preserves_windows_user_application_data_context(self) -> None:
+        environment = child_environment(
+            executable=Path("/runtime/python"),
+            source={
+                "PATH": "/caller/bin",
+                "LOCALAPPDATA": r"C:\Users\runner\AppData\Local",
+                "UNMANAGED_INPUT": "must-not-cross",
+            },
+        )
+
+        self.assertEqual(
+            r"C:\Users\runner\AppData\Local",
+            environment["LOCALAPPDATA"],
+        )
+        self.assertNotIn("UNMANAGED_INPUT", environment)
+
     def test_runtime_identity_preserves_duplicate_dependencies(self) -> None:
         class Distribution:
             name = "duplicate-fixture"

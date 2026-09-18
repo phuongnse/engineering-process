@@ -26,17 +26,18 @@ not replace those records with an issue range:
       }
     }
 
-`source` identifies exactly one issue, pull request, or owned change. Do not put an
-issue range, several issue URLs, or a pull-request summary that hides independently
-adoptable behavior in one fragment. The six structured detail fields remain required
-in the manifest so reviewers can inspect the full record, while the selected release
-standard projects only the detail useful for that change type. `compatibility` must
-explicitly state whether the item is breaking; use `type: "breaking"` when it is.
+`source` identifies exactly one issue or pull request as a durable HTTPS URL. Do not
+put an issue range, several issue URLs, plain-text issue descriptions, or a
+pull-request summary that hides independently adoptable behavior in one fragment.
+The six structured detail fields remain required in the manifest so reviewers can
+inspect the full record, while the selected release standard projects only the detail
+useful for that change type. `compatibility` must explicitly state whether the item
+is breaking; use `type: "breaking"` when it is.
 
 The renderer treats the summary and detail values as literal single-line metadata:
 ordinary punctuation remains readable, while Markdown and HTML-sensitive syntax is
-escaped. Source URLs become links and owned references become inline code. Do not
-pre-escape values in JSON or hand-edit the generated release body.
+escaped. Source URLs become links and are rejected when they are not durable HTTPS
+references. Do not pre-escape values in JSON or hand-edit the generated release body.
 
 Allowed types are fix, capability, and breaking. The current definition requires
 `schemaVersion: 1` and complete detail fields; non-current fragments are rejected

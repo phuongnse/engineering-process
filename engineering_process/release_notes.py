@@ -74,14 +74,7 @@ def render_notes(
     if state == "ready" and any(standard.unresolved(value) for value in values):
         raise ProcessError("ready release notes contain an unresolved value")
 
-    detail_labels = {
-        "problem": "Problem",
-        "changes": "What changed",
-        "affectedPaths": "Where",
-        "apply": "Apply",
-        "compatibility": "Compatibility",
-        "notes": "Notes",
-    }
+    detail_labels = standard.rules.get("detailLabels", {})
     lines = [f"# {data['title']}", "", data["introduction"], ""]
     for group in standard.rules["groups"]:
         changes = [change for change in data["changes"] if change["type"] == group["type"]]
@@ -95,7 +88,7 @@ def render_notes(
             details = change["details"]
             lines.append(f"- **{_text(change['summary'])}** ({reference})")
             for field in standard.rules["detailFields"][change["type"]]:
-                label = detail_labels[field]
+                label = detail_labels.get(field, field)
                 if field == "affectedPaths":
                     value = ", ".join(
                         _reference(path, None) for path in details["affectedPaths"]
