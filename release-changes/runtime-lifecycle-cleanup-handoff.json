@@ -3,7 +3,7 @@
   "id": "runtime-lifecycle-cleanup-handoff",
   "type": "capability",
   "summary": "Make change runtimes resumable, handoffable, and cleanup-safe.",
-  "source": "https://github.com/phuongnse/engineering-process/issues/214",
+  "source": "runtime-lifecycle-cleanup-handoff (issue #214)",
   "details": {
     "problem": "A change runtime could remain tied to one workspace and leave active artifacts after finish, making handoff, retry, isolation, and retention difficult.",
     "changes": "Adds resumable handoff export/import, validated bounded receipts, retry-safe owner-scoped cleanup, post-cleanup status and PR readers, storage measurement and guarded purge, and lifecycle acceptance coverage.",
