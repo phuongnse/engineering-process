@@ -1,5 +1,10 @@
 # Releasing
 
+Use this page when preparing or publishing a package release. The release record
+is the contents authority; the reader map is [README.md](README.md), and
+[docs/documentation.md](docs/documentation.md) explains how generated release
+text and adoption guidance remain aligned.
+
 A release has one authorization boundary: merge of a normal version-changing Release
 PR after CI and independent review.
 

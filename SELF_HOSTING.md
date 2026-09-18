@@ -1,5 +1,10 @@
 # Self-hosting
 
+Use this page when a consumer is adopting or upgrading the package. For the
+smallest setup, read [docs/consumer-setup.md](docs/consumer-setup.md) first; for
+the reader/documentation rules that adoption must preserve, see
+[docs/documentation.md](docs/documentation.md).
+
 This repository is both producer and consumer, using the same files as any other
 consumer:
 

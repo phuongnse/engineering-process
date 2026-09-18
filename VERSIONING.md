@@ -1,5 +1,10 @@
 # Versioning
 
+This is the maintainer reference for current contract boundaries and consumer
+recovery. New consumers should start at [README.md](README.md); adoption steps
+are in [SELF_HOSTING.md](SELF_HOSTING.md), and documentation source/output
+ownership is in [docs/documentation.md](docs/documentation.md).
+
 The package keeps its public release identity under SemVer. A release may contain a
 breaking process change and its release record must describe the consumer action. The
 package version, Git tag, process lock pin, distribution digest, and release snapshot

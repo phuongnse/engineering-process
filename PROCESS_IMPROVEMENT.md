@@ -1,5 +1,11 @@
 # Improving the process
 
+This page is for maintainers deciding whether a consumer problem belongs in the
+shared process. Start with [README.md](README.md), and use
+[docs/documentation.md](docs/documentation.md) when the proposed correction is
+about reader-facing guidance. Product-specific documentation stays with the
+consumer.
+
 The process may change only for a concrete consumer need.
 
 A process change contract must name the consumer repository and a real incident,

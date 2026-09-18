@@ -143,6 +143,17 @@ heading, or style preference is insufficient. Consumer checks can prove properti
 such as valid links, runnable examples, parseable structure, or rendering; presence,
 length, formatting, and resolving links do not establish semantic usefulness or truth.
 
+Exercise at least one representative reader path for each material documentation
+claim: a new consumer starting, a person performing the change, or a user,
+operator, developer, or maintainer using the changed knowledge. Do so without
+adding context from the implementation conversation. Confirm that the source is
+current or clearly marked as generated, adopted, or historical, and that the
+reader can act. If no documentation change is warranted, check that the plan's
+no-impact reasoning still matches the completed behavior. Do not block on a
+preferred folder, heading, number of pages, or a documentation checkbox; a
+finding must identify wrong, missing, hard-to-find, or hard-to-use information
+and its concrete consequence.
+
 Assess whether material test expectations follow the accepted contract, important
 claimed risks are actually exercised, and the execution boundary could detect the
 claimed failure. Reject assertions overfitted to implementation details when they do

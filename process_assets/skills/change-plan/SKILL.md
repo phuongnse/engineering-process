@@ -50,6 +50,15 @@ updates or additions in consumer-owned sources. Any proposed cleanup names the
 obstacle, smallest useful repair, and expected benefit; unrelated gaps remain
 non-blocking proposals.
 
+Make the documentation decision reviewable in the existing work items. Name the
+affected reader, the durable fact or action that changes, the authoritative source,
+and any generated or published output that must follow it. If no documentation
+changes are needed, state the reader consequence that makes that decision safe.
+Do not turn this into a required checklist or infer impact from filenames,
+keywords, page count, or an agent's assertion. When guidance is generated,
+plan the source correction and output verification together; when guidance is
+consumer-owned, preserve its existing structure and format.
+
 For a contract that supersedes a plan-scope-blocked run, inspect the linked prior run
 and the complete diff from its recorded comparison base. Add only the implementation
 boundaries needed for the already accepted outcome; the new literal boundaries must

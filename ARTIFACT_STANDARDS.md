@@ -1,5 +1,11 @@
 # Consumer artifact standards
 
+Use this reference when a consumer needs the supported shape or generator for a
+pull request, issue, release-notes, or automation-name document. Start at
+[README.md](README.md) for the reader route and
+[docs/documentation.md](docs/documentation.md) for the documentation decision;
+this page is the format authority, not a lifecycle checklist.
+
 The process supplies one current version-1 default per artifact. Consumers select the document requirements;
 generation and verification resolve the same definition. Document checks do not grant
 lifecycle approval, merge permission or release authority.
