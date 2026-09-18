@@ -16,6 +16,7 @@ merge policy, deployment, and release decisions.
 | New consumer | [Consumer setup](docs/consumer-setup.md) | [Self-hosting and adoption](SELF_HOSTING.md) |
 | Working on a change | [Delivery guide](docs/delivery.md) | [deliver-change](process_assets/skills/deliver-change/SKILL.md) |
 | Deciding what documentation to change | [Documentation quality](docs/documentation.md) | The phase skill for the current lifecycle state |
+| Reviewing historical measurements | [Performance observations](docs/performance.md) | Treat them as bounded history, not a target |
 | Changing Engineering Process itself | [Process improvement](PROCESS_IMPROVEMENT.md) | [Versioning](VERSIONING.md) and [Releasing](RELEASING.md) |
 | Using generated issue, PR, or release documents | [Artifact standards](ARTIFACT_STANDARDS.md) | The consumer's selected standard and existing profile |
 
@@ -72,6 +73,7 @@ processctl are the state authority; prose cannot advance or replace them.
 | Generated template or preset | Its packaged source standard and generator |
 | Current versus adopted release behavior | [Versioning](VERSIONING.md) and [Self-hosting](SELF_HOSTING.md) |
 | Historical shipped behavior | [Release notes](RELEASE_NOTES.md) and the release manifest |
+| Historical performance measurements | [Performance observations](docs/performance.md) |
 
 Do not maintain a second definition just to make a page look complete. Summaries
 should link to the authority they explain.

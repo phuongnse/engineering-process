@@ -51,6 +51,7 @@ class DocumentationTests(unittest.TestCase):
             "docs/consumer-setup.md",
             "docs/delivery.md",
             "docs/documentation.md",
+            "docs/performance.md",
             "PROCESS_IMPROVEMENT.md",
             "SELF_HOSTING.md",
             "ARTIFACT_STANDARDS.md",
