@@ -24,8 +24,19 @@ Run:
 
     processctl change finish --change-id ID --actor ACTOR --context CONTEXT
 
-The existing `change finish` CLI operation writes one bounded completion receipt and
-marks the run completed.
+The existing `change finish` CLI operation writes one bounded completion receipt,
+records the durable lifecycle result, marks completion, and removes only the
+change-owned `.process/runs/ID` runtime. Readers use the receipt after that cleanup;
+they do not require the deleted run files.
+
+Cleanup is deliberately retryable. If deletion or the final receipt write is
+interrupted, inspect `change status`: a `pending` or `failed` cleanup routes back to
+the same `change finish` command. Do not recreate implementation or review evidence
+to repair cleanup. `change storage` reports receipt count/bytes against the
+consumer-owned retention bounds; purge only an explicitly selected clean receipt:
+
+    processctl change storage --json
+    processctl change purge --change-id ID --confirm
 
 For an opted-in project, `change finish` first runs the existing read-only publication
 validators against the current branch, HEAD commit subject, and the recorded

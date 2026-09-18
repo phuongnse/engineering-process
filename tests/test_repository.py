@@ -11,7 +11,8 @@ from unittest.mock import patch
 from engineering_process.contracts import ProcessError
 from engineering_process import repository
 from engineering_process.repository import (
-    changed_paths, repository_snapshot, require_committed_candidate, resolve_commit,
+    changed_paths, remove_owned_runtime, repository_snapshot,
+    require_committed_candidate, resolve_commit, runtime_storage_usage,
     same_checkpoint,
 )
 
@@ -89,6 +90,48 @@ class RepositorySnapshotTests(unittest.TestCase):
             receipt.parent.mkdir(parents=True)
             receipt.write_text("{}\n", encoding="utf-8")
             self.assertTrue(same_checkpoint(initial, repository_snapshot(root)))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX link semantics")
+    def test_owned_runtime_cleanup_is_scoped_and_does_not_follow_links(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            outside = root / "outside.txt"
+            outside.write_text("preserve\n", encoding="utf-8")
+            first = root / ".process" / "runs" / "first"
+            second = root / ".process" / "runs" / "second"
+            first.mkdir(parents=True)
+            second.mkdir(parents=True)
+            (first / "run.json").write_text("first\n", encoding="utf-8")
+            (second / "run.json").write_text("second\n", encoding="utf-8")
+            (first / "outside-link").symlink_to(outside)
+
+            result = remove_owned_runtime(root, "first")
+
+            self.assertEqual(2, result["removedArtifacts"])
+            self.assertFalse(first.exists())
+            self.assertTrue((second / "run.json").is_file())
+            self.assertEqual("preserve\n", outside.read_text(encoding="utf-8"))
+            usage = runtime_storage_usage(root)
+            self.assertEqual(1, usage["runs"]["fileCount"])
+            self.assertEqual(2, usage["runs"]["directoryCount"])
+
+    def test_owned_runtime_cleanup_removes_empty_root_after_target_is_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            runs = root / ".process" / "runs"
+            target = runs / "first"
+            target.mkdir(parents=True)
+            target.rmdir()
+
+            result = remove_owned_runtime(root, "first")
+
+            self.assertEqual(
+                {"removedArtifacts": 0, "remainingArtifacts": 0}, result
+            )
+            self.assertFalse(runs.exists())
+            self.assertEqual(0, runtime_storage_usage(root)["runs"]["directoryCount"])
 
     def test_committed_candidate_ignores_only_lifecycle_state_and_ignored_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

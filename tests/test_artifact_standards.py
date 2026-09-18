@@ -636,30 +636,28 @@ class ArtifactStandardsTests(unittest.TestCase):
         self.assertEqual("pending", tampered_data["fields"]["completion-receipt"])
         receipt_path.write_bytes(original_receipt)
 
-        run_path = self.root / ".process" / "runs" / "sample-change" / "run.json"
-        original_run = run_path.read_bytes()
-        diagnostic_state = json.loads(original_run)
-        diagnostic_state["verification"]["development"]["scope"] = {
+        diagnostic_receipt = json.loads(original_receipt)
+        diagnostic_receipt["result"]["verification"]["development"]["scope"] = {
             "kind": "check",
             "check": "unit",
             "position": 1,
         }
-        run_path.write_bytes(formatted_json_bytes(diagnostic_state))
+        receipt_path.write_bytes(formatted_json_bytes(diagnostic_receipt))
         diagnostic_data = build_pr_description_data(self.root, ROOT, "sample-change")
         self.assertFalse(diagnostic_data["checks"]["required-profiles"])
 
-        no_scope_state = json.loads(original_run)
-        no_scope_state["verification"]["development"].pop("scope")
-        run_path.write_bytes(formatted_json_bytes(no_scope_state))
+        no_scope_receipt = json.loads(original_receipt)
+        no_scope_receipt["result"]["verification"]["development"].pop("scope")
+        receipt_path.write_bytes(formatted_json_bytes(no_scope_receipt))
         no_scope_data = build_pr_description_data(self.root, ROOT, "sample-change")
         self.assertFalse(no_scope_data["checks"]["required-profiles"])
 
-        nested_non_current = json.loads(original_run)
-        nested_non_current["contract"]["document"]["schemaVersion"] = 2
-        run_path.write_bytes(formatted_json_bytes(nested_non_current))
+        nested_non_current = json.loads(original_receipt)
+        nested_non_current["result"]["contract"]["document"]["schemaVersion"] = 2
+        receipt_path.write_bytes(formatted_json_bytes(nested_non_current))
         with self.assertRaisesRegex(ProcessError, "1 was expected"):
             build_pr_description_data(self.root, ROOT, "sample-change")
-        run_path.write_bytes(original_run)
+        receipt_path.write_bytes(original_receipt)
 
         unknown_runtime = {
             "executable": "python",
@@ -675,7 +673,6 @@ class ArtifactStandardsTests(unittest.TestCase):
             unknown_data = build_pr_description_data(self.root, ROOT, "sample-change")
         self.assertEqual("pending", unknown_data["fields"]["profiles"])
         self.assertFalse(unknown_data["checks"]["required-profiles"])
-        run_path.write_bytes(original_run)
 
         # AC4: No reviewer actor/context ID, local run path, or secret enters public fields
         for field_id, value in data["fields"].items():

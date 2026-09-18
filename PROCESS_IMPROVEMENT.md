@@ -35,6 +35,14 @@ Readiness creates a feedback loop, not autonomous mutation:
 The process does not scrape consumer data, choose product priorities, edit itself in
 the background, merge its own change, publish itself, or auto-promote readiness.
 
+Runtime lifecycle improvements remain local and bounded: an active run may be
+exported as an explicit, authority-bound handoff package and imported only into a
+matching candidate checkout. Finish persists the minimum durable result before
+removing the change-owned runtime; cleanup is retryable and never deletes another
+change's state. Completion receipts are retained under consumer-configured count and
+byte bounds, measured by `change storage`, and removed only through an explicit purge
+of a receipt whose cleanup is already clean.
+
 ## Consumer issue intake
 
 An ordinary GitHub issue is the transport from a consumer-only checkout. The consumer

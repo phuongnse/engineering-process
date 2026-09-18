@@ -71,6 +71,16 @@ When evidence exposes a contract gap, stop and ask the project owner to supersed
 contract. Do not make review prose into new scope. When implementation is ready,
 route to **change-verify**.
 
+If the active run must move to another sequential workspace, commit the candidate and
+export the explicit handoff package. The package carries the schema-validated run and
+checkpoint binding; it does not carry uncommitted source or waive a fresh review:
+
+    processctl change handoff export --change-id ID --output HANDOFF_PATH
+
+The receiving workspace imports that package and resumes the phase reported by
+`change status`. Keep actor/context ownership and the current implementation cycle;
+do not create a second run with a copied or renamed change id.
+
 When the lifecycle has a `plan-scope` blocker, the current run is terminal for this
 contract: stop editing and stop retrying. Report the uncovered paths, whether the
 accepted outcome is unchanged, and the exact owner action. An owner-approved

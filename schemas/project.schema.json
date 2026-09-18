@@ -41,6 +41,15 @@
           "properties": {
             "required": {"type": "boolean"}
           }
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxCompletedReceipts", "maxCompletedReceiptBytes"],
+          "properties": {
+            "maxCompletedReceipts": {"type": "integer", "minimum": 1, "maximum": 100000},
+            "maxCompletedReceiptBytes": {"type": "integer", "minimum": 1024, "maximum": 10000000000}
+          }
         }
       }
     },

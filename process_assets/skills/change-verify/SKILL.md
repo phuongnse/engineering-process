@@ -66,6 +66,12 @@ runs again. Optional configured profiles not selected by the accepted contract a
 reported as inapplicable; a required profile missing from the current policy is
 blocked. This path never deduplicates check positions or equal check IDs.
 
+Verification may be resumed in another workspace through the explicit handoff
+package. Export only after the candidate is committed, import only into the matching
+checkout, and then rerun `change status`/`change explain`; the package does not make
+old evidence fresh when candidate, policy, process authority, runtime, or dependency
+inputs differ.
+
 A failed full-profile report is not evidence for any required profile. The same run
 retains its failed check, one-based position, exit result, timeout/output/stream and
 cleanup indicators, bounded stream counts/hashes, safe reproduction arguments, report
