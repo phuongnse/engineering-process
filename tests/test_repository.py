@@ -116,6 +116,23 @@ class RepositorySnapshotTests(unittest.TestCase):
             self.assertEqual(1, usage["runs"]["fileCount"])
             self.assertEqual(2, usage["runs"]["directoryCount"])
 
+    def test_owned_runtime_cleanup_removes_empty_root_after_target_is_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            runs = root / ".process" / "runs"
+            target = runs / "first"
+            target.mkdir(parents=True)
+            target.rmdir()
+
+            result = remove_owned_runtime(root, "first")
+
+            self.assertEqual(
+                {"removedArtifacts": 0, "remainingArtifacts": 0}, result
+            )
+            self.assertFalse(runs.exists())
+            self.assertEqual(0, runtime_storage_usage(root)["runs"]["directoryCount"])
+
     def test_committed_candidate_ignores_only_lifecycle_state_and_ignored_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

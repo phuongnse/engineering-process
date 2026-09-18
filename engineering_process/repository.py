@@ -363,6 +363,11 @@ def remove_owned_runtime(project_root: Path, change_id: str) -> dict[str, int]:
         if stat.S_ISLNK(container_info.st_mode) or not stat.S_ISDIR(container_info.st_mode):
             raise ProcessError("owned runtime parent is not a real directory; cleanup refused")
     if not os.path.lexists(target):
+        try:
+            if not any(runs_root.iterdir()):
+                runs_root.rmdir()
+        except OSError as error:
+            raise ProcessError(f"cleanup could not remove empty runtime root {runs_root}: {error}") from error
         return {"removedArtifacts": 0, "remainingArtifacts": 0}
     try:
         target_info = target.lstat()
