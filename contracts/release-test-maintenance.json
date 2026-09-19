@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "release-test-maintenance",
+  "summary": "Remove duplicated release and publication fixture contracts from producer tests.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/246",
+  "comparisonBase": "2ff9016b2a67540b96ec102a15a53229c18c96be",
+  "risk": "low",
+  "affectedProjects": ["engineering-process"],
+  "consumerEvidence": [
+    {
+      "repository": "phuongnse/engineering-process",
+      "incident": "Release-note regressions exposed that tests duplicated standard-owned headings and labels; the current v3.2.2 release already resolves output labels through the selected standard, but the tests still contain avoidable prose and heading maintenance points."
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "release-standard-derived-tests",
+      "outcome": "Release-note tests derive group and section headings and visible detail labels from the selected release-notes standard instead of repeating its current prose."
+    },
+    {
+      "id": "publication-standard-derived-fixture",
+      "outcome": "Publication tests build their canonical ready body from the selected pull-request standard so section and field renames do not require a second hand-maintained fixture."
+    },
+    {
+      "id": "behavior-preserved",
+      "outcome": "The release-note renderer, source URL schema, generated output, and publication validator behavior remain unchanged; the existing tests continue to cover those contracts."
+    },
+    {
+      "id": "profile-verification",
+      "outcome": "The existing development and review profiles pass on one unchanged candidate snapshot."
+    }
+  ],
+  "requiredProfiles": ["development", "review"]
+}

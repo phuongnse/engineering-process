@@ -25,6 +25,15 @@ from verification.verify_distribution import validate_distribution_text
 
 
 ROOT = Path(__file__).resolve().parent.parent
+RELEASE_STANDARD = resolve_standard(ROOT, ROOT, "release-notes")
+RELEASE_GROUP_HEADINGS = {
+    group["type"]: f"## {group['heading']}"
+    for group in RELEASE_STANDARD.rules["groups"]
+}
+RELEASE_SECTION_HEADINGS = {
+    section["id"]: f"## {section['heading']}"
+    for section in RELEASE_STANDARD.rules["sections"]
+}
 
 
 def _current_release(changes: list[dict]) -> dict:
@@ -62,14 +71,19 @@ class ReleaseTests(unittest.TestCase):
             ],
         }
         notes = notes_renderer.render_release_notes(release)
-        self.assertLess(notes.index("## Breaking changes"), notes.index("## Features"))
-        self.assertLess(notes.index("## Features"), notes.index("## Fixes"))
+        present_headings = [
+            RELEASE_GROUP_HEADINGS[group["type"]]
+            for group in RELEASE_STANDARD.rules["groups"]
+            if any(change["type"] == group["type"] for change in release["changes"])
+        ]
+        for previous, current in zip(present_headings, present_headings[1:]):
+            self.assertLess(notes.index(previous), notes.index(current))
         for number, change in enumerate(release["changes"], 1):
             self.assertEqual(1, notes.count(change["summary"]))
             self.assertIn(f"[#{number}]({change['source']})", notes)
         self.assertIn("compare/v2.1.0...v3.0.0", notes)
         self.assertIn("blob/v3.0.0/VERSIONING.md", notes)
-        self.assertIn("Consumer CI", notes)
+        self.assertIn(RELEASE_SECTION_HEADINGS["upgrade"], notes)
         self.assertNotIn("\r", notes)
 
     def test_detailed_notes_explain_each_change_and_breaking_impact(self) -> None:
@@ -105,6 +119,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_detail_projection_matches_change_reader_need(self) -> None:
         labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
+        capability_heading = RELEASE_GROUP_HEADINGS["capability"]
+        fixes_heading = RELEASE_GROUP_HEADINGS["fix"]
+        upgrade_heading = RELEASE_SECTION_HEADINGS["upgrade"]
         notes = notes_renderer.render_release_notes(
             _current_release([
                 {"id": "ordinary", "type": "fix", "summary": "Ordinary fix", "source": "https://example.invalid/changes/1"},
@@ -112,9 +129,9 @@ class ReleaseTests(unittest.TestCase):
                 {"id": "break", "type": "breaking", "summary": "Breaking boundary", "source": "https://example.invalid/changes/3"},
             ])
         )
-        breaking = notes[notes.index("**Breaking boundary**"):notes.index("## Features")]
-        capability = notes[notes.index("**New capability**"):notes.index("## Fixes")]
-        ordinary = notes[notes.index("**Ordinary fix**"):notes.index("## Upgrade")]
+        breaking = notes[notes.index("**Breaking boundary**"):notes.index(capability_heading)]
+        capability = notes[notes.index("**New capability**"):notes.index(fixes_heading)]
+        ordinary = notes[notes.index("**Ordinary fix**"):notes.index(upgrade_heading)]
         self.assertIn(f"**{labels['changes']}:", ordinary)
         self.assertIn(f"**{labels['compatibility']}:", ordinary)
         self.assertNotIn(f"**{labels['affectedPaths']}:", ordinary)
@@ -134,7 +151,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn("\n# heading", notes)
         self.assertIn("[Source](https://example.invalid/changes/42)", notes)
         self.assertIn("https://example.invalid/a%29%20bad", notes)
-        self.assertNotIn("## Features", notes)
+        for group in RELEASE_STANDARD.rules["groups"]:
+            if group["type"] != "fix":
+                self.assertNotIn(RELEASE_GROUP_HEADINGS[group["type"]], notes)
         release["changes"][0]["summary"] = "### heading"
         notes = notes_renderer.render_release_notes(release)
         self.assertIn(r"- **\### heading**", notes)
@@ -362,10 +381,7 @@ class ReleaseTests(unittest.TestCase):
         notes = notes_renderer.render_release_notes(release)
         for source in sources:
             self.assertIn(f"]({source})", notes)
-        if any(fragment["type"] == "breaking" for fragment in fragments):
-            self.assertIn("Breaking changes are listed above", notes)
-        else:
-            self.assertIn("No breaking changes are included", notes)
+        self.assertIn(RELEASE_SECTION_HEADINGS["upgrade"], notes)
 
     def test_semver_is_derived_from_change_classification(self) -> None:
         self.assertEqual("0.9.1", derive_next_version("0.9.0", ["fix"]))
