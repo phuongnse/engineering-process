@@ -115,6 +115,7 @@ class AutomationTests(unittest.TestCase):
         self.assertTrue(config["draftPR"])
         self.assertTrue(rule["enabled"])
         self.assertTrue(rule["draftPR"])
+        self.assertEqual("always", rule["recreateWhen"])
         self.assertEqual("automation/renovate/", config["branchPrefix"])
         self.assertEqual(
             ["python .process/adopt-process.py --project-root . --requirements-lock requirements/process.txt"],
