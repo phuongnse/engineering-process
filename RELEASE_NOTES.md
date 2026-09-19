@@ -1,12 +1,12 @@
-# Engineering Process v3.2.2
+# Engineering Process v3.2.3
 
-Changes since v3.2.1.
+Changes since v3.2.2.
 
 ## Fixes
 
-- **Allow hash-locked consumers to adopt from an older process lock.** ([#248](https://github.com/phuongnse/engineering-process/issues/248))
-  - **Result:** Adoption now treats a schema-valid older engineering-process lock as migration input, converges it to the installed distribution, and continues to reject newer locks and current-version distribution mismatches.
-  - **Impact:** Non-breaking for consumers upgrading from an older final process release; invalid, future, foreign, or current-version mismatched lock state remains rejected before mutation.
+- **Preserve standard Windows runtime inputs in bounded consumer checks.** ([#245](https://github.com/phuongnse/engineering-process/issues/245))
+  - **Result:** The managed projection now retains OS, ProgramFiles, and ProgramFiles(x86) alongside LOCALAPPDATA, while continuing to exclude unrelated ambient values, Python path injection, and secret-marked inputs.
+  - **Impact:** Non-breaking additive patch release. Existing v3.2.2 locks remain valid; consumers must adopt v3.2.3 to receive the corrected Windows projection, while arbitrary ambient environment state remains excluded.
 
 ## Upgrade and compatibility
 
@@ -16,6 +16,6 @@ Consumer CI, naming conventions and branch-protection settings remain consumer-o
 
 No breaking changes are included. Review each item's Impact and follow any shown Adopt guidance before adopting.
 
-See [versioning and compatibility](https://github.com/phuongnse/engineering-process/blob/v3.2.2/VERSIONING.md) and [adoption guidance](https://github.com/phuongnse/engineering-process/blob/v3.2.2/SELF_HOSTING.md).
+See [versioning and compatibility](https://github.com/phuongnse/engineering-process/blob/v3.2.3/VERSIONING.md) and [adoption guidance](https://github.com/phuongnse/engineering-process/blob/v3.2.3/SELF_HOSTING.md).
 
-[Full change comparison](https://github.com/phuongnse/engineering-process/compare/v3.2.1...v3.2.2)
+[Full change comparison](https://github.com/phuongnse/engineering-process/compare/v3.2.2...v3.2.3)
