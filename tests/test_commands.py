@@ -152,6 +152,9 @@ class CommandTests(unittest.TestCase):
             source={
                 "PATH": "/caller/bin",
                 "LOCALAPPDATA": r"C:\Users\runner\AppData\Local",
+                "OS": "Windows_NT",
+                "ProgramFiles": r"C:\Program Files",
+                "ProgramFiles(x86)": r"C:\Program Files (x86)",
                 "UNMANAGED_INPUT": "must-not-cross",
             },
         )
@@ -159,6 +162,12 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(
             r"C:\Users\runner\AppData\Local",
             environment["LOCALAPPDATA"],
+        )
+        self.assertEqual("Windows_NT", environment["OS"])
+        self.assertEqual(r"C:\Program Files", environment["ProgramFiles"])
+        self.assertEqual(
+            r"C:\Program Files (x86)",
+            environment["ProgramFiles(x86)"],
         )
         self.assertNotIn("UNMANAGED_INPUT", environment)
 
