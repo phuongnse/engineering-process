@@ -203,6 +203,8 @@ class ArtifactStandardsTests(unittest.TestCase):
         document["rules"]["sections"].append({"id": "security", "heading": "Security impact"})
         document["rules"]["detailLabels"]["changes"] = "Delivered"
         document["rules"]["detailLabels"]["compatibility"] = "Impact"
+        changes_label = document["rules"]["detailLabels"]["changes"]
+        compatibility_label = document["rules"]["detailLabels"]["compatibility"]
         self.select(document)
         details = {
             "problem": "A current release needs actionable detail.",
@@ -218,8 +220,9 @@ class ArtifactStandardsTests(unittest.TestCase):
         code, rendered = self.cli("render", "--artifact", "release-notes", "--data-file", str(data_path), "--output", str(path))
         self.assertEqual(0, code, rendered)
         self.assertIn(b"## Corrections", path.read_bytes())
-        self.assertIn(b"**Delivered:**", path.read_bytes())
-        self.assertIn(b"**Impact:**", path.read_bytes())
+        rendered_body = path.read_bytes()
+        self.assertIn(f"**{changes_label}:".encode("utf-8"), rendered_body)
+        self.assertIn(f"**{compatibility_label}:".encode("utf-8"), rendered_body)
         self.assertNotIn(b"\r", path.read_bytes())
         code, verified = self.cli("validate", "--artifact", "release-notes", "--data-file", str(data_path), "--body-file", str(path))
         self.assertEqual(0, code, verified)

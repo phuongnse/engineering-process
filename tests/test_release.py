@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from engineering_process.artifact_standards import resolve_standard
 from engineering_process.contracts import ProcessError, read_json, write_json_atomic
 from engineering_process.release import derive_next_version, validate_release
 from verification.normalize_sdist import normalize
@@ -89,20 +90,19 @@ class ReleaseTests(unittest.TestCase):
             }]
         }
         notes = notes_renderer.render_release_notes(release)
+        labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
         self.assertIn("**Select necessary work**", notes)
         self.assertIn("([#205](https://github.com/phuongnse/engineering-process/issues/205))", notes)
-        for label in ("Result", "Adopt", "Impact"):
-            self.assertIn(f"**{label}:", notes)
-        self.assertNotIn("**Why it matters:", notes)
-        self.assertNotIn("**Surfaces:", notes)
-        self.assertNotIn("**Caveats:", notes)
+        for field in ("changes", "apply", "compatibility"):
+            self.assertIn(f"**{labels[field]}:", notes)
+        for field in ("problem", "affectedPaths", "notes"):
+            self.assertNotIn(f"**{labels[field]}:", notes)
         self.assertIn(
-            "No breaking changes are included. Review each item's Impact and "
-            "follow any shown Adopt guidance before adopting.",
+            "No breaking changes are included. Review each item's "
+            f"{labels['compatibility']} and follow any shown "
+            f"{labels['apply']} guidance before adopting.",
             notes,
         )
-        self.assertNotIn("Review each item's Compatibility", notes)
-        self.assertNotIn("shown Apply guidance", notes)
         self.assertNotIn("`engineering_process/lifecycle.py`", notes)
         self.assertIn("No breaking changes are included.", notes)
         release["changes"][0]["details"]["apply"] = "pending"
@@ -110,6 +110,7 @@ class ReleaseTests(unittest.TestCase):
             notes_renderer.render_release_notes(release)
 
     def test_detail_projection_matches_change_reader_need(self) -> None:
+        labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
         notes = notes_renderer.render_release_notes(
             _current_release([
                 {"id": "ordinary", "type": "fix", "summary": "Ordinary fix", "source": "https://example.invalid/changes/1"},
@@ -120,14 +121,14 @@ class ReleaseTests(unittest.TestCase):
         breaking = notes[notes.index("**Breaking boundary**"):notes.index("## Features")]
         capability = notes[notes.index("**New capability**"):notes.index("## Fixes")]
         ordinary = notes[notes.index("**Ordinary fix**"):notes.index("## Upgrade")]
-        self.assertIn("**Result:**", ordinary)
-        self.assertIn("**Impact:**", ordinary)
-        self.assertNotIn("**Surfaces:**", ordinary)
-        self.assertNotIn("**Caveats:**", ordinary)
-        self.assertIn("**Adopt:**", capability)
-        self.assertIn("**Why it matters:**", breaking)
-        self.assertIn("**Adopt:**", breaking)
-        self.assertIn("**Impact:**", breaking)
+        self.assertIn(f"**{labels['changes']}:", ordinary)
+        self.assertIn(f"**{labels['compatibility']}:", ordinary)
+        self.assertNotIn(f"**{labels['affectedPaths']}:", ordinary)
+        self.assertNotIn(f"**{labels['notes']}:", ordinary)
+        self.assertIn(f"**{labels['apply']}:", capability)
+        self.assertIn(f"**{labels['problem']}:", breaking)
+        self.assertIn(f"**{labels['apply']}:", breaking)
+        self.assertIn(f"**{labels['compatibility']}:", breaking)
 
     def test_notes_treat_metadata_as_text_and_do_not_invent_source_links(self) -> None:
         release = _current_release([
@@ -272,9 +273,6 @@ class ReleaseTests(unittest.TestCase):
         for change in release["changes"]:
             self.assertIn(change["source"], notes)
         self.assertNotIn("#197-#205", notes)
-        self.assertNotIn("**What changed:", notes)
-        self.assertNotIn("**Apply:", notes)
-        self.assertNotIn("**Compatibility:", notes)
 
     def test_pending_release_records_are_issue_level_and_complete(self) -> None:
         fragments = [
@@ -383,7 +381,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual([], list((target / "release-changes").glob("*.json")))
             generated_notes = notes_renderer.render_release_notes(prepared).encode("utf-8")
             self.assertEqual(generated_notes, (target / "RELEASE_NOTES.md").read_bytes())
-            self.assertIn(b"**Result:**", generated_notes)
+            labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
+            self.assertIn(f"**{labels['changes']}:".encode("utf-8"), generated_notes)
             self.assertIn(
                 f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )
