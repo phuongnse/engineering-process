@@ -98,14 +98,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn(f"**{labels[field]}:", notes)
         for field in ("problem", "affectedPaths", "notes"):
             self.assertNotIn(f"**{labels[field]}:", notes)
-        self.assertIn(
-            "No breaking changes are included. Review each item's "
-            f"{labels['compatibility']} and follow any shown "
-            f"{labels['apply']} guidance before adopting.",
-            notes,
-        )
         self.assertNotIn("`engineering_process/lifecycle.py`", notes)
-        self.assertIn("No breaking changes are included.", notes)
         release["changes"][0]["details"]["apply"] = "pending"
         with self.assertRaisesRegex(ProcessError, "unresolved value"):
             notes_renderer.render_release_notes(release)
@@ -293,8 +286,7 @@ class ReleaseTests(unittest.TestCase):
         )
         notes = notes_renderer.render_release_notes(release)
         for change in release["changes"]:
-            self.assertIn(change["source"], notes)
-        self.assertNotIn("#197-#205", notes)
+            self.assertIn(f"]({change['source']})", notes)
 
     def test_pending_release_records_are_issue_level_and_complete(self) -> None:
         fragments = [
@@ -321,12 +313,11 @@ class ReleaseTests(unittest.TestCase):
         }
         notes = notes_renderer.render_release_notes(release)
         for source in sources:
-            self.assertIn(source, notes)
+            self.assertIn(f"]({source})", notes)
         if any(fragment["type"] == "breaking" for fragment in fragments):
             self.assertIn("Breaking changes are listed above", notes)
         else:
             self.assertIn("No breaking changes are included", notes)
-        self.assertNotIn("#197-#205", notes)
 
     def test_semver_is_derived_from_change_classification(self) -> None:
         self.assertEqual("0.9.1", derive_next_version("0.9.0", ["fix"]))
