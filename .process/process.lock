@@ -25,9 +25,9 @@
   "process": {
     "digest": "sha256:0e52b7fe52f2a068e4fb50eec3652060483baf21c2e180367b96a639b5034399",
     "package": "engineering-process",
-    "version": "3.2.2"
+    "version": "3.2.3"
   },
-  "requirementsDigest": "sha256:e0009ff8cede60d6b770de669aeef597c376d70b71fd34b0ffdef382c083ce82",
+  "requirementsDigest": "sha256:2f66cbca2362f78d2e21895659b4eaf9b31b4965e215d10a1a4f703bd62c65f9",
   "schemaVersion": 1,
   "skills": [
     "change-complete",
