@@ -9,9 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process.artifact_standards import resolve_standard
+from engineering_process.pr_description import render_description, validate_pull_request
 from verification.verify_publication import verify_publication
-
-from engineering_process.pr_description import validate_pull_request
 from engineering_process.source_publication import (
     branch_issues,
     commit_issues,
@@ -22,32 +21,77 @@ from engineering_process.source_publication import (
 )
 
 
-CANONICAL_BODY = """## Result
+ROOT = Path(__file__).resolve().parent.parent
+PULL_REQUEST_STANDARD = resolve_standard(ROOT, ROOT, "pull-request")
+PULL_REQUEST_FIELDS = {
+    field["id"]: field["label"]
+    for section in PULL_REQUEST_STANDARD.rules["sections"]
+    for field in section["fields"]
+}
+PULL_REQUEST_CHECKS = {
+    check["id"]: check["label"]
+    for section in PULL_REQUEST_STANDARD.rules["sections"]
+    for check in section["checks"]
+}
+PULL_REQUEST_FIELD_VALUES = {
+    "outcome": "Preserve the requested behavior.",
+    "scope": "Runtime and regression tests.",
+    "source": "https://github.com/example/project/issues/123",
+    "risk": "medium",
+    "compatibility": "Existing callers are unchanged.",
+    "profiles": "`development`, `review`",
+    "snapshot": "`sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`",
+    "completion-receipt": "`sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`",
+    "verdict": "approved",
+    "cycles": "1",
+    "blocking-findings": "0 open",
+    "non-blocking-dispositions": "none",
+}
 
-- Outcome: Preserve the requested behavior.
-- Scope: Runtime and regression tests.
 
-## Contract and evidence
+def _section_for_field(field_id: str) -> str:
+    return next(
+        section["heading"]
+        for section in PULL_REQUEST_STANDARD.rules["sections"]
+        if any(field["id"] == field_id for field in section["fields"])
+    )
 
-- Source: https://github.com/example/project/issues/123
-- Risk: medium
-- Compatibility: Existing callers are unchanged.
-- Profiles: `development`, `review`
-- Snapshot: `sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
-- Completion receipt: `sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
 
-## Review and completion
+RESULT_HEADING = _section_for_field("outcome")
+CONTRACT_HEADING = _section_for_field("source")
+REVIEW_HEADING = _section_for_field("verdict")
 
-- Verdict: approved
-- Cycles: 1
-- Blocking findings: 0 open
-- Non-blocking dispositions: none
 
-- [x] Accepted scope is implemented without silent expansion.
-- [x] Required profiles pass on the reviewed snapshot.
-- [x] Independent review approved with no blocking finding.
-- [x] Every non-blocking finding has a recorded disposition.
-"""
+def _field_line(field_id: str, value: str | None = None) -> str:
+    if value is None:
+        value = PULL_REQUEST_FIELD_VALUES.get(field_id, f"Example {field_id} value.")
+    return f"- {PULL_REQUEST_FIELDS[field_id]}: {value}"
+
+
+def _check_line(check_id: str, marker: str = "x") -> str:
+    return f"- [{marker}] {PULL_REQUEST_CHECKS[check_id]}"
+
+
+CANONICAL_BODY = render_description(
+    PULL_REQUEST_STANDARD,
+    {
+        "schemaVersion": 1,
+        "fields": {
+            field["id"]: PULL_REQUEST_FIELD_VALUES.get(
+                field["id"], f"Example {field['id']} value."
+            )
+            for section in PULL_REQUEST_STANDARD.rules["sections"]
+            for field in section["fields"]
+        },
+        "checks": {
+            check["id"]: True
+            for section in PULL_REQUEST_STANDARD.rules["sections"]
+            for check in section["checks"]
+        },
+    },
+    state="ready",
+    process_root=ROOT,
+)
 
 
 class PublicationTests(unittest.TestCase):
@@ -75,30 +119,31 @@ class PublicationTests(unittest.TestCase):
 
     def test_pull_request_requires_unique_ordered_sections(self) -> None:
         without_contract = CANONICAL_BODY.replace(
-            "## Contract and evidence\n", "Contract and evidence\n", 1
+            f"{CONTRACT_HEADING}\n", f"{CONTRACT_HEADING[3:]}\n", 1
         )
         self.assertIn(
-            "pull request body is missing ## Contract and evidence",
+            f"pull request body is missing {CONTRACT_HEADING}",
             self.validate_body(without_contract),
         )
 
         without_completion = CANONICAL_BODY.replace(
-            "## Review and completion\n", "Review and completion\n", 1
+            f"{REVIEW_HEADING}\n", f"{REVIEW_HEADING[3:]}\n", 1
         )
         self.assertIn(
-            "pull request body is missing ## Review and completion",
+            f"pull request body is missing {REVIEW_HEADING}",
             self.validate_body(without_completion),
         )
 
         repeated = CANONICAL_BODY.replace(
-            "## Result\n", "## Result\n## Result\n", 1
+            f"{RESULT_HEADING}\n", f"{RESULT_HEADING}\n{RESULT_HEADING}\n", 1
         )
         self.assertIn(
-            "pull request body repeats ## Result", self.validate_body(repeated)
+            f"pull request body repeats {RESULT_HEADING}",
+            self.validate_body(repeated),
         )
 
-        verification = CANONICAL_BODY.index("## Contract and evidence")
-        review = CANONICAL_BODY.index("## Review and completion")
+        verification = CANONICAL_BODY.index(CONTRACT_HEADING)
+        review = CANONICAL_BODY.index(REVIEW_HEADING)
         out_of_order = (
             CANONICAL_BODY[:verification]
             + CANONICAL_BODY[review:]
@@ -110,7 +155,9 @@ class PublicationTests(unittest.TestCase):
         )
 
         unexpected = CANONICAL_BODY.replace(
-            "## Contract and evidence", "## Screenshots\n\nNone.\n\n## Contract and evidence", 1
+            CONTRACT_HEADING,
+            f"## Screenshots\n\nNone.\n\n{CONTRACT_HEADING}",
+            1,
         )
         self.assertIn(
             "pull request body has unexpected section ## Screenshots",
@@ -118,39 +165,42 @@ class PublicationTests(unittest.TestCase):
         )
 
     def test_pull_request_requires_unique_ordered_fields(self) -> None:
-        missing = CANONICAL_BODY.replace("- Compatibility:", "- Upgrade:", 1)
+        missing = CANONICAL_BODY.replace(
+            _field_line("compatibility"), "- Upgrade:", 1
+        )
         self.assertIn(
-            "pull request body is missing Compatibility in ## Contract and evidence",
+            f"pull request body is missing {PULL_REQUEST_FIELDS['compatibility']} "
+            f"in {CONTRACT_HEADING}",
             self.validate_body(missing),
         )
 
         repeated = CANONICAL_BODY.replace(
-            "- Scope: Runtime and regression tests.",
-            "- Scope: Runtime and regression tests.\n- Scope: Documentation.",
+            _field_line("scope"),
+            f"{_field_line('scope')}\n- {PULL_REQUEST_FIELDS['scope']}: Documentation.",
             1,
         )
         self.assertIn(
-            "pull request body repeats Scope",
+            f"pull request body repeats {PULL_REQUEST_FIELDS['scope']}",
             self.validate_body(repeated),
         )
 
         misplaced_duplicate = CANONICAL_BODY.replace(
-            "- Outcome: Preserve the requested behavior.",
-            "- Outcome: Preserve the requested behavior.\n- Verdict: approved",
+            _field_line("outcome"),
+            f"{_field_line('outcome')}\n{_field_line('verdict')}",
             1,
         )
         self.assertIn(
-            "pull request body repeats Verdict",
+            f"pull request body repeats {PULL_REQUEST_FIELDS['verdict']}",
             self.validate_body(misplaced_duplicate),
         )
 
         out_of_order = CANONICAL_BODY.replace(
-            "- Outcome: Preserve the requested behavior.\n- Scope: Runtime and regression tests.",
-            "- Scope: Runtime and regression tests.\n- Outcome: Preserve the requested behavior.",
+            f"{_field_line('outcome')}\n{_field_line('scope')}",
+            f"{_field_line('scope')}\n{_field_line('outcome')}",
             1,
         )
         self.assertIn(
-            "pull request body fields are out of order in ## Result",
+            f"pull request body fields are out of order in {RESULT_HEADING}",
             self.validate_body(out_of_order),
         )
 
@@ -170,7 +220,9 @@ class PublicationTests(unittest.TestCase):
         ):
             with self.subTest(metadata=metadata):
                 body = CANONICAL_BODY.replace(
-                    "- Verdict: approved", f"{metadata}\n- Verdict: approved", 1
+                    _field_line("verdict"),
+                    f"{metadata}\n{_field_line('verdict')}",
+                    1,
                 )
                 self.assertTrue(
                     any(
@@ -183,17 +235,18 @@ class PublicationTests(unittest.TestCase):
 
     def test_ready_pull_request_requires_completed_checklist(self) -> None:
         unchecked = CANONICAL_BODY.replace(
-            "- [x] Required profiles", "- [ ] Required profiles", 1
+            _check_line("required-profiles"), _check_line("required-profiles", " "), 1
         )
         self.assertIn(
-            "ready pull request has unchecked item: Required profiles pass on the reviewed snapshot.",
+            "ready pull request has unchecked item: "
+            f"{PULL_REQUEST_CHECKS['required-profiles']}",
             self.validate_body(unchecked),
         )
         self.assertEqual([], self.validate_body(unchecked, state="draft"))
 
     def test_pull_request_requires_ordered_checklist_in_completion_section(self) -> None:
-        first = "- [x] Accepted scope is implemented without silent expansion."
-        second = "- [x] Required profiles pass on the reviewed snapshot."
+        first = _check_line("accepted-scope")
+        second = _check_line("required-profiles")
         out_of_order = CANONICAL_BODY.replace(
             f"{first}\n{second}", f"{second}\n{first}", 1
         )
@@ -203,22 +256,22 @@ class PublicationTests(unittest.TestCase):
         )
 
         misplaced = CANONICAL_BODY.replace(f"\n{first}", "", 1).replace(
-            "- Outcome: Preserve the requested behavior.",
-            f"{first}\n- Outcome: Preserve the requested behavior.",
+            _field_line("outcome"),
+            f"{first}\n{_field_line('outcome')}",
             1,
         )
         self.assertIn(
             "pull request body misplaces checklist item: "
-            "Accepted scope is implemented without silent expansion.",
+            f"{PULL_REQUEST_CHECKS['accepted-scope']}",
             self.validate_body(misplaced),
         )
 
         mixed_hierarchy = CANONICAL_BODY.replace(f"\n{first}", "", 1).replace(
-            "## Review and completion", f"{first}\n\n## Review and completion", 1
+            REVIEW_HEADING, f"{first}\n\n{REVIEW_HEADING}", 1
         )
         self.assertIn(
             "pull request body misplaces checklist item: "
-            "Accepted scope is implemented without silent expansion.",
+            f"{PULL_REQUEST_CHECKS['accepted-scope']}",
             self.validate_body(mixed_hierarchy),
         )
 
@@ -229,22 +282,23 @@ class PublicationTests(unittest.TestCase):
             self.validate_body(fenced),
         )
         self.assertIn(
-            "pull request body is missing ## Result", self.validate_body(fenced)
+            f"pull request body is missing {RESULT_HEADING}",
+            self.validate_body(fenced),
         )
 
         hidden = f"<!--\n{CANONICAL_BODY}"
         hidden_issues = self.validate_body(hidden)
         self.assertIn("pull request body has an unclosed HTML comment", hidden_issues)
-        self.assertIn("pull request body is missing ## Result", hidden_issues)
+        self.assertIn(f"pull request body is missing {RESULT_HEADING}", hidden_issues)
 
         closed_hidden = f"<!--\n{CANONICAL_BODY}-->\n"
         self.assertIn(
-            "pull request body is missing ## Result",
+            f"pull request body is missing {RESULT_HEADING}",
             self.validate_body(closed_hidden),
         )
 
         unclosed_fence = CANONICAL_BODY.replace(
-            "## Result", "```markdown\n## Result", 1
+            RESULT_HEADING, f"```markdown\n{RESULT_HEADING}", 1
         )
         self.assertIn(
             "pull request body has an unclosed Markdown fence",
@@ -260,7 +314,8 @@ class PublicationTests(unittest.TestCase):
                     separated_issues,
                 )
                 self.assertIn(
-                    "pull request body is missing ## Result", separated_issues
+                    f"pull request body is missing {RESULT_HEADING}",
+                    separated_issues,
                 )
 
     def test_pull_request_accepts_commonmark_line_endings(self) -> None:
@@ -269,8 +324,8 @@ class PublicationTests(unittest.TestCase):
 
     def test_pull_request_allows_reviewer_words_in_technical_values(self) -> None:
         technical = CANONICAL_BODY.replace(
-            "Runtime and regression tests.",
-            "Update the access-reviewer-service package.",
+            _field_line("scope"),
+            _field_line("scope", "Update the access-reviewer-service package."),
             1,
         )
         self.assertEqual([], self.validate_body(technical))
@@ -282,7 +337,7 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual([], self.validate_body(referenced))
 
         misplaced = CANONICAL_BODY.replace(
-            "## Result", "Refs #123.\n\n## Result", 1
+            RESULT_HEADING, f"Refs #123.\n\n{RESULT_HEADING}", 1
         )
         self.assertIn(
             "pull request body issue reference must follow the checklist",
@@ -316,10 +371,11 @@ class PublicationTests(unittest.TestCase):
         )
 
         unchecked = closing.replace(
-            "- [x] Required profiles", "- [ ] Required profiles", 1
+            _check_line("required-profiles"), _check_line("required-profiles", " "), 1
         )
         self.assertIn(
-            "ready pull request has unchecked item: Required profiles pass on the reviewed snapshot.",
+            "ready pull request has unchecked item: "
+            f"{PULL_REQUEST_CHECKS['required-profiles']}",
             self.validate_body(unchecked),
         )
 
@@ -346,9 +402,9 @@ class PublicationTests(unittest.TestCase):
 
     def test_pull_request_ignores_template_comments(self) -> None:
         body = CANONICAL_BODY.replace(
-            "- Outcome: Preserve the requested behavior.",
+            _field_line("outcome"),
             "<!-- Do not publish .process/runs or Reviewer: values. -->\n"
-            "- Outcome: Preserve the requested behavior.",
+            f"{_field_line('outcome')}",
             1,
         )
         self.assertEqual([], self.validate_body(body))
@@ -459,7 +515,9 @@ class PublicationTests(unittest.TestCase):
             git("commit", "--allow-empty", "-qm", "unstructured checkout commit")
             checkout = git("rev-parse", "HEAD")
             context = {"PUBLICATION_BRANCH": "fix/metadata", "PUBLICATION_TITLE": "fix: reviewed change",
-                       "PUBLICATION_BODY": CANONICAL_BODY.replace("- Outcome:", "- Result:"),
+                       "PUBLICATION_BODY": CANONICAL_BODY.replace(
+                           f"- {PULL_REQUEST_FIELDS['outcome']}:", "- Result:", 1
+                       ),
                        "PUBLICATION_DRAFT": "false", "PUBLICATION_BASE": base, "PUBLICATION_HEAD": head}
             with patch.dict(os.environ, context):
                 self.assertEqual([], verify_publication(root, pull_request=True))

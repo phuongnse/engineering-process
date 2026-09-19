@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "changeId": "release-test-maintenance",
+  "contractDigest": "sha256:2d9bec5b595fb24d9747067d4aaf87f33ee69858d93ff3c42a7c2eb22aa441ca",
+  "approach": "Keep the current release-note and publication implementations unchanged. Replace duplicated test literals with small fixtures derived from the selected packaged standards: release tests will resolve group and section headings when slicing output, and publication tests will render one complete ready body from the pull-request standard before exercising parser failures. This preserves behavioral coverage while making the standard the single authority for labels, sections, fields, and checklist order. The change has no durable reader impact and needs no documentation update.",
+  "workItems": [
+    {
+      "id": "release-standard-derived-tests",
+      "affectedPaths": ["tests/test_release.py"],
+      "outcome": "Derive release group and section headings and use standard-owned labels in release-note assertions; remove assertions that merely freeze renderer prose."
+    },
+    {
+      "id": "publication-standard-derived-fixture",
+      "affectedPaths": ["tests/test_publication.py"],
+      "outcome": "Generate the canonical publication body from the selected pull-request standard while retaining all validator boundary mutations and expected diagnostics."
+    },
+    {
+      "id": "behavior-preserved",
+      "affectedPaths": ["tests/test_release.py", "tests/test_publication.py"],
+      "outcome": "Existing source-link, output-byte, publication-structure, checklist, and issue-reference behavior remains covered without changing production code or packaged standards."
+    }
+  ],
+  "risks": [
+    {
+      "risk": "A generated fixture could accidentally stop exercising the validator's expected field order or values.",
+      "mitigation": "Render a complete ready body from the selected standard with explicit non-pending values, then retain the existing targeted mutations and diagnostic assertions."
+    },
+    {
+      "risk": "Removing exact release prose assertions could hide a regression in the reader-facing upgrade guidance.",
+      "mitigation": "Keep the current output-generation and release identity tests, assert the selected upgrade section and versioned links remain present, and leave the renderer unchanged; prose changes belong to the standard/output contract rather than duplicated test literals."
+    }
+  ],
+  "productionEngineering": [
+    {
+      "id": "authoritative-structure",
+      "applicability": "applicable",
+      "rationale": "The accepted change exists specifically to make the selected artifact standards the authoritative source for test structure instead of duplicated literals.",
+      "evidenceWorkItems": ["release-standard-derived-tests", "publication-standard-derived-fixture"]
+    },
+    {
+      "id": "single-policy-authority",
+      "applicability": "applicable",
+      "rationale": "The packaged release-notes and pull-request standards are consumed by renderer and validator tests; deriving fixtures prevents semantic copies from drifting.",
+      "evidenceWorkItems": ["release-standard-derived-tests", "publication-standard-derived-fixture"]
+    },
+    {
+      "id": "bounded-side-effects",
+      "applicability": "not-applicable",
+      "rationale": "The candidate changes only test fixtures and assertions; it introduces no resource-bearing, privileged, retrying, or platform-specific side effect."
+      ,"evidenceWorkItems": []
+    },
+    {
+      "id": "contractual-evolution",
+      "applicability": "not-applicable",
+      "rationale": "No released format, API, CLI, schema, standard, or production behavior changes; the tests continue to consume the current contracts."
+      ,"evidenceWorkItems": []
+    },
+    {
+      "id": "evidence-bound-assurance",
+      "applicability": "applicable",
+      "rationale": "This is a test-maintenance change whose acceptance depends on preserving the existing behavioral and publication boundary evidence on one candidate snapshot.",
+      "evidenceWorkItems": ["behavior-preserved"]
+    }
+  ]
+}
