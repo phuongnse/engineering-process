@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "preserve-windows-runtime-inputs",
+  "type": "fix",
+  "summary": "Preserve standard Windows runtime inputs in bounded consumer checks.",
+  "source": "https://github.com/phuongnse/engineering-process/issues/245",
+  "details": {
+    "problem": "The bounded Windows child environment omitted standard runtime inputs used by supported consumer bootstrap checks, so a managed processctl command could fail while the same command passed in the ambient runner.",
+    "changes": "The managed projection now retains OS, ProgramFiles, and ProgramFiles(x86) alongside LOCALAPPDATA, while continuing to exclude unrelated ambient values, Python path injection, and secret-marked inputs.",
+    "affectedPaths": [
+      "engineering_process/evidence.py",
+      "tests/test_commands.py"
+    ],
+    "apply": "Adopt engineering-process v3.2.3 through the consumer's existing hash-locked process runner, regenerate managed files, and rerun the consumer's Windows processctl profile.",
+    "compatibility": "Non-breaking additive patch release. Existing v3.2.2 locks remain valid; consumers must adopt v3.2.3 to receive the corrected Windows projection, while arbitrary ambient environment state remains excluded.",
+    "notes": "The release does not change consumer-owned commands or product behavior. The originating LyricRail issue is closed only after a real post-adoption managed Windows profile passes."
+  }
+}
