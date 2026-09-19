@@ -245,13 +245,52 @@ class AdoptionTests(unittest.TestCase):
             "consumer documentation\n", readme.read_text(encoding="utf-8")
         )
 
-    def test_current_shape_lock_from_another_release_is_rejected_without_mutation(self) -> None:
+    def test_older_lock_is_migrated_and_obsolete_managed_files_are_removed(self) -> None:
+        self.assertEqual("applied", apply_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+        obsolete = self.root / ".agents" / "skills" / "process-improve" / "obsolete.md"
+        obsolete.write_text("old managed file\n", encoding="utf-8")
+        lock_path = self.root / ".process" / "process.lock"
+        lock = read_json(lock_path)
+        lock["process"]["version"] = "3.2.0"
+        lock["process"]["digest"] = "sha256:" + "2" * 64
+        lock["managedFiles"].append(".agents/skills/process-improve/obsolete.md")
+        write_json(lock_path, lock)
+
+        result = apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+
+        self.assertEqual("applied", result["status"])
+        self.assertFalse(obsolete.exists())
+        migrated = read_json(lock_path)
+        self.assertEqual(VERSION, migrated["process"]["version"])
+        self.assertNotIn(".agents/skills/process-improve/obsolete.md", migrated["managedFiles"])
+        self.assertEqual("passed", check_adoption(self.root, PROCESS_ROOT, self.requirements)["status"])
+
+    def test_newer_lock_is_rejected_without_mutation(self) -> None:
         lock_path = self.root / ".process" / "process.lock"
         lock = {
             "schemaVersion": 1,
             "process": {
                 "package": "engineering-process",
-                "version": "2.6.0",
+                "version": "99.0.0",
+                "digest": "sha256:" + "1" * 64,
+            },
+            "requirementsDigest": "sha256:" + "1" * 64,
+            "skills": ["process-improve"],
+            "managedFiles": [".agents/skills/process-improve/SKILL.md"],
+        }
+        write_json(lock_path, lock)
+        before = lock_path.read_bytes()
+        with self.assertRaisesRegex(ProcessError, "newer package"):
+            apply_adoption(self.root, PROCESS_ROOT, self.requirements)
+        self.assertEqual(before, lock_path.read_bytes())
+
+    def test_current_lock_with_mismatched_distribution_is_rejected_without_mutation(self) -> None:
+        lock_path = self.root / ".process" / "process.lock"
+        lock = {
+            "schemaVersion": 1,
+            "process": {
+                "package": "engineering-process",
+                "version": VERSION,
                 "digest": "sha256:" + "0" * 64,
             },
             "requirementsDigest": "sha256:" + "1" * 64,
