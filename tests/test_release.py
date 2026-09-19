@@ -199,7 +199,7 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ProcessError, "does not match"):
                 validate_release(project, ROOT)
 
-    def test_canonical_source_contracts_reject_trailing_line_endings(self) -> None:
+    def test_canonical_source_contracts_reject_trailing_line_feed(self) -> None:
         source = "https://example.invalid/changes/42"
         release = _current_release([{
             "id": "line-ending-reference",
@@ -214,13 +214,38 @@ class ReleaseTests(unittest.TestCase):
             "release-change": fragment,
             "release-notes-data": notes_renderer.release_notes_data(release),
         }
-        for suffix in ("\n", "\r\n"):
-            for kind, document in documents.items():
-                invalid = deepcopy(document)
-                change = invalid if kind == "release-change" else invalid["changes"][0]
-                change["source"] = source + suffix
-                with self.subTest(kind=kind, suffix=repr(suffix)), self.assertRaises(ProcessError):
-                    validate_document(invalid, kind, schema_root=schemas_root(ROOT))
+        for kind, document in documents.items():
+            invalid = deepcopy(document)
+            change = invalid if kind == "release-change" else invalid["changes"][0]
+            # This is the regression for the old $-anchored grammar: it accepted
+            # a final LF because $ could match immediately before it.
+            change["source"] = source + "\n"
+            with self.subTest(kind=kind), self.assertRaises(ProcessError):
+                validate_document(invalid, kind, schema_root=schemas_root(ROOT))
+
+    def test_canonical_source_contracts_reject_trailing_carriage_return_line_feed(self) -> None:
+        source = "https://example.invalid/changes/42"
+        release = _current_release([{
+            "id": "carriage-return-reference",
+            "type": "fix",
+            "summary": "Reject a source with a trailing CRLF",
+            "source": source,
+        }])
+        fragment = deepcopy(release["changes"][0])
+        fragment["schemaVersion"] = 1
+        documents = {
+            "release": release,
+            "release-change": fragment,
+            "release-notes-data": notes_renderer.release_notes_data(release),
+        }
+        for kind, document in documents.items():
+            invalid = deepcopy(document)
+            change = invalid if kind == "release-change" else invalid["changes"][0]
+            # The legacy grammar already rejected CRLF; keep this as explicit
+            # contract coverage alongside the final-LF regression above.
+            change["source"] = source + "\r\n"
+            with self.subTest(kind=kind), self.assertRaises(ProcessError):
+                validate_document(invalid, kind, schema_root=schemas_root(ROOT))
 
     def test_notes_check_rejects_stale_missing_and_noncanonical_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
