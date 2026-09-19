@@ -19,7 +19,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 1000,
-      "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?:/[^\\s]+)$"
+      "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?:/[^\\s]+)(?![\\s\\S])"
     },
     "details": {"$ref": "#/$defs/details"}
   },
