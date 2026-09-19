@@ -62,7 +62,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 20000,
-            "pattern": "\\S"
+            "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?:/[^\\s]+)(?![\\s\\S])"
           },
           "details": {"$ref": "#/$defs/details"}
         }

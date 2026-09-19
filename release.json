@@ -3,102 +3,41 @@
     {
       "details": {
         "affectedPaths": [
-          "README.md",
-          "docs/",
-          "process_assets/skills/",
-          "process_assets/standards/pull-request.v1.json",
-          "templates/",
-          "ARTIFACT_STANDARDS.md",
-          "PROCESS_IMPROVEMENT.md",
-          "SELF_HOSTING.md",
-          "VERSIONING.md",
-          "RELEASING.md"
+          "schemas/release-notes-data.schema.json",
+          "schemas/artifact-standard.schema.json",
+          "engineering_process/release_notes.py",
+          "process_assets/standards/release-notes.v1.json"
         ],
-        "apply": "Adopt the released process package, regenerate managed skills, instructions, and PR-template outputs, recreate unsupported active process artifacts under the current contract, and rerun the consumer's required profiles. Keep consumer product documentation in its existing organization and update it only when the consumer change affects durable reader knowledge.",
-        "changes": "Make README a reader map, add focused consumer setup, delivery, and documentation-quality routes, align source skills and generated guidance, and verify links and source-derived outputs.",
-        "compatibility": "Non-breaking guidance capability within the current version-1 process contracts. The lifecycle and consumer ownership boundaries remain unchanged; the currently adopted 3.1.0 managed surfaces remain authoritative until the consumer adopts the release containing this correction.",
-        "notes": "Documentation checks prove links and source-derived output consistency only. Independent review must still assess accuracy, findability, and usefulness for representative readers. No new lifecycle, schema, document registry, or universal documentation checklist is introduced.",
-        "problem": "The process's reader routes, lifecycle guidance, generated outputs, and adoption boundaries were spread across long or overlapping documents, making it hard to know what to read, where a rule was authoritative, and when a consumer document should change."
+        "apply": "Adopt the patch release and regenerate release notes or other release artifacts from canonical source records; replace plain-text issue descriptions with HTTPS issue or pull-request URLs.",
+        "changes": "Release-note source records now require durable HTTPS references, safe rendering keeps them clickable, and detailLabels in the selected standard controls the visible labels for each selected detail field.",
+        "compatibility": "The current packaged release-notes standard remains version 1; existing custom standards without detailLabels fall back to field IDs, while new or edited records must use HTTPS sources.",
+        "notes": "The renderer never invents an issue URL from prose, and summaries/detail values remain escaped literal metadata.",
+        "problem": "Release records could describe an issue in plain text, which rendered as an unlinked code span, while the renderer hard-coded reader-facing labels that were not controlled by the selected artifact standard."
       },
-      "id": "documentation-quality",
-      "source": "documentation-quality (issue #214)",
-      "summary": "Make process guidance easy to find and teach consumer documentation care in ordinary delivery work.",
-      "type": "capability"
-    },
-    {
-      "details": {
-        "affectedPaths": [
-          "engineering_process/pr_description.py",
-          "tests/test_publication.py",
-          "README.md",
-          "process_assets/standards/pull-request.v1.json",
-          "templates/PULL_REQUEST_TEMPLATE.md"
-        ],
-        "apply": "Adopt the published package or source change and rerun the consumer's normal publication checks; apply the managed template update through the normal later adoption PR, with no migration required and existing references with a final period remaining valid.",
-        "changes": "Accept valid Refs and Closes references with or without a terminal period while retaining the complete issue-target grammar, checklist placement, uniqueness, and draft/ready restrictions; align the README, canonical standard, and generated next-distribution template guidance while leaving the currently adopted managed template unchanged until its adoption PR.",
-        "compatibility": "Non-breaking current-v1 compatibility expansion: both existing references with a final period and valid references without one are accepted; incomplete, malformed, duplicated, misplaced, or draft-closing references remain rejected.",
-        "notes": "Only the terminal period is optional. The complete keyword/reference syntax and the requirement that the reference follow the checklist remain unchanged. Managed consumer guidance follows the adopted package's release timing.",
-        "problem": "The publication validator required a final period on an otherwise complete Refs or Closes issue reference, blocking a self-consumer pull request even when its issue identity and required evidence were present."
-      },
-      "id": "publication-reference-tolerance",
-      "source": "https://github.com/phuongnse/engineering-process/pull/239",
-      "summary": "Allow optional terminal punctuation in pull request issue references.",
+      "id": "release-notes-contract",
+      "source": "https://github.com/phuongnse/engineering-process/issues/246",
+      "summary": "Make release-note source links durable and visible detail labels standard-owned.",
       "type": "fix"
     },
     {
       "details": {
         "affectedPaths": [
-          "engineering_process/cli.py",
-          "process_assets/skills/deliver-change/SKILL.md",
-          "process_assets/skills/change-verify/SKILL.md",
-          "README.md",
-          "tests/test_cli.py",
-          "tests/test_lifecycle.py",
-          "tests/test_commands.py",
-          "tests/test_release.py"
+          "engineering_process/evidence.py",
+          "tests/test_commands.py"
         ],
-        "apply": "Adopt the published package and exact hash, regenerate managed skills and current process-owned guidance, recreate active process artifacts under the current v1 contract, and rerun consumer-required profiles. Continue treating evidence selection and independent review as the assurance authority.",
-        "changes": "Add a read-only status projection of the current verification selection, candidate and control identities, readiness and review blockers, bounded diagnostics, and one actionable next route while preserving the existing verification report-status field; clarify the direct vocabulary and reader entry point in the delivery guidance.",
-        "compatibility": "Non-breaking current-v1 lifecycle correction: existing lifecycle transitions, verification commands, and the verification report-status field remain authoritative, while consumers can use currentVerification, evidence.requirements, diagnostics, review blockers, and nextAction; no migration layer or automatic retry is provided.",
-        "notes": "The status projection never reruns checks, promotes stale reports, or exposes raw stdout/stderr. Runtime fingerprints describe reuse inputs; bounded execution containment and independent review remain separate boundaries. Release guidance distinguishes breaking and non-breaking pending fragments.",
-        "problem": "Change status exposed stored profile results without showing whether those reports were reusable for the current candidate and inputs, so stale, failed, and runtime-invalidated evidence required manual reconstruction from lifecycle files and several route documents."
+        "apply": "Adopt the patch release and regenerate the hash-locked process surfaces; no consumer-specific Windows workaround is required.",
+        "changes": "The managed child environment now preserves LOCALAPPDATA alongside the existing explicit Windows runtime variables, with regression coverage for the Python bootstrap boundary.",
+        "compatibility": "Non-breaking for the current v1 lifecycle contract; Windows checks receive one additional documented runtime-resolution input and unrelated ambient variables remain excluded.",
+        "notes": "The variable is forwarded only when present on the host and is included in the bounded runtime identity so affected evidence cannot be reused silently.",
+        "problem": "The installed bounded Windows process profile dropped LOCALAPPDATA, so a consumer bootstrap could pass its direct tests but fail when launched through the managed execution environment."
       },
-      "id": "reader-facing-evidence-state",
-      "source": "https://github.com/phuongnse/engineering-process/issues/214",
-      "summary": "Make lifecycle evidence and next actions understandable from change status.",
+      "id": "windows-managed-environment",
+      "source": "https://github.com/phuongnse/engineering-process/issues/245",
+      "summary": "Preserve the Windows user-local application context required by bounded Python checks.",
       "type": "fix"
-    },
-    {
-      "details": {
-        "affectedPaths": [
-          "engineering_process/cli.py",
-          "engineering_process/contracts.py",
-          "engineering_process/lifecycle.py",
-          "engineering_process/pr_description.py",
-          "engineering_process/project.py",
-          "engineering_process/repository.py",
-          "schemas/handoff.schema.json",
-          "schemas/project.schema.json",
-          "schemas/receipt.schema.json",
-          "process_assets/skills",
-          "tests/test_lifecycle.py",
-          "tests/test_repository.py",
-          "README.md",
-          "PROCESS_IMPROVEMENT.md"
-        ],
-        "apply": "Adopt the updated process assets and run the repository verification profiles; use change handoff export/import for sequential workspace transfer and change storage or change purge --confirm for retention maintenance.",
-        "changes": "Adds resumable handoff export/import, validated bounded receipts, retry-safe owner-scoped cleanup, post-cleanup status and PR readers, storage measurement and guarded purge, and lifecycle acceptance coverage.",
-        "compatibility": "Non-breaking for current v1 consumers. Existing project and receipt documents remain valid; no distributed service or extra approval or identity gate is introduced. Consumers continue using their owned commands and review policy.",
-        "notes": "Successful finish retains only bounded result receipts and removes change-owned active runtime artifacts; incomplete or blocked history remains available for diagnosis subject to configured limits. Independent review and evidence freshness rules remain enforced.",
-        "problem": "A change runtime could remain tied to one workspace and leave active artifacts after finish, making handoff, retry, isolation, and retention difficult."
-      },
-      "id": "runtime-lifecycle-cleanup-handoff",
-      "source": "runtime-lifecycle-cleanup-handoff (issue #214)",
-      "summary": "Make change runtimes resumable, handoffable, and cleanup-safe.",
-      "type": "capability"
     }
   ],
-  "previousVersion": "3.1.0",
+  "previousVersion": "3.2.0",
   "schemaVersion": 1,
-  "version": "3.2.0"
+  "version": "3.2.1"
 }

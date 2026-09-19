@@ -14,7 +14,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from engineering_process.contracts import ProcessError, read_json, write_json_atomic
+from engineering_process.artifact_standards import resolve_standard
+from engineering_process.contracts import ProcessError, read_json, validate_document, write_json_atomic
+from engineering_process.distribution import schemas_root
 from engineering_process.release import derive_next_version, validate_release
 from verification.normalize_sdist import normalize
 from verification.prepare_release import _replace_once
@@ -89,48 +91,48 @@ class ReleaseTests(unittest.TestCase):
             }]
         }
         notes = notes_renderer.render_release_notes(release)
+        labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
         self.assertIn("**Select necessary work**", notes)
         self.assertIn("([#205](https://github.com/phuongnse/engineering-process/issues/205))", notes)
-        for label in ("What changed", "Apply", "Compatibility"):
-            self.assertIn(f"**{label}:", notes)
-        self.assertNotIn("**Problem:", notes)
-        self.assertNotIn("**Where:", notes)
-        self.assertNotIn("**Notes:", notes)
+        for field in ("changes", "apply", "compatibility"):
+            self.assertIn(f"**{labels[field]}:", notes)
+        for field in ("problem", "affectedPaths", "notes"):
+            self.assertNotIn(f"**{labels[field]}:", notes)
         self.assertNotIn("`engineering_process/lifecycle.py`", notes)
-        self.assertIn("No breaking changes are included.", notes)
         release["changes"][0]["details"]["apply"] = "pending"
         with self.assertRaisesRegex(ProcessError, "unresolved value"):
             notes_renderer.render_release_notes(release)
 
     def test_detail_projection_matches_change_reader_need(self) -> None:
+        labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
         notes = notes_renderer.render_release_notes(
             _current_release([
-                {"id": "ordinary", "type": "fix", "summary": "Ordinary fix", "source": "fix-1"},
-                {"id": "feature", "type": "capability", "summary": "New capability", "source": "feature-1"},
-                {"id": "break", "type": "breaking", "summary": "Breaking boundary", "source": "break-1"},
+                {"id": "ordinary", "type": "fix", "summary": "Ordinary fix", "source": "https://example.invalid/changes/1"},
+                {"id": "feature", "type": "capability", "summary": "New capability", "source": "https://example.invalid/changes/2"},
+                {"id": "break", "type": "breaking", "summary": "Breaking boundary", "source": "https://example.invalid/changes/3"},
             ])
         )
         breaking = notes[notes.index("**Breaking boundary**"):notes.index("## Features")]
         capability = notes[notes.index("**New capability**"):notes.index("## Fixes")]
         ordinary = notes[notes.index("**Ordinary fix**"):notes.index("## Upgrade")]
-        self.assertIn("**What changed:**", ordinary)
-        self.assertIn("**Compatibility:**", ordinary)
-        self.assertNotIn("**Where:**", ordinary)
-        self.assertNotIn("**Notes:**", ordinary)
-        self.assertIn("**Apply:**", capability)
-        self.assertIn("**Problem:**", breaking)
-        self.assertIn("**Apply:**", breaking)
-        self.assertIn("**Compatibility:**", breaking)
+        self.assertIn(f"**{labels['changes']}:", ordinary)
+        self.assertIn(f"**{labels['compatibility']}:", ordinary)
+        self.assertNotIn(f"**{labels['affectedPaths']}:", ordinary)
+        self.assertNotIn(f"**{labels['notes']}:", ordinary)
+        self.assertIn(f"**{labels['apply']}:", capability)
+        self.assertIn(f"**{labels['problem']}:", breaking)
+        self.assertIn(f"**{labels['apply']}:", breaking)
+        self.assertIn(f"**{labels['compatibility']}:", breaking)
 
     def test_notes_treat_metadata_as_text_and_do_not_invent_source_links(self) -> None:
         release = _current_release([
-            {"id": "safe-text", "type": "fix", "summary": "Cải thiện `tool`\n# heading [link]", "source": "owned change #42"},
-            {"id": "safe-url", "type": "fix", "summary": "Safe source link.", "source": "https://example.invalid/a) bad"},
+            {"id": "safe-text", "type": "fix", "summary": "Cải thiện `tool`\n# heading [link]", "source": "https://example.invalid/changes/42"},
+            {"id": "safe-url", "type": "fix", "summary": "Safe source link.", "source": "https://example.invalid/a%29%20bad"},
         ])
         notes = notes_renderer.render_release_notes(release)
         self.assertIn("Cải thiện \\`tool\\` # heading \\[link\\]", notes)
         self.assertNotIn("\n# heading", notes)
-        self.assertIn("`owned change #42`", notes)
+        self.assertIn("[Source](https://example.invalid/changes/42)", notes)
         self.assertIn("https://example.invalid/a%29%20bad", notes)
         self.assertNotIn("## Features", notes)
         release["changes"][0]["summary"] = "### heading"
@@ -142,11 +144,11 @@ class ReleaseTests(unittest.TestCase):
         release = _current_release([{
             "id": "literal-metadata", "type": "fix",
             "summary": "1. Preserve literal &copy; <tag> and ~~removed~~ labels.",
-            "source": "owned &copy; ~~reference~~ #42",
+            "source": "https://example.invalid/changes/42",
         }])
         notes = notes_renderer.render_release_notes(release)
         self.assertIn(r"- **1. Preserve literal &amp;copy; &lt;tag&gt; and \~\~removed\~\~ labels.**", notes)
-        self.assertIn("(`owned &copy; ~~reference~~ #42`)", notes)
+        self.assertIn("[Source](https://example.invalid/changes/42)", notes)
         self.assertNotIn(r"\.", notes)
         self.assertNotIn(r"\-", notes)
         for marker in ("-", "+", "*"):
@@ -154,14 +156,96 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn("- **\\" + marker + " Preserve", notes_renderer.render_release_notes(release))
 
-    def test_owned_references_with_backticks_stay_inside_one_code_span(self) -> None:
+    def test_source_urls_are_rendered_as_links(self) -> None:
         release = _current_release([{
             "id": "literal-reference",
             "type": "fix",
             "summary": "Keep the source literal",
-            "source": "`owned` ``reference`` #42",
+            "source": "https://example.invalid/changes/%60owned%60",
         }])
-        self.assertIn("(``` `owned` ``reference`` #42 ```)", notes_renderer.render_release_notes(release))
+        self.assertIn(
+            "[Source](https://example.invalid/changes/%60owned%60)",
+            notes_renderer.render_release_notes(release),
+        )
+
+    def test_plain_text_issue_sources_are_rejected(self) -> None:
+        release = _current_release([{
+            "id": "plain-reference",
+            "type": "fix",
+            "summary": "Reject an unlinked issue reference",
+            "source": "component (issue #42)",
+        }])
+        with self.assertRaisesRegex(ProcessError, "does not match"):
+            notes_renderer.render_release_notes(release)
+
+    def test_canonical_release_contracts_reject_plain_text_sources(self) -> None:
+        release = _current_release([{
+            "id": "plain-reference",
+            "type": "fix",
+            "summary": "Reject an unlinked issue reference",
+            "source": "component (issue #42)",
+        }])
+        fragment = deepcopy(release["changes"][0])
+        for kind, document in (("release", release), ("release-change", fragment)):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ProcessError, "does not match"):
+                validate_document(document, kind, schema_root=schemas_root(ROOT))
+
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            release_copy = deepcopy(read_json(ROOT / "release.json"))
+            release_copy["changes"][0]["source"] = "issue #1"
+            (project / "release.json").write_text(json.dumps(release_copy), encoding="utf-8")
+            shutil.copyfile(ROOT / "pyproject.toml", project / "pyproject.toml")
+            with self.assertRaisesRegex(ProcessError, "does not match"):
+                validate_release(project, ROOT)
+
+    def test_canonical_source_contracts_reject_trailing_line_feed(self) -> None:
+        source = "https://example.invalid/changes/42"
+        release = _current_release([{
+            "id": "line-ending-reference",
+            "type": "fix",
+            "summary": "Reject a source with a trailing line ending",
+            "source": source,
+        }])
+        fragment = deepcopy(release["changes"][0])
+        fragment["schemaVersion"] = 1
+        documents = {
+            "release": release,
+            "release-change": fragment,
+            "release-notes-data": notes_renderer.release_notes_data(release),
+        }
+        for kind, document in documents.items():
+            invalid = deepcopy(document)
+            change = invalid if kind == "release-change" else invalid["changes"][0]
+            # This is the regression for the old $-anchored grammar: it accepted
+            # a final LF because $ could match immediately before it.
+            change["source"] = source + "\n"
+            with self.subTest(kind=kind), self.assertRaises(ProcessError):
+                validate_document(invalid, kind, schema_root=schemas_root(ROOT))
+
+    def test_canonical_source_contracts_reject_trailing_carriage_return_line_feed(self) -> None:
+        source = "https://example.invalid/changes/42"
+        release = _current_release([{
+            "id": "carriage-return-reference",
+            "type": "fix",
+            "summary": "Reject a source with a trailing CRLF",
+            "source": source,
+        }])
+        fragment = deepcopy(release["changes"][0])
+        fragment["schemaVersion"] = 1
+        documents = {
+            "release": release,
+            "release-change": fragment,
+            "release-notes-data": notes_renderer.release_notes_data(release),
+        }
+        for kind, document in documents.items():
+            invalid = deepcopy(document)
+            change = invalid if kind == "release-change" else invalid["changes"][0]
+            # The legacy grammar already rejected CRLF; keep this as explicit
+            # contract coverage alongside the final-LF regression above.
+            change["source"] = source + "\r\n"
+            with self.subTest(kind=kind), self.assertRaises(ProcessError):
+                validate_document(invalid, kind, schema_root=schemas_root(ROOT))
 
     def test_notes_check_rejects_stale_missing_and_noncanonical_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
@@ -250,8 +334,7 @@ class ReleaseTests(unittest.TestCase):
         )
         notes = notes_renderer.render_release_notes(release)
         for change in release["changes"]:
-            self.assertIn(change["source"], notes)
-        self.assertNotIn("#197-#205", notes)
+            self.assertIn(f"]({change['source']})", notes)
 
     def test_pending_release_records_are_issue_level_and_complete(self) -> None:
         fragments = [
@@ -278,12 +361,11 @@ class ReleaseTests(unittest.TestCase):
         }
         notes = notes_renderer.render_release_notes(release)
         for source in sources:
-            self.assertIn(source, notes)
+            self.assertIn(f"]({source})", notes)
         if any(fragment["type"] == "breaking" for fragment in fragments):
             self.assertIn("Breaking changes are listed above", notes)
         else:
             self.assertIn("No breaking changes are included", notes)
-        self.assertNotIn("#197-#205", notes)
 
     def test_semver_is_derived_from_change_classification(self) -> None:
         self.assertEqual("0.9.1", derive_next_version("0.9.0", ["fix"]))
@@ -330,7 +412,7 @@ class ReleaseTests(unittest.TestCase):
                     "id": "test-fix",
                     "type": "fix",
                     "summary": "Exercise release preparation against live state.",
-                    "source": "release test fixture",
+                    "source": "https://example.invalid/fixtures/release-test",
                     "details": {
                         "problem": "The fixture needs a complete release record.",
                         "changes": "Supply the required structured release details.",
@@ -360,7 +442,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual([], list((target / "release-changes").glob("*.json")))
             generated_notes = notes_renderer.render_release_notes(prepared).encode("utf-8")
             self.assertEqual(generated_notes, (target / "RELEASE_NOTES.md").read_bytes())
-            self.assertIn(b"**What changed:**", generated_notes)
+            labels = resolve_standard(ROOT, ROOT, "release-notes").rules["detailLabels"]
+            self.assertIn(f"**{labels['changes']}:".encode("utf-8"), generated_notes)
             self.assertIn(
                 f'version = "{expected}"', (target / "pyproject.toml").read_text()
             )
@@ -386,7 +469,7 @@ class ReleaseTests(unittest.TestCase):
                     "id": "unsupported",
                     "type": "fix",
                     "summary": "Unsupported record.",
-                    "source": "unsupported fixture",
+                    "source": "https://example.invalid/fixtures/unsupported",
                     "details": {
                         "problem": "The fixture uses a superseded version.",
                         "changes": "Reject it before writing release files.",

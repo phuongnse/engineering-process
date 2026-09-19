@@ -192,7 +192,7 @@ print('Installed consumer standard and draft/ready checks: PASSED')
         release_data = consumer / "release-data.json"
         release_data.write_text(json.dumps({
             "schemaVersion": 1, "title": "Fixture release", "introduction": "Reviewed fixture changes.",
-            "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "fixture-change", "details": {"problem": "The fixture needs release detail.", "changes": "Preserve behavior.", "affectedPaths": ["consumer/"], "apply": "Adopt the current package.", "compatibility": "No breaking change.", "notes": "Installed artifact fixture."}}],
+            "changes": [{"type": "fix", "summary": "Preserve behavior.", "source": "https://example.invalid/fixtures/change", "details": {"problem": "The fixture needs release detail.", "changes": "Preserve behavior.", "affectedPaths": ["consumer/"], "apply": "Adopt the current package.", "compatibility": "No breaking change.", "notes": "Installed artifact fixture."}}],
             "sections": {"upgrade": "No additional consumer action."},
         }), encoding="utf-8")
         issue_data = consumer / "issue-data.json"

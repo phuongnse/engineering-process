@@ -176,13 +176,16 @@ Authors supply narrative fields (`outcome`, `scope`, `compatibility`, `issueRefe
 
 The consumer maps its release records to the packaged `release-notes-data` schema.
 This input belongs to the consumer; it does not replace its versioning policy or
-become another authoritative changelog. A change supplies structured `details`
+become another authoritative changelog. Each `source` is one durable HTTPS issue or
+pull-request URL; plain-text issue descriptions are rejected. A change supplies structured `details`
 with `problem`, `changes`, `affectedPaths`, `apply`, `compatibility`, and `notes` so
 the renderer can select actionable information without relying on an issue range.
 The current standard maps change type to visible detail: ordinary fixes show the
-result and compatibility, capabilities add the action to take, and breaking changes
-also show the problem and adaptation action. Paths and caveats remain available in the
-manifest without being repeated in every public item.
+result and impact, capabilities add the adoption action, and breaking changes also
+show why the change matters. The selected standard owns visible labels through
+`detailLabels`; `detailFields` still controls which fields appear for each change
+type. Paths and caveats remain available in the manifest without being repeated in
+every public item.
 For example:
 
 ```json
@@ -194,7 +197,7 @@ For example:
     {
       "type": "fix",
       "summary": "Preserve the requested behavior.",
-      "source": "CHANGE-12",
+      "source": "https://github.com/example/project/issues/12",
       "details": {
         "problem": "The requested behavior was lost.",
         "changes": "Restore the behavior at its owning boundary.",
@@ -218,10 +221,10 @@ selected group, and the data must supply exactly the selected sections. A consum
 override can reorder/rename groups or require additional sections such as upgrade or
 security impact. Update the consumer's data mapping when changing IDs or requirements.
 
-Change summaries are literal text. HTTP(S) source references become links; other
-owned references remain code spans without invented GitHub links. The renderer adds
-only the labels selected for the change type. `repositoryUrl` can identify the consumer's GitHub
-repository for compact issue/PR link labels. The renderer escapes only Markdown or
+Change summaries are literal text. HTTPS source references become links and are never
+invented from issue-like prose. The renderer adds only the labels selected for the
+change type. `repositoryUrl` can identify the consumer's GitHub repository for compact
+issue/PR link labels. The renderer escapes only Markdown or
 HTML-sensitive syntax in metadata, leaves ordinary punctuation readable, and uses
 ordinary inline-code delimiters for references that contain no backticks. Authors
 must not pre-escape these values.

@@ -260,6 +260,24 @@
                     ]
                   }
                 }
+              },
+              "detailLabels": {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 6,
+                "propertyNames": {
+                  "enum": [
+                    "problem",
+                    "changes",
+                    "affectedPaths",
+                    "apply",
+                    "compatibility",
+                    "notes"
+                  ]
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/line"
+                }
               }
             }
           }

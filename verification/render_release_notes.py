@@ -19,8 +19,11 @@ from engineering_process.release_notes import render_notes  # noqa: E402
 REPOSITORY = "https://github.com/phuongnse/engineering-process"
 
 
-def release_notes_data(release: dict) -> dict:
+def release_notes_data(release: dict, *, detail_labels: dict[str, str] | None = None) -> dict:
     version, previous = release["version"], release["previousVersion"]
+    detail_labels = detail_labels or {}
+    compatibility_label = detail_labels.get("compatibility", "compatibility")
+    apply_label = detail_labels.get("apply", "apply")
     changes = []
     for change in release["changes"]:
         record = {key: change[key] for key in ("type", "summary", "source")}
@@ -34,11 +37,13 @@ def release_notes_data(release: dict) -> dict:
     ]
     if any(change["type"] == "breaking" for change in release["changes"]):
         upgrade.append(
-            "Breaking changes are listed above; review each item's Compatibility and Apply guidance before adopting."
+            "Breaking changes are listed above; review each item's "
+            f"{compatibility_label} and {apply_label} guidance before adopting."
         )
     else:
         upgrade.append(
-            "No breaking changes are included. Review each item's Compatibility and follow any shown Apply guidance before adopting."
+            "No breaking changes are included. Review each item's "
+            f"{compatibility_label} and follow any shown {apply_label} guidance before adopting."
         )
     upgrade.append(
         f"See [versioning and compatibility]({REPOSITORY}/blob/v{version}/VERSIONING.md) and [adoption guidance]({REPOSITORY}/blob/v{version}/SELF_HOSTING.md)."
@@ -56,7 +61,11 @@ def release_notes_data(release: dict) -> dict:
 
 def render_release_notes(release: dict) -> str:
     standard = resolve_standard(PROJECT_ROOT, PROJECT_ROOT, "release-notes")
-    return render_notes(standard, release_notes_data(release), process_root=PROJECT_ROOT)
+    return render_notes(
+        standard,
+        release_notes_data(release, detail_labels=standard.rules.get("detailLabels")),
+        process_root=PROJECT_ROOT,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,7 +76,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     release = load_and_validate(PROJECT_ROOT / "release.json", "release", schema_root=schemas_root(PROJECT_ROOT))
     standard = resolve_standard(PROJECT_ROOT, PROJECT_ROOT, "release-notes")
-    expected = render_notes(standard, release_notes_data(release), process_root=PROJECT_ROOT).encode("utf-8")
+    expected = render_notes(
+        standard,
+        release_notes_data(release, detail_labels=standard.rules.get("detailLabels")),
+        process_root=PROJECT_ROOT,
+    ).encode("utf-8")
     if args.check:
         if args.check.read_bytes() != expected:
             raise ProcessError(f"release notes are stale: {args.check}")
