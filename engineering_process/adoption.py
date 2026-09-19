@@ -23,6 +23,7 @@ from .distribution import (
 )
 from .project import normalize_project, project_path
 from .pr_description import render_template
+from .release import parse_version
 
 
 MAX_REQUIREMENTS_BYTES = 2_000_000
@@ -132,6 +133,23 @@ def _read_lock(project_root: Path, process_root: Path) -> dict[str, Any] | None:
     return value
 
 
+def _validate_existing_lock(lock: dict[str, Any], process_root: Path) -> None:
+    process = lock["process"]
+    existing_version = parse_version(process["version"])
+    current_version = parse_version(VERSION)
+    if existing_version > current_version:
+        raise ProcessError(
+            "existing process lock identifies a newer package than the installed one"
+        )
+    if (
+        existing_version == current_version
+        and process["digest"] != distribution_digest(process_root)
+    ):
+        raise ProcessError(
+            "existing process lock does not identify the current package and distribution"
+        )
+
+
 def _expected_files(
     project_root: Path,
     process_root: Path,
@@ -140,14 +158,7 @@ def _expected_files(
     existing_lock = _read_lock(project_root, process_root)
     existing_skills = set(existing_lock.get("skills", [])) if existing_lock else set()
     if existing_lock is not None:
-        process = existing_lock["process"]
-        if (
-            process["version"] != VERSION
-            or process["digest"] != distribution_digest(process_root)
-        ):
-            raise ProcessError(
-                "existing process lock does not identify the current package and distribution"
-            )
+        _validate_existing_lock(existing_lock, process_root)
     names = skill_names(process_root)
     new_skills = set(names)
     writes: dict[Path, bytes] = {}
