@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "github>phuongnse/engineering-process//templates/renovate#71bb94acb18aab41c97120f66e3cbd7c2fcee468"
+    "github>phuongnse/engineering-process//templates/renovate#c292559166faeda7715dedab3d28c08afdccc64c"
   ],
   "enabled": true,
   "draftPR": true,
@@ -39,6 +39,7 @@
       "groupName": "engineering-process",
       "schedule": ["at any time"],
       "prPriority": 100,
+      "recreateWhen": "always",
       "commitMessageTopic": "engineering-process",
       "postUpgradeTasks": {
         "commands": [
