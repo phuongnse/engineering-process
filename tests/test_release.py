@@ -15,7 +15,8 @@ import unittest
 from unittest.mock import patch
 
 from engineering_process.artifact_standards import resolve_standard
-from engineering_process.contracts import ProcessError, read_json, write_json_atomic
+from engineering_process.contracts import ProcessError, read_json, validate_document, write_json_atomic
+from engineering_process.distribution import schemas_root
 from engineering_process.release import derive_next_version, validate_release
 from verification.normalize_sdist import normalize
 from verification.prepare_release import _replace_once
@@ -183,6 +184,27 @@ class ReleaseTests(unittest.TestCase):
         }])
         with self.assertRaisesRegex(ProcessError, "does not match"):
             notes_renderer.render_release_notes(release)
+
+    def test_canonical_release_contracts_reject_plain_text_sources(self) -> None:
+        release = _current_release([{
+            "id": "plain-reference",
+            "type": "fix",
+            "summary": "Reject an unlinked issue reference",
+            "source": "component (issue #42)",
+        }])
+        fragment = deepcopy(release["changes"][0])
+        for kind, document in (("release", release), ("release-change", fragment)):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ProcessError, "does not match"):
+                validate_document(document, kind, schema_root=schemas_root(ROOT))
+
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            release_copy = deepcopy(read_json(ROOT / "release.json"))
+            release_copy["changes"][0]["source"] = "issue #1"
+            (project / "release.json").write_text(json.dumps(release_copy), encoding="utf-8")
+            shutil.copyfile(ROOT / "pyproject.toml", project / "pyproject.toml")
+            with self.assertRaisesRegex(ProcessError, "does not match"):
+                validate_release(project, ROOT)
 
     def test_notes_check_rejects_stale_missing_and_noncanonical_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
